@@ -100,8 +100,9 @@ custom messages remain independent readable boundaries in this contract.
   trust-only commands.
 
 - Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source
-  projection. Formula bodies use canonical `$…$` inline or `$$…$$` display delimiters, including
-  partial selections whose original formula wrapper determines display identity; surrounding
+  projection. Inline formulas use `$…$`; display formulas put each `$$` delimiter on its own line,
+  preserving internal formula whitespace. This also applies to partial selections whose original
+  formula wrapper determines display identity; surrounding
   selected text and multiple formulas are preserved. Every user turn has a message-level action that
   copies its exact source. Every assistant response has an action at the end of the response that
   concatenates only its response text blocks and excludes thinking, tool, custom, and generic

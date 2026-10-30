@@ -204,8 +204,36 @@ describe("selection copy", () => {
     displayRange.setEnd(textNode(displayHtml), 1);
     const display = dispatchSelectionCopy(displayHtml, displayRange);
     expect(display.event.defaultPrevented).toBe(true);
-    expect(display.data.getData("text/plain")).toBe("$$d+2$$");
+    expect(display.data.getData("text/plain")).toBe("$$\nd+2\n$$");
     expect(display.data.getData("text/html")).toContain("katex-display");
+  });
+
+  it("puts display delimiters on separate lines without changing formula indentation", async () => {
+    const source = String.raw`\begin{aligned}
+  x&=1\\
+    y&=2
+\end{aligned}`;
+    const { container } = render(
+      <Transcript
+        messages={[
+          {
+            role: "assistant",
+            content: [{ type: "text", text: `$$\n${source}\n$$` }],
+          },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".katex-display")).toBeTruthy(),
+    );
+    const formula = container.querySelector(".katex-display")!;
+    const range = document.createRange();
+    range.selectNodeContents(formula);
+    const result = dispatchSelectionCopy(formula, range);
+    expect(result.data.getData("text/plain")).toBe(`$$\n${source}\n$$`);
   });
 
   it("handles a real DOM selection and writes both ClipboardEvent formats", async () => {
