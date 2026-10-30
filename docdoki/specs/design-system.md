@@ -278,12 +278,13 @@ Reading tables use a separate data-text tier: 12.5px Compact, 14px Comfortable a
 They sit one step below prose without sharing the smaller tool/metadata tier. Semibold headings,
 tabular numerals, quiet row rules and local horizontal scrolling remain unchanged.
 
-Resource tabs use four equal columns, 13px labels (12.5px untracked in the smallest groups), and
-28px desktop / 34px compact-touch height with adjacent 32px actions. Complete labels fit without
-cropping or distortion. The group is unfilled and has no visible enclosing border. Selected modes
-use a straight 2px inset accent underline instead of a filled tile; Rajdhani, uppercase tracking,
-500/600 weights, accent ink and existing focus/disabled states remain unchanged. This treatment
-is specific to resource modes; other segmented controls retain their own selection surfaces.
+The contextual header keeps file and terminal tabs in one leading, horizontally scrollable strip.
+Files, Changes and History use fixed trailing icon tabs; Terminal is a default-shell creation action.
+The header stays 36px on desktop. Tool icons retain their 26px desktop / 32px compact-touch targets;
+file and terminal labels use the existing small UI tier. The rail-colored header has one weak
+hairline against stage-colored content. Selected tabs retain content-colored fill, accent ink and
+a straight 2px underline; hover, transparent close buttons and keyboard focus retain their existing
+roles. Other segmented controls keep their own selection surfaces.
 Count capsules use `--accent-tint`/`--accent-deep`, smaller text on the label
 baseline and a distinct gap. When a complete label/count pair cannot fit, omit the count while
 retaining the exact Changes total in its title.

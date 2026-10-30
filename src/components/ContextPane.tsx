@@ -28,6 +28,7 @@ import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
 import { readHistoryReading, workbenchSessionKey } from "../workbench-session";
 import { BranchTree } from "./BranchTree";
@@ -77,10 +78,17 @@ export const ContextPane = memo(function ContextPane({
     [state.sessionId, state.cwd],
   );
   const [terminalVisited, setTerminalVisited] = useState(false);
+  const [terminalTabsHost, setTerminalTabsHost] =
+    useState<HTMLDivElement | null>(null);
   const fileTabsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (state.contextMode === "terminal") setTerminalVisited(true);
-  }, [state.contextMode]);
+    if (state.contextMode === "terminal" || (state.resourcesOpen && state.cwd))
+      setTerminalVisited(true);
+  }, [state.contextMode, state.resourcesOpen, state.cwd]);
+  const activateTerminal = useCallback(
+    () => store.setContextMode("terminal"),
+    [],
+  );
   useEffect(() => {
     for (const reference of fileReadings.keys())
       if (!state.resourceTabs.some((tab) => tab.reference === reference))
@@ -444,66 +452,67 @@ export const ContextPane = memo(function ContextPane({
                 </div>
               );
             })}
+            <div className="ctx__terminal-tabs" ref={setTerminalTabsHost} />
           </div>
           <div className="ctx__modes">
-            {(["files", "changes", "branches", "terminal"] as const).map(
-              (mode) => {
-                const label =
-                  mode === "files"
-                    ? "Files"
-                    : mode === "changes"
-                      ? "Changes"
-                      : mode === "branches"
-                        ? "History"
-                        : "Terminal";
-                const Icon =
-                  mode === "files"
-                    ? Folder
-                    : mode === "changes"
-                      ? GitCompareArrows
-                      : mode === "branches"
-                        ? History
-                        : SquareTerminal;
-                const selected =
-                  state.contextMode === mode &&
-                  (mode !== "files" || !activeFile);
-                const changesCount =
-                  mode === "changes"
-                    ? (gitChangeCount(state.gitStatus) ?? 0)
-                    : 0;
-                return (
-                  <button
-                    type="button"
-                    key={mode}
-                    role="tab"
-                    aria-label={label}
-                    title={
-                      changesCount
-                        ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
-                        : label
-                    }
-                    aria-selected={selected}
-                    aria-controls={`context-${mode}-content`}
-                    tabIndex={selected ? 0 : -1}
-                    data-terminal-focus-trigger={
-                      mode === "terminal" ? "" : undefined
-                    }
-                    onClick={() =>
-                      mode === "files"
-                        ? store.showFileBrowser()
-                        : store.setContextMode(mode)
-                    }
-                  >
-                    <Icon size={16} aria-hidden />
-                    {changesCount > 0 ? (
-                      <span className="ctx__mode-badge" aria-hidden="true">
-                        {changesCount > 99 ? "99+" : changesCount}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              },
-            )}
+            {(["files", "changes", "branches"] as const).map((mode) => {
+              const label =
+                mode === "files"
+                  ? "Files"
+                  : mode === "changes"
+                    ? "Changes"
+                    : "History";
+              const Icon =
+                mode === "files"
+                  ? Folder
+                  : mode === "changes"
+                    ? GitCompareArrows
+                    : History;
+              const selected =
+                state.contextMode === mode && (mode !== "files" || !activeFile);
+              const changesCount =
+                mode === "changes" ? (gitChangeCount(state.gitStatus) ?? 0) : 0;
+              return (
+                <button
+                  type="button"
+                  key={mode}
+                  role="tab"
+                  aria-label={label}
+                  title={
+                    changesCount
+                      ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
+                      : label
+                  }
+                  aria-selected={selected}
+                  aria-controls={`context-${mode}-content`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => {
+                    if (mode === "files") store.showFileBrowser();
+                    else store.setContextMode(mode);
+                  }}
+                >
+                  <Icon size={16} aria-hidden />
+                  {changesCount > 0 ? (
+                    <span className="ctx__mode-badge" aria-hidden="true">
+                      {changesCount > 99 ? "99+" : changesCount}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              aria-label="New terminal"
+              title="New terminal"
+              disabled={!state.cwd}
+              data-terminal-focus-trigger
+              onClick={() => {
+                store.setContextMode("terminal");
+                queueTerminalAction("new", state.cwd);
+              }}
+            >
+              <SquareTerminal size={16} aria-hidden />
+            </button>
           </div>
         </div>
         <div className="ctx__header-actions">
@@ -600,6 +609,8 @@ export const ContextPane = memo(function ContextPane({
           >
             <TerminalPane
               cwd={state.cwd}
+              sharedTabsHost={terminalTabsHost}
+              onActivate={activateTerminal}
               active={state.resourcesOpen && state.contextMode === "terminal"}
               reloadKey={terminalReloadKey}
               onOpenFile={handleTerminalOpenFile}

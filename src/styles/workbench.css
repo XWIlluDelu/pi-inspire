@@ -212,6 +212,8 @@ body.pane-resizing--vertical .nav {
   gap: 0;
 }
 
+.ctx__terminal-tabs { display: contents; }
+
 .ctx__file-tab {
   position: relative;
   flex: 0 0 auto;

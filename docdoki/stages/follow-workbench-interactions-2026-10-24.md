@@ -456,6 +456,23 @@ content surface and keep their accent underline. Focused checks cover all four t
 Silicon and Jade light/dark, plus an opened Markdown file; the header remains 36px and resize
 dividers remain invisible at rest. Left navigation geometry and colors are unchanged.
 
+## Shared terminal tabs and floating controls
+
+Project terminal tabs now render beside file tabs through the existing terminal component, keeping
+its catalog, selection, process attachment and control ownership. Opening the shared strip reads
+the catalog even from Files; only the active terminal surface polls. The fixed Terminal icon
+creates one default-profile terminal. Terminal controls float in the output's top-right with
+explicit collapse, Escape and input/reading-intent collapse. Search temporarily owns that corner;
+background output does not open or close the controls. Focused windows retain their own tabs.
+Shared rename inputs use the same label origin and optical text offset as their tab labels.
+
+Verification: 55 terminal component cases and 37 resource/action cases pass; focused Chromium
+lifecycle, menu/focus and active-view controls scenarios pass. Isolated native terminals preserve
+output across file/two-terminal switches and refresh from Files. Default creation and close/Reopen
+counts match requested actions; busy-close cancellation sends no removal. The narrow view keeps
+output at the pane top without a reserved second header and no viewport overflow. No user terminal
+or in-flight task is used by these checks.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

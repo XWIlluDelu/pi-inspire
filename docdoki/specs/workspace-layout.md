@@ -203,19 +203,21 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   accent underline. Desktop top corners join the frame squarely. Search fields, floating actions,
   authored documents and the terminal keep their own content-surface roles.
 
-- Open files have filename tabs on the leading side of the contextual header. Files, Changes,
-  History, and Terminal remain fixed icon tabs on its trailing side, with hover titles and
-  accessible names. All are same-level selections sharing one content region. Files shows its
+- Open files and project terminals have tabs on the leading side of the contextual header.
+  Files, Changes and History remain fixed icon tabs on its trailing side, with hover titles and
+  accessible names; the Terminal icon creates and activates a default terminal instead of selecting
+  a nested terminal page. File, terminal and tool tabs share one content region. Files shows its
   complete search/Recent/Workspace browser; selecting a file opens or selects its sibling tab,
   without a nested Files layer or index/detail split. Returning to Files preserves its query,
   expansions and scroll. File tabs retain independent reader modes and Source/rendered scroll
   offsets; [[resource-preview]] defines the boundary for embedded readers and execution.
-  Overflowing filename tabs scroll within their own strip while the tool tabs remain available.
+  Overflowing file/terminal tabs scroll within their shared strip while the tool actions remain available.
   Filename tabs fill the header height, starting flush at its leading content edge, with internal
   label spacing rather than floating rounded backgrounds. Title and close action share one continuous
   tab background; close hover changes only its icon ink, and keyboard focus uses a thin outline.
-  The tab strip has no full-width bottom rule: its warm surface meets the selected view directly,
-  while file paths and tool content retain their own local boundaries. Selection indicators remain.
+  A single weak header hairline separates the frame from the content surface; selection indicators
+  remain. File-specific and terminal controls float over their own content rather than adding
+  another full-width toolbar row.
   F5 keeps the current browser tab's navigation collapse, context visibility, file-tab order and
   selection, tool selection, and Files query/expanded directories. Existing saved pane widths remain
   in use. Session-specific state is scoped to the Host, session and workspace, and file content is

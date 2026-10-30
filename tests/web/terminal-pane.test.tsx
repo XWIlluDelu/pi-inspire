@@ -558,6 +558,108 @@ describe("terminal creation controls", () => {
 });
 
 describe("terminal project ownership", () => {
+  it("keeps a running terminal when its shared-tab close confirmation is cancelled", async () => {
+    const running = { ...terminal("busy A"), commandRunning: true };
+    api.terminals.mockResolvedValue(catalog([running]));
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
+    try {
+      await within(host).findByRole("tab", { name: "busy A", selected: true });
+      fireEvent.click(
+        within(host).getByRole("button", { name: "Close busy A" }),
+      );
+      expect(confirm).toHaveBeenCalledWith(
+        "Close “busy A” and terminate its running process?",
+      );
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(within(host).getByRole("tab", { name: "busy A" })).toBeVisible();
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
+
+  it("loads shared tabs while inactive and activates an existing terminal without creating one", async () => {
+    const list = document.createElement("div");
+    list.setAttribute("role", "tablist");
+    const file = document.createElement("button");
+    file.setAttribute("role", "tab");
+    file.textContent = "README.md";
+    const host = document.createElement("div");
+    list.append(file, host);
+    document.body.append(list);
+    const onActivate = vi.fn();
+    const view = render(
+      <TerminalPane
+        cwd="/A"
+        active={false}
+        sharedTabsHost={host}
+        onActivate={onActivate}
+      />,
+    );
+    try {
+      const first = await within(list).findByRole("tab", { name: "A shell" });
+      expect(first).toHaveAttribute("aria-selected", "false");
+      expect(
+        screen.queryByRole("toolbar", { name: "Project terminals" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(within(list).getByRole("tab", { name: "A second" }));
+      expect(onActivate).toHaveBeenCalledOnce();
+      expect(api.createTerminal).not.toHaveBeenCalled();
+      view.rerender(
+        <TerminalPane
+          cwd="/A"
+          active
+          sharedTabsHost={host}
+          onActivate={onActivate}
+        />,
+      );
+      const selected = await within(list).findByRole("tab", {
+        name: "A second",
+        selected: true,
+      });
+      fireEvent.keyDown(selected, { key: "Home" });
+      expect(file).toHaveFocus();
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      list.remove();
+    }
+  });
+
+  it("collapses shared controls for reading and preserves the terminal view", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
+    try {
+      await within(host).findByRole("tab", { name: "A shell", selected: true });
+      const input = await screen.findByLabelText("Fixture terminal input");
+      fireEvent.change(input, { target: { value: "unfinished command" } });
+      fireEvent.pointerDown(input);
+      const toggle = screen.getByRole("button", {
+        name: "Show terminal controls",
+      });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(toggle);
+      expect(screen.getByLabelText("Terminal actions")).toBeVisible();
+      fireEvent.keyDown(
+        screen.getByRole("button", { name: "Hide terminal controls" }),
+        { key: "Escape" },
+      );
+      expect(
+        screen.getByRole("button", { name: "Show terminal controls" }),
+      ).toHaveFocus();
+      expect(input).toHaveValue("unfinished command");
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
+
   it("retains the selected view while hidden without accepting terminal actions", async () => {
     const view = render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });

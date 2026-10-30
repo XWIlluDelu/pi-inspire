@@ -3,6 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { terminalMutationHeaders } from "./support/terminal-operations";
+import { openProjectTerminal } from "./support/navigation";
 
 // Isolated mock Host and in-process PTYs from playwright.config.ts, never the daily Host.
 test.use({ serviceWorkers: "block" });
@@ -38,13 +39,9 @@ async function openTerminal(page: Page, pair: boolean) {
       .click();
   }
   await expect(sessionTitle).toHaveText(/Review extension event lifecycle/);
-  const terminalTab = page.getByRole("tab", {
-    name: "Terminal",
-    exact: true,
-  });
-  if (!(await terminalTab.isVisible()))
+  if (!(await page.locator(".ctx").count()))
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await terminalTab.click();
+  await openProjectTerminal(page);
   await expect(page.locator(".terminal-pane")).toBeVisible();
 }
 

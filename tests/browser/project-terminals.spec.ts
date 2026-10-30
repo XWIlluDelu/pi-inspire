@@ -10,7 +10,12 @@ import { actionGeometry } from "./support/action-geometry";
 import { focusRingClipping } from "./support/focus-bounds";
 import { hostRequest } from "./support/host-request";
 import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import {
+  openMockSession,
+  openProjectTerminal,
+  pairedPage,
+  showTerminalControls,
+} from "./support/navigation";
 import { terminalWriteCommand } from "./support/terminal-command";
 import { terminalMutationHeaders } from "./support/terminal-operations";
 import { terminalTransportFixture } from "./support/terminal-transport";
@@ -32,7 +37,7 @@ test("terminal failures use shared error feedback with copy and explicit dismiss
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+  await openProjectTerminal(page);
   const error = page.locator(".terminal-pane__error");
   await expect(error).toBeVisible();
   await expect(error).toHaveClass(/notice--error/);
@@ -98,9 +103,10 @@ for (const narrow of [false, true]) {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
       await expect.poll(() => terminal!.resizes.length).toBeGreaterThan(0);
       terminal!.write("QUOTE_HANDOFF_CONTENT\r\n");
+      await showTerminalControls(page);
       await page.getByLabel("Terminal actions", { exact: true }).click();
       await page
         .getByRole("button", { name: "Select text", exact: true })
@@ -162,7 +168,8 @@ for (const touch of [false, true]) {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
+      await showTerminalControls(page);
       await page.getByLabel("Terminal actions", { exact: true }).click();
       await page
         .getByLabel("Terminals in all projects", { exact: true })
@@ -206,7 +213,7 @@ for (const touch of [false, true]) {
       if (touch) await back.tap();
       else await back.click();
       await expect(context).toHaveCount(0);
-      await expect(page.locator(".terminal-tab")).toHaveCount(0);
+      await expect(page.locator(".ctx__terminal-select")).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "New terminal", exact: true }).first(),
       ).toBeVisible();
@@ -254,7 +261,7 @@ test("a replacement terminal snapshot retires output still waiting in xterm's pa
     });
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+  await openProjectTerminal(page);
   await expect(
     page.getByRole("status", { name: "Controlling", exact: true }),
   ).toBeVisible();
@@ -350,7 +357,7 @@ test("terminal profiles keep long labels, the default marker, and keyboard focus
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+  await openProjectTerminal(page);
   const trigger = page.getByLabel("Choose terminal profile", { exact: true });
   await trigger.focus();
   await trigger.press("Enter");
@@ -445,7 +452,7 @@ for (const theme of ["light", "dark"] as const) {
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
       const error = pane.locator(
         source === "catalog"
           ? ".terminal-pane__error"
@@ -508,7 +515,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
     );
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+  await openProjectTerminal(page);
 
   const emptyTerminal = page.locator(".terminal-empty");
   await emptyTerminal.getByRole("button", { name: "New terminal" }).click();
@@ -548,6 +555,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
         (command) => navigator.clipboard.writeText(command),
         terminalWriteCommand("终端✓\n"),
       );
+      await showTerminalControls(page);
       await page.getByLabel("Terminal actions", { exact: true }).click();
       await page.getByRole("button", { name: "Paste into terminal" }).click();
       await expect(
@@ -566,7 +574,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
     await expect(visibleTerminalOutput).toContainText("INSPIRE_ALT_SCREEN");
 
     await page.getByRole("button", { name: "New terminal" }).click();
-    await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
+    await expect(page.locator(".ctx__terminal-select")).toHaveCount(2);
     terminalIds = (await readTerminals()).terminals.map(({ id }) => id);
     const terminalAccessibility = await new AxeBuilder({ page })
       .include(".terminal-pane")
@@ -577,8 +585,8 @@ test("project terminals survive browser detach and keep multiple tabs", {
     await expect(page.getByRole("main")).toBeVisible();
     await openMockSession(page, /Review extension event lifecycle/);
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await page.getByRole("tab", { name: "Terminal", exact: true }).click();
-    await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
+    await openProjectTerminal(page);
+    await expect(page.locator(".ctx__terminal-select")).toHaveCount(2);
     expect((await readTerminals()).terminals.map(({ id }) => id)).toEqual(
       terminalIds,
     );
@@ -620,6 +628,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
     await expect(
       focusedPage.getByRole("status", { name: "Controlling", exact: true }),
     ).toBeVisible();
+    await showTerminalControls(page);
     await expect(
       page.getByRole("status", { name: "View only", exact: true }),
     ).toBeVisible();
@@ -683,7 +692,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
         await page
           .getByRole("button", { name: "Toggle resources panel" })
           .click();
-      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
       await page.locator(`#terminal-tab-${terminal.id}`).click();
       await expect(
         page.locator(".terminal-view--active .xterm-helper-textarea"),
@@ -694,7 +703,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
 
       const centers = await page
         .locator(
-          ".terminal-tab__label, .terminal-tab__status, .terminal-tab__close, .terminal-tabs__new > .icon-button, .terminal-tabs-shell .terminal-menu > summary, .terminal-view-controls > .icon-button, .terminal-view__keyboard, .terminal-tabs__focus",
+          ".terminal-tabs-shell .terminal-menu > summary, .terminal-view-controls > .icon-button, .terminal-view__keyboard, .terminal-tabs__focus",
         )
         .evaluateAll((controls) =>
           controls
@@ -725,7 +734,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
         const box = el.getBoundingClientRect();
         const style = getComputedStyle(el);
         const shell = el
-          .closest(".terminal-tabs-shell")!
+          .closest(".ctx__header, .terminal-tabs-shell")!
           .getBoundingClientRect();
         return {
           x:
@@ -773,6 +782,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
       const openMenus = page.locator(
         ".terminal-pane details[data-terminal-menu][open]",
       );
+      await showTerminalControls(page);
       await actions.focus();
       await actions.press("Enter");
       await expect(openMenus).toHaveCount(1);
@@ -781,6 +791,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
       await expect(openMenus).toHaveCount(1);
       await expect(profiles.locator("..")).toHaveAttribute("open", "");
       await expect(actions.locator("..")).not.toHaveAttribute("open");
+      await showTerminalControls(page);
       await actions.focus();
       await actions.press("Enter");
       await expect(actions.locator("..")).toHaveAttribute("open", "");
@@ -815,6 +826,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
         name: "Focus terminal",
         exact: true,
       });
+      await showTerminalControls(page);
       if (!(await focus.isVisible())) await actions.click();
       await focus.click();
       await expect(page.locator(".terminal-pane--focused")).toBeVisible();
@@ -825,13 +837,22 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
         name: "Exit focused terminal",
         exact: true,
       });
+      await showTerminalControls(page);
       if (!(await exit.isVisible())) await actions.click();
       await exit.click();
       await expect(page.locator(".terminal-pane--focused")).toHaveCount(0);
       await expect(page.locator(".ctx")).toBeVisible();
       if (width <= 390) {
+        await showTerminalControls(page);
         await actions.focus();
         await actions.press("Escape");
+        await expect(
+          page.getByRole("button", {
+            name: "Show terminal controls",
+            exact: true,
+          }),
+        ).toBeVisible();
+        await page.keyboard.press("Escape");
         await expect(page.locator(".ctx")).toHaveCount(0);
       }
     }
@@ -862,7 +883,7 @@ for (const hasTouch of [false, true]) {
         });
         if ((await resources.getAttribute("aria-expanded")) === "false")
           await resources.click();
-        await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+        await openProjectTerminal(page);
         await expect(
           page.getByRole("status", { name: "Controlling", exact: true }),
         ).toBeVisible();
@@ -941,7 +962,7 @@ test.describe("terminal clipboard and focus ownership", () => {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),
       ).toBeVisible();
@@ -1089,7 +1110,7 @@ test.describe("international terminal keyboard input", () => {
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),
       ).toBeVisible();
@@ -1197,6 +1218,7 @@ test.describe("international terminal keyboard input", () => {
       );
       expect(first!.inputs.join("")).toBe(beforeTabs);
       await page.locator("#terminal-tab-" + ids[0]).click();
+      await showTerminalControls(page);
       await page
         .getByRole("button", { name: "Search terminal output", exact: true })
         .click();
@@ -1295,11 +1317,12 @@ test("terminal search keeps IME keys native before ordinary match navigation", a
   await pairedPage(page);
   await openMockSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+  await openProjectTerminal(page);
   await expect(
     page.getByRole("status").filter({ hasText: "Controlling" }),
   ).toBeVisible();
   terminal!.write("测量一\r\n测量二\r\n");
+  await showTerminalControls(page);
   await page
     .getByRole("button", { name: "Search terminal output", exact: true })
     .click();
@@ -1364,7 +1387,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
       prompts.push(request.url());
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+  await openProjectTerminal(page);
   await page.locator(`#terminal-tab-${ids[0]}`).click();
   await expect(
     page.getByRole("status", { name: "Controlling", exact: true }),
@@ -1397,6 +1420,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
     exact: true,
   });
   await expect(searchButton).toHaveCount(1);
+  await showTerminalControls(page);
   await searchButton.click();
   const searchInput = page.getByRole("textbox", {
     name: "Search terminal output",
@@ -1421,9 +1445,13 @@ test("compact terminal controls keep selection, search, and output scoped to the
   secondTerminal.write("TERMINAL_REDESIGN_B\r\n");
   await expect(searchButton).toHaveCount(1);
   await expect(searchButton).toHaveAttribute("aria-expanded", "false");
+  await showTerminalControls(page);
   await searchButton.click();
   await expect(searchInput).toHaveValue("");
   await searchInput.fill("SECOND_VIEW_QUERY");
+  // Search owns the floating corner while open; dismiss it before utilities.
+  await searchInput.press("Escape");
+  await showTerminalControls(page);
   await page.getByLabel("Terminal actions", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Copy last output", exact: true }),
@@ -1437,6 +1465,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
     origin: new URL(page.url()).origin,
   });
   const more = page.getByLabel("Terminal actions", { exact: true });
+  await showTerminalControls(page);
   await more.click();
   const copyOutput = page.getByRole("button", {
     name: "Copy last output",
@@ -1447,12 +1476,14 @@ test("compact terminal controls keep selection, search, and output scoped to the
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe("TERMINAL_REDESIGN_A");
+  await showTerminalControls(page);
   await more.click();
   await page.getByRole("button", { name: "Copy all", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain("TERMINAL_REDESIGN_A");
   const beforeSelectionResizes = firstTerminal.resizes.length;
+  await showTerminalControls(page);
   await more.click();
   await page.getByRole("button", { name: "Select text", exact: true }).click();
   const textDialog = page.getByRole("dialog", {
@@ -1534,6 +1565,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
         requestAnimationFrame(() => resolve()),
       );
     }, value);
+  await showTerminalControls(page);
   await more.click();
   await page
     .getByRole("button", { name: "Paste into terminal", exact: true })
@@ -1543,6 +1575,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
   await deliverPaste("TERMINAL_CLIPBOARD_STALE");
   expect(firstTerminal.inputs).toEqual([]);
   expect(secondTerminal.inputs).toEqual([]);
+  await showTerminalControls(page);
   await more.click();
   await page
     .getByRole("button", { name: "Paste into terminal", exact: true })
@@ -1574,12 +1607,14 @@ test("compact terminal controls keep selection, search, and output scoped to the
       .slice(beforeHeightResizes)
       .every(({ cols }) => cols === beforeHeight.cols),
   ).toBe(true);
+  await showTerminalControls(page);
   await more.click();
   await expect(copyOutput).toBeEnabled();
   await copyOutput.click();
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe("TERMINAL_REDESIGN_A");
+  await showTerminalControls(page);
   await more.click();
   await page
     .locator(".terminal-pane")
@@ -1593,6 +1628,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
     paneBounds!.y + paneBounds!.height,
   );
 
+  await showTerminalControls(page);
   await more.click();
   await page
     .locator(".terminal-pane")
@@ -1604,10 +1640,11 @@ test("compact terminal controls keep selection, search, and output scoped to the
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-    await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+    await openProjectTerminal(page);
     const visibleInput = page.locator(
       ".terminal-views__item:not([hidden]) .xterm-helper-textarea",
     );
+    await showTerminalControls(page);
     await searchButton.click();
     await expect(searchInput).toBeFocused();
     await searchInput.fill("TERMINAL_REDESIGN_A");
@@ -1666,7 +1703,7 @@ test.describe("touch terminal", () => {
     const terminal = (await response.json()) as { id: string };
     try {
       await page.getByRole("button", { name: "Toggle resources panel" }).tap();
-      await page.getByRole("tab", { name: "Terminal", exact: true }).tap();
+      await openProjectTerminal(page);
       await page.locator(`#terminal-tab-${terminal.id}`).tap();
       await expect(
         page.getByRole("status", { name: "Controlling", exact: true }),

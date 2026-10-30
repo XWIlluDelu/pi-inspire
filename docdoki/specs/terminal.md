@@ -207,17 +207,25 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 ## Tabs, menus, and settings
 
-The lazy Terminal mode provides profile choice, creation, rename, drag/keyboard ordering, restart,
-close/force-close confirmation, recent-close recreation, status/unread/bell indicators, and an
-all-project navigator. One header owns tabs, new/profile, connection/control state, search, focus, and
-More. At pane widths up to 480px, Focus moves into More to leave room for the active tab and its close
-control. Focus remains available with an empty catalog. Focus mode and a same-origin focused window
-attach the existing terminal. With multiple available profiles, compact/touch creation presents
-one Plus control that opens profile choice; the empty-state New button does the same without
-creating prematurely. A single available profile creates directly. Wider desktop layouts keep default
-New plus a separate chooser; command/keyboard New continues to create the default profile. The
-input-focus icon uses neutral action color; process dots and connecting/reconnecting indicators
-retain their state colors.
+Each project terminal occupies a tab beside open files in the shared contextual strip. Selecting
+a file or tool hides the terminal view without replacing its process or changing input ownership.
+The top Terminal shortcut creates and activates one default-profile terminal; existing terminals
+are reached through their tabs. The pane reads the catalog when the shared strip first opens so
+existing terminal tabs remain reachable after refresh, including from Files. Background catalog
+polling remains limited to the active terminal surface.
+
+Profile choice, connection/control state, search, focus and More form a compact floating group at
+the output's top-right, without a second tab/header row. An explicit toggle and Escape collapse it;
+interacting with terminal output/input collapses it without reacting to background output. There
+is no duplicate default-New button in this group; the profile chooser retains named alternatives.
+At pane widths up to 480px, Focus remains in More. Focus mode and same-origin focused windows
+attach the existing terminal and retain their own accessible tab strip.
+
+Rename, drag/keyboard ordering, close/force-close confirmation, recent-close recreation,
+status/unread/bell indicators and the all-project navigator retain their behavior. Closing a
+running command requires confirmation; Reopen creates a fresh shell rather than resuming a
+terminated process. Command/keyboard New creates the default profile. The input-focus icon uses
+neutral action color; process dots and connecting/reconnecting indicators retain their state colors.
 
 Selected tabs are revealed on selection or strip resize without stealing focus. Catalog reconciliation
 restores saved selection before persisting a new value. Automatic focus belongs to a fresh activation

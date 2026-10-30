@@ -41,3 +41,31 @@ export async function openCommandPalette(page: Page) {
   await expect(palette).toBeVisible();
   return palette;
 }
+
+/** Open an existing shell without the top-bar New terminal creation action. */
+export async function openProjectTerminal(page: Page) {
+  const existing = page.locator(".ctx__terminal-tabs [role=tab]").first();
+  if (await existing.count()) {
+    await existing.click();
+    return;
+  }
+  // Empty and failed catalogs still expose the existing palette entry.
+  // A narrow drawer owns focus and suppresses global shortcuts; leave it
+  // before opening the palette, whose command reopens the terminal surface.
+  const close = page.getByRole("button", {
+    name: "Close context pane",
+    exact: true,
+  });
+  if (await close.isVisible()) await close.click();
+  const palette = await openCommandPalette(page);
+  await palette.getByLabel("Filter commands").fill("Open Terminal");
+  await palette.getByRole("option", { name: /^Open Terminal$/ }).click();
+}
+
+export async function showTerminalControls(page: Page) {
+  const toggle = page.getByRole("button", {
+    name: "Show terminal controls",
+    exact: true,
+  });
+  if (await toggle.isVisible()) await toggle.click();
+}

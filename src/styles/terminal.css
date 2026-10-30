@@ -155,6 +155,66 @@
   display: none;
 }
 
+/* Shared workbench tabs stay in their existing strip; controls alone overlay
+   the terminal so no second header consumes output rows. */
+.terminal-tabs--shared,
+.terminal-controls {
+  display: contents;
+}
+
+.ctx__terminal-select { flex: 1; }
+.ctx__file-tab > .ctx__terminal-select { cursor: pointer; }
+.ctx__file-tab .terminal-tab__status { align-self: center; }
+.ctx__file-tab .terminal-tab__rename {
+  align-self: center;
+  /* Label: 8px inset + 6px status + 5px gap; input: 1px border + 5px padding. */
+  margin-left: 13px;
+  translate: 0 var(--ui-text-offset);
+}
+
+.terminal-pane--shared .terminal-tabs-shell {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  min-height: 0;
+  max-width: calc(100% - 2 * var(--space-3));
+  height: auto;
+  flex: none;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-file-surface);
+}
+
+.terminal-pane--shared .terminal-controls {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.terminal-controls[hidden],
+.terminal-pane--shared .terminal-controls[hidden] { display: none; }
+.terminal-controls-toggle { flex: 0 0 auto; }
+.terminal-pane--shared .terminal-tabs__new {
+  border: 0;
+  padding: 0;
+}
+.terminal-pane--shared .terminal-tabs__new > button[hidden] { display: none; }
+.terminal-pane--shared .terminal-tabs__new:has(> button[hidden]):not(:has(details)) { display: none; }
+.terminal-pane--shared .terminal-tabs__profile-new { display: none; }
+.terminal-pane--shared .terminal-tabs__profile-chevron { display: block; }
+
+/* Search owns the same corner while open; keep its input and close action
+   reachable instead of stacking two floating controls over one another. */
+.terminal-pane--shared:has(.terminal-views__item:not([hidden]) .terminal-search) .terminal-tabs-shell {
+  visibility: hidden;
+}
+
 .terminal-tab {
   position: relative;
   min-width: 88px;
