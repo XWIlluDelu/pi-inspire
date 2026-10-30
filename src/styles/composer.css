@@ -657,6 +657,17 @@
   display: contents;
 }
 
+@media (min-width: 901px) and (pointer: fine) {
+  .composer { padding-inline: var(--space-2); }
+
+  @container reading-stage (min-width: 441px) {
+    /* Separate settings from file actions without a border or a second row. */
+    .composer__selectors + .icon-button {
+      margin-inline-start: var(--space-1);
+    }
+  }
+}
+
 /* Pixel-stable labels belong to both composers, independent of adapters. */
 .composer__selectors .model-picker__trigger-copy,
 .composer__selectors .dropdown__value {

@@ -348,9 +348,10 @@ before projects, including in the Overlay header. The collapsed rail's mark expa
 its separate plus starts New; both logo forms share size and icon axis.
 
 New, Search, folder and session titles share a text axis. Folder counts keep the right column;
-desktop session age and existing activity marks occupy a quieter second line, with curation
-actions at its trailing edge. Session titles retain their first-line width on hover and focus.
-Hidden folders add one indent, independent of workspace-tree nesting. Narrow/coarse-pointer
+desktop status marks precede first-line titles, while age occupies the quieter second line with
+curation actions at its trailing edge. Session titles retain their first-line width on hover and focus.
+Hidden keeps the compact project geometry and lists independent sessions before folders, without
+an additional folder indent. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
 
@@ -371,8 +372,10 @@ hover. The row retains selection fill even when its select button is disabled. F
 use control-radius corners, a clear icon gutter beside the marker and a common text axis with their
 sessions. Folder, Workspace and Hidden keyboard outlines remain inset within clipping boundaries.
 
-Project spacing is 16px above the 2px catalog gap, and 20px after pinned sessions or the last pinned
-folder; collapse preserves it. Hidden keeps its compact drawer spacing regardless of previous pinning.
+Fine-pointer desktop project spacing is 12px above the 2px catalog gap (other layouts retain 16px),
+and 20px after pinned sessions or the last pinned folder; collapse preserves it. Hidden keeps its
+compact drawer spacing regardless of previous pinning, including an 8px section margin before a
+folder following independent sessions.
 Runtime status stays on each session's existing row rather than duplicating sessions in separate
 status groups, preserving project hierarchy and user curation.
 
@@ -410,6 +413,12 @@ Steer/Queue in a dedicated delivery row, and a quiet metadata toolbar below. Its
 12px corners and a quiet border; spacing separates the rows without an internal divider. Attachment
 corners use the control radius. Input text, the delivery row's outer edge and the model label share
 one horizontal content anchor, including on phones, while selector hit areas retain their padding.
+On fine-pointer desktop the outer horizontal padding is 8px, retaining 12px vertically. The input,
+attachments and model label share the resulting 18px inset from the outer border, with an 8px row
+gap and unchanged height. Desktop reading stages wider than 440px use an 8px separation between
+settings and file actions; gaps within each group stay at 4px. Narrow/coarse layouts retain their
+existing padding and wrap behavior. The main topbar's 28px utility buttons form a compact 4px-gap
+group on fine-pointer desktop without changing its trailing anchor or the 44px header height.
 
 Toolbar order is Model, Thinking, project files and attachments, context usage, optional Stop, and
 rightmost Send. Send is icon-only; Stop has a square glyph and filled error-color treatment, including

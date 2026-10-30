@@ -681,7 +681,8 @@
   padding: 0 var(--space-3) var(--space-2);
 }
 
-.nav__hidden-content > .nav__group + .nav__group {
+.nav__hidden-content > .nav__group + .nav__group,
+.nav__hidden-content > .nav__row + .nav__group {
   margin-top: var(--space-2);
 }
 
@@ -1093,6 +1094,13 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
 
 .nav__group + .nav__group {
   margin-top: var(--space-4);
+}
+
+@media (min-width: 901px) and (pointer: fine) {
+  /* Keep project boundaries lighter than the Pinned/category boundary. */
+  .nav__list > .nav__group:not(.nav__group--pinned, .nav__group--pinned-folder) + .nav__group {
+    margin-top: var(--space-3);
+  }
 }
 
 .nav__pagination {

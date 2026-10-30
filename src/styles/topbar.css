@@ -517,6 +517,10 @@
   gap: var(--space-2);
 }
 
+@media (min-width: 901px) and (pointer: fine) {
+  .topbar__actions { gap: var(--space-1); }
+}
+
 .topbar:has(.topbar__rename) {
   grid-template-columns: [identity] minmax(0, max-content) [status] minmax(0, 1fr) [actions] auto;
 }

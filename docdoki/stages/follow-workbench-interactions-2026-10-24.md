@@ -421,6 +421,23 @@ desktop fixture the painted right stays at x30.35, title at x40 and row height a
 clearance grows from 5.15px to 6.6px. Activity matrices, global loaders, the selection marker and
 the separate attention dot remain unchanged.
 
+## Scoped Copilot spacing comparison
+
+The follow-up compares the actual Copilot reference with the same synthetic Inspire conversation
+and projects before/after at 1920×1080; screenshot pixels are not treated as reference CSS or font
+identity. The bounded review covers session title/date rhythm, project gaps, icon/text gutters,
+type hierarchy, both header/tool regions and Composer padding.
+The 44px two-line rows (18/16px line boxes, 1px gap, 12.5/11.5px text) and 16px folder icon with
+8px text gap remain. Existing right-side tools retain their 36px header, 12px trailing inset and
+compact 24px file-action targets. Fine-pointer desktop ordinary project surface gaps shrink
+18→14px; topbar utilities retain 28px targets but group gaps shrink 8→4px (100→92px total).
+Composer horizontal padding shrinks 12→8px, keeping input/model/attachment axes together at
+18px rather than 22px from the border; its 99px measured height, fonts and vertical rhythm remain.
+An 8px setting-to-file-action gap distinguishes those groups while each group's internal gap
+remains 4px. The extra group gap is absent in constrained two-row desktop and mobile layouts.
+Hidden independently lists standalone sessions before project folders and preserves internal and
+keyboard ordering; its boundary uses existing section spacing rather than extra indentation.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

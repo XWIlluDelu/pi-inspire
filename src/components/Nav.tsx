@@ -173,7 +173,7 @@ export const Nav = memo(function Nav({
       ...folderRows(sections.pinnedGroups),
       ...folderRows(sections.groups),
       ...(hiddenExpanded
-        ? [...folderRows(sections.hiddenGroups), ...sections.hidden]
+        ? [...sections.hidden, ...folderRows(sections.hiddenGroups)]
         : []),
     ];
   }, [sections, searching, hiddenExpanded, collapsedGroupCwds]);
@@ -600,6 +600,18 @@ export const Nav = memo(function Nav({
           </h2>
           {hiddenExpanded ? (
             <div className="nav__hidden-content" id={hiddenContentId}>
+              {hidden.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  searchQuery={sessionQuery}
+                  selectedSessionId={visibleSessionId}
+                  highlightedSessionId={highlightedSessionId}
+                  showProject
+                  onSelect={onSelectSession}
+                  onDelete={setDeleteCandidate}
+                />
+              ))}
               {hiddenGroups.map((group, groupIndex) => (
                 <ProjectGroup
                   key={group.cwd}
@@ -623,18 +635,6 @@ export const Nav = memo(function Nav({
                     group.sessions,
                     deletionState,
                   )}
-                />
-              ))}
-              {hidden.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  searchQuery={sessionQuery}
-                  selectedSessionId={visibleSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  showProject
-                  onSelect={onSelectSession}
-                  onDelete={setDeleteCandidate}
                 />
               ))}
             </div>

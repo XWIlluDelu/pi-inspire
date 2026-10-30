@@ -160,12 +160,18 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus,
   without hiding metadata or taking width from the title. Ordinary pointer rows are 44px high;
   coarse desktop rows retain visible 36px actions. Narrow session layouts remain unchanged.
+  Fine-pointer desktop project groups have a 14px surface gap (12px margin plus the list's 2px
+  gap), while Pinned/category boundaries retain their distinct spacing. The title/age line boxes
+  stay at 18/16px with a 1px gap; density changes do not squeeze the individual two-line rows.
   Folder headers retain their label tier, persistent pin state and trailing session count.
   Desktop New/Search, folder headers and session-row surfaces share the same outer inset;
   their internal icon/text axes remain stable. Hidden's full-width dock header remains distinct
   from its inset contents; its root folders and row surfaces use the normal project axes without
   an extra section-wide indent. Independent hidden sessions stay at that root text axis;
   grouped sessions retain the compact desktop layout rather than adding another 20px indent.
+  Hidden lists independent sessions before folders and their children, preserving each category's
+  existing order. Keyboard search navigation follows that same visual order. A folder following
+  independent sessions uses the existing 8px folder-section margin rather than another indent.
   The exact timestamp and message count stay in tooltips. On phone-width layouts or without
   hover the actions remain visible beside the age. Pin and Hide stay directly accessible,
   not behind an overflow menu.
