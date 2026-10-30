@@ -60,7 +60,7 @@
    and the reading column yields while a preview is open. */
 
 .ctx {
-  --bg-context: var(--bg-rail);
+  --bg-context: var(--bg-stage);
   width: var(--ctx-w);
   flex: 0 0 auto;
   background: var(--bg-context);
@@ -178,6 +178,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__header {
+  box-sizing: border-box;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -185,7 +186,8 @@ body.pane-resizing--vertical .nav {
   gap: var(--space-1);
   padding: 0 var(--space-3);
   height: 36px;
-  background: var(--bg-context);
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--hairline);
   font-size: var(--text-base);
   font-weight: 500;
 }
@@ -220,7 +222,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .ctx__file-tab--active {
-  background: var(--accent-tint);
+  background: var(--bg-stage);
   color: var(--accent-deep);
 }
 
@@ -328,7 +330,7 @@ body.pane-resizing--vertical .nav {
 .ctx__modes button[aria-pressed="true"],
 .ctx__modes button[aria-selected="true"],
 .ctx__modes button.segmented__item--active {
-  background: var(--accent-tint);
+  background: var(--bg-stage);
   box-shadow: inset 0 -2px 0 var(--accent);
   font-weight: 600;
 }
@@ -348,7 +350,7 @@ body.pane-resizing--vertical .nav {
   .ctx__modes button[aria-selected="true"]:hover:not(:disabled) {
     background:
       linear-gradient(var(--accent-tint), var(--accent-tint)),
-      var(--bg-control);
+      var(--bg-stage);
   }
 
   .ctx__file-tab > .ctx__file-close:hover {
@@ -934,10 +936,10 @@ body.pane-resizing--vertical .nav {
 }
 
 .file-preview__content {
-  --bg-context: var(--bg-file-canvas);
+  --bg-context: var(--bg-stage);
   --bg-surface: var(--bg-file-surface);
   --bg-inset: var(--bg-file-inset);
-  background: var(--bg-file-canvas);
+  background: var(--bg-stage);
 }
 
 .file-preview__content {

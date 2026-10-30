@@ -197,9 +197,11 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
 
 - Workspace file browsing lives in the contextual Files pane; the session navigation column does
   not duplicate its tree.
-  The right shell, tool header and file tree share the navigation/titlebar rail background. Desktop
-  top corners join that frame squarely; file bodies, search fields and other content surfaces keep
-  their existing separate background roles.
+  The right tool header shares the navigation/titlebar rail background, with one weak 1px hairline
+  separating it from the content below. The file tree, History and file-preview canvas share the
+  main reading-stage background; selected tabs use that content surface while retaining their
+  accent underline. Desktop top corners join the frame squarely. Search fields, floating actions,
+  authored documents and the terminal keep their own content-surface roles.
 
 - Open files have filename tabs on the leading side of the contextual header. Files, Changes,
   History, and Terminal remain fixed icon tabs on its trailing side, with hover titles and

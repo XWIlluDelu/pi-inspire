@@ -447,6 +447,15 @@ share their body reading column (individual letter side bearings differ by about
 icon/label centres differ by about 0.36px, so those layers are retained. Dialog wording and delete
 behavior are unchanged; isolated confirmation checks block DELETE and only dismiss the dialog.
 
+## Right-pane surface hierarchy
+
+The right header retains the rail background and uses one weak 1px hairline against the content.
+Files, Changes and History use the main stage surface; file previews use the same canvas while
+their controls and authored/terminal content retain separate roles. Selected tabs share that
+content surface and keep their accent underline. Focused checks cover all four tools in Carbon &
+Silicon and Jade light/dark, plus an opened Markdown file; the header remains 36px and resize
+dividers remain invisible at rest. Left navigation geometry and colors are unchanged.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
