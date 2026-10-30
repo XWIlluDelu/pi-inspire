@@ -378,7 +378,8 @@ before its body has been read, while known unavailable source stays disabled. Th
 count reserves digits for its total; horizontal group padding is balanced.
 
 Hidden root projects and standalone sessions retain their shared axes and full-width interaction
-surfaces. Actual project children regain a 20px deeper title/status level. Desktop status glyphs
+surfaces. The attempted extra 20px project-child indent was rejected after rendered review and
+reverted to the prior compact desktop layout; existing folder grouping remains. Desktop status glyphs
 right-align within the existing 16px folder slot, adding 2px selected-marker clearance without
 moving titles or the row boundaries. Mobile layout remains unchanged. The auxiliary user-message
 bubble inspection changed no CSS: equal 10px vertical padding gives a small 1–1.5 screenshot-pixel
