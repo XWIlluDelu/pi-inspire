@@ -334,6 +334,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ## Feedback scope
 
+- Session selection retains its pending-navigation and send/deletion safety guards without
+  displaying the agent's working animation. Fast opens stay quiet; after 800ms, the target row's
+  age is temporarily replaced by `Opening…`. Completion or failure clears that feedback, while
+  genuine agent activity keeps its existing status glyph.
 - Recover internal read state automatically while retaining confirmed content. Catalog backfill,
   History revalidation, snapshot refresh and file probes use bounded, ownership-checked retry;
   branch commands and prompts with uncertain acceptance are never automatically replayed.

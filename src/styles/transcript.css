@@ -306,6 +306,22 @@
   padding-bottom: var(--space-4);
 }
 
+/* Compact consecutive activity/checkpoint groups, keeping prose and prompt
+   boundaries on their existing rhythm in both measured and ordinary lists. */
+@media (min-width: 901px) and (pointer: fine) {
+  .transcript__column:not(.transcript__column--virtual)
+    > [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint))
+    + [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint)) {
+    margin-top: calc(var(--space-2) - var(--space-4));
+  }
+
+  .transcript__virtual-row:has(> :is(.activity-fold, .turn--checkpoint)):has(
+    + [data-transcript-row] > :is(.activity-fold, .turn--checkpoint)
+  ) {
+    padding-bottom: var(--space-2);
+  }
+}
+
 /* Prompt Map is a reading navigator, not a second branch ledger. Its narrow
    rail sits in the breathing space beside the transcript; opening it reveals only
    the current-path user prompts in a clean, floating navigator card. */

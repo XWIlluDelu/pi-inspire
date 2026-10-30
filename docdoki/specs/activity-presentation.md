@@ -47,6 +47,10 @@ returns to the unified disclosure with `preventScroll`.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
 expanded details retain their own internal spacing.
+On fine-pointer desktop layouts, individual activity headers use a 28px minimum height and
+adjacent Activity/context-checkpoint groups have an 8px gap. Prose/prompt boundaries retain their
+existing spacing, as do narrow/coarse-pointer hit targets. Font sizes and reading line heights do
+not change with this density refinement.
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution
 rows and divider ticks are absent both inside and outside groups. The group heading uses the
 base UI size in the Rajdhani structural-label face with secondary ink; individual identities use

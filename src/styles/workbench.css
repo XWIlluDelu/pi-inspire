@@ -500,7 +500,10 @@ body.pane-resizing--vertical .nav {
   padding-right: var(--space-3);
 }
 
-.files-browser__search > .icon-button,
+.files-browser__search > .icon-button {
+  margin-right: 0;
+}
+
 .res__index > .file-search-controls > .icon-button {
   margin-right: calc((24px - 28px) / 2);
 }

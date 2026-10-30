@@ -539,6 +539,12 @@
   margin-inline-start: calc(-1 * var(--disclosure-outdent));
 }
 
+@media (min-width: 901px) and (pointer: fine) {
+  .activity-fold .card__header {
+    min-height: 28px;
+  }
+}
+
 .activity-fold .card__body {
   margin: 0;
   /* Match the label after the leading chevron and identity icon. */

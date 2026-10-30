@@ -7,7 +7,7 @@ import {
   PinOff,
   Trash2,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   isBusyRunState,
   projectNameFromCwd,
@@ -74,6 +74,13 @@ export const SessionRow = memo(function SessionRow({
   );
   const selected = session.id === selectedSessionId;
   const opening = openingSessionId === session.id;
+  const [openingSlow, setOpeningSlow] = useState(false);
+  useEffect(() => {
+    setOpeningSlow(false);
+    if (!opening) return;
+    const timer = window.setTimeout(() => setOpeningSlow(true), 800);
+    return () => window.clearTimeout(timer);
+  }, [opening]);
   const hidden = individuallyHidden || projectHidden;
   const {
     conflicted,
@@ -132,16 +139,7 @@ export const SessionRow = memo(function SessionRow({
         title={`${title} · ${session.messageCount} messages${externalLabel ? ` · ${externalLabel}` : ""}`}
       >
         <span className="nav__row-title">
-          {opening ? (
-            <span
-              className="nav__row-state"
-              role="img"
-              aria-label="Opening session"
-              title="Opening session"
-            >
-              <PiLoader size={12} aria-hidden />
-            </span>
-          ) : attention ? (
+          {attention ? (
             <span
               className={
                 attention === "attention"
@@ -176,7 +174,11 @@ export const SessionRow = memo(function SessionRow({
               />
             </span>
           ) : null}
-          {!parentContext ? (
+          {opening && openingSlow ? (
+            <span className="nav__row-age" role="status">
+              Opening…
+            </span>
+          ) : !parentContext ? (
             <span
               className="nav__row-age"
               title={new Date(session.modified).toLocaleString()}

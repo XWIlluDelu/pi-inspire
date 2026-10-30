@@ -390,6 +390,18 @@ desktop/320px checks cover direct Git→Source, tab reuse, compact count navigat
 space, keyboard/read collapse and mixed Hidden hierarchy. Publication uses the authorized auto-dev
 static workflow; main and existing tags remain unchanged.
 
+## Activity density and quiet session selection
+
+The approved Activity density follow-up keeps all font sizes and reading line heights. On
+fine-pointer desktop, item headers shrink from 30px to 28px and adjacent Activity/checkpoint
+groups use an 8px gap (the actual transcript wrapper previously used 16px, distinct from the
+12px paragraph-content gap). Normal prose/prompt boundaries and narrow/coarse targets stay
+unchanged. Ordinary and virtual-list content spacing were checked in the isolated rendered build.
+Session opening now stays quiet for 800ms, then uses plain `Opening…` age-slot text rather than
+the agent-running glyph. The existing focused indicator scenario covers pending, delayed feedback,
+completion and real activity states. Files' visibility button drops an obsolete -2px right margin;
+its 28px hover target now shares the refresh target's right edge without resizing either control.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

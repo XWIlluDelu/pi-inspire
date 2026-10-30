@@ -88,7 +88,7 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
   await openMockSession(page, /Prompt map long-session fixture/);
   await expect(page.locator(".nav__row--active .pi-status")).toHaveCount(0);
 
-  // Opening uses the same glyph centering, without a permanent idle slot.
+  // Fast selection stays quiet; a slow open uses text, not the working glyph.
   const nextRow = page
     .locator(".nav__row")
     .filter({ hasText: "Formula rendering and spectral analysis" });
@@ -113,20 +113,15 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     await route.continue();
   });
   await nextRow.locator(".nav__row-main").click();
-  const opening = nextRow.getByRole("img", {
-    name: "Opening session",
-    exact: true,
-  });
-  await expect(opening).toBeVisible();
-  const offset = await opening.evaluate((element) => {
-    const icon = element.querySelector("svg")!.getBoundingClientRect();
-    const meta = element
-      .closest(".nav__row")!
-      .querySelector(".nav__row-meta")!
-      .getBoundingClientRect();
-    return icon.y + icon.height / 2 - meta.y - meta.height / 2;
-  });
-  expect(Math.abs(offset)).toBeLessThanOrEqual(0.1);
+  await expect(nextRow.locator(".nav__row-main")).toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  await expect(nextRow.locator(".pi-loading")).toHaveCount(0);
+  const opening = nextRow.getByRole("status");
+  await expect(opening).toHaveCount(0);
+  await expect(opening).toHaveText("Opening…");
+  expect(await idleInset()).toBe(0);
   release();
   await expect(opening).toHaveCount(0);
   expect(await idleInset()).toBe(0);
