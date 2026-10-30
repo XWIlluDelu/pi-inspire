@@ -1558,38 +1558,7 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       ) : (
-        <div
-          className="terminal-views"
-          onPointerDownCapture={(event) => {
-            if (
-              sharedTabs &&
-              !(event.target as Element).closest(".terminal-tabs-shell")
-            )
-              setControlsExpanded(false);
-          }}
-          onWheelCapture={(event) => {
-            if (
-              sharedTabs &&
-              !(event.target as Element).closest(".terminal-tabs-shell")
-            )
-              setControlsExpanded(false);
-          }}
-          onTouchStartCapture={(event) => {
-            if (
-              sharedTabs &&
-              !(event.target as Element).closest(".terminal-tabs-shell")
-            )
-              setControlsExpanded(false);
-          }}
-          onKeyDownCapture={(event) => {
-            if (
-              sharedTabs &&
-              !event.defaultPrevented &&
-              !(event.target as Element).closest(".terminal-tabs-shell")
-            )
-              setControlsExpanded(false);
-          }}
-        >
+        <div className="terminal-views">
           {terminals
             .filter((terminal) => openedIds.has(terminal.id))
             .map((terminal) => (

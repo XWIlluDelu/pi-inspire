@@ -491,6 +491,13 @@ to join their content; inactive tabs remain unboxed. The deferred right-pane she
 renders its legacy visible Context title before the real tabs mount. Header geometry, Close,
 normal loading and actionable errors remain; the toolbar's content Refresh never used this shell.
 
+## Terminal overlay ownership and explicit collapse
+
+Terminal clicks, selection, scrolling and typing now preserve the user's tool-group state;
+Hide/Show and toolbar Escape remain explicit collapse controls. Selection Copy/Add actions and
+copy confirmations temporarily share the same corner ownership as Search, restoring the previous
+tool state afterward. File-preview reading-intent collapse is unchanged.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

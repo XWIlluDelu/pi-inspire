@@ -630,7 +630,7 @@ describe("terminal project ownership", () => {
     }
   });
 
-  it("collapses shared controls for reading and preserves the terminal view", async () => {
+  it("keeps shared controls open during terminal interaction and collapses them explicitly", async () => {
     const host = document.createElement("div");
     document.body.append(host);
     const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
@@ -639,6 +639,16 @@ describe("terminal project ownership", () => {
       const input = await screen.findByLabelText("Fixture terminal input");
       fireEvent.change(input, { target: { value: "unfinished command" } });
       fireEvent.pointerDown(input);
+      fireEvent.click(input);
+      fireEvent.wheel(input);
+      fireEvent.touchStart(input);
+      fireEvent.keyDown(input, { key: "ArrowLeft" });
+      const hide = screen.getByRole("button", {
+        name: "Hide terminal controls",
+      });
+      expect(hide).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByLabelText("Terminal actions")).toBeVisible();
+      fireEvent.click(hide);
       const toggle = screen.getByRole("button", {
         name: "Show terminal controls",
       });

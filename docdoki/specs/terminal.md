@@ -217,8 +217,10 @@ existing terminal tabs remain reachable after refresh, including from Files. Bac
 polling remains limited to the active terminal surface.
 
 Profile choice, connection/control state, search, focus and More form a compact floating group at
-the output's top-right, without a second tab/header row. An explicit toggle and Escape collapse it;
-interacting with terminal output/input collapses it without reacting to background output. There
+the output's top-right, without a second tab/header row. An explicit Hide/Show toggle and Escape
+control its visibility; terminal output/input interactions and background output preserve that choice.
+Search, selection actions and copy confirmation temporarily own the same corner, making the floating
+group unavailable until those overlays close without changing its expanded/collapsed state. There
 is no duplicate default-New button in this group; the profile chooser retains named alternatives.
 At pane widths up to 480px, Focus remains in More. Focus mode and same-origin focused windows
 attach the existing terminal and retain their own accessible tab strip.

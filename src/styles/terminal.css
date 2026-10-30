@@ -219,9 +219,9 @@
 .terminal-pane--shared .terminal-tabs__profile-new { display: none; }
 .terminal-pane--shared .terminal-tabs__profile-chevron { display: block; }
 
-/* Search owns the same corner while open; keep its input and close action
-   reachable instead of stacking two floating controls over one another. */
-.terminal-pane--shared:has(.terminal-views__item:not([hidden]) .terminal-search) .terminal-tabs-shell {
+/* Temporary search and selection overlays own this corner. Keep the user's
+   expanded/collapsed choice for when the overlay closes. */
+.terminal-pane--shared:has(.terminal-views__item:not([hidden]) :is(.terminal-search, .terminal-selection, .terminal-copy-confirmation)) .terminal-tabs-shell {
   visibility: hidden;
 }
 
