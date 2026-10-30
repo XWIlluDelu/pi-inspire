@@ -498,6 +498,13 @@
   display: inline-flex;
   align-items: center;
 }
+
+.nav__row-state > :is(.pi-loading, .pi-status) {
+  /* Render the 12px mark at 10px, anchored to its painted right edge
+     (13.8 / 16), while retaining its slot and vertical centre. */
+  transform-origin: 86.25% 50%;
+  transform: scale(0.8333333333);
+}
 .nav__row-state--running { color: var(--brand-accent); }
 
 .nav__row-state--completed {

@@ -151,8 +151,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   state.
 
 - Desktop session rows use two compact lines: the activity mark precedes the title on the first
-  line, right-aligned inside the same 16px icon slot and 8px label gap as folder rows. The text
-  axis remains reserved when no status is present; age aligns with the title. Cross-project metadata
+  line, right-aligned inside the same 16px icon slot and 8px label gap as folder rows. The status
+  mark renders at 10px, scaled about its painted right edge and vertical centre without moving
+  the slot, text axis or selection marker. The text axis remains reserved when no status is present;
+  age aligns with the title. Cross-project metadata
   follows age on that quieter second line. Hidden keeps enough leading gutter to separate status
   from its selection marker.
   Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus,

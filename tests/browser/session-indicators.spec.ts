@@ -56,8 +56,8 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     const glyph = status.locator(index === 0 ? ".pi-loading" : ".pi-status");
     await expect(glyph).toBeVisible();
     const box = await glyph.boundingBox();
-    expect(box!.width).toBeCloseTo(12, 2);
-    expect(box!.height).toBeCloseTo(12, 2);
+    expect(box!.width).toBeCloseTo(10, 2);
+    expect(box!.height).toBeCloseTo(10, 2);
     expect(
       await status.evaluate((el) => {
         const icon = el.getBoundingClientRect();

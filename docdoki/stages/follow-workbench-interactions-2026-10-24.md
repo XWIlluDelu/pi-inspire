@@ -412,6 +412,15 @@ actions now use the same inset focus offset as the folder toggle. Opening rows a
 label opacity while pending instead of flashing to 55%; the 800ms text feedback and all pending
 safety guards remain. No typography/layout redesign accompanies these corrections.
 
+## Smaller sidebar status marks
+
+The approved sidebar status-size follow-up renders running/completed/failed glyphs at 10px rather
+than 12px, retaining the original layout box and 16px desktop slot. Scaling uses the mark's
+13.8/16 painted right edge and vertical centre rather than the SVG viewport centre. In the focused
+desktop fixture the painted right stays at x30.35, title at x40 and row height at 44px; the marker
+clearance grows from 5.15px to 6.6px. Activity matrices, global loaders, the selection marker and
+the separate attention dot remain unchanged.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
