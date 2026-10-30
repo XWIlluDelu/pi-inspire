@@ -282,8 +282,9 @@ The contextual header keeps file and terminal tabs in one leading, horizontally 
 Files, Changes and History use fixed trailing icon tabs; Terminal is a default-shell creation action.
 The header stays 36px on desktop. Tool icons retain their 26px desktop / 32px compact-touch targets;
 file and terminal labels use the existing small UI tier. The rail-colored header has one weak
-hairline against stage-colored content. Selected tabs retain content-colored fill, accent ink and
-a straight 2px underline; hover, transparent close buttons and keyboard focus retain their existing
+hairline against stage-colored content. Selected file/terminal tabs retain content-colored fill,
+accent ink and weak top/right edges, with an open bottom joining the content. Fixed tool selections
+retain their 2px underline. Hover, transparent close buttons and keyboard focus retain their existing
 roles. Other segmented controls keep their own selection surfaces.
 Count capsules use `--accent-tint`/`--accent-deep`, smaller text on the label
 baseline and a distinct gap. When a complete label/count pair cannot fit, omit the count while

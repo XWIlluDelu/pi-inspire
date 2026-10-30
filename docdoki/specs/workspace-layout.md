@@ -201,8 +201,8 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   not duplicate its tree.
   The right tool header shares the navigation/titlebar rail background, with one weak 1px hairline
   separating it from the content below. The file tree, History and file-preview canvas share the
-  main reading-stage background; selected tabs use that content surface while retaining their
-  accent underline. Desktop top corners join the frame squarely. Search fields, floating actions,
+  main reading-stage background; selected file/terminal tabs use that content surface with weak
+  top/right edges and an open bottom seam. Desktop top corners join the frame squarely. Search fields, floating actions,
   authored documents and the terminal keep their own content-surface roles.
 
 - Open files and project terminals have tabs on the leading side of the contextual header.
@@ -220,6 +220,8 @@ The editor's existing Expand/Collapse, selection, draft and completion behavior 
   A single weak header hairline separates the frame from the content surface; selection indicators
   remain. File-specific and terminal controls float over their own content rather than adding
   another full-width toolbar row.
+  Deferred loading preserves the header geometry without a legacy Context title; loading and
+  actionable failure feedback remain in the content area.
   F5 keeps the current browser tab's navigation collapse, context visibility, file-tab order and
   selection, tool selection, and Files query/expanded directories. Existing saved pane widths remain
   in use. Session-specific state is scoped to the Host, session and workspace, and file content is

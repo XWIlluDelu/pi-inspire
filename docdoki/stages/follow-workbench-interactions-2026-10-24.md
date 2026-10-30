@@ -484,6 +484,13 @@ Terminal status dots retain 6px paint inside the file icon's 13px slot, so equal
 tab widths. Shared padding, close slots, natural sizing and the 180px cap remain; rename inputs
 follow the same label origin.
 
+## Selected-tab frames and deferred header
+
+Selected file/terminal tabs now have weak non-sizing top/right edges and cover the bottom hairline
+to join their content; inactive tabs remain unboxed. The deferred right-pane shell no longer
+renders its legacy visible Context title before the real tabs mount. Header geometry, Close,
+normal loading and actionable errors remain; the toolbar's content Refresh never used this shell.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
