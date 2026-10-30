@@ -117,6 +117,7 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     "aria-busy",
     "true",
   );
+  await expect(nextRow.locator(".nav__row-main")).toHaveCSS("opacity", "1");
   await expect(nextRow.locator(".pi-loading")).toHaveCount(0);
   const opening = nextRow.getByRole("status");
   await expect(opening).toHaveCount(0);

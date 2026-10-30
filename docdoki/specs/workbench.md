@@ -163,8 +163,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   their internal icon/text axes remain stable. Hidden's full-width dock header remains distinct
   from its inset contents; its root folders and row surfaces use the normal project axes without
   an extra section-wide indent. Independent hidden sessions stay at that root text axis;
-  actual project children use a further 20px indent so following root sessions cannot look like
-  children of the preceding project.
+  grouped sessions retain the compact desktop layout rather than adding another 20px indent.
   The exact timestamp and message count stay in tooltips. On phone-width layouts or without
   hover the actions remain visible beside the age. Pin and Hide stay directly accessible,
   not behind an overflow menu.
@@ -337,7 +336,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 - Session selection retains its pending-navigation and send/deletion safety guards without
   displaying the agent's working animation. Fast opens stay quiet; after 800ms, the target row's
   age is temporarily replaced by `Opening…`. Completion or failure clears that feedback, while
-  genuine agent activity keeps its existing status glyph.
+  genuine agent activity keeps its existing status glyph. Pending navigation retains normal label
+  opacity instead of briefly dimming the row on every fast open.
 - Recover internal read state automatically while retaining confirmed content. Catalog backfill,
   History revalidation, snapshot refresh and file probes use bounded, ownership-checked retry;
   branch commands and prompts with uncertain acceptance are never automatically replayed.

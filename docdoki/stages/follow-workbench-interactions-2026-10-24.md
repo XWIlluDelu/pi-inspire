@@ -402,6 +402,16 @@ the agent-running glyph. The existing focused indicator scenario covers pending,
 completion and real activity states. Files' visibility button drops an obsolete -2px right margin;
 its 28px hover target now shares the refresh target's right edge without resizing either control.
 
+## Screenshot-led navigation detail review
+
+The subsequent screenshot-led detail review preserves Activity's Rajdhani face and the existing
+font sizes, reading width and row geometry. The selected session's text block and marker are
+visually centered; its trailing actions intentionally align with the metadata line. Actual keyboard
+inspection found the folder action focus ring clipped by 2px above/below the 28px heading, so the
+actions now use the same inset focus offset as the folder toggle. Opening rows also keep full
+label opacity while pending instead of flashing to 55%; the 800ms text feedback and all pending
+safety guards remain. No typography/layout redesign accompanies these corrections.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

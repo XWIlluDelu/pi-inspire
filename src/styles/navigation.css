@@ -1238,6 +1238,11 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   outline-offset: -2px;
 }
 
+.nav__group-actions .nav__row-action:focus-visible {
+  /* Keep the complete ring inside the same clipped folder heading. */
+  outline-offset: -2px;
+}
+
 .nav__group-toggle:disabled {
   cursor: default;
   opacity: 0.7;
@@ -1324,7 +1329,8 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
 
 .nav__row-main:disabled {
   cursor: default;
-  opacity: 0.55;
+  /* Pending navigation must not flash the readable row into an inactive state. */
+  opacity: 1;
 }
 
 .nav__row-main:disabled:hover {
