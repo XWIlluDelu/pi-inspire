@@ -570,7 +570,7 @@ body.pane-resizing--vertical .nav {
   box-sizing: border-box;
   flex: 0 0 auto;
   border-bottom: none;
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
   background: transparent;
 }
 
@@ -595,7 +595,7 @@ body.pane-resizing--vertical .nav {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: var(--space-1) var(--space-1) var(--space-2);
+  padding: 0 var(--space-1) var(--space-2);
 }
 
 .files-browser__section {
@@ -609,7 +609,7 @@ body.pane-resizing--vertical .nav {
 }
 
 .files-browser__section h2 {
-  height: var(--files-section-title-size);
+  height: var(--space-6);
   box-sizing: border-box;
   display: flex;
   flex: 0 0 auto;
@@ -1147,6 +1147,10 @@ body.pane-resizing--vertical .nav {
   overflow: auto;
 }
 
+.res__body--changes > .res__list {
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+
 .res__more {
   display: inline-flex;
   align-items: center;
@@ -1320,7 +1324,9 @@ button.res__more:hover {
   justify-content: space-between;
   align-items: center;
   margin: 0;
-  padding: var(--space-1) var(--space-2);
+  box-sizing: border-box;
+  min-height: var(--space-6);
+  padding: 0 var(--space-2);
   color: var(--faint);
   font: 600 var(--text-xs)/1 var(--font-sans);
 }

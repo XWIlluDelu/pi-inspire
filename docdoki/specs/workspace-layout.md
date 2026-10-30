@@ -113,6 +113,13 @@ their existing size. Floating tools keep 2px within groups and 6px between actio
 adding separator lines; terminal search/selection overlays share the tools' 8px/12px corner insets.
 Desktop HTML previews use the context perimeter rather than a second complete inner frame.
 
+Files and History search fields start 8px below contextual chrome with 12px horizontal insets.
+Files uses one 4px search-to-heading gap and 24px section headings, retaining the 12px break
+between Recent and workspace and the existing item heights. Changes section headings use the
+same 24px tier and 12px text origin. List surfaces use a 4px outer inset plus their own content
+padding; History's first turn has no duplicate top padding after its search margin. Hierarchical
+indentation, subsequent turn spacing and the terminal's floating-search layout remain distinct.
+
 Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
 area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.
 Input text keeps its normal size; toolbars and Send/Stop retain their full targets. The minimum

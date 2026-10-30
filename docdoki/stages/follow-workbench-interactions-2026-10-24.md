@@ -557,6 +557,18 @@ share 28px desktop targets, 16px glyphs and muted ink; status colors and font si
 Focused compiled-CSS checks confirm identical header/content/tool origins across HTML, Source and
 terminal, 6px group boundaries, unchanged 28px/16px controls, and the common search overlay anchor.
 
+## Context search and section spacing
+
+The user's saved pre-change production baseline is
+`c263c2ac829ac7fee3e78fcf8c3ce86fc6c260e1`; HTTP resources and the clean local HEAD matched before
+this pass. Files/History search top insets are now 8px. Files removes double search-to-heading
+padding (8px to 4px) and uses 24px headings instead of 30px, retaining its 28px Recent rows and 12px
+section break. Changes heading ink starts at 12px instead of 16px, with the same 24px heading tier;
+its list surface inset is 4px instead of 8px. History uses the same 4px surface inset instead of
+12px and removes the first turn's extra top padding (first control gap 16px to 8px). Real compiled
+CSS measurements verify these changes in the same isolated page. Terminal floating search already
+has its own coherent 8px/12px anchor and compact controls, so no extra terminal change was made.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
