@@ -541,6 +541,8 @@ states. No broad CI matrix or production restart is needed.
 Desktop conversation and the whole contextual pane use a subtle 1px theme hairline and 6px outer
 corners; navigation remains part of the shell. The existing pane gaps and invisible resize handles
 remain independent, and narrow/mobile views retain their previous edge-to-edge surfaces.
+Desktop shell bottom padding is 8px, aligning the conversation and context outer bottom edges;
+content padding and narrow/mobile layout stay unchanged.
 
 ## Undecided interaction proposals
 
