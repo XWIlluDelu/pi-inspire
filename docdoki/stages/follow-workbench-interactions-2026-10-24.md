@@ -527,8 +527,6 @@ Focused browser checks cover mixed file/terminal overflow, revealing hidden file
 tabs, minimum-width and expanded-width resize, preserved order, and the 320px drawer layout.
 The resource-preview toggle case, typecheck, lint and isolated build pass; no full CI matrix was run.
 
-## Undecided interaction proposals
-
 ## Connected tool tabs and interaction icon
 
 Fixed tool selection now uses the file tab's content-connected surface and fine top/side boundary
@@ -539,6 +537,10 @@ HTML interaction uses ordinary/clicking pointer glyphs in the shared 28px deskto
 Enable/Stop accessible actions, pressed/busy state, execution grants and revocation. Five targeted
 HTML tests pass; isolated visual checks verify actual selected/hover surfaces and both pointer
 states. No broad CI matrix or production restart is needed.
+
+Desktop conversation and the whole contextual pane use a subtle 1px theme hairline and 6px outer
+corners; navigation remains part of the shell. The existing pane gaps and invisible resize handles
+remain independent, and narrow/mobile views retain their previous edge-to-edge surfaces.
 
 ## Undecided interaction proposals
 

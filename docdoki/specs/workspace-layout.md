@@ -83,7 +83,9 @@ independent project shells in [[terminal]].
   resizing and pane visibility changes reflow the saved preferences together; they do not write
   temporary widths back to storage. Double-click resets only the chosen side.
   Desktop navigation uses a 4px gutter; the right pane uses 8px of frame-colored whitespace,
-  without a permanent vertical border. Both keep 8px resize hit bands and hidden resting indicators.
+  without a separate permanent divider. Desktop conversation and the complete context panel each
+  have a subtle theme-aware 1px perimeter and 6px outer corners; navigation remains integrated with
+  the shell, and narrow/mobile views have no added perimeter or radius. Both keep 8px resize hit bands and hidden resting indicators.
   Hover, keyboard focus and active dragging reveal a straight 2px divider with round caps and
   inset ends, not an outline wrapping the adjacent pane's corners.
   The session header shares the reading surface without a separate bottom seam.
