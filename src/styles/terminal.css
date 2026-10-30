@@ -249,6 +249,13 @@
 .terminal-controls[hidden],
 .terminal-pane--shared .terminal-controls[hidden] { display: none; }
 .terminal-controls-toggle { flex: 0 0 auto; }
+.terminal-pane--shared .terminal-controls-toggle[aria-expanded="true"] {
+  margin-inline-start: var(--space-1);
+}
+.terminal-pane--shared .terminal-tabs__new:has(details) + .terminal-view-controls,
+.terminal-pane--shared .terminal-tabs__focus {
+  margin-inline-start: var(--space-1);
+}
 .terminal-pane--shared .terminal-tabs-shell:has(> .terminal-controls-toggle[aria-expanded="false"]) {
   padding-inline: 2px;
 }
@@ -725,6 +732,12 @@
   align-items: flex-end;
   gap: 6px;
   pointer-events: none;
+}
+
+.terminal-pane--shared .terminal-view__overlays {
+  top: var(--space-2);
+  right: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-3));
 }
 
 .terminal-view__overlays > * {

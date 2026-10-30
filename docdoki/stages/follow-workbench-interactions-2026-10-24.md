@@ -545,6 +545,18 @@ Desktop shell right and bottom padding are both 8px, aligning the conversation a
 bottom edges and preserving the right inset when context is closed. Content padding and
 narrow/mobile layout stay unchanged.
 
+## Right-pane chrome and grouping polish
+
+The fine-pointer desktop header now stays 32px through loading, empty and populated states;
+previously the first tab increased it to 36px, moving content and floating tools down 4px. Floating
+tool groups keep 2px within groups and 6px between them. Terminal temporary search/selection
+overlays now share the existing 8px top / 12px right tool anchor (previously 6px / 8px), retaining
+their corner ownership and control-state behavior. Desktop HTML loses only the redundant 1px
+inner viewport frame; its content inset and execution isolation remain. Secondary controls already
+share 28px desktop targets, 16px glyphs and muted ink; status colors and font sizes retain their semantics.
+Focused compiled-CSS checks confirm identical header/content/tool origins across HTML, Source and
+terminal, 6px group boundaries, unchanged 28px/16px controls, and the common search overlay anchor.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

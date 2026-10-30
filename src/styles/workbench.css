@@ -206,7 +206,7 @@ body.pane-resizing--vertical .nav {
 .ctx__header:has(.ctx__tabs) { padding-left: 0; }
 
 @media (min-width: 901px) and (pointer: fine) {
-  .ctx__header:has(.ctx__tabs):not(:has(.ctx__file-tab)) { height: 32px; }
+  .ctx__header { height: 32px; }
 }
 
 .ctx__tabs {
@@ -801,6 +801,11 @@ body.pane-resizing--vertical .nav {
   display: inline-flex;
   flex: 0 0 auto;
   gap: 2px;
+  margin-inline-start: var(--space-1);
+}
+
+.file-preview__actions-toggle[aria-expanded="true"] {
+  margin-inline-start: var(--space-1);
 }
 
 .res__index-header {
@@ -1699,6 +1704,14 @@ button.res__more:hover {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
+}
+
+/* The desktop context perimeter already frames this complete HTML viewport. */
+@media (min-width: 901px) {
+  .file-preview__content > .res__frame {
+    border: 0;
+    border-radius: 0;
+  }
 }
 
 .res__state {

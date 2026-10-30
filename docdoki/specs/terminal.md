@@ -221,7 +221,9 @@ polling remains limited to the active terminal surface.
 
 Profile choice, connection/control state, search, focus and More form a compact floating group at
 the same 28px desktop / 32px touch/narrow button tier as file actions, with 16px glyphs and shared
-padding/gaps. The status/focus and search slots are reserved before the view mounts, so connection
+padding. Closely related controls keep 2px gaps, with 6px between the profile, view, utility and
+collapse groups. Search/selection overlays use the same 8px top / 12px right anchor as floating tools.
+The status/focus and search slots are reserved before the view mounts, so connection
 updates do not resize the group. Normal writable state has no visible Controlling label; its
 accessible state/tooltip and keyboard-focus action remain. Non-writable states retain connection
 feedback, the ownership message and Take control where ready. These controls sit at

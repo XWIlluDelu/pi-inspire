@@ -107,8 +107,11 @@ drawers at 340px or narrower put the tab strip on its own row, retaining all too
 Files/Changes/History use the same content-connected selected-tab background, top corners and
 fine boundary as file/terminal tabs, without an additional accent underline. The Terminal shortcut
 remains an action that creates a terminal. Inactive file hover surfaces share the 4px top corners.
-On fine-pointer desktop layouts, a strip with no open file or terminal tabs uses a 32px header;
-opened tabs keep the 36px full-height strip, while narrow/touch targets retain their existing size.
+Fine-pointer desktop headers retain a 32px height through loading, empty and opened-tab states,
+so creating the first tab does not move content or floating controls. Narrow/touch targets retain
+their existing size. Floating tools keep 2px within groups and 6px between action groups, without
+adding separator lines; terminal search/selection overlays share the tools' 8px/12px corner insets.
+Desktop HTML previews use the context perimeter rather than a second complete inner frame.
 
 Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
 area while the draft and Pi's aboveEditor/belowEditor widgets yield through their own scrolling.
