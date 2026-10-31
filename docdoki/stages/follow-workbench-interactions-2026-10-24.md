@@ -569,6 +569,18 @@ its list surface inset is 4px instead of 8px. History uses the same 4px surface 
 CSS measurements verify these changes in the same isolated page. Terminal floating search already
 has its own coherent 8px/12px anchor and compact controls, so no extra terminal change was made.
 
+## Shared pane search and rename controls
+
+Files and History now use one shared search-surface rule instead of separate copies: 34px on
+desktop, 40px with 16px text at narrow widths, with common surface, border, padding and states.
+Their widths and Files' adjacent visibility toggle remain distinct. Terminal and session inline
+rename editors share border, surface, corners and focus styling; terminal typography and geometry
+remain fitted to its tab. Existing manual-name priority and empty-name automatic reset are unchanged.
+An isolated compiled browser fixture verifies desktop/narrow search dimensions and terminal rename
+cancel, long-name save, and empty-name reset without touching live terminals. Type checking and
+the focused build pass. Pre-existing uncommitted UI changes are preserved separately from this work;
+the saved comparison baseline remains `c263c2ac829ac7fee3e78fcf8c3ce86fc6c260e1`.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

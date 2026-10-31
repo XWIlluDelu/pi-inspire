@@ -276,6 +276,7 @@ const SessionIdent = memo(function SessionIdent({
         }}
       >
         <input
+          className="inline-rename-input"
           ref={inputRef}
           style={{ width: renameWidth }}
           value={value}

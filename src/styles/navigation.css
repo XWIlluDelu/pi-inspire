@@ -1021,54 +1021,6 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   padding-left: var(--space-2) !important;
 }
 
-.workspace-search {
-  display: flex;
-  min-width: 0;
-  height: 34px;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid color-mix(in srgb, var(--hairline) 75%, transparent);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  padding: 0 var(--space-3);
-  color: var(--muted);
-  box-shadow: none;
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.workspace-search:hover {
-  border-color: var(--line);
-  color: var(--ink);
-}
-
-.workspace-search:focus-within {
-  border-color: var(--accent-focus);
-  color: var(--ink);
-}
-
-.workspace-search svg {
-  flex: 0 0 auto;
-  color: inherit;
-}
-
-.workspace-search input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  padding: var(--space-2) 0;
-  color: var(--ink);
-  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
-}
-
-.workspace-search input::placeholder {
-  color: var(--muted);
-  opacity: 1;
-}
-
 .git-rollup {
   width: 14px;
   height: 14px;

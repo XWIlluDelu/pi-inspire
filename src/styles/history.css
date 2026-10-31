@@ -12,30 +12,9 @@
 }
 .history-outline[hidden] { display: none; }
 .branch-tree__search {
-  display: flex;
   flex: none;
-  align-items: center;
-  min-height: 34px;
   margin: var(--space-2) var(--space-3);
-  padding: 0 var(--space-3);
-  gap: var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  color: var(--muted);
-  background: var(--bg-stage);
 }
-.branch-tree__search:focus-within { border-color: var(--accent-focus); }
-.branch-tree__search input {
-  min-width: 0;
-  flex: 1 1 auto;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  color: var(--ink);
-  background: transparent;
-  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
-}
-.branch-tree__search input::placeholder { color: var(--muted); }
 .branch-tree__rows {
   min-height: 0;
   overflow: auto;
@@ -297,8 +276,6 @@
   font-size: var(--text-xs);
 }
 @media (max-width: 760px) {
-  .branch-tree__search { min-height: 40px; }
-  .branch-tree__search input { font-size: 16px; }
   .history-disclosure,
   .history-entry,
   .history-route,

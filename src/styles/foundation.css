@@ -1046,7 +1046,73 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   }
 }
 
-/* Search owners retain their surface geometry and keyboard semantics. */
+/* Inline identity editors share their surface; owners keep label-sized geometry. */
+.inline-rename-input {
+  min-width: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-canvas);
+  padding: 2px var(--space-2);
+  transition:
+    border-color var(--dur-micro) var(--ease-standard),
+    box-shadow var(--dur-micro) var(--ease-standard);
+}
+
+.inline-rename-input:focus-visible {
+  outline: none;
+  border-color: var(--accent-focus);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+/* Pane searches share controls, while each owner retains its width and margins. */
+.search-field:is(.workspace-search, .branch-tree__search) {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  min-height: 34px;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  padding: 0 var(--space-3);
+  color: var(--muted);
+  transition:
+    border-color var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.search-field:is(.workspace-search, .branch-tree__search):hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.search-field:is(.workspace-search, .branch-tree__search):focus-within {
+  border-color: var(--accent-focus);
+  color: var(--ink);
+}
+
+.search-field:is(.workspace-search, .branch-tree__search) svg {
+  flex: 0 0 auto;
+  color: inherit;
+}
+
+.search-field:is(.workspace-search, .branch-tree__search) input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  color: var(--ink);
+  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
+}
+
+.search-field:is(.workspace-search, .branch-tree__search) input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
 .search-field__icon {
   display: inline-flex;
   flex: none;
@@ -1090,6 +1156,11 @@ input[type="search"]::-webkit-search-cancel-button:hover {
 }
 
 @media (max-width: 900px) {
+  .search-field:is(.workspace-search, .branch-tree__search) {
+    height: 40px;
+    min-height: 40px;
+  }
+
   .search-field input[type="search"] {
     font-size: 16px;
   }

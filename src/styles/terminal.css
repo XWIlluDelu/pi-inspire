@@ -326,13 +326,8 @@
   height: 23px;
   /* Match the label after its 8px inset, 6px status, and 6px gap. */
   margin-left: 14px;
-  border: 1px solid var(--accent-focus);
-  border-radius: var(--radius-xs);
-  padding: 0 5px;
-  color: var(--ink);
-  background: var(--bg-surface);
+  padding-inline: 5px;
   font: 500 var(--text-xs)/1 var(--font-sans);
-  outline: none;
 }
 
 .terminal-tab__label {

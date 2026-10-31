@@ -1022,7 +1022,7 @@ export const TerminalPane = memo(function TerminalPane({
         >
           {renameId === terminal.id ? (
             <input
-              className="terminal-tab__rename"
+              className="inline-rename-input terminal-tab__rename"
               value={renameValue}
               autoFocus
               maxLength={120}

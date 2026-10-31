@@ -114,6 +114,9 @@ adding separator lines; terminal search/selection overlays share the tools' 8px/
 Desktop HTML previews use the context perimeter rather than a second complete inner frame.
 
 Files and History search fields start 8px below contextual chrome with 12px horizontal insets.
+Their shared search-control rule owns the 34px desktop / 40px narrow height, surface, border,
+inner padding and hover/focus states; narrow inputs use 16px text. Owners retain their different
+available widths and Files keeps its adjacent hidden-files control.
 Files uses one 4px search-to-heading gap and 24px section headings, retaining the 12px break
 between Recent and workspace and the existing item heights. Changes section headings use the
 same 24px tier and 12px text origin. List surfaces use a 4px outer inset plus their own content

@@ -208,7 +208,10 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 ## Tabs, menus, and settings
 
 Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
-tabs use the file tab's padding, close slot, width cap and overflow rules; each 6px status dot
+rename inputs share the session rename editor's surface, border, corners and focus treatment,
+while retaining the tab's compact type and label-aligned width. Enter or blur saves; Escape
+cancels. A manual name overrides automatic titles, and clearing it restores automatic naming.
+Terminal tabs use the file tab's padding, close slot, width cap and overflow rules; each 6px status dot
 sits within the same 13px icon slot. File and terminal tabs share a 132px minimum and 180px cap;
 longer names truncate within that shared geometry. Tabs that do not fit move into the shared
 trailing More tabs menu, without horizontal scrolling or reducing that minimum. The active tab
