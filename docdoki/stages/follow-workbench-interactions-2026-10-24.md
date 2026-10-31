@@ -610,6 +610,14 @@ margin within their former 16px footprint. Open and closed icons keep their righ
 origin and vertical center; the marker and mobile layout do not move. The change is confined to
 the shared navigation folder toggle, not file-tree, session-state or Activity icons.
 
+## Narrower context gutter
+
+The approved context gutter is now 4px rather than 8px, matching the navigation gutter. The
+minimum-width budget uses the same value. The existing 8px resize hit band remains centered,
+overlapping each adjacent edge by only 2px; perimeter borders and resting/hover indicators are
+unchanged. Isolated measurements verify the 4px/8px dimensions, a real pointer resize and
+unobscured adjacent control centers. Unrelated work and the fixed comparison baseline are retained.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

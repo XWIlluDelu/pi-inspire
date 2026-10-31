@@ -85,7 +85,7 @@
 
   .app:has(> .ctx) {
     --context-min-w: 320px;
-    --context-gutter: var(--space-2);
+    --context-gutter: var(--space-1);
   }
 
   .app > .center {
@@ -127,7 +127,7 @@
   width: var(--pane-gutter);
 }
 
-.pane-resize--ctx { --pane-gutter: var(--space-2); }
+.pane-resize--ctx { --pane-gutter: var(--space-1); }
 
 .pane-resize__hit {
   position: absolute;
