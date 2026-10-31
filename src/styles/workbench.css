@@ -520,8 +520,12 @@ body.pane-resizing--vertical .nav {
 }
 
 .res {
-  --files-section-title-size: 30px;
+  --files-section-title-size: 34px;
   overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .res { --files-section-title-size: 40px; }
 }
 
 .res__body {
@@ -810,6 +814,7 @@ body.pane-resizing--vertical .nav {
 
 .res__index-header {
   background: var(--bg-context);
+  margin-top: var(--space-2);
   height: var(--files-section-title-size);
   min-height: var(--files-section-title-size);
   flex: 0 0 var(--files-section-title-size);

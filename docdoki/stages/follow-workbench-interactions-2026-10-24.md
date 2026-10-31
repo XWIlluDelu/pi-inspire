@@ -594,6 +594,14 @@ Focused compiled-fixture checks cover navigation present/absent, multiline promp
 marker, row edges and unchanged mobile spacing/Activity targets. The fixed comparison baseline and
 pre-existing uncommitted work are preserved.
 
+## Changes heading alignment
+
+Changes' branch summary was a flush 30px row, placing its list heading 12px above Recent.
+It now uses an 8px top inset and 34px desktop / 40px narrow height while retaining the real
+branch/summary content. Compiled fixture measurements put Changes and Recent headings at the same
+46px desktop / 52px narrow offset, with identical 24px height, 12px text origin and typography.
+No empty search row is introduced; file selection and Git behavior are unchanged.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

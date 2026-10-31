@@ -119,7 +119,9 @@ inner padding and hover/focus states; narrow inputs use 16px text. Owners retain
 available widths and Files keeps its adjacent hidden-files control.
 Files uses one 4px search-to-heading gap and 24px section headings, retaining the 12px break
 between Recent and workspace and the existing item heights. Changes section headings use the
-same 24px tier and 12px text origin. List surfaces use a 4px outer inset plus their own content
+same 24px tier and 12px text origin. The real Changes branch-summary row uses the search row's
+8px top inset and 34px desktop / 40px narrow height, aligning Changes with Recent without an
+empty placeholder row. List surfaces use a 4px outer inset plus their own content
 padding; both lists reserve the same stable native-scrollbar gutter. History's first turn has no
 duplicate top padding, even when Earlier conversation or route navigation precedes it. Fine-pointer
 desktop History turns and prompts use 4px vertical padding; Activity keeps its full target and
