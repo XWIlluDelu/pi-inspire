@@ -1064,6 +1064,12 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
+/* Reserve the same native scrollbar slot on both pane lists, including short lists. */
+.files-browser__scroll,
+.branch-tree__rows {
+  scrollbar-gutter: stable;
+}
+
 /* Pane searches share controls, while each owner retains its width and margins. */
 .search-field:is(.workspace-search, .branch-tree__search) {
   display: flex;

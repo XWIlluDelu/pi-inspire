@@ -581,6 +581,19 @@ cancel, long-name save, and empty-name reset without touching live terminals. Ty
 the focused build pass. Pre-existing uncommitted UI changes are preserved separately from this work;
 the saved comparison baseline remains `c263c2ac829ac7fee3e78fcf8c3ce86fc6c260e1`.
 
+## History spacing follow-up
+
+The screenshot comparison found padding duplicated around History turns and their prompt controls,
+plus an oversized generic Earlier conversation button. Fine-pointer desktop turn/prompt vertical
+padding is now 4px rather than 8px; ordinary single-line groups shrink from 81.75px to 65.75px
+without shrinking Activity targets or changing text. Earlier conversation uses the 12px text origin
+and a 30px secondary-navigation tier, with a 44px narrow/touch target. The first conversation section
+keeps zero top padding even when navigation controls precede it. Files retains its existing row
+heights; Files and History now share stable scrollbar reservation so their hover right edges agree.
+Focused compiled-fixture checks cover navigation present/absent, multiline prompts, the current
+marker, row edges and unchanged mobile spacing/Activity targets. The fixed comparison baseline and
+pre-existing uncommitted work are preserved.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:

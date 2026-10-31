@@ -120,7 +120,11 @@ available widths and Files keeps its adjacent hidden-files control.
 Files uses one 4px search-to-heading gap and 24px section headings, retaining the 12px break
 between Recent and workspace and the existing item heights. Changes section headings use the
 same 24px tier and 12px text origin. List surfaces use a 4px outer inset plus their own content
-padding; History's first turn has no duplicate top padding after its search margin. Hierarchical
+padding; both lists reserve the same stable native-scrollbar gutter. History's first turn has no
+duplicate top padding, even when Earlier conversation or route navigation precedes it. Fine-pointer
+desktop History turns and prompts use 4px vertical padding; Activity keeps its full target and
+multiline/current markers retain their hierarchy. Earlier conversation uses a compact secondary
+navigation control aligned to the 12px text origin, with a 44px narrow/touch target. Hierarchical
 indentation, subsequent turn spacing and the terminal's floating-search layout remain distinct.
 
 Transcript and the complete Composer dock share the reading stage's height budget. Preserve a reading
