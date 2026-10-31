@@ -770,6 +770,13 @@
     padding-inline-start: var(--space-1);
   }
 
+  /* Keep the 16px slot and label origin; leave room beside the active marker. */
+  .nav__group-toggle > svg {
+    width: 14px;
+    height: 14px;
+    margin-inline-start: 2px;
+  }
+
   .nav__list .nav__row-main,
   .nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
     padding-inline-start: calc(var(--nav-label-inset) - var(--space-1));

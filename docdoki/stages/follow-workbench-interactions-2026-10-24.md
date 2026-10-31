@@ -602,6 +602,14 @@ branch/summary content. Compiled fixture measurements put Changes and Recent hea
 46px desktop / 52px narrow offset, with identical 24px height, 12px text origin and typography.
 No empty search row is introduced; file selection and Git behavior are unchanged.
 
+## Folder selection-marker clearance
+
+The collapsed active-folder screenshot exposed a collision: the desktop icon began 4px into
+the row, while the marker occupied 2–4.5px. Desktop folder glyphs now use 14px plus a 2px leading
+margin within their former 16px footprint. Open and closed icons keep their right edge, title
+origin and vertical center; the marker and mobile layout do not move. The change is confined to
+the shared navigation folder toggle, not file-tree, session-state or Activity icons.
+
 ## Undecided interaction proposals
 
 The following remain proposals, not implemented requirements:
