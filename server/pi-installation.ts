@@ -146,6 +146,42 @@ async function adjacentPackageRoot(
   return null;
 }
 
+/** The official installer places a stable launcher in agent/bin and selects
+ * its package through agent/install/current-version. Resolve the launcher's
+ * physical location so aliases work, without running it or pinning a release. */
+async function managedPackageRoot(
+  commandPath: string,
+): Promise<{ root: string; manifest: PiPackageManifest } | null> {
+  const installRoot = resolve(dirname(commandPath), "..", "install");
+  const invalid = () =>
+    new Error(
+      `The managed Pi installation at ${installRoot} is incomplete or invalid. ` +
+        "Repair it with Pi's installer, then restart INSΠRE.",
+    );
+  let version: string;
+  try {
+    version = (
+      await readFile(join(installRoot, "current-version"), "utf8")
+    ).split(/\r?\n/u, 1)[0]!;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw invalid();
+  }
+  if (
+    !/^[0-9A-Za-z._+-]+$/u.test(version) ||
+    version === "." ||
+    version === ".."
+  )
+    throw invalid();
+  const root = await realpath(
+    join(installRoot, "releases", version, "node_modules", PI_PACKAGE_NAME),
+  ).catch(() => null);
+  if (!root) throw invalid();
+  const manifest = await readPiManifest(root);
+  if (!manifest || manifest.version !== version) throw invalid();
+  return { root, manifest };
+}
+
 async function inspectCandidate(commandPath: string): Promise<{
   commandPath: string;
   packageRoot: string;
@@ -157,6 +193,7 @@ async function inspectCandidate(commandPath: string): Promise<{
   const resolvedCommand = await realpath(commandPath);
   const found =
     (await findPackageRoot(resolvedCommand)) ??
+    (await managedPackageRoot(resolvedCommand)) ??
     (await adjacentPackageRoot(commandPath));
   if (!found) return null;
   const paths = await manifestPaths(found.root, found.manifest);
@@ -214,13 +251,13 @@ export async function resolvePiInstallationIdentity(
   if (discoveredLocal) {
     throw new Error(
       "INSΠRE requires a separately installed Pi runtime; the only Pi found belongs to this INSΠRE checkout. " +
-        "Install or update Pi globally, then restart INSΠRE.",
+        "Install or update Pi, then restart INSΠRE.",
     );
   }
   throw new Error(
     explicitCommand
       ? `INSPIRE_PI_COMMAND does not identify a ${PI_PACKAGE_NAME} installation: ${explicitCommand}`
-      : "INSΠRE requires Pi to be installed and available on PATH. Install Pi globally, then restart INSΠRE.",
+      : "INSΠRE requires Pi to be installed and available on PATH. Install Pi, then restart INSΠRE.",
   );
 }
 
