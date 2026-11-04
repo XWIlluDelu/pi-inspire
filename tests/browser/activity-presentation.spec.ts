@@ -1,8 +1,8 @@
 import { expect, type Locator, test } from "@playwright/test";
 import { activityReadingMessages } from "../web/fixtures/activity-reading";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
-import { openMockEventSession } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openEventSession } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
 
 async function expectActivityMarksCentered(control: Locator) {
@@ -18,7 +18,7 @@ test("the full activity header discloses content with Copy beside its text", asy
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const fold = page.locator(".activity-fold").first();
   await fold.getByRole("button", { name: "Expand assistant activity" }).click();
   const card = fold.locator(".card").first();
@@ -131,7 +131,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const fold = page.locator(".activity-fold").first();
   const disclosure = fold.getByRole("button", {
     name: "Expand assistant activity",
@@ -147,7 +147,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
   await expectActivityMarksCentered(disclosure);
   const kind = fold.locator(".activity-fold__kind").first();
   // Unit tests establish which kinds are live. Here isolate the CSS animation
-  // from the mock worker's timing and verify that it never moves the control.
+  // from the offline provider's timing and verify that it never moves the control.
   await kind.evaluate((element) =>
     element.classList.add("activity-fold__kind--live"),
   );
@@ -232,7 +232,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
 test("activity Copy is available only with expanded content and custom messages stay independent", async ({
   page,
 }) => {
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Activity reading",
     customMessageConfiguration,
@@ -352,7 +352,7 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Earlier history",
     customMessageConfiguration,
@@ -383,7 +383,7 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
 test("success and failure cues retain semantic color in tools and nested calls", async ({
   page,
 }) => {
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Activity states",
     customMessageConfiguration,
@@ -539,7 +539,7 @@ test.describe("touch activity disclosures", () => {
   }) => {
     await page.setViewportSize({ width: 390, height: 1000 });
     await page.emulateMedia({ reducedMotion: "reduce" });
-    const send = await openMockEventSession(
+    const send = await openEventSession(
       page,
       "Touch disclosures",
       customMessageConfiguration,

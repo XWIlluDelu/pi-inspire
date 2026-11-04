@@ -284,7 +284,6 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
     snapshotDigest: TEST_SNAPSHOT_DIGEST,
     version: "0.1.0",
     piVersion: "0.80.10",
-    mock: false,
     updateStatus: hostUpdateStatus(),
     preferences: DEFAULT_PREFS,
     availableModels: [

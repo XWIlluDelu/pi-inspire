@@ -95,6 +95,11 @@ export interface SessionCatalogLike {
 
 export class SessionCatalog implements SessionCatalogLike {
   private cached: SessionRecord[] = [];
+  private searchResult: {
+    query: string;
+    sources: readonly SessionRecord[];
+    matches: SessionRecord[];
+  } | null = null;
   private observedProjectCwds = new Set<string>();
   private issues: SessionCatalogIssue[] = [];
   private loadedAt = 0;
@@ -314,7 +319,7 @@ export class SessionCatalog implements SessionCatalogLike {
     );
     const issues = [...this.issues];
     const filtered = query
-      ? await searchSessionRecords(sessions, query, options.signal, issues)
+      ? await this.searchRecords(sessions, query, options.signal, issues)
       : sessions;
 
     return {
@@ -332,6 +337,37 @@ export class SessionCatalog implements SessionCatalogLike {
       offset,
       limit,
     };
+  }
+
+  private async searchRecords(
+    sessions: readonly SessionRecord[],
+    query: string,
+    signal: AbortSignal | undefined,
+    issues: SessionCatalogIssue[],
+  ): Promise<SessionRecord[]> {
+    signal?.throwIfAborted();
+    const cached = this.searchResult;
+    if (
+      cached?.query === query &&
+      cached.sources.length === sessions.length &&
+      sessions.every((session, index) => session === cached.sources[index])
+    ) {
+      return cached.matches;
+    }
+    const generation = this.generation;
+    const searchIssues: SessionCatalogIssue[] = [];
+    const matches = await searchSessionRecords(
+      sessions,
+      query,
+      signal,
+      searchIssues,
+    );
+    issues.push(...searchIssues);
+    // Retain only the last successful query; failed reads remain recoverable.
+    if (generation === this.generation && searchIssues.length === 0) {
+      this.searchResult = { query, sources: sessions, matches };
+    }
+    return matches;
   }
 
   async listByIds(ids: readonly string[]): Promise<SessionSummary[]> {
@@ -386,6 +422,7 @@ export class SessionCatalog implements SessionCatalogLike {
   }
 
   invalidate(): void {
+    this.searchResult = null;
     this.generation += 1;
     this.loadedAt = 0;
   }

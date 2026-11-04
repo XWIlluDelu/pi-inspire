@@ -81,7 +81,7 @@ interface RuntimeEventControllerHost {
   recordPersistenceEvent(
     slot: RuntimeSlot,
     event: Record<string, unknown>,
-  ): void;
+  ): string | undefined;
   activeAssistantOverlayMessage(slot: RuntimeSlot): unknown;
   updateOverlay(
     slot: RuntimeSlot,
@@ -797,7 +797,17 @@ export class RuntimeEventController {
       slot.manualCompaction?.worker === rpc
     )
       slot.manualCompaction.aborted = record.aborted === true;
-    this.host.recordPersistenceEvent(slot, record);
+    const entryId = this.host.recordPersistenceEvent(slot, record);
+    if (entryId && record.message && typeof record.message === "object") {
+      event = {
+        ...record,
+        message: {
+          ...record.message,
+          __inspireEntryId: entryId,
+          __inspireMessageId: `${entryId}:0`,
+        },
+      };
+    }
     // `entry_appended` is host provenance, not transcript content. Its raw
     // extension payload must never cross the browser boundary.
     if (record.type === "entry_appended") return;

@@ -25,7 +25,6 @@ import type { RuntimeWorkerStatus } from "./runtime.js";
 
 interface HerdrEnhancementOptions {
   enabled: boolean;
-  mock?: boolean;
   registry: HerdrWorkerRegistry;
   client?: HerdrClient;
   diagnostics?: DiagnosticLogger;
@@ -111,7 +110,7 @@ export class HerdrEnhancement {
 
   private async recover(): Promise<void> {
     try {
-      if (this.options.mock || process.platform !== "linux") return;
+      if (process.platform !== "linux") return;
       const leases = await this.options.registry.list();
       // Starting a second Host on an occupied address must not kill the first
       // Host's workers before listen() has a chance to reject that address.
@@ -170,12 +169,7 @@ export class HerdrEnhancement {
     sessionFile: string,
     occupancy?: PiSessionOccupancy,
   ): Promise<ExternalSessionConnection | null> {
-    if (
-      !this.options.enabled ||
-      this.options.mock ||
-      process.platform !== "linux"
-    )
-      return null;
+    if (!this.options.enabled || process.platform !== "linux") return null;
     if (this.closed) throw requestError("The Host is shutting down", 503);
     const writer = await this.observer.findNativeWriter(sessionId, sessionFile);
     if (!writer) return null;
@@ -194,8 +188,7 @@ export class HerdrEnhancement {
     await this.initialize();
     if (this.closed) throw requestError("The Host is shutting down", 503);
     if (this.recoveryIssue) throw requestError(this.recoveryIssue, 503);
-    if (!this.options.enabled || this.options.mock)
-      return new PiRpcProcess(options);
+    if (!this.options.enabled) return new PiRpcProcess(options);
     if (process.platform !== "linux")
       throw requestError("Herdr enhancement currently requires Linux", 503);
 
@@ -242,20 +235,8 @@ export class HerdrEnhancement {
   }
 
   async status(): Promise<HerdrEnhancementStatus> {
-    const enabled = this.options.enabled && !this.options.mock;
-    const supported = process.platform === "linux" && !this.options.mock;
-    if (this.options.mock) {
-      return {
-        enabled,
-        ready: false,
-        supported,
-        installed: false,
-        running: false,
-        compatible: null,
-        version: null,
-        issue: "Herdr enhancement is unavailable in mock mode",
-      };
-    }
+    const enabled = this.options.enabled;
+    const supported = process.platform === "linux";
     const probe = await this.client.probe();
     let scopeIssue: string | undefined;
     let scopesAvailable = false;

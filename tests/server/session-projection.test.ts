@@ -49,6 +49,7 @@ async function fixture(
   lines: unknown[],
   id = "session-a",
   readHooks?: SessionProjectionReadHooks,
+  fileNameForPath?: (path: string) => string | null,
 ) {
   const directory = await mkdtemp(join(tmpdir(), "inspire-projection-"));
   directories.push(directory);
@@ -71,7 +72,11 @@ async function fixture(
     path,
     bytes,
     record,
-    projection: await SessionProjection.open(record, readHooks),
+    projection: await SessionProjection.open(
+      record,
+      readHooks,
+      fileNameForPath,
+    ),
   };
 }
 
@@ -1061,6 +1066,69 @@ describe("SessionProjection replacement and Pi context semantics", () => {
 });
 
 describe("SessionProjection bounded paging", () => {
+  it("keeps distinct live messages with the same timestamp and honors explicit entry identity", async () => {
+    const { projection } = await fixture([
+      message("u1", null, "user", "saved input", 1),
+    ]);
+    try {
+      const live = {
+        role: "user",
+        content: "different input",
+        timestamp: 1,
+        __inspireLiveId: "live-1",
+      };
+      expect(
+        projection
+          .latestPage([live])
+          .messages.map((item) => (item as { content: unknown }).content),
+      ).toEqual(["saved input", "different input"]);
+      expect(
+        projection.latestPage([{ ...live, content: "saved input" }]).messages,
+      ).toHaveLength(2);
+      expect(
+        projection.latestPage([{ ...live, __inspireEntryId: "u1" }]).messages,
+      ).toHaveLength(1);
+      expect(
+        projection.latestPage([
+          { ...live, content: "saved input", __inspireEntryId: "u2" },
+        ]).messages,
+      ).toHaveLength(2);
+    } finally {
+      await projection.close();
+    }
+  });
+
+  it("projects readable attachment names within page bounds without rewriting saved input", async () => {
+    const path = "/cache/physical-short.txt";
+    const content =
+      "Referenced files available to the agent (JSON paths):\n- " +
+      JSON.stringify(path);
+    const name = "研究".repeat(50) + ".txt";
+    const {
+      projection,
+      path: sessionPath,
+      bytes,
+    } = await fixture(
+      [message("u1", null, "user", content, 1)],
+      "session-a",
+      undefined,
+      (reference) => (reference === path ? name : null),
+    );
+    try {
+      const page = projection.latestPage();
+      expect(page.messages[0]).toMatchObject({
+        content,
+        __inspireFileNames: { [path]: name },
+      });
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
+        TRANSCRIPT_PAGE_MAX_BYTES,
+      );
+      expect(await readFile(sessionPath, "utf8")).toBe(bytes);
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("projects more than 10 MiB of individually bounded history into count/byte bounded pages", async () => {
     const lines: unknown[] = [];
     let parent: string | null = null;

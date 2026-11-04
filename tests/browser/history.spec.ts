@@ -1,17 +1,23 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
+import type { ActiveSnapshot } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
 
 async function chooseSource(page: Page) {
-  await openMockSession(page, /Calibration history fixture/);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
 }
 
 async function openHistory(page: Page) {
@@ -176,6 +182,11 @@ test("recovers a History image and opens local references in the authorized sess
   });
   const selectInput = async () => {
     const history = await openHistory(page);
+    const back = history.getByRole("button", {
+      name: "Back to history",
+      exact: true,
+    });
+    if (await back.isVisible()) await back.click();
     await history
       .getByRole("searchbox", { name: "Find in history" })
       .fill("Compare the calibration strategies");
@@ -228,7 +239,7 @@ test("recovers a History image and opens local references in the authorized sess
       : history.getByRole("button", { name: "README.md", exact: true })
     ).click();
     expect((await resolved).postDataJSON()).toMatchObject({
-      sessionId: "mock-calibration-history",
+      sessionId: "fixture-calibration-history",
       reference: "README.md",
     });
     await expect(page.locator(".file-preview")).toBeVisible();
@@ -330,7 +341,7 @@ test("reads native-shaped shell History and inspects saved images", async ({
   );
   await fullLog.click();
   expect((await resolvedLog).postDataJSON()).toMatchObject({
-    sessionId: "mock-calibration-history",
+    sessionId: "fixture-calibration-history",
     reference,
   });
   const source = page.getByRole("region", { name: "File source" });
@@ -510,7 +521,7 @@ test.describe("touch History navigation", () => {
       expect((await title.boundingBox())!.width).toBeGreaterThan(40);
       await expect(
         page.getByRole("button", {
-          name: "Open Git changes: mock/analysis, 1 change",
+          name: "Open Git changes: fixture/analysis, 1 change",
           exact: true,
         }),
       ).toBeHidden();
@@ -675,6 +686,11 @@ test.describe("touch History navigation", () => {
     await chooseSource(page);
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     history = await openHistory(page);
+    const back = history.getByRole("button", {
+      name: "Back to history",
+      exact: true,
+    });
+    if (await back.isVisible()) await back.click();
     await history
       .getByRole("searchbox", { name: "Find in history" })
       .fill("cobalt baseline");
@@ -795,7 +811,7 @@ test("navigates to a native shell card and opens its complete log on a narrow sc
   );
   await action.click();
   expect((await resolved).postDataJSON().sessionId).toBe(
-    "mock-calibration-history",
+    "fixture-calibration-history",
   );
   const source = page.getByRole("region", { name: "File source" });
   await expect(source).toBeVisible();
@@ -808,6 +824,22 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
   page,
 }) => {
   await connectCalibration(page);
+  // A carried summary commits history. Copy before compaction so the older
+  // input remains in the copied model context, without mutating the seed.
+  const source: ActiveSnapshot = await (
+    await hostRequest(page).get(
+      "/api/snapshot?detail=fixture-calibration-history",
+    )
+  ).json();
+  const copied = await hostRequest(page).post("/api/branches/clone", {
+    data: {
+      sessionId: source.active!.sessionId,
+      viewId: source.active!.transcriptPage.viewId,
+      targetId: "history-a-598",
+    },
+  });
+  expect(copied.ok()).toBe(true);
+  await page.reload();
   const composer = page.getByLabel("Message", { exact: true });
   await composer.fill("Confirmed draft");
   const history = await openHistory(page);
@@ -842,10 +874,9 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
     ),
   });
   await expect(page.locator(".attachment--ready")).toBeVisible();
+  const completed = page.waitForResponse("**/api/branches/navigate");
   release();
-  await expect(
-    page.getByText("Continuing from earlier history", { exact: true }),
-  ).toBeVisible();
+  expect((await completed).ok()).toBe(true);
   await expect(composer).toHaveValue("Newer draft typed while waiting");
   await expect(page.locator(".attachment--image")).toHaveCount(1);
   await expect(
@@ -853,10 +884,6 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
       exact: true,
     }),
   ).toBeVisible();
-
-  await page
-    .getByRole("button", { name: "Back to latest", exact: true })
-    .click();
 });
 
 test("earlier-branch progress identifies the action while keeping both failures recoverable", async ({
@@ -864,7 +891,26 @@ test("earlier-branch progress identifies the action while keeping both failures 
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openMockSession(page, /Earlier branch recovery fixture/);
+  await openFixtureSession(page, /Earlier branch recovery fixture/);
+  const branch = await (
+    await hostRequest(page).get("/api/branches/tree?sessionId=fixture-branch")
+  ).json();
+  const earlier = branch.nodes.find(
+    (node: { id: string; canSwitch: boolean }) =>
+      node.canSwitch && node.id !== branch.effectiveLeafId,
+  )?.id;
+  expect(earlier).toBeTruthy();
+  const navigated = await hostRequest(page).post("/api/branches/navigate", {
+    data: {
+      sessionId: "fixture-branch",
+      revision: branch.revision,
+      targetId: earlier,
+      mode: "switch",
+      summarize: false,
+    },
+  });
+  expect(navigated.ok()).toBe(true);
+  await page.reload();
   const banner = page.getByRole("region", { name: "Earlier branch context" });
   await expect(banner).toBeVisible();
   const draft = page.getByRole("textbox", { name: "Message", exact: true });

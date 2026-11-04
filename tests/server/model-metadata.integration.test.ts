@@ -4,7 +4,7 @@ import request from "supertest";
 import { afterEach, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
 import { AttachmentStore } from "../../server/attachments.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
+import { hostServices } from "../fixtures/host-services.js";
 import {
   ModelMetadataCatalog,
   queryModelMetadata,
@@ -48,9 +48,7 @@ it("discovers native global/trusted-project registrations and resolves defaults 
   );
   const app = createInspireServer({
     token: "fixture",
-    runtime: new MockRuntime(),
-    catalog: new MockCatalog(),
-    attachments,
+    ...hostServices(f.root, { attachments }),
     preferences: new PreferencesStore(join(f.root, "preferences.json")),
     resources: new ResourceStore(),
     git: {
@@ -61,7 +59,6 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     },
     version: "fixture",
     piVersion: "1.0.0",
-    mock: true,
     modelMetadata: (cwd, refresh) => catalog.read(cwd, refresh),
     availableModels: available,
 

@@ -158,7 +158,7 @@ describe("Host browser authentication and asset access", () => {
     await request(application.server)
       .get("/api/health")
       .set("Authorization", `Bearer ${token}`)
-      .expect(200, { appName: "inspire", mock: true });
+      .expect(200, { appName: "inspire" });
     await request(application.server)
       .post("/api/auth/pair")
       .send({ token })

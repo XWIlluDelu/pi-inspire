@@ -31,7 +31,7 @@ describe("Pending handoff receipts", () => {
         .spyOn(f.runtime, action === "recover" ? "recoverPending" : "abort")
         .mockReturnValueOnce(gate);
       const body = {
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         authorityId: f.application.authorityId,
         operationId: randomUUID(),
       };
@@ -66,7 +66,7 @@ describe("Pending handoff receipts", () => {
       expect((await post()).body).toEqual(a.body);
       expect(operation).toHaveBeenCalledOnce();
       for (const changed of [
-        { sessionId: "mock-older" },
+        { sessionId: "fixture-older" },
         { authorityId: randomUUID() },
       ]) {
         await request(f.application.server)
@@ -96,7 +96,7 @@ describe("Pending handoff receipts", () => {
       .spyOn(f.runtime, "recoverPending")
       .mockRejectedValueOnce(new Error("transient failure"));
     const body = {
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       authorityId: f.application.authorityId,
       operationId: randomUUID(),
     };
@@ -149,7 +149,7 @@ describe("Pending handoff receipts", () => {
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         message: "caption",
         authorityId: f.application.authorityId,
         operationId: randomUUID(),
@@ -166,7 +166,7 @@ describe("Pending handoff receipts", () => {
     const body = {
       authorityId: f.application.authorityId,
       operationId: randomUUID(),
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
     };
     await request(f.application.server)
       .post("/api/pending/recover")

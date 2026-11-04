@@ -175,7 +175,7 @@ async function freePort() {
   });
 }
 
-async function waitForHealth(url, token, expectedMock, timeoutMs = 20_000) {
+async function waitForHealth(url, token, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -184,7 +184,7 @@ async function waitForHealth(url, token, expectedMock, timeoutMs = 20_000) {
       });
       if (response.ok) {
         const body = await response.json();
-        if (body.appName === "inspire" && body.mock === expectedMock) return;
+        if (body.appName === "inspire") return;
       }
     } catch {}
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
@@ -637,7 +637,7 @@ try {
     for await (const chunk of request) body += String(chunk);
     probes.push({ authorization: request.headers.authorization, body });
     response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify({ appName: "inspire", mock: false }));
+    response.end(JSON.stringify({ appName: "inspire" }));
   });
   await new Promise((resolve) => impostor.listen(0, "127.0.0.1", resolve));
   try {
@@ -650,7 +650,6 @@ try {
       pid: process.pid,
       processStartTime: await instanceModule.processStartIdentity(process.pid),
       startedAt: new Date().toISOString(),
-      mock: false,
       httpControlVersion: 1,
     };
     const fakePath = join(stateDirectory, "impostor.json");
@@ -751,7 +750,7 @@ try {
   );
   if (!preparation.stdout.includes("Restart preparation passed."))
     throw new Error("Installed runtime preparation did not complete");
-  host = spawn(process.execPath, [bin, "mock"], {
+  host = spawn(process.execPath, [bin], {
     cwd: temporary,
     env: environment,
     ...isolatedProcessOptions(),
@@ -763,27 +762,26 @@ try {
   host.stderr?.on("data", (chunk) => {
     hostOutput = `${hostOutput}${String(chunk)}`.slice(-8_192);
   });
-  const mockOrigin = `http://127.0.0.1:${port}`;
-  await waitForHealth(`${mockOrigin}/api/health`, token, true);
-  const mockState = await waitForInstanceState(environment.INSPIRE_STATE_PATH);
+  const hostOrigin = `http://127.0.0.1:${port}`;
+  await waitForHealth(`${hostOrigin}/api/health`, token);
+  const hostState = await waitForInstanceState(environment.INSPIRE_STATE_PATH);
   if (
-    mockState.httpControlVersion !== 1 ||
+    hostState.httpControlVersion !== 1 ||
     (
       await instanceModule.inspectInstance(environment.INSPIRE_STATE_PATH, {
         root: installedRoot,
         host: "127.0.0.1",
         port,
-        mock: true,
       })
     ).kind !== "healthy"
   )
     throw new Error("Installed Host did not authenticate readiness");
-  if (!(await maintenanceModule.requestMaintenance(mockState))?.kind)
+  if (!(await maintenanceModule.requestMaintenance(hostState))?.kind)
     throw new Error(
       "Installed maintenance could not authenticate the Host result",
     );
   const terminalEpochResponse = await fetch(
-    `${mockOrigin}/api/terminal-operations`,
+    `${hostOrigin}/api/terminal-operations`,
     {
       headers: { Authorization: `Bearer ${token}` },
     },
@@ -797,7 +795,7 @@ try {
       epoch: terminalEpoch,
     }),
   });
-  const terminalResponse = await fetch(`${mockOrigin}/api/terminals`, {
+  const terminalResponse = await fetch(`${hostOrigin}/api/terminals`, {
     method: "POST",
     headers: terminalMutationHeaders(),
     body: JSON.stringify({ cwd: temporary, cols: 80, rows: 24 }),
@@ -810,7 +808,7 @@ try {
   if (typeof packagedTerminal.id !== "string")
     throw new Error("Packaged PTY startup returned no terminal identity");
   const closeTerminalResponse = await fetch(
-    `${mockOrigin}/api/terminals/${encodeURIComponent(packagedTerminal.id)}?force=1`,
+    `${hostOrigin}/api/terminals/${encodeURIComponent(packagedTerminal.id)}?force=1`,
     {
       method: "DELETE",
       headers: terminalMutationHeaders(),
@@ -848,7 +846,7 @@ try {
   });
   await waitForExit(host);
   if (host.exitCode !== 0)
-    throw new Error(`Packaged mock host exited with ${host.exitCode}`);
+    throw new Error(`Packaged Host exited with ${host.exitCode}`);
 
   host = null;
   hostOutput = "";
@@ -969,7 +967,7 @@ try {
     hostOutput = `${hostOutput}${String(chunk)}`.slice(-8_192);
   });
   const realOrigin = `http://127.0.0.1:${realPort}`;
-  await waitForHealth(`${realOrigin}/api/health`, token, false);
+  await waitForHealth(`${realOrigin}/api/health`, token);
   await waitForInstanceState(realEnvironment.INSPIRE_STATE_PATH);
   const headers = { Authorization: `Bearer ${token}` };
   async function daemonMutationHeaders() {
@@ -1118,7 +1116,7 @@ try {
   }
   if (!replaced)
     throw new Error("Packaged page restart did not replace the Host");
-  await waitForHealth(`${realOrigin}/api/health`, token, false);
+  await waitForHealth(`${realOrigin}/api/health`, token);
   const retainedTerminals = await fetch(
     realOrigin + "/api/terminals?cwd=" + encodeURIComponent(canonicalWorkspace),
     { headers },
@@ -1201,7 +1199,7 @@ try {
       piAuthority: "external installation",
       installMode: "production dependencies only; Pi not bundled",
       portableCliEntry: "npm shim and JS entry resolved",
-      mockHealth: "ok",
+      hostHealth: "ok",
       readinessPeer:
         "fresh mutual proofs; impostor rejected without bearer disclosure",
       localPairing:
@@ -1215,8 +1213,7 @@ try {
       realPiStartup: "ok",
       sessionForkWorker: "ok",
       publishDryRun: "accepted without metadata correction",
-      lifecycle:
-        "mock and real start/status/stop; real page restart with owned Pi",
+      lifecycle: "Host start/status/stop; page restart with owned Pi",
     }),
   );
 } catch (error) {

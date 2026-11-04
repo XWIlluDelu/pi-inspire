@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test("PDF paints selectable pages, preserves zoom across resize and never runs document actions", async ({
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const resources = page.getByRole("complementary", { name: "Context panel" });
   const localOrigin = new URL(page.url()).origin;

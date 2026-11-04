@@ -123,19 +123,19 @@ custom messages remain independent readable boundaries in this contract.
 
   Image-bearing user messages omit Pi's exact appended image-dimension/coordinate-mapping suffix
   from their bubble, view-local search, Prompt Map and catalog/title projections. Thumbnails and
-  image counts remain visible; image-only prompts retain their attachment label. Quoted examples,
+  image counts remain visible; image-only prompts keep their attachment label. Quoted examples,
   non-suffix text and image omission diagnostics are not filtered. Stored messages, model context
-  and complete-source Copy remain unchanged; [[composer]] applies the same omission to recall.
+  and complete-source Copy are unchanged; [[composer]] applies the same omission to recall.
 
   The exact trailing file-reference context added for Pi is presented as compact filename tags,
-  not a prose path list. Image thumbnails and filename tags are grouped before the user’s text,
-  with consistent spacing between attachment groups and prose and no extra gap on attachment-only turns.
-  Each tag retains its full path in a hover title but grants no file access.
-  Default private-upload identifiers are omitted from the label; ordinary project filenames remain
-  intact. File-only turns stay visible, file names participate in view-local search, and Prompt Map
-  includes file references in attachment counts. Mixed image/file prompts remove the image hint
-  before splitting file context. Malformed blocks and quoted examples remain ordinary message text;
-  stored/model text and complete-source Copy remain unchanged.
+  not a prose path list. Image thumbnails and filename tags are grouped before the user's text, with
+  consistent spacing between attachment groups and prose and no extra gap on attachment-only turns.
+  Each tag keeps its full path in a hover title but grants no file access. Default private-upload
+  identifiers are omitted from the label; ordinary project filenames stay intact. File-only turns
+  stay visible, file names participate in view-local search, and Prompt Map includes file references
+  in attachment counts. Mixed image/file prompts remove the image hint before splitting file
+  context. Malformed blocks and quoted examples remain ordinary message text; stored/model text and
+  complete-source Copy are unchanged.
 
 - Project references and artifact handoff follow [[composer]]; preview authorization follows
   [[resource-preview]]. Transcript paths are presentation, not filesystem authority.

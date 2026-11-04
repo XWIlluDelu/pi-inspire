@@ -5,8 +5,8 @@ import type { UploadedAttachment } from "../../shared/contracts";
 import { pendingTextSummary } from "../../shared/pending-preview";
 import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 const token = "inspire-browser-test-token";
 const pixel = Buffer.from(
@@ -42,7 +42,7 @@ test("Pending navigation keeps latest truthful in ordinary and virtualized conve
     ],
     followUp: [],
   };
-  await routeMockSnapshots(page, {
+  await routeSnapshots(page, {
     snapshot(snapshot) {
       if (!snapshot.active) return;
       snapshot.pendingQueues = queue;
@@ -155,7 +155,7 @@ test("Pending image thumbnails open the shared viewer and wrap at narrow widths"
     ],
     followUp: [],
   };
-  await routeMockSnapshots(page, {
+  await routeSnapshots(page, {
     snapshot: (value) => {
       if (value.active) value.pendingQueues = pendingProjection;
     },
@@ -431,48 +431,17 @@ for (const action of ["Return all", "Escape"] as const) {
     page,
   }) => {
     const { composer, input, pending } = await openPendingSession(page);
-    const boot = await (await hostRequest(page).get("/api/bootstrap")).json();
-    const uploads = new Map<string, UploadedAttachment>();
-    let queued: Array<{
-      mode: "steer" | "followUp";
-      images: UploadedAttachment[];
-    }> = [];
     let lastSent: {
       message: string;
       attachmentIds?: string[];
       behavior?: string;
     } | null = null;
-    await page.route("**/api/prompt", async (route) => {
-      const body = route.request().postDataJSON();
-      lastSent = body;
-      if (body.behavior)
-        queued.push({
-          mode: body.behavior,
-          images: (body.attachmentIds ?? []).map(
-            (id: string) => uploads.get(id)!,
-          ),
-        });
-      await route.continue();
-    });
-    // Mock Pi owns text queue behavior; augment only its receipt with real,
-    // isolated staged upload handles. Thumbnail GET/removal use the actual Host.
-    await page.route("**/api/pending/recover", async (route) => {
-      const response = await route.fetch();
-      const body = await response.json();
-      const attachments = [
-        ...queued.filter((item) => item.mode === "steer"),
-        ...queued.filter((item) => item.mode === "followUp"),
-      ].flatMap((item) => item.images);
-      queued = [];
-      await route.fulfill({
-        response,
-        json: {
-          ...body,
-          ...(attachments.length
-            ? { attachments, authorityId: boot.authorityId }
-            : {}),
-        },
-      });
+    page.on("request", (request) => {
+      if (
+        new URL(request.url()).pathname === "/api/prompt" &&
+        request.method() === "POST"
+      )
+        lastSent = request.postDataJSON();
     });
     const addImage = async (name: string) => {
       const uploaded = page.waitForResponse(
@@ -485,11 +454,10 @@ for (const action of ["Return all", "Escape"] as const) {
         .setInputFiles({ name, mimeType: "image/gif", buffer: pixel });
       const value: UploadedAttachment = (await (await uploaded).json())
         .attachments[0];
-      uploads.set(value.id, value);
       await expect(composer.locator(".attachment--ready")).toHaveCount(1);
       return value;
     };
-    await input.fill(`Keep the mock stream active ${"x".repeat(2000)}`);
+    await input.fill(`Keep the offline stream active ${"x".repeat(2000)}`);
     await composer
       .getByRole("button", { name: "Send message", exact: true })
       .click();
@@ -571,7 +539,7 @@ for (const action of ["Return all", "Escape"] as const) {
         .click();
       await expect(composer.locator(".attachment--image")).toHaveCount(2);
     }
-    // The Escape case restarts after abort; stop the isolated mock before exit.
+    // The Escape case restarts after abort; stop the isolated fixture before exit.
     if (action === "Escape")
       await composer
         .getByRole("button", { name: "Abort running task" })
@@ -585,7 +553,7 @@ test("Pending text preserves visible head and tail while copying and returning t
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const { composer, input, pending } = await openPendingSession(page);
-  await input.fill(`Keep mock work running ${"x".repeat(2000)}`);
+  await input.fill(`Keep offline work running ${"x".repeat(2000)}`);
   await composer
     .getByRole("button", { name: "Send message", exact: true })
     .click();
@@ -630,7 +598,7 @@ test("running composer exposes steer, queue, and abort controls", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await pairedPage(page);
   await page.getByRole("button", { name: "Toggle navigation" }).click();
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const message = page.getByRole("textbox", { name: "Message" });
   await message.fill("start a run for delivery controls");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -672,7 +640,7 @@ test.describe("touch Pending layout", () => {
   test("wrapped items align numbers, text and reachable actions without clipping confirmation", async ({
     page,
   }) => {
-    await routeMockSnapshots(page, {
+    await routeSnapshots(page, {
       snapshot: (snapshot) => {
         snapshot.pendingQueues = {
           revision: 9,

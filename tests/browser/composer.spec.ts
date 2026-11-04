@@ -4,8 +4,8 @@ import {
   PALETTE_PREFERENCES,
 } from "../../shared/contracts";
 import { renderedColors } from "./support/colors";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(`failed-delivery recovery · ${touch ? "touch" : "mouse"}`, () => {
@@ -17,9 +17,9 @@ for (const touch of [false, true]) {
     test("distinguishes unavailable Restore without overwriting the current draft", async ({
       page,
     }) => {
-      const transport = await routeMockSnapshots(page, {});
+      const transport = await routeSnapshots(page, {});
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       let release!: () => void;
       const responseGate = new Promise<void>((resolve) => {
         release = resolve;
@@ -114,7 +114,7 @@ test("composer selectors stay readable in narrow desktop panes without moving or
 }) => {
   let source: ActiveSnapshot | undefined;
   let envelope: { type: string; detailSessionId?: string } | undefined;
-  const transport = await routeMockSnapshots(page, {
+  const transport = await routeSnapshots(page, {
     snapshot: (snapshot) => {
       if (snapshot.active) source = structuredClone(snapshot);
     },
@@ -131,7 +131,7 @@ test("composer selectors stay readable in narrow desktop panes without moving or
   });
   await page.setViewportSize({ width: 1366, height: 768 });
   await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const toggle = page.getByRole("button", {
     name: "Toggle resources panel",
     exact: true,
@@ -272,7 +272,7 @@ test("running halo animates independently and retains focus and reduced-motion f
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const composer = page.getByRole("form", { name: "Message composer" });
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.focus();
@@ -281,7 +281,7 @@ test("running halo animates independently and retains focus and reduced-motion f
     return getComputedStyle(el).borderColor;
   });
   // State-to-class mapping is covered by Composer unit tests; isolate this
-  // presentation check from the mock worker's short execution lifetime.
+  // presentation check from the offline provider's short execution lifetime.
   await composer.evaluate((el) => el.classList.add("composer--running"));
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(composer).toHaveCSS("border-color", focusedBorder);
@@ -329,16 +329,16 @@ test("composer text drafts survive reload and stay partitioned through switching
   tag: "@cross-browser",
 }, async ({ page }) => {
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   const draft = "UNSENT_REFRESH_SAFE\n保留 exact draft";
   await input.fill(draft);
   await page.reload();
   await expect(input).toHaveValue(draft);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   await expect(input).toHaveValue("");
   await input.fill("other session draft");
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(input).toHaveValue(draft);
   // Merely browsing history must not overwrite the saved pre-browse draft.
   await input.evaluate((element: HTMLTextAreaElement) =>
@@ -376,7 +376,7 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
 }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   const expand = page.getByRole("button", {
     name: "Expand editor",
@@ -506,7 +506,7 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
     const touch = await touchContext.newPage();
     await pairedPage(touch);
     await touch.getByRole("button", { name: "Toggle navigation" }).click();
-    await openMockSession(touch, /Formula rendering and spectral analysis/);
+    await openFixtureSession(touch, /Formula rendering and spectral analysis/);
     const touchInput = touch.getByRole("textbox", {
       name: "Message",
       exact: true,

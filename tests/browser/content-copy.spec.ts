@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { openMockEventSession } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openEventSession } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 declare global {
   interface Window {
@@ -21,7 +21,7 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await pairedPage(page);
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );
@@ -139,7 +139,7 @@ test("image-only Copy writes real PNGs in reverse order and pastes an image into
   page,
   context,
 }) => {
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Image copy fixture",
     { version: 1, rules: {}, mappings: {} },
@@ -241,18 +241,27 @@ test("History Copy reads the complete retained entry and saved image without exp
   context,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const whole = "Retained content. ".repeat(2500) + "COPY_END";
+  let entryMetadata: Record<string, unknown>;
   await page.route("**/api/branches/entry?**", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
     const offset = Number(
       new URL(route.request().url()).searchParams.get("offset") ?? 0,
     );
+    if (offset === 0) {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      entryMetadata = await response.json();
+    }
+    const body = entryMetadata;
     const end = Math.min(offset + 32000, whole.length);
     await route.fulfill({
-      response,
+      status: 200,
       json: {
         ...body,
         text: whole.slice(offset, end),

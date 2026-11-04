@@ -76,7 +76,9 @@ test("Manage models carries New's prospective project only for its Settings visi
     .getByRole("dialog", { name: "Settings", exact: true })
     .getByRole("button", { name: "Models", exact: true })
     .click();
-  await expect.poll(() => settingsOwner).toEqual({ sessionId: "mock-history" });
+  await expect
+    .poll(() => settingsOwner)
+    .toEqual({ sessionId: "fixture-history" });
 });
 
 test("model search and refresh preserve defaults and browsing position", async ({

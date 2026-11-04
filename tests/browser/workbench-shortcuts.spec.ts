@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { ModelOption } from "../../shared/contracts";
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
 
 // A service worker can bypass page.route. This fixture owns network model
@@ -35,13 +35,13 @@ for (const platform of ["MacIntel", "Win32"]) {
       platform,
     );
     // This tests shortcut ownership, not the model selection a previous test
-    // left on the shared mock Host. Keep catalog, snapshots and control replies
+    // left on the shared test Host. Keep catalog, snapshots and control replies
     // in the same owned two-model cycle, including an explicit initial member.
     let selected = models[0]!;
     let thinkingLevel = "off";
-    await routeMockSnapshots(page, {
+    await routeSnapshots(page, {
       snapshot: (snapshot) => {
-        if (snapshot.active?.sessionId === "mock-history")
+        if (snapshot.active?.sessionId === "fixture-history")
           Object.assign(snapshot.active, {
             model: selected,
             availableModels: models,

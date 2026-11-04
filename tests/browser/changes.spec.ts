@@ -1,12 +1,9 @@
 import { expect, test } from "@playwright/test";
-import type {
-  GitDiffResponse,
-  GitStatusResponse,
-} from "../../shared/contracts";
+import type { GitDiffResponse } from "../../shared/contracts";
 
 // Files and Changes share the contextual navigation and reading surface.
 import { focusRingClipping } from "./support/focus-bounds";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(`resource navigation focus · ${touch ? "coarse" : "fine"} pointer`, () => {
@@ -20,7 +17,7 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await pairedPage(page);
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );
@@ -28,7 +25,7 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await pane
         .locator(".files-browser__section")
         .filter({ hasText: "Recent" })
@@ -63,54 +60,55 @@ for (const touch of [false, true]) {
         await page.setViewportSize({ width, height });
         let filesHeaderTop = 0;
         for (const mode of ["Files", "Changes"]) {
-          await pane.getByRole("button", { name: mode, exact: true }).click();
-          const header = pane.locator(".file-detail-header");
+          if (mode === "Files") {
+            await pane
+              .getByRole("tab", { name: "page.html", exact: true })
+              .click();
+            const changes = pane.getByRole("button", {
+              name: "Git changes",
+              exact: true,
+            });
+            if ((await changes.getAttribute("aria-pressed")) === "true")
+              await changes.click();
+          } else {
+            await pane
+              .getByRole("tab", { name: "Changes", exact: true })
+              .click();
+            await expect(pane.locator(".res__list")).toBeVisible();
+            await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
+            await pane
+              .getByRole("button", { name: /page\.html, modified/ })
+              .click();
+            await expect(
+              pane.getByRole("tab", { name: "page.html", exact: true }),
+            ).toHaveAttribute("aria-selected", "true");
+          }
+          const header = pane.locator(".file-preview__actions");
           await expect(header).toBeVisible();
           const headerTop = (await header.boundingBox())!.y;
           if (mode === "Files") filesHeaderTop = headerTop;
-          else if (width > 900)
-            expect(headerTop).toBeCloseTo(filesHeaderTop, 1);
-          else {
-            const navigation = pane.locator(".changes__navigation");
-            await expect(navigation).toBeVisible();
-            const box = (await navigation.boundingBox())!;
-            expect(box.y).toBeCloseTo(filesHeaderTop, 1);
-            expect(headerTop).toBeCloseTo(box.y + box.height, 1);
-            expect(box.height).toBeGreaterThanOrEqual(44);
-            await expect(pane.locator(".res__index")).toBeHidden();
-          }
-          const controls =
-            mode === "Files"
-              ? width > 900
-                ? [
-                    pane.getByRole("button", {
-                      name: /Back to file browser for/,
-                    }),
-                    pane.getByRole("button", {
-                      name: "Show hidden files",
-                      exact: true,
-                    }),
-                    pane.locator(".file-path-action"),
-                  ]
-                : [
-                    pane.getByRole("button", {
-                      name: "Back to Files",
-                      exact: true,
-                    }),
-                    pane.locator(".file-path-action"),
-                  ]
-              : [
-                  ...(width <= 900
-                    ? [pane.getByRole("button", { name: /^All changes/ })]
-                    : []),
-                  pane.locator(".file-path-action"),
-                ];
-          for (const control of controls) {
+          else expect(headerTop).toBeCloseTo(filesHeaderTop, 1);
+          const controls = [
+            [pane.getByRole("tab", { name: "page.html", exact: true }), "2px"],
+            [
+              pane.getByRole("button", {
+                name: "Close page.html",
+                exact: true,
+              }),
+              "1px",
+            ],
+            [pane.locator(".file-path-action"), "2px"],
+            [
+              pane.getByRole("button", { name: "Git changes", exact: true }),
+              "2px",
+            ],
+          ] as const;
+          for (const [control, outlineWidth] of controls) {
             await page.keyboard.press("Tab");
             await control.focus();
             await expect(control).toBeFocused();
             await expect(control).toHaveCSS("outline-style", "solid");
-            await expect(control).toHaveCSS("outline-width", "2px");
+            await expect(control).toHaveCSS("outline-width", outlineWidth);
             await expect
               .poll(() => control.evaluate(focusRingClipping))
               .toBeLessThanOrEqual(0.5);
@@ -131,19 +129,16 @@ for (const touch of [false, true]) {
           }
         }
       }
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
-      await pane
-        .getByRole("button", { name: "Back to Files", exact: true })
-        .click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await expect(pane.locator(".files-browser")).toBeVisible();
-      await expect(pane.locator(".file-detail-header")).toHaveCount(0);
+      await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
     });
 
     test("centers diff recovery with its status and keeps retry reachable", async ({
       page,
     }) => {
       await pairedPage(page);
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );
@@ -162,10 +157,8 @@ for (const touch of [false, true]) {
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
       const state = pane.locator(".res__state");
       const retry = state.getByRole("button", { name: "Retry", exact: true });
       await expect(state).toContainText("Source unavailable");
@@ -177,7 +170,7 @@ for (const touch of [false, true]) {
         [568, 320],
       ]) {
         await page.setViewportSize({ width, height });
-        // Let the ResizeObserver split budget commit before native focus scrolling.
+        // Let the drawer layout settle before native focus scrolling.
         await page.evaluate(
           () =>
             new Promise<void>((resolve) => {
@@ -217,7 +210,7 @@ test("long diff line numbers keep separate aligned columns and sticky gutters", 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.route("**/api/git/diff", async (route) => {
     const response = await route.fetch();
     const diff = (await response.json()) as GitDiffResponse;
@@ -233,10 +226,8 @@ test("long diff line numbers keep separate aligned columns and sticky gutters", 
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
-  await pane.getByRole("button", { name: "Changes", exact: true }).click();
-  await pane
-    .getByRole("button", { name: /page\.html, unstaged modified/ })
-    .click();
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+  await pane.getByRole("button", { name: /page\.html, modified/ }).click();
   const source = pane.locator(".source-diff");
   await expect(source).toContainText("1000");
   for (const width of [1280, 901, 568, 320]) {
@@ -285,31 +276,60 @@ test("change navigation preserves addition and deletion colors", async ({
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
+  await page.route("**/api/git/diff", async (route) => {
+    const response = await route.fetch();
+    const diff = (await response.json()) as GitDiffResponse;
+    if (diff.kind === "text") {
+      diff.lines = [
+        { kind: "delete", text: "-old first", oldLine: 1, newLine: null },
+        { kind: "add", text: "+new first", oldLine: null, newLine: 1 },
+        { kind: "context", text: " unchanged", oldLine: 2, newLine: 2 },
+        { kind: "delete", text: "-old second", oldLine: 3, newLine: null },
+        { kind: "add", text: "+new second", oldLine: null, newLine: 3 },
+      ];
+      diff.additions = 2;
+      diff.deletions = 2;
+      delete diff.source;
+    }
+    await route.fulfill({ response, json: diff });
+  });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
-  await pane.getByRole("button", { name: "Changes", exact: true }).click();
-  await pane
-    .getByRole("button", { name: /page\.html, unstaged modified/ })
-    .click();
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+  await pane.getByRole("button", { name: /page\.html, modified/ }).click();
 
   const lines = pane.locator(
     ".source-diff__line--add, .source-diff__line--delete",
   );
-  await expect(lines).toHaveCount(2);
+  await expect(lines).toHaveCount(4);
   const backgrounds = () =>
     lines.evaluateAll((rows) =>
       rows.map((row) => getComputedStyle(row).backgroundColor),
     );
-  const unselected = await backgrounds();
-  expect(unselected[0]).not.toBe(unselected[1]);
+  const original = await backgrounds();
+  expect(original[0]).not.toBe(original[1]);
+  await expect(pane.getByLabel("Change position")).toHaveText("1/2");
+  await expect(
+    pane.getByRole("button", { name: "Previous change", exact: true }),
+  ).toBeDisabled();
 
   await pane.getByRole("button", { name: "Next change", exact: true }).click();
-  await expect(pane.locator(".source-diff__line--active")).toHaveCount(2);
-  expect(await backgrounds()).toEqual(unselected);
+  await expect(pane.getByLabel("Change position")).toHaveText("2/2");
+  await expect(
+    pane.getByRole("button", { name: "Next change", exact: true }),
+  ).toBeDisabled();
+  const active = pane.locator(".source-diff__line--active");
+  await expect(active).toHaveCount(2);
+  expect(await backgrounds()).toEqual(original);
   expect(
-    await lines.first().evaluate((row) => getComputedStyle(row).boxShadow),
+    await active.first().evaluate((row) => getComputedStyle(row).boxShadow),
   ).not.toBe("none");
+  await pane
+    .getByRole("button", { name: "Previous change", exact: true })
+    .click();
+  await expect(pane.getByLabel("Change position")).toHaveText("1/2");
+  expect(await backgrounds()).toEqual(original);
 });
 
 for (const touch of [false, true]) {
@@ -324,31 +344,14 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await page.clock.install();
-      if (touch) {
-        await page.route("**/api/git/status?*", async (route) => {
-          const response = await route.fetch();
-          const status = (await response.json()) as GitStatusResponse;
-          if (status.kind === "repository") {
-            status.files[0].staged = { kind: "modified" };
-            status.groups.staged = [status.files[0].path.id];
-          }
-          await route.fulfill({ response, json: status });
-        });
-      }
       await pairedPage(page);
       let latest = false;
       let diffReads = 0;
       let gate: Promise<void> | null = null;
       await page.route("**/api/git/diff", async (route) => {
         diffReads += 1;
-        const requested = route.request().postDataJSON();
-        const response = await route.fetch({
-          // The mock Host provides one working-tree comparison. Present its
-          // bytes as a staged comparison too, to exercise two-sided navigation.
-          postData: touch ? { ...requested, side: "unstaged" } : requested,
-        });
+        const response = await route.fetch();
         const diff = (await response.json()) as GitDiffResponse;
-        if (touch) diff.side = requested.side;
         if (latest && diff.kind === "text") {
           if (gate) await gate;
           diff.lines = diff.lines.map((line) =>
@@ -366,7 +369,7 @@ for (const touch of [false, true]) {
       });
       if ((await navigation.getAttribute("aria-expanded")) === "false")
         await navigation.click();
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );
@@ -376,21 +379,20 @@ for (const touch of [false, true]) {
       if ((await toggle.getAttribute("aria-expanded")) === "false")
         await toggle.click();
       const pane = page.locator(".ctx");
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       const tree = pane.getByRole("region", { name: "Workspace file tree" });
-      const file = tree.getByTitle("README.md", { exact: true });
-      const folder = tree.getByTitle("src", { exact: true });
+      const file = tree.locator('[data-workspace-path="README.md"]');
+      const folder = tree.getByRole("button", { name: "src", exact: true });
       await expect(file).toBeVisible();
+      await expect(folder).toBeVisible();
       const nameX = (row: typeof file) =>
         row
           .locator(".workspace-tree__name")
           .evaluate((node) => node.getBoundingClientRect().x);
       expect(await nameX(file)).toBe(await nameX(folder));
 
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
       const source = pane.locator(".source-diff");
       const first = source.locator('[data-change-index="0"]');
       await expect(first).toBeInViewport();
@@ -438,51 +440,34 @@ for (const touch of [false, true]) {
       await refreshed;
       await expect.poll(position).toEqual(saved);
       expect(diffReads).toBe(readsBeforeExplicit + 1);
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+      await expect(pane.locator(".res__list")).toBeVisible();
+      await expect(source).toHaveCount(0);
+      await pane.getByRole("tab", { name: "page.html", exact: true }).click();
       await expect.poll(position).toEqual(saved);
-      await pane
-        .getByRole("button", { name: "Next change", exact: true })
-        .click();
-      await expect(first).toBeInViewport();
+      await expect(pane.getByLabel("Change position")).toHaveText("1/1");
+      await expect(
+        pane.getByRole("button", { name: "Next change", exact: true }),
+      ).toBeDisabled();
       await expect(pane.locator(".source-diff__line--active")).toHaveCount(2);
       if (touch) {
-        await expect(pane.locator(".res__index")).toBeHidden();
-        const savedBeforeNavigation = await position();
-        await pane
-          .getByRole("button", { name: "Next file change", exact: true })
-          .click();
-        await expect(pane.locator(".changes__comparison")).toHaveText(
-          "Staged 2/2",
-        );
-        await expect(source).toBeVisible();
         await expect(
-          pane.getByRole("button", { name: "Next file change", exact: true }),
-        ).toBeDisabled();
+          pane.getByRole("combobox", { name: "Comparison side" }),
+        ).toHaveCount(0);
+        const savedBeforeNavigation = await position();
+        await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+        await expect(pane.locator(".res__list")).toBeVisible();
+        await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
         await pane
-          .getByRole("button", { name: "Previous file change", exact: true })
+          .getByRole("button", { name: /page\.html, modified/ })
           .click();
-        await expect(pane.locator(".changes__comparison")).toHaveText(
-          "Working 1/2",
-        );
+        await expect(
+          pane.getByRole("tab", { name: "page.html", exact: true }),
+        ).toHaveCount(1);
         await expect.poll(position).toEqual(savedBeforeNavigation);
-        await expect(pane.locator(".source-diff__line--active")).toHaveCount(2);
-
-        await pane
-          .getByRole("button", { name: "All changes (1)", exact: true })
-          .click();
-        await expect(pane.locator(".res__index")).toBeVisible();
-        await expect(pane.locator(".changes__detail")).toBeHidden();
-        const working = pane.getByRole("button", {
-          name: /page\.html, unstaged modified/,
-        });
-        await expect(working).toBeFocused();
-        await working.click();
-        await expect.poll(position).toEqual(savedBeforeNavigation);
-        await page.goBack();
-        await expect(pane.locator(".res__index")).toBeVisible();
-        await expect(working).toBeFocused();
         await expect(pane).toHaveRole("dialog");
+        // A file tab adds no second drawer level to browser history.
         await page.goBack();
         await expect(pane).toBeHidden();
       }
@@ -490,11 +475,11 @@ for (const touch of [false, true]) {
   });
 }
 
-test("Files and Changes share the index boundary and preserve the selected file reader", async ({
+test("Files and Changes open one file tab with explicit body and diff views", async ({
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const resources = page.getByRole("complementary", { name: "Context panel" });
   await resources
@@ -503,47 +488,76 @@ test("Files and Changes share the index boundary and preserve the selected file 
     .getByRole("button", { name: /page\.html/ })
     .click();
   const frame = page.frameLocator("iframe[title='Preview page.html']");
-  const workspaceIndex = resources.locator(".res__index");
-  const workspaceIndexHeight = () =>
-    workspaceIndex.evaluate(
-      (element) => element.getBoundingClientRect().height,
-    );
-  const stableIndexHeight = await workspaceIndexHeight();
-  expect(stableIndexHeight).toBeGreaterThan(200);
+  await expect(
+    resources.getByRole("tab", { name: "page.html", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(resources.locator(".res__index")).toHaveCount(0);
+  await expect(resources.locator(".files-browser")).toHaveCount(0);
 
-  await resources.getByRole("button", { name: "Changes", exact: true }).click();
+  await resources.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(resources.locator(".res__index-title")).toHaveText(
-    "mock/analysis",
+    "fixture/analysis",
   );
-  await expect(resources.locator(".res__index-summary")).toHaveText(
-    "1 working",
-  );
+  await expect(resources.locator(".res__index-summary")).toHaveText("1 change");
   await expect(resources.locator(".res__index-summary")).toHaveAttribute(
     "title",
-    "1 working",
+    "1 change",
   );
   await expect(resources.locator(".res__index-title")).toHaveAttribute(
     "title",
-    "mock/analysis",
+    "fixture/analysis",
   );
+  await expect(resources.locator(".file-preview__actions")).toHaveCount(0);
+  await expect(resources.locator(".source-diff")).toHaveCount(0);
+  await resources.getByRole("button", { name: /page\.html, modified/ }).click();
+  const fileTab = resources.getByRole("tab", {
+    name: "page.html",
+    exact: true,
+  });
+  const changes = resources.getByRole("button", {
+    name: "Git changes",
+    exact: true,
+  });
+  await expect(fileTab).toHaveCount(1);
+  await expect(fileTab).toHaveAttribute("aria-selected", "true");
+  await expect(changes).toHaveAttribute("aria-pressed", "true");
   await expect(resources.locator(".changes__additions")).toHaveText("+1");
   await expect(resources.locator(".changes__deletions")).toHaveText("−1");
   await expect(
-    resources.getByRole("region", {
-      name: /Source changes for .*page\.html/,
-    }),
+    resources.getByRole("region", { name: /Source changes for .*page\.html/ }),
   ).toBeVisible();
-  await resources.getByRole("button", { name: "Next change" }).click();
-  await expect(resources.locator(".source-diff__line--active")).toHaveCount(2);
-  expect(await workspaceIndexHeight()).toBeCloseTo(stableIndexHeight, 1);
-  await resources.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(resources.getByLabel("Change position")).toHaveText("1/1");
+  await changes.click();
+  await expect(changes).toHaveAttribute("aria-pressed", "false");
+  await expect(frame.locator("h1")).toHaveText(
+    "Quiet systems, legible signals.",
+  );
+  await expect(resources.getByLabel("Change position")).toHaveCount(0);
+  await changes.click();
+  await expect(resources.locator(".source-diff")).toBeVisible();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
+  await expect(resources.locator(".files-browser")).toBeVisible();
+  await resources
+    .locator(".files-browser__section")
+    .filter({ hasText: "Recent" })
+    .getByRole("button", { name: /page\.html/ })
+    .click();
+  await expect(fileTab).toHaveCount(1);
+  await expect(changes).toHaveAttribute("aria-pressed", "false");
+  await expect(frame.locator("h1")).toHaveText(
+    "Quiet systems, legible signals.",
+  );
+  await resources.getByRole("tab", { name: "Changes", exact: true }).click();
+  await expect(resources.locator(".res__list")).toBeVisible();
+  await expect(resources.locator(".file-preview__actions")).toHaveCount(0);
+  await fileTab.click();
   await expect(frame.locator("h1")).toHaveText(
     "Quiet systems, legible signals.",
   );
 });
 
 for (const hasTouch of [false, true]) {
-  test(`resource index headers retain their shared contour and action alignment · ${hasTouch ? "touch" : "mouse"}`, async ({
+  test(`Files and Changes retain their own navigation and reachable actions · ${hasTouch ? "touch" : "mouse"}`, async ({
     browser,
     baseURL,
   }) => {
@@ -557,7 +571,7 @@ for (const hasTouch of [false, true]) {
     const page = await context.newPage();
     try {
       await pairedPage(page);
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );
@@ -576,25 +590,7 @@ for (const hasTouch of [false, true]) {
         },
         hasTouch ? "dark" : "light",
       );
-      const header = pane.locator(".res__index > .res__index-header");
-      const geometry = () =>
-        pane.evaluate((element) => {
-          const rect = (selector: string) => {
-            const value = element
-              .querySelector(selector)!
-              .getBoundingClientRect();
-            return {
-              top: value.top,
-              bottom: value.bottom,
-              height: value.height,
-            };
-          };
-          return {
-            header: rect(".res__index > .res__index-header"),
-            index: rect(".res__index"),
-            detail: rect(".file-detail-header"),
-          };
-        });
+      const header = pane.locator(".res__body--changes > .res__index-header");
       for (const viewport of [
         { width: 1280, height: 900 },
         { width: 901, height: 700 },
@@ -606,88 +602,64 @@ for (const hasTouch of [false, true]) {
         await expect(pane).toHaveRole(
           viewport.width <= 900 ? "dialog" : "complementary",
         );
-        if (viewport.width <= 900) {
-          await expect(pane.locator(".res__index")).toBeHidden();
-          const filesDetail = (await pane
-            .locator(".file-detail-header")
-            .boundingBox())!;
-          await expect(
-            pane.getByRole("button", { name: "Back to Files", exact: true }),
-          ).toBeVisible();
-          await pane
-            .getByRole("button", { name: "Changes", exact: true })
-            .click();
-          await expect(pane.locator(".res__index")).toBeHidden();
-          const navigation = pane.locator(".changes__navigation");
-          await expect(navigation).toBeVisible();
-          const navigationBox = (await navigation.boundingBox())!;
-          const detailBox = (await pane
-            .locator(".file-detail-header")
-            .boundingBox())!;
-          expect(navigationBox.y).toBeCloseTo(filesDetail.y, 1);
-          expect(detailBox.y).toBeCloseTo(
-            navigationBox.y + navigationBox.height,
-            1,
-          );
-          const back = pane.getByRole("button", { name: /^All changes/ });
-          await page.keyboard.press("Tab");
-          await back.focus();
-          await expect(back).toBeFocused();
-          expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-          expect(await back.evaluate(focusRingClipping)).toBeLessThanOrEqual(
-            0.5,
-          );
-          await pane
-            .getByRole("button", { name: "Files", exact: true })
-            .click();
-          continue;
-        }
-        await expect(header).toHaveCSS("border-bottom-width", "1px");
-        await expect(header).toHaveCSS("border-bottom-style", "solid");
-        const files = await geometry();
-        expect(files.header.height).toBe(30);
-        const actions = await header.evaluate((element) => {
-          const center = (selector: string) => {
-            const rect = element
-              .querySelector(selector)!
-              .getBoundingClientRect();
-            return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-          };
-          return {
-            back: center(".res__index-header--back > svg"),
-            visibility: center(".icon-button > svg"),
-          };
+        await pane.getByRole("tab", { name: "page.html", exact: true }).click();
+        await expect(pane.locator(".res__index")).toHaveCount(0);
+        await expect(pane.locator(".files-browser")).toHaveCount(0);
+        const filesDetail = (await pane
+          .locator(".file-preview__actions")
+          .boundingBox())!;
+        const content = (await pane
+          .getByRole("tabpanel", { name: "File", exact: true })
+          .boundingBox())!;
+        expect(filesDetail.y).toBeCloseTo(content.y + 8, 1);
+        await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+        await expect(header).toBeVisible();
+        await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
+        const list = pane.locator(".res__list");
+        await expect(list).toBeVisible();
+        const changesContent = (await pane
+          .getByRole("tabpanel", { name: "Changes", exact: true })
+          .boundingBox())!;
+        const listBox = (await list.boundingBox())!;
+        const headerBox = (await header.boundingBox())!;
+        expect(headerBox.y).toBeCloseTo(changesContent.y, 1);
+        expect(listBox.y).toBeCloseTo(headerBox.y + headerBox.height, 1);
+        expect(listBox.y + listBox.height).toBeCloseTo(
+          changesContent.y + changesContent.height,
+          1,
+        );
+        await pane
+          .getByRole("button", { name: /page\.html, modified/ })
+          .click();
+        await expect(
+          pane.getByRole("tab", { name: "page.html", exact: true }),
+        ).toHaveCount(1);
+        const git = pane.getByRole("button", {
+          name: "Git changes",
+          exact: true,
         });
+        await expect(git).toHaveAttribute("aria-pressed", "true");
         expect(
-          Math.abs(actions.back.y - actions.visibility.y),
-        ).toBeLessThanOrEqual(0.5);
+          (await pane.locator(".file-preview__actions").boundingBox())!.y,
+        ).toBeCloseTo(filesDetail.y, 1);
+        await page.keyboard.press("Tab");
+        await git.focus();
+        await expect(git).toBeFocused();
+        await expect(git).toBeInViewport({ ratio: 1 });
+        expect(await git.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
+        await pane.getByRole("tab", { name: "Files", exact: true }).click();
+        await expect(pane.locator(".files-browser")).toBeVisible();
+        await expect(pane.locator(".file-preview__actions")).toHaveCount(0);
         const visibility = pane.getByRole("button", {
           name: "Show hidden files",
           exact: true,
         });
-        const back = pane.getByRole("button", {
-          name: /Back to file browser for/,
-        });
         await page.keyboard.press("Tab");
-        await back.focus();
-        await expect(back).toBeFocused();
-        await expect(back).toHaveCSS("outline-offset", "-2px");
         await visibility.focus();
-        await expect(visibility).toHaveCSS("outline-offset", "-2px");
-        await pane
-          .getByRole("button", { name: "Changes", exact: true })
-          .click();
-        await expect(header).toHaveCSS("border-bottom-width", "1px");
-        const changes = await geometry();
-        for (const area of ["header", "index", "detail"] as const) {
-          for (const edge of ["top", "bottom", "height"] as const) {
-            expect(
-              Math.abs(changes[area][edge] - files[area][edge]),
-              `${area} ${edge} at ${viewport.width}`,
-            ).toBeLessThanOrEqual(0.5);
-          }
-        }
-        await pane.getByRole("button", { name: "Files", exact: true }).click();
+        await expect(visibility).toBeFocused();
+        expect(
+          await visibility.evaluate(focusRingClipping),
+        ).toBeLessThanOrEqual(0.5);
       }
       await page.setViewportSize({ width: 1280, height: 900 });
       await pane
@@ -696,9 +668,6 @@ for (const hasTouch of [false, true]) {
       await expect(
         pane.getByRole("button", { name: "Show hidden files", exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
-      await pane
-        .getByRole("button", { name: /Back to file browser for/ })
-        .click();
       await expect(pane.locator(".files-browser")).toBeVisible();
     } finally {
       await context.close();

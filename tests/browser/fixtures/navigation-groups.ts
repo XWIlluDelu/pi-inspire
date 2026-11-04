@@ -1,30 +1,29 @@
 import type { Page } from "@playwright/test";
 import type { SessionSummary } from "../../../shared/contracts";
-import { routeMockSnapshots } from "../support/mock-host";
+import { routeSnapshots } from "../support/host-events";
 
 /** Isolated curation model: grouped projects, including a Hidden former pin.
- * MockRuntime.newSession is transient, not a file-backed catalog entry. Seeded
- * native IDs retain their real open/history envelopes; only the catalog
+ * Seeded native IDs retain their real open/history envelopes; only the catalog
  * summaries and matching selected identity are fixture-owned. No Host preference
  * or canonical session file is changed. */
 export async function navigationGroupsFixture(page: Page) {
   const records: SessionSummary[] = [
-    ["mock-history", "/projects/calibration", "Geometry session", "05"],
+    ["fixture-history", "/projects/calibration", "Geometry session", "05"],
     [
-      "mock-calibration-history",
+      "fixture-calibration-history",
       "/projects/acquisition",
       "Residual session",
       "04",
     ],
-    ["mock-active", "/projects/reports", "Reports session", "03"],
+    ["fixture-active", "/projects/reports", "Reports session", "03"],
     [
-      "mock-compaction",
+      "fixture-compaction",
       "/projects/archived-a",
       "Archived measurement session",
       "02",
     ],
     [
-      "mock-errors",
+      "fixture-errors",
       "/projects/archived-b",
       "Archived validation session",
       "01",
@@ -39,7 +38,7 @@ export async function navigationGroupsFixture(page: Page) {
     messageCount: 1,
   }));
   let preferences: Record<string, unknown>;
-  const transport = await routeMockSnapshots(page, {
+  const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       if (!preferences)
         preferences = {

@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
 import { modelSettingsScenario } from "./fixtures/model-settings";
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import { pairAndOpen } from "./support/navigation";
 
 test("model labels and selection retain text contrast across palettes and themes", async ({
@@ -183,9 +183,8 @@ test("cached model choices open immediately and background updates preserve sele
     page.getByRole("status").filter({ hasText: "Could not refresh models" }),
   ).toBeVisible();
   await search.fill("fresh-model");
-  await list.getByRole("option", { name: /Fresh model/ }).click();
-  await expect(trigger).toBeFocused();
-  await expect(trigger).toHaveText("fresh-model");
+  await expect(list.getByRole("option", { name: /Fresh model/ })).toBeEnabled();
+  await expect(trigger).toHaveText(selected!);
   await expect(draft).toHaveValue("Catalog refresh must preserve this draft");
 });
 
@@ -213,7 +212,7 @@ test("the first-message model transition clamps max to high and sends explicit s
     }
     return snapshot;
   };
-  await routeMockSnapshots(page, { snapshot: decorate });
+  await routeSnapshots(page, { snapshot: decorate });
   await page.route("**/api/models**", (route) =>
     route.fulfill({ json: { models: [extended, ordinary] } }),
   );

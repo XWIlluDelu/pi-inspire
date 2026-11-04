@@ -10,7 +10,7 @@ import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
 
 const directories: string[] = [];
 const enhancements: HerdrEnhancement[] = [];
-async function harness(enabled = false, mock = false) {
+async function harness(enabled = false) {
   const root = await mkdtemp(join(tmpdir(), "inspire-enhancement-test-"));
   directories.push(root);
   const registry = new HerdrWorkerRegistry(join(root, "ownership"));
@@ -26,7 +26,7 @@ async function harness(enabled = false, mock = false) {
   const checkScopes = vi
     .spyOn(workerScopes, "assertHerdrWorkerScopesAvailable")
     .mockResolvedValue();
-  const enhancement = new HerdrEnhancement({ enabled, mock, registry, client });
+  const enhancement = new HerdrEnhancement({ enabled, registry, client });
   enhancements.push(enhancement);
   const lease = async () => {
     const launchDirectory = await mkdtemp(join(root, "inspire-herdr-"));
@@ -299,23 +299,6 @@ describe.skipIf(process.platform !== "linux")(
       await lease();
       expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
       expect(list).toHaveBeenCalledTimes(2);
-    });
-
-    it("does not inspect or recover real ownership in mock mode", async () => {
-      const { enhancement, root, registry, lease, probe, restore } =
-        await harness(true, true);
-      await lease();
-      const list = vi.spyOn(registry, "list");
-      await enhancement.initialize();
-      expect(await enhancement.status()).toMatchObject({
-        enabled: false,
-        ready: false,
-        supported: false,
-      });
-      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
-      expect(list).not.toHaveBeenCalled();
-      expect(probe).not.toHaveBeenCalled();
-      expect(restore).not.toHaveBeenCalled();
     });
   },
 );

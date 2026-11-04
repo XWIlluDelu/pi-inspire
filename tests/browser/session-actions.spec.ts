@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
@@ -12,7 +13,7 @@ test("a failed clone leaves its action menu available instead of silently dismis
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   let attempts = 0;
   await page.route("**/api/branches/clone", (route) => {
     attempts++;
@@ -40,7 +41,7 @@ test("a failed clone leaves its action menu available instead of silently dismis
   await expect(menu).toBeVisible();
 });
 
-async function namedSession(page: Page) {
+async function namedSession(page: Page, withConversation = false) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
   const response = await hostRequest(page).post("/api/sessions/new", {
@@ -50,6 +51,37 @@ async function namedSession(page: Page) {
     },
   });
   expect(response.ok()).toBe(true);
+  const sessionId = (await response.json()).active.sessionId;
+  if (withConversation) {
+    const bootstrap = await (
+      await hostRequest(page).get("/api/bootstrap")
+    ).json();
+    const accepted = await hostRequest(page).post("/api/prompt", {
+      data: {
+        sessionId,
+        message: "Save a conversation for the native export.",
+        operationId: randomUUID(),
+        authorityId: bootstrap.authorityId,
+      },
+    });
+    expect(accepted.ok()).toBe(true);
+    await expect
+      .poll(async () => {
+        const snapshot = await hostRequest(page).get(
+          `/api/snapshot?detail=${sessionId}`,
+        );
+        return (await snapshot.json()).runState;
+      })
+      .toBe("idle");
+  }
+  // API creation is outside browser navigation; reload must restore this
+  // fixture's session rather than the Host selection from a preceding test.
+  await page.evaluate((sessionId) => {
+    sessionStorage.setItem(
+      "inspire:workbench:v1:last-session",
+      JSON.stringify({ sessionId }),
+    );
+  }, sessionId);
   await page.reload();
   const title = page.getByRole("button", { name: /^Session actions:/ });
   await expect(title).toContainText("Calibration notes");
@@ -326,7 +358,7 @@ for (const touch of [false, true]) {
     test("terminal handoff keeps the browser draft and requires explicit continuation", async ({
       page,
     }, testInfo) => {
-      const { title, composer } = await namedSession(page);
+      const { title, composer } = await namedSession(page, true);
       await title.click();
       await page
         .getByRole("menuitem", { name: "More actions", exact: true })
@@ -402,7 +434,7 @@ for (const touch of [false, true]) {
         await page
           .getByRole("button", { name: "Toggle resources panel" })
           .click();
-      await pane.getByRole("button", { name: "Files", exact: true }).click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       const search = pane.getByRole("searchbox", {
         name: "Search workspace files",
         exact: true,
@@ -577,7 +609,7 @@ test("export failure keeps long diagnostics readable and the selected format ret
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const draft = page.getByRole("textbox", { name: "Message", exact: true });
   await draft.fill("Keep the unfinished comparison");
   const authority = (await hostRequest(page).get("/api/preferences")).headers()[
@@ -690,7 +722,7 @@ test("export failure keeps long diagnostics readable and the selected format ret
 test("title/palette exports download the selected format and branch without consuming draft attachments", async ({
   page,
 }, info) => {
-  const { title: actions, composer } = await namedSession(page);
+  const { title: actions, composer } = await namedSession(page, true);
   await page.locator('input[type="file"]').setInputFiles({
     name: "draft.txt",
     mimeType: "text/plain",

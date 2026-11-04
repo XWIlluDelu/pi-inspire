@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { hostRequest } from "./support/host-request";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "touch selection" : "pointer selection", () => {
@@ -134,7 +134,7 @@ for (const touch of [false, true]) {
           json: Object.assign(preferences, route.request().postDataJSON()),
         }),
       );
-      await openMockSession(page, /Formula rendering and spectral analysis/);
+      await openFixtureSession(page, /Formula rendering and spectral analysis/);
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 1000 });
         if (width < 768)

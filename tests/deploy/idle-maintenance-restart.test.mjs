@@ -159,7 +159,6 @@ describe.runIf(process.platform !== "win32")(
             root,
             processStartTime: "fixture-birth",
             startedAt: "fixture-start",
-            mock: false,
             httpControlVersion: 1,
           },
           "commit",

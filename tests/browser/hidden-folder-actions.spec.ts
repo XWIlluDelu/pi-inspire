@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({ reducedMotion: "reduce", serviceWorkers: "block" });
 
@@ -10,7 +10,11 @@ test("deletes the visible idle session through one confirmation and returns to N
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
   // Destructive tests own their persisted session; the shared History fixture
   // must remain available to subsequent browser tests and retries.
   const source = (await (await hostRequest(page).get("/api/snapshot")).json())
@@ -80,7 +84,7 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const source = (await (await hostRequest(page).get("/api/snapshot")).json())
     .active;
   const created = await hostRequest(page).post("/api/branches/clone", {
@@ -181,7 +185,10 @@ for (const touch of [false, true]) {
         page,
       }) => {
         await pairedPage(page);
-        await openMockSession(page, /Formula rendering and spectral analysis/);
+        await openFixtureSession(
+          page,
+          /Formula rendering and spectral analysis/,
+        );
         const initial = await (
           await hostRequest(page).get("/api/bootstrap")
         ).json();
@@ -224,7 +231,7 @@ for (const touch of [false, true]) {
         // Browser projection owns hierarchy and the submitted scope. Real catalog
         // completeness, reservations and filesystem deletion are server regressions.
         let connected = false;
-        const transport = await routeMockSnapshots(page, {
+        const transport = await routeSnapshots(page, {
           event: (event) => {
             if (event.type === "snapshot") connected = true;
           },

@@ -7,8 +7,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { createInspireServer } from "../../server/app.js";
-import { AttachmentStore } from "../../server/attachments.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 import { dispatchTerminalMutation } from "../../server/terminal-operation-dispatch.js";
@@ -144,9 +143,7 @@ describe("terminal HTTP and WebSocket transport", () => {
     terminalService = new FakeTerminalService();
     application = createInspireServer({
       token,
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "uploads")),
+      ...hostServices(temporary),
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
       resources: new ResourceStore(),
       git: {
@@ -164,7 +161,6 @@ describe("terminal HTTP and WebSocket transport", () => {
         }),
       },
       terminal: terminalService,
-      mock: true,
       version: "test",
       piVersion: "test",
       distDir: join(temporary, "missing-dist"),

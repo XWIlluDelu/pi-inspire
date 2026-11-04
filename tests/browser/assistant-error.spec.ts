@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { assistantOutcomeScenario } from "./support/assistant-outcomes";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.afterEach(async ({ page }) => {
   // Settled events can start a snapshot read after their visible outcome.
@@ -33,7 +33,7 @@ for (const scenario of [
       const fixture = await assistantOutcomeScenario(page);
       await page.emulateMedia({ reducedMotion: "reduce" });
       await pairedPage(page);
-      await openMockSession(page, /Pi error display fixture/);
+      await openFixtureSession(page, /Pi error display fixture/);
       await expect.poll(fixture.ready).toBe(true);
       const input = page.getByRole("textbox", { name: "Message", exact: true });
       await input.fill("Keep this unsent draft.");

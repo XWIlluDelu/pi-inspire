@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { observeClipboardWrites as observeWrites } from "./support/clipboard";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({
   serviceWorkers: "block",
@@ -17,7 +17,11 @@ test.beforeEach(async ({ browserName, context }) => {
 
 async function openHistoryDetail(page: Page) {
   await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
   const toggle = page.getByRole("button", {
     name: "Toggle resources panel",
     exact: true,
@@ -41,18 +45,23 @@ test("slow retained text and saved PNG copy after the gesture expires", {
   tag: "@cross-browser",
 }, async ({ page }) => {
   const complete = "Retained content. ".repeat(2500) + "COPY_END";
+  let entryMetadata: Record<string, unknown>;
   let copying = false;
   await page.route("**/api/branches/entry?**", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
     const offset = Number(
       new URL(route.request().url()).searchParams.get("offset") ?? 0,
     );
+    if (offset === 0) {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      entryMetadata = await response.json();
+    }
+    const body = entryMetadata;
     if (copying && offset === 0)
       await new Promise((resolve) => setTimeout(resolve, 6100));
     const end = Math.min(offset + 32000, complete.length);
     await route.fulfill({
-      response,
+      status: 200,
       json: {
         ...body,
         text: complete.slice(offset, end),
@@ -102,7 +111,11 @@ test("Copy last response initiates its text write before a slow Host read", {
     await route.fulfill({ json: { text: complete } });
   });
   await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
   await observeWrites(page);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
   await input.fill("/copy");

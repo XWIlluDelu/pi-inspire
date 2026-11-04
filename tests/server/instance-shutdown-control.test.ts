@@ -34,7 +34,6 @@ async function fixture() {
     token: "private-owner-token",
     startedAt: "2026-10-19T00:00:00Z",
     processStartTime: "original-process-birth",
-    mock: false,
     shutdownControlVersion: 1,
   };
   return { root, path, state };
@@ -78,7 +77,6 @@ describe("authenticated local Host shutdown", () => {
     { root: "different-installation" },
     { host: "localhost" },
     { port: 41235 },
-    { mock: true },
   ])(
     "rejects other credentials, incarnation or configuration: %j",
     async (change) => {

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { ModelOption } from "../../shared/contracts";
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
 
 // The PTY integration owns native API semantics. This routed scenario exercises
@@ -29,7 +29,7 @@ for (const width of [1280, 390]) {
       thinkingLevel = "medium",
       hostCommands = 0;
     const changes: Array<Record<string, unknown>> = [];
-    await routeMockSnapshots(page, {
+    await routeSnapshots(page, {
       snapshot: (snapshot) => {
         if (!snapshot.active) return;
         const id = snapshot.active.sessionId;

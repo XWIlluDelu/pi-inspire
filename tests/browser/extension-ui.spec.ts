@@ -29,7 +29,7 @@ type DemoDisplay =
     };
 
 // The portable example is exercised against real Pi in the native integration test.
-// This fixture owns its matching browser questions while the isolated mock Host
+// This fixture owns its matching browser questions while the isolated test Host
 // supplies pairing, navigation and snapshots; it never opens a user extension.
 async function openExample(page: Page, theme: "light" | "dark") {
   let socket: WebSocketRoute | undefined;
@@ -63,7 +63,7 @@ async function openExample(page: Page, theme: "light" | "dark") {
     });
   });
   for (const pattern of [
-    "**/api/bootstrap",
+    "**/api/bootstrap**",
     "**/api/snapshot**",
     "**/api/sessions/open",
   ]) {
@@ -99,6 +99,14 @@ async function openExample(page: Page, theme: "light" | "dark") {
   const createdSnapshot: ActiveSnapshot = await created.json();
   expect(createdSnapshot.active?.sessionId).toBeTruthy();
   sessionId = createdSnapshot.active!.sessionId;
+  // API creation does not change this browser's saved selection. Restore the
+  // fixture's own session, as openEventSession does for live-event readers.
+  await page.evaluate((sessionId) => {
+    sessionStorage.setItem(
+      "inspire:workbench:v1:last-session",
+      JSON.stringify({ sessionId }),
+    );
+  }, sessionId);
   const reload = async () => {
     const previousSocket = socket;
     await page.reload();

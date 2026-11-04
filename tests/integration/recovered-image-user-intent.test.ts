@@ -60,7 +60,6 @@ describe("recovered images retain later user intent", () => {
             throw new Error("unused");
           },
         },
-        mock: true,
         version: "test",
         piVersion: "1.3.0",
       });

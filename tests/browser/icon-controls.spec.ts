@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { activityReadingMessages } from "../web/fixtures/activity-reading";
-import { openMockEventSession } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openEventSession } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "touch icon controls" : "pointer icon controls", () => {
@@ -10,7 +10,7 @@ for (const touch of [false, true]) {
     test("compact actions retain their declared square glyph and center", async ({
       page,
     }) => {
-      const emit = await openMockEventSession(
+      const emit = await openEventSession(
         page,
         "Compact icon geometry",
         emptyToolPresentationConfiguration(),
@@ -114,7 +114,7 @@ for (const touch of [false, true]) {
     }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await pairedPage(page);
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );

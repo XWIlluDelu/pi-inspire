@@ -1,6 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
-import { openMockSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  pairAndOpen,
+} from "./support/navigation";
 
 // The same deferred boundary is served as a source module by Vite and as a
 // hashed chunk by a packaged Host.
@@ -178,8 +182,8 @@ for (const width of [390, 768]) {
   }) => {
     await page.setViewportSize({ width, height: 844 });
     await pairedPage(page);
-    // Use an existing session so History can fetch real bounded mock data.
-    await openMockSession(page, /Review extension event lifecycle/);
+    // Use an existing session so History can fetch real bounded saved data.
+    await openFixtureSession(page, /Review extension event lifecycle/);
     const release = await holdRequests(page, contextModule);
     try {
       await page
@@ -273,7 +277,7 @@ test("Context deferred failure preserves its shell, focus and recovery", async (
   page,
 }) => {
   await page.setViewportSize({ width: 768, height: 844 });
-  await pairedPage(page);
+  await pairAndOpen(page);
   const pattern = contextModule;
   const release = await holdRequests(page, pattern, "abort");
   const toggle = page.getByRole("button", { name: "Toggle resources panel" });

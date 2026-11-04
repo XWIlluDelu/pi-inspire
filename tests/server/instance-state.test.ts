@@ -62,7 +62,6 @@ function state(port = 4587): InstanceState {
     token: "test-token-with-sufficient-entropy",
     startedAt: new Date().toISOString(),
     processStartTime: "test-process-start",
-    mock: false,
   };
 }
 
@@ -174,9 +173,7 @@ describe("Inspire instance state", () => {
       }
       response.setHeader("Content-Type", "application/json");
       response.end(
-        JSON.stringify(
-          control.reply(grant, { appName: "inspire", mock: false }),
-        ),
+        JSON.stringify(control.reply(grant, { appName: "inspire" })),
       );
     });
     servers.push(server);
@@ -196,17 +193,10 @@ describe("Inspire instance state", () => {
     await expect(
       inspectInstance(
         path,
-        { root: value.root, host: value.host, port: value.port, mock: false },
+        { root: value.root, host: value.host, port: value.port },
         { processMarker },
       ),
     ).resolves.toMatchObject({ kind: "healthy", state: value });
-    await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port, mock: true },
-        { processMarker },
-      ),
-    ).resolves.toMatchObject({ kind: "mode-conflict" });
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
     servers.splice(servers.indexOf(server), 1);

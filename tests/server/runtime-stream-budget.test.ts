@@ -28,7 +28,7 @@ function setup(incremental = true) {
   });
   slot.ready = true;
   const ownership = new RuntimePersistenceOwnershipController(
-    { readNewSessionEntries: async () => [] },
+    { promptFileName: () => null, readNewSessionEntries: async () => [] },
     {} as DiagnosticLogger,
   );
   let forwarded: Record<string, unknown> = {};
@@ -36,7 +36,7 @@ function setup(incremental = true) {
   const events = new RuntimeEventController({
     updateBash: () => false,
     selectedSessionId: () => slot.id,
-    recordPersistenceEvent: () => {},
+    recordPersistenceEvent: () => undefined,
     activeAssistantOverlayMessage: (owner) =>
       ownership.activeAssistantOverlayMessage(owner),
     updateOverlay: (owner, message, phase, delta) =>
