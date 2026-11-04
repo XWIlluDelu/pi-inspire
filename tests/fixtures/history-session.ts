@@ -1,25 +1,15 @@
 import { resolve } from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
-export const HISTORY_FIXTURE_SESSION_ID = "mock-calibration-history";
+export const HISTORY_FIXTURE_SESSION_ID = "fixture-calibration-history";
 const timestamp = "2026-10-01T10:00:00.000Z";
-const historyImage = process.env.INSPIRE_MOCK_HISTORY_IMAGE
-  ? {
-      type: "image",
-      mimeType: "image/png",
-      data: process.env.INSPIRE_MOCK_HISTORY_IMAGE,
-    }
-  : {
-      type: "image",
-      mimeType: "image/gif",
-      data: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-    };
 const response = (text: string) => ({
   role: "assistant",
   content: [{ type: "text", text }],
   timestamp: 1,
-  provider: "fixture",
-  model: "fixture",
+  api: "openai-completions",
+  provider: "workbench",
+  model: "offline",
   stopReason: "stop",
   usage: {
     input: 0,
@@ -31,9 +21,18 @@ const response = (text: string) => ({
   },
 });
 
-/** One retained mock conversation, including a long old response, an alternate
- * route, and a tool-heavy current turn. Native semantics use isolated Pi tests. */
-export function historyFixtureEntries(): SessionEntry[] {
+/** Saved history with a long response, alternate branch, images and tool results. */
+export function historyFixtureEntries(
+  workspace = "output/playwright/workspace",
+  image?: string,
+): SessionEntry[] {
+  const historyImage = image
+    ? { type: "image", mimeType: "image/png", data: image }
+    : {
+        type: "image",
+        mimeType: "image/gif",
+        data: "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+      };
   const entries: SessionEntry[] = [];
   let parentId: string | null = null;
   const append = (id: string, message: Record<string, unknown>) => {
@@ -107,11 +106,7 @@ export function historyFixtureEntries(): SessionEntry[] {
       excludeFromContext,
       ...(!excludeFromContext
         ? {
-            fullOutputPath: resolve(
-              process.env.INSPIRE_MOCK_WORKSPACE ??
-                "output/playwright/workspace",
-              "native-shell.log",
-            ),
+            fullOutputPath: resolve(workspace, "native-shell.log"),
           }
         : {}),
       timestamp: 1,
@@ -151,24 +146,4 @@ export function historyFixtureEntries(): SessionEntry[] {
     ),
   );
   return entries;
-}
-
-export function historyFixtureMessages(): unknown[] {
-  return historyFixtureEntries()
-    .filter(
-      (entry) =>
-        entry.type === "message" &&
-        (entry.id === "history-u-599" ||
-          entry.id === "history-latest" ||
-          entry.id === "history-shell-included" ||
-          entry.id === "history-shell-excluded" ||
-          entry.id === "history-tool-call-69" ||
-          entry.id === "history-tool-result-69"),
-    )
-    .map((entry) => ({
-      ...(entry as Extract<SessionEntry, { type: "message" }>).message,
-      entryId: entry.id,
-      __inspireEntryId: entry.id,
-      __inspireMessageId: `${entry.id}:0`,
-    }));
 }

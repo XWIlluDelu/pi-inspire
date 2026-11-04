@@ -1,4 +1,3 @@
-import { hostRequest } from "./host-request";
 import { expect, type Page, type WebSocketRoute } from "@playwright/test";
 import type {
   ActiveSnapshot,
@@ -6,6 +5,7 @@ import type {
 } from "../../../shared/contracts";
 import type { ToolPresentationConfiguration } from "../../../shared/tool-presentation-config";
 import { browserWorkspace } from "../fixtures/workspace.mjs";
+import { hostRequest } from "./host-request";
 import { pairedPage } from "./navigation";
 
 type SnapshotEvent = {
@@ -15,8 +15,8 @@ type SnapshotEvent = {
 };
 
 // Keep HTTP bootstrap/open/recovery and live snapshots consistent. Fixtures own
-// their domain state; this helper only owns the mock Host's transport envelopes.
-export async function routeMockSnapshots(
+// their domain state; this helper only owns the Host's transport envelopes.
+export async function routeSnapshots(
   page: Page,
   options: {
     snapshot?: (snapshot: ActiveSnapshot) => void;
@@ -65,14 +65,14 @@ export async function routeMockSnapshots(
 
 // Tool/custom-message presentations both need an empty owned session and a
 // synchronized live event stream, not the Host selection left by another test.
-export async function openMockEventSession(
+export async function openEventSession(
   page: Page,
   name: string,
   toolPresentations: ToolPresentationConfiguration,
   preferences: Record<string, unknown>,
 ) {
   let sessionId: string | null = null;
-  const transport = await routeMockSnapshots(page, {
+  const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       Object.assign(body.preferences, preferences);
       body.toolPresentations = toolPresentations;
@@ -90,6 +90,14 @@ export async function openMockEventSession(
   expect(created.ok()).toBe(true);
   const createdSnapshot: ActiveSnapshot = await created.json();
   const createdSessionId = createdSnapshot.active!.sessionId;
+  // This fixture creates outside the browser. Match its persisted selection
+  // before reload rather than relying on the Host's process-global selection.
+  await page.evaluate((sessionId) => {
+    sessionStorage.setItem(
+      "inspire:workbench:v1:last-session",
+      JSON.stringify({ sessionId }),
+    );
+  }, createdSessionId);
   sessionId = null;
   await page.reload();
   await expect(

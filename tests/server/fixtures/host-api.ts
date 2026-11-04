@@ -9,7 +9,8 @@ import { WebSocket } from "ws";
 import { createInspireServer } from "../../../server/app.js";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type { GitInspectionLike } from "../../../server/git-inspection.js";
-import { MockCatalog, MockRuntime } from "../../../server/mock.js";
+import type { RuntimeLike } from "../../../server/runtime.js";
+import { workbenchFixture } from "../../fixtures/workbench.js";
 import { PreferencesStore } from "../../../server/preferences.js";
 import { ResourceStore } from "../../../server/resources.js";
 import { ToolPresentationConfigStore } from "../../../server/tool-presentation-config.js";
@@ -109,7 +110,7 @@ export async function hostApiFixture(
     websocketHeartbeatIntervalMs?: number;
     promptObservationWindowMs?: number;
     runtime?: Parameters<typeof createInspireServer>[0]["runtime"] &
-      Pick<MockRuntime, "emit">;
+      Pick<import("node:events").EventEmitter, "emit">;
     distDir?: string;
     staticAssetCacheDirs?: string[];
   } = {},
@@ -117,9 +118,21 @@ export async function hostApiFixture(
   const temporary = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-test-")),
   );
+  const previousEnvironment = {
+    agent: process.env.PI_CODING_AGENT_DIR,
+    sessions: process.env.PI_CODING_AGENT_SESSION_DIR,
+  };
   const resources = new ResourceStore();
   const attachments = new AttachmentStore(join(temporary, "uploads"));
-  const runtime = options.runtime ?? new MockRuntime({ attachments });
+  const workbench = await workbenchFixture(join(temporary, ".host"), {
+    attachments,
+    rich: false,
+  });
+  process.env.PI_CODING_AGENT_DIR = workbench.agent;
+  process.env.PI_CODING_AGENT_SESSION_DIR = workbench.sessions;
+  const runtime: RuntimeLike &
+    Pick<import("node:events").EventEmitter, "emit"> =
+    options.runtime ?? workbench.runtime;
   const git: GitInspectionLike = {
     status: vi.fn(async () => ({ kind: "not-repository" as const })),
     diff: vi.fn(async (_cwd, pathId, side) => ({
@@ -138,7 +151,7 @@ export async function hostApiFixture(
   const application = createInspireServer({
     token,
     runtime,
-    catalog: new MockCatalog(),
+    catalog: workbench.catalog,
     attachments,
     preferences: new PreferencesStore(join(temporary, "preferences.json")),
     toolPresentations: new ToolPresentationConfigStore(
@@ -146,7 +159,6 @@ export async function hostApiFixture(
     ),
     resources,
     git,
-    mock: true,
     version: "0.1.0-test",
     piVersion: "0.80.10",
     updateChecker: {
@@ -207,6 +219,9 @@ export async function hostApiFixture(
   }
   return {
     temporary,
+    previousEnvironment,
+    cwd: workbench.cwd,
+    catalog: workbench.catalog,
     resources,
     attachments,
     runtime,
@@ -223,5 +238,12 @@ export async function closeHostApiFixture(
   fixture: Awaited<ReturnType<typeof hostApiFixture>>,
 ) {
   await fixture.application.close();
+  for (const [key, value] of Object.entries({
+    PI_CODING_AGENT_DIR: fixture.previousEnvironment.agent,
+    PI_CODING_AGENT_SESSION_DIR: fixture.previousEnvironment.sessions,
+  })) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   await rm(fixture.temporary, { recursive: true, force: true });
 }

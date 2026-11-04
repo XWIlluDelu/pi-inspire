@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import type { Plugin } from "vite";
 
@@ -19,7 +19,7 @@ interface PackageNotice {
 const projectRoot = resolve(import.meta.dirname, "..");
 const licenseOverrides = new Map<string, string>([
   [
-    "@earendil-works/pi-tui@1.3.0",
+    "@earendil-works/pi-tui@1.5.0",
     resolve(projectRoot, "scripts/licenses/earendil-works-pi-MIT.txt"),
   ],
   [

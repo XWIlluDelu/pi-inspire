@@ -76,14 +76,9 @@ function validState(value) {
       typeof value.startedAt === "string" &&
       typeof value.processStartTime === "string" &&
       value.processStartTime.length > 0 &&
-      typeof value.mock === "boolean" &&
       (value.shutdownControlVersion === undefined || value.shutdownControlVersion === 1) &&
       (value.httpControlVersion === undefined || value.httpControlVersion === 1),
   );
-}
-
-function modeMatches(state, expected) {
-  return expected.mock === undefined || state.mock === expected.mock;
 }
 
 async function readState(path) {
@@ -127,8 +122,7 @@ export async function removeInstanceState(path, owner) {
     state.root === owner.root &&
     state.host === owner.host &&
     state.port === owner.port &&
-    state.startedAt === owner.startedAt &&
-    state.mock === owner.mock
+    state.startedAt === owner.startedAt
   )
     await rm(path, { force: true });
 }
@@ -483,8 +477,7 @@ export async function inspectInstance(path, expected, options = {}) {
     {},
     options.healthTimeoutMs ?? 1_500,
   );
-  if (readiness?.appName === "inspire" && readiness.mock === state.mock) {
-    if (!modeMatches(state, expected)) return { kind: "mode-conflict", state };
+  if (readiness?.appName === "inspire") {
     return { kind: "healthy", state, url: instanceUrl(state) };
   }
 
@@ -605,14 +598,13 @@ export async function portAvailable(host, port) {
 }
 
 async function cli() {
-  const [command, path, root, host, portText, mockText] = process.argv.slice(2);
+  const [command, path, root, host, portText] = process.argv.slice(2);
   if (!command || !path || !root || !host || !portText) process.exit(64);
   const port = Number.parseInt(portText, 10);
   const expected = {
     root,
     host,
     port,
-    mock: mockText === undefined ? undefined : mockText === "1",
   };
   const processMarker = fileURLToPath(import.meta.url).includes(
     `${join("build", "server")}`,
@@ -629,7 +621,6 @@ async function cli() {
     // Inspect is observational. A launcher that owns the instance lock may
     // replace a stale publication; this standalone probe must not race it.
     if (result.kind === "unavailable") process.exitCode = 4;
-    else if (result.kind === "mode-conflict") process.exitCode = 5;
     else process.exitCode = 3;
     return;
   }

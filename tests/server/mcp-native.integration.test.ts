@@ -11,12 +11,17 @@ import { ProjectTrustStore, piInstallation } from "../../server/pi-runtime.js";
 import type { McpConfigEdit } from "../../shared/mcp.js";
 import { nativePiWorkspace } from "./fixtures/native-pi.js";
 
-it("Pi loads saved CIMD, dynamic and pre-registered OAuth configurations after partial edits", async () => {
+it("Pi loads saved automatic, CIMD, dynamic and pre-registered OAuth configurations after partial edits", async () => {
   const workspace = await nativePiWorkspace("inspire-mcp-oauth-", {});
   const { root, agent, cwd } = workspace;
   try {
     const service = new McpConfigService(agent);
     const variants = {
+      automatic: {
+        clientRegistration: "auto" as const,
+        clientName: "Automatic client",
+        callbackUrl: "http://[::1]/custom-callback",
+      },
       cimd: {
         clientRegistration: "cimd" as const,
         callbackUrl: "http://localhost:8765/callback",
@@ -217,100 +222,94 @@ it("Pi consumes saved MCP files with native trust/precedence while its existing 
     expect(JSON.stringify(trusted)).toContain("project");
     expect(initializations).toBe(2);
 
-    // Pi 1.1 adds native policy-only project overrides; Pi 1.0 requires full entries.
-    const [major, minor] = piInstallation.version.split(".").map(Number);
-    if (major! > 1 || (major === 1 && minor! >= 1)) {
-      const project = join(cwd, ".pi/mcp.json");
-      await rm(project);
-      expect((await service.read(cwd)).files[1]!.entries).toEqual([]);
-      const userBefore = await readFile(join(agent, "mcp.json"), "utf8");
-      await edit({
-        scope: "project",
-        name: "remote",
-        operation: "add",
-        values: { enabled: false },
-      });
-      expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
-        mcpServers: { remote: { enabled: false } },
-      });
-      const created = await list();
-      expect(created.errors).toEqual([]);
-      expect(
-        created.servers.find(
-          (entry: { name: string }) => entry.name === "remote",
-        ),
-      ).toMatchObject({
-        enabled: false,
-        source: join(agent, "mcp.json"),
-        override: project,
-        state: "disabled",
-      });
-      expect(initializations).toBe(2);
-      expect((await service.read(cwd)).files[1]!.entries[0]).toMatchObject({
-        policyOnly: true,
-        transport: null,
-        headerKeys: [],
-        urlConfigured: false,
-      });
-      await edit({
-        scope: "project",
-        name: "remote",
-        operation: "update",
-        values: {
+    const project = join(cwd, ".pi/mcp.json");
+    await rm(project);
+    expect((await service.read(cwd)).files[1]!.entries).toEqual([]);
+    const userBefore = await readFile(join(agent, "mcp.json"), "utf8");
+    await edit({
+      scope: "project",
+      name: "remote",
+      operation: "add",
+      values: { enabled: false },
+    });
+    expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
+      mcpServers: { remote: { enabled: false } },
+    });
+    const created = await list();
+    expect(created.errors).toEqual([]);
+    expect(
+      created.servers.find(
+        (entry: { name: string }) => entry.name === "remote",
+      ),
+    ).toMatchObject({
+      enabled: false,
+      source: join(agent, "mcp.json"),
+      override: project,
+      state: "disabled",
+    });
+    expect(initializations).toBe(2);
+    expect((await service.read(cwd)).files[1]!.entries[0]).toMatchObject({
+      policyOnly: true,
+      transport: null,
+      headerKeys: [],
+      urlConfigured: false,
+    });
+    await edit({
+      scope: "project",
+      name: "remote",
+      operation: "update",
+      values: {
+        enabled: true,
+        exposure: "hidden",
+        toolExposure: { read_fixture: "direct", "*": "hidden" },
+      },
+    });
+    const inherited = await list();
+    expect(inherited.errors).toEqual([]);
+    expect(
+      inherited.servers.find(
+        (entry: { name: string }) => entry.name === "remote",
+      ),
+    ).toMatchObject({
+      enabled: true,
+      exposure: "hidden",
+      source: join(agent, "mcp.json"),
+      override: project,
+      state: "connected",
+    });
+    expect(initializations).toBe(3);
+    expect(authorizations).toEqual([
+      "Bearer isolated-mcp-secret",
+      "Bearer isolated-mcp-secret",
+      "Bearer isolated-mcp-secret",
+    ]);
+    expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
+      mcpServers: {
+        remote: {
           enabled: true,
           exposure: "hidden",
           toolExposure: { read_fixture: "direct", "*": "hidden" },
         },
-      });
-      const inherited = await list();
-      expect(inherited.errors).toEqual([]);
-      expect(
-        inherited.servers.find(
-          (entry: { name: string }) => entry.name === "remote",
-        ),
-      ).toMatchObject({
-        enabled: true,
-        exposure: "hidden",
-        source: join(agent, "mcp.json"),
-        override: project,
-        state: "connected",
-      });
-      expect(initializations).toBe(3);
-      expect(authorizations).toEqual([
-        "Bearer isolated-mcp-secret",
-        "Bearer isolated-mcp-secret",
-        "Bearer isolated-mcp-secret",
-      ]);
-      expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
-        mcpServers: {
-          remote: {
-            enabled: true,
-            exposure: "hidden",
-            toolExposure: { read_fixture: "direct", "*": "hidden" },
-          },
-        },
-      });
-      await edit({ scope: "project", name: "remote", operation: "remove" });
-      const restored = await list();
-      expect(restored.errors).toEqual([]);
-      const remote = restored.servers.find(
-        (entry: { name: string }) => entry.name === "remote",
-      );
-      expect(remote).toMatchObject({
-        enabled: true,
-        exposure: "direct",
-        source: join(agent, "mcp.json"),
-        state: "connected",
-      });
-      expect(remote.override).toBeUndefined();
-      expect(initializations).toBe(4);
-      expect(authorizations[3]).toBe("Bearer isolated-mcp-secret");
-      expect(JSON.parse(await readFile(project, "utf8")).mcpServers).toEqual(
-        {},
-      );
-      expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(userBefore);
-      expect((await command("/mcp")).notifications).toBe(before.notifications);
-    }
+      },
+    });
+    await edit({ scope: "project", name: "remote", operation: "remove" });
+    const restored = await list();
+    expect(restored.errors).toEqual([]);
+    const remote = restored.servers.find(
+      (entry: { name: string }) => entry.name === "remote",
+    );
+    expect(remote).toMatchObject({
+      enabled: true,
+      exposure: "direct",
+      source: join(agent, "mcp.json"),
+      state: "connected",
+    });
+    expect(remote.override).toBeUndefined();
+    expect(initializations).toBe(4);
+    expect(authorizations[3]).toBe("Bearer isolated-mcp-secret");
+    expect(JSON.parse(await readFile(project, "utf8")).mcpServers).toEqual({});
+    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(userBefore);
+    expect((await command("/mcp")).notifications).toBe(before.notifications);
   } finally {
     await rpc.stop();
     server.closeAllConnections();

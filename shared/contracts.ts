@@ -1314,7 +1314,6 @@ export interface BootstrapResponse {
   snapshotDigest: string;
   version: string;
   piVersion: string;
-  mock: boolean;
   /** Host-owned update observations and notice acknowledgement shared by every
    * authenticated view of this deployment. */
   updateStatus: HostUpdateStatus;

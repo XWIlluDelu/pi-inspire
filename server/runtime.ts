@@ -539,11 +539,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       new PiRpcProcess(options),
     private readonly openSessionProjection: (
       session: SessionRecord,
-    ) => Promise<SessionProjectionView> = SessionProjection.open,
+    ) => Promise<SessionProjectionView> = (session) =>
+      SessionProjection.open(session, undefined, (path) =>
+        attachments.promptFileName(path),
+      ),
     private readonly branchBridgeTimeoutMs: number | null = null,
     private readonly openForkProjection: (
       session: SessionRecord,
-    ) => Promise<SessionProjectionView> = SessionProjection.open,
+    ) => Promise<SessionProjectionView> = (session) =>
+      SessionProjection.open(session, undefined, (path) =>
+        attachments.promptFileName(path),
+      ),
     private readonly deleteSessionRecord: DeleteSessionRecord = (
       session,
       version,
@@ -555,6 +561,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     super();
     this.persistenceOwnership = new RuntimePersistenceOwnershipController(
       {
+        promptFileName: (path) => this.attachments.promptFileName(path),
         readNewSessionEntries: (slot, rpc) =>
           this.readNewSessionEntries(slot, rpc),
       },
@@ -725,24 +732,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
         workerOptions: (cwd, args, bridge) =>
           this.workerOptions(cwd, args, bridge),
-        newBridgeIdentity,
-        attachProcess: (slot, rpc) => this.processRegistry.attach(slot, rpc),
-        detachProcess: (rpc) => this.processRegistry.detach(rpc),
-        retireBash: (slot, rpc) => this.bash.retire(slot, rpc),
         reconcile: (slot, force, startupAttestation) =>
           this.reconcileSlot(slot, force, startupAttestation),
-        clearPendingExtensionUi: (slot, reason) =>
-          this.extensionUi.clear(slot, reason),
-        clearWriterBaseline: (slot) =>
-          this.projectionCoordinator.clearWriterBaseline(slot),
-        captureWriterBaseline: (slot) =>
-          this.projectionCoordinator.captureWriterBaseline(slot),
-        writerBaselineMatches: (slot) =>
-          this.projectionCoordinator.writerBaselineMatches(slot),
-        writerOwnershipActive: (slot) =>
-          this.projectionCoordinator.writerOwnershipActive(slot),
-        clearPartialPersistence: (slot) =>
-          this.projectionCoordinator.clearPartialPersistence(slot),
         setProjectionConflict: (slot, kind, message, diagnosticFields) =>
           this.setProjectionConflict(slot, kind, message, diagnosticFields),
         renewView: (slot) => this.renewView(slot),
@@ -754,7 +745,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.logRuntimeError(sessionId, error, event),
       },
       diagnostics,
-      this.startupAttestor,
+      {
+        startupAttestor: this.startupAttestor,
+        processRegistry: this.processRegistry,
+        projectionCoordinator: this.projectionCoordinator,
+        extensionUi: this.extensionUi,
+        bash: this.bash,
+      },
     );
     this.workerPool = new RuntimeWorkerPool({
       isClosing: () => this.closing,
@@ -1539,8 +1536,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         error instanceof PiRpcCancelledError &&
         (error.command === "prompt" || error.command === "bash")
       ) {
-        if (error.stopped) await error.stopped;
-        await this.reconcileSlot(slot, true);
+        try {
+          if (error.stopped) await error.stopped;
+          await this.reconcileSlot(slot, true);
+        } catch (cleanupError) {
+          // Cancellation does not prove that Pi rejected the dispatched input.
+          // Failed retirement keeps its writer fence; failed reconciliation
+          // must likewise preserve uncertainty instead of inviting a resend.
+          this.logRuntimeError(
+            slot.id,
+            cleanupError,
+            "cancelled_persistence_cleanup_failed",
+          );
+        }
         if (error.command === "prompt") {
           slot.runState = slot.conflict ? "conflict" : "aborted";
           this.emitSlotEvent(slot, { type: "prompt_cancelled" });
@@ -2661,17 +2669,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.assertNotClosing();
       let projection: SessionProjectionView;
       if (slot.sessionPath) {
-        const pendingProjection = await SessionProjection.openPending({
-          id: sessionId,
-          cwd,
-          path: slot.sessionPath,
-          name,
-          created: new Date(),
-          modified: new Date(),
-          messageCount: 0,
-          firstMessage: "",
-          source: null,
-        });
+        const pendingProjection = await SessionProjection.openPending(
+          {
+            id: sessionId,
+            cwd,
+            path: slot.sessionPath,
+            name,
+            created: new Date(),
+            modified: new Date(),
+            messageCount: 0,
+            firstMessage: "",
+            source: null,
+          },
+          undefined,
+          (path) => this.attachments.promptFileName(path),
+        );
         await pendingProjection.suspendReconciliation();
         try {
           this.assertNotClosing();
@@ -3516,6 +3528,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.requireIdleBranchSlot(slot, request.revision);
       const ready = await this.ensureFreshWriterInsideGate(slot);
       this.requireIdleBranchSlot(slot, request.revision);
+      const rpc = ready.process;
       const projection = ready.projection;
       const bridge = ready.bridge;
       if (!projection || !bridge)
@@ -3569,7 +3582,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         bridgeRequest,
         BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
       );
-      const promptFence = ready.process
+      const promptFence = rpc
         .request(
           { type: "prompt", message: `/${bridge.command} ${payload}` },
           this.branchBridgeTimeoutMs,
@@ -3632,7 +3645,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const result = resultOutcome.value;
       let verified: { entries?: unknown[]; leafId?: unknown };
       try {
-        verified = await ready.process.request({
+        verified = await rpc.request({
           type: "get_entries",
           since: tail,
         });
@@ -3657,7 +3670,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         (!result.summaryId || request.summarize) &&
         branchDeltaMatches(result, delta, navigationTarget, beforeLeaf);
       await this.reconcileSlot(slot, true);
-      if (slot.pendingBranchBridge === pending) slot.pendingBranchBridge = null;
       if (
         slot.conflict ||
         (delta.length === 0
@@ -3672,6 +3684,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           slot,
           "Branch navigation verification failed; the worker was stopped and disk state reconciled",
         );
+      // Stop and process exit retire this worker outside the mutation lane.
+      // Reconciliation must not let its finished handler recreate that lease.
+      if (
+        slot.process !== rpc ||
+        slot.bridge !== bridge ||
+        slot.pendingBranchBridge !== pending
+      )
+        throw requestError(
+          "Branch navigation worker stopped before the result could be applied",
+          409,
+        );
+      slot.pendingBranchBridge = null;
       if (result.cancelled) {
         if (result.effectiveLeaf !== beforeLeaf)
           return this.failUnknownBranchOutcome(

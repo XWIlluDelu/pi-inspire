@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import {
   access,
   chmod,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -35,6 +37,36 @@ const children: ChildProcess[] = [];
 const temporaryDirectories: string[] = [];
 const terminalChildren: ChildProcess[] = [];
 let activeEnvironment: NodeJS.ProcessEnv | null = null;
+/** The launcher that owns the active environment's instance. */
+let activeLauncher = launcher;
+
+/** A disposable copy of the working tree with shared dependencies, for a
+ * test whose launcher builds into its own directory. */
+async function isolatedCheckout(directory: string): Promise<string> {
+  const checkout = join(directory, "checkout");
+  const files = execFileSync(
+    "git",
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { cwd: root, encoding: "utf8" },
+  )
+    .split("\0")
+    .filter(Boolean);
+  for (const file of files) {
+    await mkdir(dirname(join(checkout, file)), { recursive: true });
+    // A tracked file deleted in the working tree is absent from the copy.
+    await copyFile(join(root, file), join(checkout, file)).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      },
+    );
+  }
+  await symlink(
+    join(root, "node_modules"),
+    join(checkout, "node_modules"),
+    "junction",
+  );
+  return checkout;
+}
 
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -146,7 +178,6 @@ esac
   const environment = { ...process.env };
   for (const key of [
     "INSPIRE_HOST",
-    "INSPIRE_MOCK",
     "INSPIRE_PORT",
     "INSPIRE_STATE_PATH",
     "INSPIRE_TOKEN",
@@ -167,9 +198,13 @@ esac
   };
 }
 
-function runLauncher(args: string[], env: NodeJS.ProcessEnv): string {
-  return execFileSync(process.execPath, [launcher, ...args], {
-    cwd: root,
+function runLauncher(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  path = launcher,
+): string {
+  return execFileSync(process.execPath, [path, ...args], {
+    cwd: dirname(path),
     env,
     encoding: "utf8",
     timeout: 30_000,
@@ -181,6 +216,7 @@ async function waitForLauncher(
   env: NodeJS.ProcessEnv,
   output: Buffer[],
   timeout = 60_000,
+  path = launcher,
 ): Promise<void> {
   const deadline = Date.now() + timeout;
   let lastStatus = "";
@@ -192,7 +228,7 @@ async function waitForLauncher(
     try {
       // Do not repeatedly spawn Node while a cold build has not published a Host.
       await access(env.INSPIRE_STATE_PATH!);
-      lastStatus = runLauncher(["status"], env);
+      lastStatus = runLauncher(["status"], env, path);
       if (lastStatus.startsWith("INSΠRE is running.")) return;
     } catch (error) {
       lastStatus = String(error);
@@ -207,13 +243,14 @@ async function waitForLauncher(
 afterEach(async () => {
   if (activeEnvironment) {
     try {
-      runLauncher(["stop"], activeEnvironment);
+      runLauncher(["stop"], activeEnvironment, activeLauncher);
     } catch {
       // The child may already have exited; cleanup below still removes only
       // this test's temporary directory.
     }
     activeEnvironment = null;
   }
+  activeLauncher = launcher;
   for (const child of children.splice(0)) {
     if (child.exitCode === null) child.kill("SIGTERM");
   }
@@ -286,7 +323,6 @@ describe("production launcher", () => {
         pid: process.pid,
         processStartTime: await processStartIdentity(process.pid),
         startedAt: new Date().toISOString(),
-        mock: false,
         ...(outcome === "legacy" ? {} : { httpControlVersion: 1 as const }),
       };
       await writeFile(statePath, JSON.stringify(state));
@@ -516,6 +552,11 @@ describe("production launcher", () => {
     const port = await freePort();
     const home = join(directory, "home");
     const env = launcherEnv(statePath, port, home);
+    // The launcher builds into its own checkout; never the shared one, whose
+    // dist/ a running Host may serve.
+    const checkout = await isolatedCheckout(directory);
+    const checkoutLauncher = join(checkout, "inspire.mjs");
+    activeLauncher = checkoutLauncher;
     // A user-exported NODE_ENV must not select an in-process terminal owner.
     env.NODE_ENV = "test";
     env.INSPIRE_TERMINAL_DAEMON_ADDRESS =
@@ -529,9 +570,9 @@ describe("production launcher", () => {
       [
         "--import",
         "tsx",
-        join(root, "server", "terminal-daemon-entry.ts"),
+        join(checkout, "server", "terminal-daemon-entry.ts"),
         "--root",
-        root,
+        checkout,
         "--host",
         "127.0.0.1",
         "--port",
@@ -543,7 +584,7 @@ describe("production launcher", () => {
         "--state-path",
         env.INSPIRE_TERMINAL_STATE_PATH,
       ],
-      { cwd: root, env, ...isolatedProcessOptions(), stdio: "ignore" },
+      { cwd: checkout, env, ...isolatedProcessOptions(), stdio: "ignore" },
     );
     terminalChildren.push(terminalChild);
     await vi.waitFor(
@@ -561,24 +602,26 @@ describe("production launcher", () => {
       },
       { timeout: 8_000 },
     );
-    expect(runLauncher(["stop"], env)).toContain(
+    expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
       "No managed INSΠRE instance is running.",
     );
-    // CI builds the browser before its parallel unit suite. Remove only this
-    // source-checkout stamp so this serial lifecycle test still proves that a
-    // stale build is rebuilt once, without competing with all Vitest workers.
+    // The copied checkout has no build stamp, so this lifecycle proves that a
+    // stale build is rebuilt once.
     // A synthetic old chunk also proves the supported build path preserves
     // the outgoing generation before Vite empties dist/assets.
     const legacyAsset = "ContextPane-launcher-old.js";
-    await mkdir(join(root, "dist", "assets"), { recursive: true });
-    await rm(join(root, "dist", ".inspire-current-assets.json"), {
+    await mkdir(join(checkout, "dist", "assets"), { recursive: true });
+    await rm(join(checkout, "dist", ".inspire-current-assets.json"), {
       force: true,
     });
-    await writeFile(join(root, "dist", "assets", legacyAsset), "old chunk\n");
-    await rm(join(root, ".inspire-build"), { force: true });
+    await writeFile(
+      join(checkout, "dist", "assets", legacyAsset),
+      "old chunk\n",
+    );
+    await rm(join(checkout, ".inspire-build"), { force: true });
     const output: Buffer[] = [];
-    const child = spawn(process.execPath, [launcher, "restart"], {
-      cwd: root,
+    const child = spawn(process.execPath, [checkoutLauncher, "restart"], {
+      cwd: checkout,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -587,17 +630,17 @@ describe("production launcher", () => {
     child.stdout?.on("data", (chunk: Buffer) => output.push(chunk));
     child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
 
-    await waitForLauncher(child, env, output, 120_000);
+    await waitForLauncher(child, env, output, 120_000, checkoutLauncher);
     const firstState = JSON.parse(await readFile(statePath, "utf8")) as {
       schemaVersion: number;
       token: string;
     };
     expect(firstState.schemaVersion).toBe(1);
-    expect(runLauncher(["wait-ready"], env)).toBe("");
+    expect(runLauncher(["wait-ready"], env, checkoutLauncher)).toBe("");
     expect(Buffer.concat(output).toString()).toContain(
       "No managed INSΠRE instance is running.",
     );
-    const cacheDirectory = defaultStaticAssetCacheDirectory(root, {
+    const cacheDirectory = defaultStaticAssetCacheDirectory(checkout, {
       environment: env,
       home,
     });
@@ -613,7 +656,7 @@ describe("production launcher", () => {
       ),
     );
     expect(cachedCopies).toContain("old chunk\n");
-    const publishedLegacyAsset = join(root, "dist", "assets", legacyAsset);
+    const publishedLegacyAsset = join(checkout, "dist", "assets", legacyAsset);
     await expect(readFile(publishedLegacyAsset, "utf8")).resolves.toBe(
       "old chunk\n",
     );
@@ -720,7 +763,7 @@ describe("production launcher", () => {
       );
     }
 
-    const stopOutput = runLauncher(["stop"], env);
+    const stopOutput = runLauncher(["stop"], env, checkoutLauncher);
     expect(stopOutput).toContain("Stopped INSΠRE process");
     const exitCode = await new Promise<number | null>((resolveExit) =>
       child.once("close", (code) => resolveExit(code)),
@@ -731,8 +774,8 @@ describe("production launcher", () => {
       code: "ENOENT",
     });
 
-    const restarted = spawn(process.execPath, [launcher, "start"], {
-      cwd: root,
+    const restarted = spawn(process.execPath, [checkoutLauncher, "start"], {
+      cwd: checkout,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -741,7 +784,13 @@ describe("production launcher", () => {
     const restartOutput: Buffer[] = [];
     restarted.stdout!.on("data", (chunk: Buffer) => restartOutput.push(chunk));
     restarted.stderr!.on("data", (chunk: Buffer) => restartOutput.push(chunk));
-    await waitForLauncher(restarted, env, restartOutput);
+    await waitForLauncher(
+      restarted,
+      env,
+      restartOutput,
+      undefined,
+      checkoutLauncher,
+    );
     const secondState = JSON.parse(await readFile(statePath, "utf8")) as {
       token: string;
     };
@@ -762,7 +811,9 @@ describe("production launcher", () => {
       { method: "DELETE", headers: mutationHeaders() },
     );
     expect(closeTerminalResponse.ok).toBe(true);
-    expect(runLauncher(["stop"], env)).toContain("Stopped INSΠRE process");
+    expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
+      "Stopped INSΠRE process",
+    );
     const restartedExit =
       restarted.exitCode ??
       (await new Promise<number | null>((resolveExit) =>

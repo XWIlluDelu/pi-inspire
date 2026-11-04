@@ -7,7 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,8 +21,6 @@ import {
   pairedBrowser,
   token,
 } from "./fixtures/host-api.js";
-
-const mockWorkspace = resolve("/home/demo/research");
 
 describe("HTTP resource and upload authority", () => {
   let temporary: Awaited<ReturnType<typeof hostApiFixture>>["temporary"];
@@ -367,7 +365,7 @@ describe("HTTP resource and upload authority", () => {
 
   it("serves only authenticated session-addressed Git status and diff inspection", async () => {
     await request(application.server)
-      .get("/api/git/status?sessionId=mock-active")
+      .get("/api/git/status?sessionId=fixture-active")
       .expect(401);
     await request(application.server)
       .get("/api/git/status?sessionId=not-open")
@@ -376,15 +374,15 @@ describe("HTTP resource and upload authority", () => {
     await request(application.server)
       .post("/api/sessions/open")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
+      .send({ id: "fixture-active" })
       .expect(200);
     const status = await request(application.server)
-      .get("/api/git/status?sessionId=mock-active")
+      .get("/api/git/status?sessionId=fixture-active")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(status.body).toEqual({ kind: "not-repository" });
     expect(git.status).toHaveBeenCalledWith(
-      mockWorkspace,
+      fixture.cwd,
       expect.any(AbortSignal),
     );
 
@@ -392,7 +390,7 @@ describe("HTTP resource and upload authority", () => {
       .post("/api/git/diff")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         pathId: "not base64!",
         side: "unstaged",
       })
@@ -401,7 +399,7 @@ describe("HTTP resource and upload authority", () => {
       .post("/api/git/diff")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         pathId: "ZmlsZS50eHQ",
         side: "working",
       })
@@ -410,14 +408,14 @@ describe("HTTP resource and upload authority", () => {
       .post("/api/git/diff")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         pathId: "ZmlsZS50eHQ",
         side: "unstaged",
       })
       .expect(200);
     expect(diff.body).toMatchObject({ kind: "empty", side: "unstaged" });
     expect(git.diff).toHaveBeenCalledWith(
-      mockWorkspace,
+      fixture.cwd,
       "ZmlsZS50eHQ",
       "unstaged",
       expect.any(AbortSignal),
@@ -435,7 +433,7 @@ describe("HTTP resource and upload authority", () => {
       await request(application.server)
         .post(`/api/git/${route}`)
         .set("Authorization", `Bearer ${token}`)
-        .send({ sessionId: "mock-active" })
+        .send({ sessionId: "fixture-active" })
         .expect(404);
     }
   });
@@ -616,7 +614,7 @@ describe("HTTP resource and upload authority", () => {
     await request(application.server)
       .post("/api/sessions/open")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
+      .send({ id: "fixture-active" })
       .expect(200);
     await request(application.server)
       .get(
@@ -636,7 +634,9 @@ describe("HTTP resource and upload authority", () => {
         .expect(200);
     }
     await request(application.server)
-      .get(`/api/resources/${resolved.body.id}/content?sessionId=mock-active`)
+      .get(
+        `/api/resources/${resolved.body.id}/content?sessionId=fixture-active`,
+      )
       .set("Authorization", `Bearer ${token}`)
       .expect(404);
   });
@@ -841,7 +841,7 @@ describe("HTTP resource and upload authority", () => {
     await request(application.server)
       .post("/api/sessions/open")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
+      .send({ id: "fixture-active" })
       .expect(200);
 
     const metadataBefore = await readdir(
@@ -883,28 +883,29 @@ describe("HTTP resource and upload authority", () => {
     }
 
     const prompt = vi.spyOn(runtime, "prompt");
-    await request(application.server)
+    const delivered = await request(application.server)
       .post("/api/prompt")
       .set("Authorization", `Bearer ${token}`)
       .send(
         promptDelivery({
-          sessionId: "mock-active",
+          sessionId: "fixture-active",
           message: "Integrate this note",
           attachmentIds: [uploaded.body.attachments[0].id],
         }),
       )
-      .expect(202, {
-        accepted: true,
-        historyEntry: {
-          text: "Integrate this note",
-          images: [],
-          files: [],
-        },
-      });
+      .expect(202);
+    expect(delivered.body).toMatchObject({
+      accepted: true,
+      historyEntry: {
+        text: "Integrate this note",
+        images: [],
+        files: [{ fileName: "notes.txt", kind: "attachment" }],
+      },
+    });
 
     expect(prompt).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         message: "Integrate this note",
         attachmentIds: [id],
       }),

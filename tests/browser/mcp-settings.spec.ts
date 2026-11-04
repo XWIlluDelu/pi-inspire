@@ -244,6 +244,16 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await settings
       .getByText("OAuth client configuration", { exact: true })
       .click();
+    const registration = settings.getByRole("combobox", {
+      name: "Client registration",
+    });
+    await expect(registration).toHaveText("Automatic (Pi default)");
+    await registration.click();
+    await page
+      .getByRole("option", { name: "Client ID or dynamic registration" })
+      .click();
+    await registration.click();
+    await page.getByRole("option", { name: "Automatic (Pi default)" }).click();
     await expect(
       settings.getByLabel("Client secret", { exact: true }),
     ).toHaveValue("");
@@ -268,6 +278,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
         clientId: "stored-client",
         clientSecret: "stored-oauth-secret",
         clientName: "Inspire fixture",
+        clientRegistration: "auto",
       },
       custom: { preserved: true },
     });

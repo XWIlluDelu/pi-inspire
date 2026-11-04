@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "Touch notices" : "Mouse notices", () => {
@@ -17,7 +17,7 @@ for (const touch of [false, true]) {
     }) => {
       await page.setViewportSize({ width: 568, height: 420 });
       let sessionId: string | null = null;
-      const transport = await routeMockSnapshots(page, {
+      const transport = await routeSnapshots(page, {
         snapshot: (snapshot) => {
           sessionId = snapshot.active?.sessionId ?? null;
         },
@@ -26,7 +26,7 @@ for (const touch of [false, true]) {
         },
       });
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       const extensionPath = "/extensions/workspace-bridge/index.ts";
       const error =
         "Cannot connect to the local service. Check that the service is running and retry. END OF DIAGNOSTIC";
@@ -120,7 +120,7 @@ for (const touch of [false, true]) {
       await expect(editor).toHaveValue(draft);
 
       // Navigation retains one feedback owner and its floating presentation.
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       await expect(stack).not.toHaveClass(/notices--inline/);
       await expect(stack).toHaveCSS("position", "fixed");
       await expect(notice).toContainText(error);
@@ -138,7 +138,7 @@ for (const touch of [false, true]) {
     }) => {
       await page.setViewportSize({ width: 1280, height: 844 });
       let sessionId: string | null = null;
-      const transport = await routeMockSnapshots(page, {
+      const transport = await routeSnapshots(page, {
         snapshot: (snapshot) => {
           sessionId = snapshot.active?.sessionId ?? null;
         },
@@ -157,7 +157,7 @@ for (const touch of [false, true]) {
         await route.fulfill({ json: { ok: true } });
       });
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       const notify = (id: string, message: string) =>
         transport.send({
           type: "extension_ui_request",
@@ -329,7 +329,7 @@ for (const touch of [false, true]) {
     }, async ({ page, context }) => {
       await page.setViewportSize({ width: 1366, height: 900 });
       let sessionId: string | null = null;
-      const transport = await routeMockSnapshots(page, {
+      const transport = await routeSnapshots(page, {
         snapshot: (snapshot) => {
           sessionId = snapshot.active?.sessionId ?? null;
         },
@@ -338,7 +338,7 @@ for (const touch of [false, true]) {
         },
       });
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       const editor = page.getByRole("textbox", {
         name: "Message",
         exact: true,

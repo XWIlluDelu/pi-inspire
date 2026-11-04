@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 import { hostRequest } from "./support/host-request";
-import { openMockSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+} from "./support/navigation";
 
 const root = resolve(
   process.env.INSPIRE_BROWSER_TEST_OUTPUT_DIR ?? "output/playwright",
@@ -425,7 +428,7 @@ test("files navigation preserves context across desktop and narrow workspaces", 
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
 
   const pane = page.getByRole("complementary", { name: "Context panel" });
@@ -458,7 +461,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const resources = page.getByRole("complementary", { name: "Context panel" });
   const search = resources.getByRole("searchbox", {

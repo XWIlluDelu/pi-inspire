@@ -1,7 +1,62 @@
 import { expect, test } from "@playwright/test";
 import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { focusRingClipping } from "./support/focus-bounds";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
+
+test("desktop sessions keep titles above metadata and preserve a saved width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
+  const nav = page.locator(".nav");
+  await expect
+    .poll(async () => (await nav.boundingBox())!.width)
+    .toBeCloseTo(240, 0);
+  const row = page.locator(".nav__row--active");
+  const title = row.locator(".nav__row-name");
+  const meta = row.locator(".nav__row-meta");
+  const actions = row.locator(".nav__row-actions");
+  const titleBox = (await title.boundingBox())!;
+  const metaBox = (await meta.boundingBox())!;
+  expect(metaBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+  expect((await row.boundingBox())!.height).toBeLessThanOrEqual(46);
+  expect(
+    await meta.evaluate((el) =>
+      Number.parseFloat(getComputedStyle(el).fontSize),
+    ),
+  ).toBeLessThan(
+    await title.evaluate((el) =>
+      Number.parseFloat(getComputedStyle(el).fontSize),
+    ),
+  );
+  await page.mouse.move(1000, 300);
+  await expect(actions).toHaveCSS("opacity", "0");
+  await row.hover();
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(meta).toHaveCSS("opacity", "1");
+  expect((await title.boundingBox())!.width).toBeCloseTo(titleBox.width, 2);
+  for (const action of await actions.getByRole("button").all()) {
+    const box = (await action.boundingBox())!;
+    // The larger hit area can use the line gap; its visible mark stays below
+    // the title rather than consuming the title's horizontal space.
+    const icon = (await action.locator("svg").boundingBox())!;
+    expect(icon.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+    expect(box.width).toBeGreaterThanOrEqual(24);
+  }
+  await page.mouse.move(1000, 300);
+  await row.locator(".nav__row-main").focus();
+  await page.keyboard.press("Tab");
+  await expect(actions.getByRole("button").first()).toBeFocused();
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(meta).toHaveCSS("opacity", "1");
+  await page.evaluate(() => localStorage.setItem("inspire.nav-width", "360"));
+  await page.reload();
+  await expect
+    .poll(async () => (await nav.boundingBox())!.width)
+    .toBeCloseTo(360, 0);
+});
 
 test.describe("cross-project touch rows", () => {
   test.use({ hasTouch: true, isMobile: true });
@@ -13,7 +68,7 @@ test.describe("cross-project touch rows", () => {
       const response = await route.fetch();
       const body = await response.json();
       Object.assign(body.preferences, {
-        pinnedSessionIds: ["mock-history"],
+        pinnedSessionIds: ["fixture-history"],
         hiddenSessionIds: [],
         hiddenProjectCwds: [],
       });
@@ -105,7 +160,7 @@ test("hiding a session removes it from Welcome Recent as well as the normal list
     await route.fulfill({ json: preferences });
   });
   await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   const row = page.locator(".nav__row--active");
   await row.hover();
   await row
@@ -260,7 +315,7 @@ for (const touch of [false, true]) {
       });
       if ((await group.getAttribute("aria-expanded")) !== "true")
         await group.click();
-      await openMockSession(page, /Geometry session/);
+      await openFixtureSession(page, /Geometry session/);
       await page.addStyleTag({
         content:
           "*, *::before, *::after { transition: none !important; animation: none !important; }",

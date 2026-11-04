@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
 import { testPiCommand } from "./test-pi-command.mjs";
@@ -19,6 +19,7 @@ const instanceStatePath = resolve(output, "instance.json");
 const stopRequestPath = resolve(output, "stop-request.json");
 const diagnosticsPath = resolve(output, "diagnostics.jsonl");
 const home = resolve(output, "fixture-home");
+await rm(home, { recursive: true, force: true });
 await mkdir(home, { recursive: true, mode: 0o700 });
 await writeFile(
   resolve(home, ".zshrc"),
@@ -56,20 +57,20 @@ await writeFile(
   `${Array.from({ length: 2500 }, (_, index) => `native shell line ${index + 1}`).join("\n")}\nCOMPLETE_NATIVE_SHELL_LOG_END\n`,
 );
 
-const historyImage = (
-  await readFile(
-    resolve(
-      browserWorkspace,
-      "tests/browser/fixtures/file-previews/training curve.png",
-    ),
-  )
-).toString("base64");
 const child = spawn(
   process.execPath,
-  [resolve("node_modules", "tsx", "dist", "cli.mjs"), "server/index.ts"],
+  [
+    resolve("node_modules", "tsx", "dist", "cli.mjs"),
+    "tests/browser/fixtures/start-host.ts",
+  ],
   {
     env: {
-      ...process.env,
+      ...Object.fromEntries(
+        Object.entries(process.env).filter(
+          ([key]) => !key.startsWith("INSPIRE_") && !key.startsWith("PI_"),
+        ),
+      ),
+      INSPIRE_OPEN: "0",
       // Shell startup, terminal settings/history and optional SDK discovery
       // belong to this fixture, never to the developer's user profile.
       HOME: home,
@@ -85,10 +86,8 @@ const child = spawn(
       ),
       INSPIRE_TOKEN: "inspire-browser-test-token",
       INSPIRE_PI_COMMAND: testPiCommand,
-      INSPIRE_MOCK: "1",
-      INSPIRE_MOCK_WORKSPACE: browserWorkspace,
-      INSPIRE_MOCK_HISTORY_IMAGE: historyImage,
-      INSPIRE_MOCK_STREAM_INTERVAL_MS: "250",
+      INSPIRE_BROWSER_FIXTURE_ROOT: home,
+      INSPIRE_BROWSER_FIXTURE_WORKSPACE: browserWorkspace,
       INSPIRE_PREFERENCES_PATH: preferencesPath,
       INSPIRE_STATE_PATH: instanceStatePath,
       INSPIRE_STOP_REQUEST_PATH: stopRequestPath,

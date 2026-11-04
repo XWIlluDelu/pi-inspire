@@ -90,7 +90,7 @@ writeFileSync(process.env.ENV_PROBE_OUTPUT, JSON.stringify({
 }
 
 describe("packaged launcher environment boundary", () => {
-  it.each(["mock", "terminal-daemon"])(
+  it.each(["host", "terminal-daemon"])(
     "does not inject NODE_ENV into %s",
     async (mode) => {
       const f = await fixture();
@@ -118,7 +118,7 @@ describe("packaged launcher environment boundary", () => {
         join(f.root, ".bashrc"),
         'export ENV_PROBE=shell-export\nexport PATH="$HOME/.local/bin:$PATH"\n',
       );
-      for (const mode of ["mock", "terminal-daemon"]) {
+      for (const mode of ["host", "terminal-daemon"]) {
         const result = await f.launch(mode);
         expect(result).toMatchObject({
           nodeEnv: null,

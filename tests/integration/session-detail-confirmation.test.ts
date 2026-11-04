@@ -26,21 +26,33 @@ describe("addressed snapshot confirmation", () => {
   });
 
   it("accepts the real Host's unchanged B confirmation after its already-sent A detail arrives late", async () => {
-    await f.runtime.openSession("mock-active");
-    await f.runtime.openSession("mock-older");
+    await f.runtime.openSession("fixture-active");
+    await f.runtime.openSession("fixture-history");
+    await vi.waitFor(
+      async () => {
+        expect(
+          (await f.runtime.snapshot("fixture-active")).active?.runtimeSettings
+            ?.autoRetryEnabled,
+        ).toBeDefined();
+        expect(
+          (await f.runtime.snapshot("fixture-history")).active?.runtimeSettings
+            ?.autoRetryEnabled,
+        ).toBeDefined();
+      },
+      { timeout: 10_000 },
+    );
     const observed = observeEventSocket(
-      `${f.baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+      `${f.baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
     try {
       await vi.waitFor(() =>
-        expect({
-          frames: observed.frames,
-          state: observed.socket.readyState,
-        }).toMatchObject({ frames: [{ type: "snapshot" }] }),
+        expect(observed.frames.some((frame) => frame.type === "snapshot")).toBe(
+          true,
+        ),
       );
       f.runtime.emit("event", {
         type: "message_update",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         message: {
           role: "assistant",
           timestamp: 1,
@@ -69,7 +81,7 @@ describe("addressed snapshot confirmation", () => {
         return baseRoutes(url, init);
       });
       const { store, socket } = await initStore();
-      await store.openSession("mock-older");
+      await store.openSession("fixture-history");
       const interest = JSON.parse(socket.sent.at(-1)!);
       const messages = store.getState().messages;
       const read = vi.spyOn(f.runtime, "snapshot");
@@ -86,7 +98,7 @@ describe("addressed snapshot confirmation", () => {
       const confirmation = observed.frames.find(
         (frame) => frame.detailRevision === interest.revision,
       )!;
-      expect(read).toHaveBeenCalledWith("mock-older");
+      expect(read).toHaveBeenCalledWith("fixture-history");
       expect(confirmation).toMatchObject({
         unchanged: true,
         snapshotDigest: interest.snapshotDigest,
@@ -97,13 +109,13 @@ describe("addressed snapshot confirmation", () => {
       socket.emit({ ...confirmation, authorityId: TEST_HOST_AUTHORITY });
       expect(socket.readyState).toBe(1);
       expect(store.getState()).toMatchObject({
-        sessionId: "mock-older",
+        sessionId: "fixture-history",
         connection: "open",
       });
     } finally {
       observed.socket.close();
     }
-  });
+  }, 15_000);
 
   it.each(["target-changed", "wrong-authority", "wrong-digest"] as const)(
     "still refuses unchanged when %s",

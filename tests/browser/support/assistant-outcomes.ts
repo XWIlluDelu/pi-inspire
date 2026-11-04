@@ -1,10 +1,10 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
 import type { ActiveSnapshot } from "../../../shared/contracts";
 
-/** A public-wire fixture: the mock Host supplies navigation and read snapshots;
+/** A public-wire fixture: the Host supplies navigation and read snapshots;
  * controlled completion frames represent native Pi without executing a model. */
 export async function assistantOutcomeScenario(page: Page) {
-  const sessionId = "mock-errors";
+  const sessionId = "fixture-errors";
   let socket: WebSocketRoute | undefined;
   let readySocket: WebSocketRoute | undefined;
   let phase: "running" | "stopped" | "failed" = "running";
@@ -66,6 +66,13 @@ export async function assistantOutcomeScenario(page: Page) {
     upstream.onMessage((data) => {
       if (socket !== client) return;
       const event = JSON.parse(String(data));
+      if (event.sessionId === sessionId && event.sessionStatus)
+        event.sessionStatus.runState =
+          phase === "running"
+            ? "running"
+            : phase === "stopped"
+              ? "aborted"
+              : "failed";
       if (event.type === "snapshot") {
         if (event.data) project(event.data);
         if (

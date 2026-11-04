@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hostServicePath,
   inspectHostService,
@@ -13,7 +13,17 @@ const root = "/workspace/inspire";
 const environment = {
   HOME: "/home/tester",
   XDG_CONFIG_HOME: "/home/tester/.config",
+  XDG_RUNTIME_DIR: "/run/tester",
 };
+
+const missingPath = async () => {
+  throw Object.assign(new Error("absent"), { code: "ENOENT" });
+};
+const unavailableManager = async () => ({
+  code: 1,
+  stdout: "",
+  stderr: "Failed to connect to bus",
+});
 
 function show(
   hostProperties,
@@ -205,26 +215,101 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     expect(calls.every((args) => args[1] === "show")).toBe(true);
   });
 
-  it("distinguishes an absent unit from an unavailable user manager", async () => {
+  it("uses authoritative unit absence without offline filesystem checks", async () => {
+    const inspectPath = vi.fn();
     await expect(
       inspectHostService(root, {
         environment,
         run: show({ LoadState: "not-found" }),
+        inspectPath,
       }),
     ).resolves.toEqual({ kind: "absent" });
+    expect(inspectPath).not.toHaveBeenCalled();
+  });
 
+  it.each(["spawn systemctl ENOENT", "Failed to connect to bus"])(
+    "permits direct mode after %s only when no service authority remains",
+    async (stderr) => {
+      await expect(
+        inspectHostService(root, {
+          environment,
+          run: async () => ({ code: 1, stdout: "", stderr }),
+          inspectPath: missingPath,
+        }),
+      ).resolves.toEqual({ kind: "absent" });
+    },
+  );
+
+  it.each([
+    "/home/tester/.config/systemd/user/inspire-host.service",
+    "/usr/lib/systemd/user/inspire-host.service",
+    "/run/tester/systemd/transient/inspire-host.service",
+    `/run/user/${process.getuid?.()}/systemd/private`,
+  ])("keeps offline authority at %s closed", async (present) => {
     await expect(
       inspectHostService(root, {
         environment,
-        run: async () => ({
-          code: 1,
-          stdout: "",
-          stderr: "Failed to connect to bus",
-        }),
+        run: unavailableManager,
+        inspectPath: async (path) => (path === present ? {} : missingPath()),
       }),
     ).resolves.toEqual({
       kind: "unavailable",
       detail: "Failed to connect to bus",
     });
+  });
+
+  it("keeps inaccessible unit paths and custom manager locations unknown", async () => {
+    for (const options of [
+      {
+        inspectPath: async () => {
+          throw Object.assign(new Error("denied"), { code: "EACCES" });
+        },
+      },
+      { environment: { ...environment, SYSTEMD_UNIT_PATH: "/custom/units" } },
+      {
+        environment: {
+          ...environment,
+          DBUS_SESSION_BUS_ADDRESS: "unix:path=/custom/bus",
+        },
+      },
+    ]) {
+      await expect(
+        inspectHostService(root, {
+          environment,
+          run: unavailableManager,
+          inspectPath: missingPath,
+          ...options,
+        }),
+      ).resolves.toMatchObject({ kind: "unavailable" });
+    }
+  });
+
+  it.each(["masked", "error", "bad-setting", ""])(
+    "does not treat the installed %s load state as absent",
+    async (LoadState) => {
+      await expect(
+        inspectHostService(root, {
+          environment,
+          run: show({ LoadState }),
+          inspectPath: missingPath,
+        }),
+      ).resolves.toMatchObject({ kind: "unavailable" });
+    },
+  );
+
+  it("keeps a loaded foreign unit authoritative even with no remaining file", async () => {
+    const inspectPath = vi.fn(missingPath);
+    await expect(
+      inspectHostService(root, {
+        environment,
+        run: show(
+          managedProperties({
+            FragmentPath: "/usr/lib/systemd/user/inspire-host.service",
+          }),
+        ),
+        inspectPath,
+      }),
+    ).resolves.toMatchObject({ kind: "foreign" });
+    expect(inspectPath).not.toHaveBeenCalled();
   });
 });

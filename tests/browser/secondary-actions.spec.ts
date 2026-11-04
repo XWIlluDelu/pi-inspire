@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
@@ -18,7 +18,7 @@ for (const touch of [false, true]) {
         context,
       }) => {
         await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-        const send = await openMockEventSession(
+        const send = await openEventSession(
           page,
           "Secondary action visibility",
           emptyToolPresentationConfiguration(),

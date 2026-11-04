@@ -19,6 +19,7 @@ import type {
 } from "../../server/pi-rpc.js";
 import { requestError } from "../../server/request-error.js";
 import { RuntimeController } from "../../server/runtime.js";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import type {
   SessionCatalogLike,
   SessionRecord,
@@ -27,10 +28,13 @@ import type {
   StagedSessionFork,
   StageSessionFork,
 } from "../../server/session-fork.js";
-import { SessionProjection } from "../../server/session-projection.js";
+import {
+  type ProjectionReconcileResult,
+  SessionProjection,
+} from "../../server/session-projection.js";
 import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
 import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
-import { workerAttachmentStore } from "./fixtures/runtime.js";
+import { deferredSignal, workerAttachmentStore } from "./fixtures/runtime.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
@@ -219,6 +223,8 @@ class BranchRpc extends EventEmitter {
         isCompacting: false,
       };
     } else if (command.type === "set_auto_retry") await this.autoRetryGate;
+    else if (command.type === "clear_queue")
+      value = { steering: [], followUp: [] };
     else if (command.type === "get_available_models") value = { models: [] };
     else if (command.type === "get_commands")
       value = {
@@ -582,6 +588,95 @@ describe("stock RPC branch bridge", () => {
       await runtime.close();
     }
   });
+
+  it.each(["Stop", "worker exit"] as const)(
+    "does not restore a navigation lease retired by %s during final reconciliation",
+    async (retirement) => {
+      const { runtime, worker, workers, path } = await setup();
+      const reconciling = deferredSignal();
+      const release = deferredSignal();
+      const internal = runtime as unknown as {
+        slots: Map<string, RuntimeSlot>;
+        reconcileSlot(
+          slot: RuntimeSlot,
+          force?: boolean,
+        ): Promise<ProjectionReconcileResult>;
+      };
+      const slot = internal.slots.get(SESSION_ID)!;
+      const reconcile = internal.reconcileSlot.bind(runtime);
+      const request = worker.request.bind(worker);
+      let verified = false;
+      vi.spyOn(worker, "request").mockImplementation(async (command) => {
+        const result = await request(command);
+        if (command.type === "get_entries") verified = true;
+        return result;
+      });
+      vi.spyOn(internal, "reconcileSlot").mockImplementation(
+        async (...args) => {
+          const result = await reconcile(...args);
+          if (verified) {
+            verified = false;
+            reconciling.resolve();
+            await release.promise;
+          }
+          return result;
+        },
+      );
+      let navigation: Promise<unknown> | undefined;
+      try {
+        const tree = await runtime.branchTree(SESSION_ID);
+        const source = await readFile(path, "utf8");
+        navigation = runtime
+          .navigateBranch({
+            sessionId: SESSION_ID,
+            revision: tree.revision,
+            targetId: "a1",
+            mode: "switch",
+          })
+          .catch((error: unknown) => error);
+        await reconciling.promise;
+        expect(worker.leafId).toBe("a1");
+        if (retirement === "Stop") await runtime.abort(SESSION_ID);
+        else worker.emit("exit", new Error("Branch worker exited"));
+        expect(slot.process).toBeNull();
+        expect(slot.pendingBranchBridge).toBeNull();
+        expect(worker.stops).toBe(1);
+        release.resolve();
+        expect(await navigation).toMatchObject({
+          status: 409,
+          message:
+            "Branch navigation worker stopped before the result could be applied",
+        });
+        // Both the immediate response view and a later read must use disk's
+        // saved branch; a retired worker cannot own an in-memory earlier leaf.
+        for (let read = 0; read < 2; read += 1) {
+          const snapshot = await runtime.snapshot(SESSION_ID);
+          expect(snapshot).toMatchObject({
+            runState: retirement === "Stop" ? "aborted" : "failed",
+            active: {
+              durableLeafId: "a2",
+              effectiveLeafId: "a2",
+              navigationLeased: false,
+            },
+          });
+          expect(
+            JSON.stringify(snapshot.active?.transcriptPage.messages),
+          ).toContain("second answer");
+          expect(slot.navigationLease).toBeNull();
+        }
+        expect(await readFile(path, "utf8")).toBe(source);
+        expect(workers).toHaveLength(1);
+        expect(worker.stops).toBe(1);
+        expect(
+          worker.commands.filter((command) => command.type === "prompt"),
+        ).toHaveLength(1);
+      } finally {
+        release.resolve();
+        await navigation;
+        await runtime.close();
+      }
+    },
+  );
 
   it("answers a session_before_tree dialog on the independent response lane without deadlock", async () => {
     const { runtime, worker } = await setup();

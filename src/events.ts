@@ -72,6 +72,8 @@ export interface ChatMessage {
   __inspireStreamRevision?: number;
   __inspireSettled?: boolean;
   __inspireEntryId?: string;
+  /** Host-owned readable names, independent of physical upload cache basenames. */
+  __inspireFileNames?: Record<string, string>;
   /** Opaque lazy-range alias retained while deferred history materializes so
    * the surrounding activity disclosure keeps its mounted identity. */
   __inspireActivityRangeCursor?: string;
@@ -145,9 +147,16 @@ export function userMessageDisplayContent(message: ChatMessage) {
   return userMessageContent(message.content);
 }
 
+export function userMessageFileName(
+  message: ChatMessage,
+  path: string,
+): string {
+  return message.__inspireFileNames?.[path] ?? fileReferenceName(path);
+}
+
 export function userMessageSearchText(message: ChatMessage): string {
   const { text, references } = userMessageDisplayContent(message);
-  return [...references.map(fileReferenceName), text]
+  return [...references.map((path) => userMessageFileName(message, path)), text]
     .filter(Boolean)
     .join("\n");
 }

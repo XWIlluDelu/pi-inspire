@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HOST_SERVICE_NAME = "inspire-host.service";
@@ -122,13 +123,75 @@ function commandDetail(result) {
   return `${result.stderr}${result.stdout}`.trim();
 }
 
+async function mayHaveHostService(environment, inspectPath) {
+  // Custom manager lookup/bus settings cannot be reconstructed offline.
+  if (environment.SYSTEMD_UNIT_PATH) return true;
+  const runtimeDirectories = [
+    environment.XDG_RUNTIME_DIR,
+    typeof process.getuid === "function" ? `/run/user/${process.getuid()}` : null,
+  ].filter(Boolean);
+  if (
+    environment.DBUS_SESSION_BUS_ADDRESS &&
+    !runtimeDirectories.some(
+      (directory) =>
+        environment.DBUS_SESSION_BUS_ADDRESS === `unix:path=${directory}/bus`,
+    )
+  )
+    return true;
+  const directories = [
+    join(configHome(environment), "systemd/user.control"),
+    join(configHome(environment), "systemd/user"),
+    ...(environment.XDG_CONFIG_DIRS || "/etc/xdg")
+      .split(":")
+      .map((directory) => join(directory, "systemd/user")),
+    "/etc/systemd/user",
+    ...runtimeDirectories.flatMap((directory) =>
+      [
+        "user.control",
+        "transient",
+        "generator.early",
+        "user",
+        "generator",
+        "generator.late",
+      ].map((name) => join(directory, "systemd", name)),
+    ),
+    "/run/systemd/user",
+    join(
+      environment.XDG_DATA_HOME ||
+        join(environment.HOME || homedir(), ".local/share"),
+      "systemd/user",
+    ),
+    ...(environment.XDG_DATA_DIRS || "/usr/local/share:/usr/share")
+      .split(":")
+      .map((directory) => join(directory, "systemd/user")),
+    "/usr/local/lib/systemd/user",
+    "/usr/lib/systemd/user",
+    "/lib/systemd/user",
+  ];
+  if ([...runtimeDirectories, ...directories].some((path) => !isAbsolute(path)))
+    return true;
+  for (const path of [
+    // A live manager can retain a loaded unit after its file has disappeared.
+    ...runtimeDirectories.map((directory) => join(directory, "systemd/private")),
+    ...directories.map((directory) => join(directory, HOST_SERVICE_NAME)),
+  ]) {
+    try {
+      await inspectPath(path);
+      return true; // Includes masked units and dangling symlinks.
+    } catch (error) {
+      if (error.code !== "ENOENT") return true;
+    }
+  }
+  return false;
+}
+
 /**
  * A generic user-unit name is shared by installations, so a launcher may
  * delegate only when systemd proves the unit is this exact checkout's unit.
  */
 export async function inspectHostService(
   root,
-  { environment = process.env, run = runSystemctl } = {},
+  { environment = process.env, run = runSystemctl, inspectPath = lstat } = {},
 ) {
   const expectedRoot = resolve(root);
   const result = await run(
@@ -150,12 +213,23 @@ export async function inspectHostService(
     environment,
   );
   if (result.code !== 0) {
-    if (/not[ -]found|not loaded/iu.test(commandDetail(result)))
+    if (
+      /Unit inspire-host\.service (?:could not be found|not found|not loaded)/iu.test(
+        commandDetail(result),
+      )
+    )
+      return { kind: "absent" };
+    if (!(await mayHaveHostService(environment, inspectPath)))
       return { kind: "absent" };
     return { kind: "unavailable", detail: commandDetail(result) };
   }
   const value = properties(result.stdout);
-  if (value.LoadState !== "loaded") return { kind: "absent" };
+  if (value.LoadState === "not-found") return { kind: "absent" };
+  if (value.LoadState !== "loaded")
+    return {
+      kind: "unavailable",
+      detail: `Unit load state: ${value.LoadState || "unknown"}`,
+    };
 
   const launcher = join(expectedRoot, "inspire");
   if (

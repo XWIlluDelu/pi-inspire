@@ -9,7 +9,11 @@ export async function pairedPage(page: Page) {
   await expect(page.getByRole("main")).toBeVisible();
 }
 
-export async function openMockSession(page: Page, title: RegExp) {
+export async function openFixtureSession(
+  page: Page,
+  title: RegExp,
+  sessionId?: string,
+) {
   const toggle = page.getByRole("button", {
     name: /^(Toggle|Expand|Collapse) navigation$/,
     exact: true,
@@ -19,13 +23,37 @@ export async function openMockSession(page: Page, title: RegExp) {
     (await page.locator(".nav--rail").count())
   )
     await toggle.click();
-  await page.locator(".nav__row-main").filter({ hasText: title }).click();
+  const row = sessionId
+    ? page.locator(`[data-session-id="${sessionId}"] .nav__row-main`)
+    : page.locator(".nav__row-main").filter({ hasText: title });
+  // Native creations can page an older sample out of Recent. Use real search
+  // to locate that identity, then leave the next interaction an unfiltered nav.
+  const searched = sessionId !== undefined && (await row.count()) === 0;
+  const search = page.getByRole("searchbox", {
+    name: "Search sessions",
+    exact: true,
+  });
+  if (searched) await search.fill(title.source);
+  await row.click();
   await expect(page.locator(".topbar__title-button")).toHaveText(title);
+  if (searched) {
+    const reopen = page.getByRole("button", {
+      name: "Toggle navigation",
+      exact: true,
+    });
+    const narrow = await reopen.isVisible();
+    if (narrow) await reopen.click();
+    await search.fill("");
+    if (narrow)
+      await page
+        .getByRole("button", { name: "Close navigation", exact: true })
+        .click();
+  }
 }
 
 export async function pairAndOpen(page: Page) {
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();

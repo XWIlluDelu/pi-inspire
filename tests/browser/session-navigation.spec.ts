@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 
@@ -28,7 +28,7 @@ test("session search paginates unloaded results and keyboard selection preserves
   await pairedPage(page);
   const restoreCuration = await preserveCuration(page);
   try {
-    await openMockSession(page, /Review extension event lifecycle/);
+    await openFixtureSession(page, /Review extension event lifecycle/);
     const input = page.getByRole("textbox", { name: "Message", exact: true });
     await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
     await page.locator('input[type="file"]').setInputFiles({
@@ -57,14 +57,14 @@ test("session search paginates unloaded results and keyboard selection preserves
         json: {
           sessions:
             offset === 0
-              ? [find("mock-active"), find("mock-history")]
+              ? [find("fixture-active"), find("fixture-history")]
               : [
                   {
-                    ...find("mock-active"),
+                    ...find("fixture-active"),
                     id: "unloaded-catalog-result",
                     title: "Unloaded catalog result",
                   },
-                  find("mock-errors"),
+                  find("fixture-errors"),
                 ],
           total: 4,
           offset,
@@ -179,7 +179,7 @@ test("session transitions cannot accept input for the previous session", async (
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
 
   let releaseOpen!: () => void;
   const openGate = new Promise<void>((resolve) => {
@@ -224,7 +224,7 @@ test.describe("touch session drawer", () => {
     await pairedPage(page);
     const restoreCuration = await preserveCuration(page);
     try {
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       const input = page.getByRole("textbox", { name: "Message", exact: true });
       await input.fill("Keep this touch draft");
       await page

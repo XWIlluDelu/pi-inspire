@@ -1,17 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  readlink,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
-import lockfile from "proper-lockfile";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import {
+  MCP_CLIENT_REGISTRATIONS,
   MCP_EXPOSURES,
   type McpConfigEdit,
   type McpConfigEntry,
@@ -22,7 +13,11 @@ import {
   type McpConnectionValues,
   mcpOAuthError,
 } from "../shared/mcp.js";
-import { configurationEditLockPaths } from "./configuration-edit-locks.js";
+import {
+  configurationFileTarget,
+  editConfigurationFile,
+  readConfigurationText as readText,
+} from "./configuration-file.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { getAgentDir } from "./pi-runtime.js";
@@ -33,12 +28,13 @@ const isObject = (value: unknown): value is JsonObject =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const text = z.string().max(32_768);
 const exposure = z.enum(MCP_EXPOSURES);
+const clientRegistration = z.enum(MCP_CLIENT_REGISTRATIONS);
 const changes = <T extends z.ZodType>(schema: T) =>
   schema.nullable().optional();
 const stringMap = z.record(z.string().min(1).max(256), text.nullable());
 const oauthSchema = z
   .object({
-    clientRegistration: changes(z.enum(["dcr", "cimd"])),
+    clientRegistration: changes(clientRegistration),
     clientId: changes(text),
     clientSecret: changes(text),
     callbackPort: changes(z.number().int().min(1).max(65535)),
@@ -117,6 +113,9 @@ function projectEntry(
         ? "stdio"
         : null;
   const policyOnly = isPolicyOnly(raw, scope);
+  const registration = isObject(value.oauth)
+    ? clientRegistration.safeParse(value.oauth.clientRegistration).data
+    : undefined;
   return {
     name,
     transport,
@@ -140,14 +139,7 @@ function projectEntry(
     envKeys: strings(value.env),
     headerKeys: strings(value.headers),
     oauthFields: strings(value.oauth),
-    ...(isObject(value.oauth) &&
-    ["dcr", "cimd"].includes(value.oauth.clientRegistration as string)
-      ? {
-          oauthClientRegistration: value.oauth.clientRegistration as
-            | "dcr"
-            | "cimd",
-        }
-      : {}),
+    ...(registration ? { oauthClientRegistration: registration } : {}),
     toolExposure: Object.fromEntries(
       isObject(value.toolExposure)
         ? Object.entries(value.toolExposure).flatMap(([key, val]) => {
@@ -159,14 +151,6 @@ function projectEntry(
     extraFieldCount: Object.keys(value).filter((key) => !fieldNames.has(key))
       .length,
   };
-}
-async function readText(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw requestError("MCP configuration could not be read", 409);
-  }
 }
 function parse(source: string | undefined): JsonObject {
   try {
@@ -185,46 +169,7 @@ function parse(source: string | undefined): JsonObject {
     );
   }
 }
-/** Resolve existing and dangling links without replacing the configuration symlink. */
-async function targetAt(
-  path: string,
-  seen = new Set<string>(),
-): Promise<string> {
-  const absolute = resolve(path);
-  if (seen.has(absolute))
-    throw requestError("MCP configuration has a circular link", 409);
-  seen.add(absolute);
-  try {
-    return await realpath(absolute);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      throw requestError("MCP configuration path is unavailable", 409);
-  }
-  try {
-    return await targetAt(
-      resolve(dirname(absolute), await readlink(absolute)),
-      seen,
-    );
-  } catch (error) {
-    if (
-      !["ENOENT", "EINVAL"].includes(
-        (error as NodeJS.ErrnoException).code ?? "",
-      )
-    )
-      throw error;
-  }
-  return join(await parentAt(dirname(absolute)), basename(absolute));
-}
-async function parentAt(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      throw requestError("MCP configuration directory is unavailable", 409);
-    return join(await parentAt(dirname(path)), basename(path));
-  }
-}
-const revisionOf = (target: string, source: string | undefined) =>
+const revisionOf = (source: string | undefined, target: string) =>
   createHash("sha256")
     .update(JSON.stringify([target, source ?? null]))
     .digest("hex");
@@ -337,7 +282,7 @@ export class McpConfigService {
     const path = this.path(cwd, scope);
     const project =
       scope === "project" ? await resolveProjectDirectory(cwd!) : null;
-    const target = await targetAt(path);
+    const target = await configurationFileTarget(path);
     // A repository-controlled symlink cannot redirect a project edit into user config or another project.
     if (
       project !== null &&
@@ -362,7 +307,7 @@ export class McpConfigService {
           return {
             scope,
             path,
-            revision: revisionOf(target, source),
+            revision: revisionOf(source, target),
             entries: Object.entries(
               isObject(parsed.mcpServers) ? parsed.mcpServers : {},
             ).map(([name, raw]) => projectEntry(name, raw, scope)),
@@ -390,7 +335,7 @@ export class McpConfigService {
     const request = mcpConnectionReadSchema.parse(input);
     const target = await this.target(cwd, request.scope);
     const source = await readText(target);
-    if (revisionOf(target, source) !== request.revision)
+    if (revisionOf(source, target) !== request.revision)
       throw requestError(
         "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
         409,
@@ -419,151 +364,98 @@ export class McpConfigService {
   async save(cwd: string | null, input: McpConfigEdit): Promise<void> {
     const edit = mcpConfigEditSchema.parse(input);
     const path = this.path(cwd, edit.scope);
-    const target = await this.target(cwd, edit.scope);
-    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-    const lexical = join(await realpath(dirname(path)), basename(path));
-    const lockPaths = await configurationEditLockPaths(lexical, target);
-    // Add validates one namespace across both files. Share the user authority
-    // with user-file edits so simultaneous additions cannot each pass against
-    // the other file's old contents. Updates cannot rename an existing entry.
-    let userTarget: string | undefined;
-    if (edit.scope === "project" && edit.operation === "add") {
-      const userPath = this.path(cwd, "user");
-      userTarget = await this.target(cwd, "user");
-      await mkdir(dirname(userTarget), { recursive: true, mode: 0o700 });
-      const userLexical = join(
-        await realpath(dirname(userPath)),
-        basename(userPath),
-      );
-      lockPaths.push(
-        ...(await configurationEditLockPaths(userLexical, userTarget)),
-      );
-    }
-    const releases: Array<() => Promise<void>> = [];
-    let compromised = false;
-    const temporary = join(
-      dirname(target),
-      `.inspire-mcp-${randomUUID()}.json`,
-    );
-    try {
-      for (const authority of [...new Set(lockPaths)].sort()) {
-        try {
-          releases.push(
-            await lockfile.lock(authority, {
-              realpath: false,
-              retries: {
-                retries: 20,
-                factor: 1,
-                minTimeout: 50,
-                maxTimeout: 50,
-              },
-              onCompromised: () => {
-                compromised = true;
-              },
-            }),
-          );
-        } catch {
+    await editConfigurationFile(
+      {
+        path,
+        resolveTarget: () => this.target(cwd, edit.scope),
+        expectedRevision: edit.revision,
+        revision: revisionOf,
+        // Add shares the user authority so concurrent user/project additions
+        // cannot each validate against the other file's old namespace.
+        alsoLock:
+          edit.scope === "project" && edit.operation === "add"
+            ? [
+                {
+                  path: this.path(cwd, "user"),
+                  resolveTarget: () => this.target(cwd, "user"),
+                },
+              ]
+            : [],
+      },
+      async (source) => {
+        const parsed = parse(source);
+        const servers = isObject(parsed.mcpServers) ? parsed.mcpServers : {};
+        const exists = Object.hasOwn(servers, edit.name);
+        if (edit.operation === "add" ? exists : !exists)
           throw requestError(
-            "MCP configuration is being edited elsewhere. Refresh files and try again.",
+            exists
+              ? "That server already exists in this file"
+              : "That server no longer exists in this file",
             409,
           );
-        }
-      }
-      const source = await readText(path);
-      if (revisionOf(target, source) !== edit.revision)
-        throw requestError(
-          "MCP configuration changed elsewhere. Refresh files before saving.",
-          409,
-        );
-      const parsed = parse(source);
-      const servers = isObject(parsed.mcpServers) ? parsed.mcpServers : {};
-      const exists = Object.hasOwn(servers, edit.name);
-      if (edit.operation === "add" ? exists : !exists)
-        throw requestError(
-          exists
-            ? "That server already exists in this file"
-            : "That server no longer exists in this file",
-          409,
-        );
-      if (edit.operation === "remove") delete servers[edit.name];
-      else {
-        const current = edit.operation === "update" ? servers[edit.name] : {};
-        if (!isObject(current))
-          throw requestError(
-            "Remove the invalid server entry before adding it again",
-            409,
-          );
-        const values = edit.values ?? {};
-        const value = mergeValues(current, values);
-        if (
-          isPolicyOnly(
-            edit.operation === "update" ? current : value,
-            edit.scope,
-          )
-        ) {
-          if (Object.keys(values).some((key) => !policyFields.has(key)))
+        if (edit.operation === "remove") delete servers[edit.name];
+        else {
+          const current = edit.operation === "update" ? servers[edit.name] : {};
+          if (!isObject(current))
             throw requestError(
-              "Project policy overrides can only edit enabled, exposure and toolExposure",
-              400,
-            );
-          const user = parse(await readText(this.path(cwd, "user")));
-          const base = isObject(user.mcpServers)
-            ? user.mcpServers[edit.name]
-            : undefined;
-          if (!isObject(base))
-            throw requestError(
-              "Project policy override needs a same-name user server",
+              "Remove the invalid server entry before adding it again",
               409,
             );
-          // Validate the inherited configuration in user scope without copying it to the project.
-          validate(edit.name, { ...base, ...value }, "user");
-        } else {
-          validate(edit.name, value, edit.scope);
-        }
-        const names =
-          edit.operation === "add"
-            ? (await this.read(cwd)).files.flatMap((file) =>
-                file.entries.map((entry) => entry.name),
-              )
-            : Object.keys(servers);
-        if (
-          names.some(
-            (name) =>
-              name !== edit.name &&
-              name.replaceAll("-", "_") === edit.name.replaceAll("-", "_"),
+          const values = edit.values ?? {};
+          const value = mergeValues(current, values);
+          if (
+            isPolicyOnly(
+              edit.operation === "update" ? current : value,
+              edit.scope,
+            )
+          ) {
+            if (Object.keys(values).some((key) => !policyFields.has(key)))
+              throw requestError(
+                "Project policy overrides can only edit enabled, exposure and toolExposure",
+                400,
+              );
+            const user = parse(await readText(this.path(cwd, "user")));
+            const base = isObject(user.mcpServers)
+              ? user.mcpServers[edit.name]
+              : undefined;
+            if (!isObject(base))
+              throw requestError(
+                "Project policy override needs a same-name user server",
+                409,
+              );
+            // Validate the inherited configuration in user scope without copying it to the project.
+            validate(edit.name, { ...base, ...value }, "user");
+          } else {
+            validate(edit.name, value, edit.scope);
+          }
+          const names =
+            edit.operation === "add"
+              ? (await this.read(cwd)).files.flatMap((file) =>
+                  file.entries.map((entry) => entry.name),
+                )
+              : Object.keys(servers);
+          if (
+            names.some(
+              (name) =>
+                name !== edit.name &&
+                name.replaceAll("-", "_") === edit.name.replaceAll("-", "_"),
+            )
           )
-        )
-          throw requestError(
-            "Server names differing only in hyphens and underscores conflict in Pi",
-            409,
-          );
-        Object.defineProperty(servers, edit.name, {
-          value,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-      }
-      parsed.mcpServers = servers;
-      const indent = source?.match(/^([ \t]+)\S/m)?.[1] ?? "  ";
-      await writeFile(temporary, `${JSON.stringify(parsed, null, indent)}\n`, {
-        mode: 0o600,
-      });
-      if (
-        compromised ||
-        (await this.target(cwd, edit.scope)) !== target ||
-        (userTarget !== undefined &&
-          (await this.target(cwd, "user")) !== userTarget) ||
-        revisionOf(target, await readText(path)) !== edit.revision
-      )
-        throw requestError(
-          "MCP configuration changed elsewhere. Refresh files before saving.",
-          409,
-        );
-      await rename(temporary, target);
-    } finally {
-      await rm(temporary, { force: true });
-      await Promise.all(releases.reverse().map((release) => release()));
-    }
+            throw requestError(
+              "Server names differing only in hyphens and underscores conflict in Pi",
+              409,
+            );
+          Object.defineProperty(servers, edit.name, {
+            value,
+            enumerable: true,
+            configurable: true,
+            writable: true,
+          });
+        }
+        parsed.mcpServers = servers;
+        const indent = source?.match(/^([ \t]+)\S/m)?.[1] ?? "  ";
+        return `${JSON.stringify(parsed, null, indent)}\n`;
+      },
+    );
   }
 }

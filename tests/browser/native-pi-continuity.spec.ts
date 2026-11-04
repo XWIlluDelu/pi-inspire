@@ -11,7 +11,7 @@ import {
   nativeHerdrAvailable,
   nativeHerdrFixture,
 } from "../server/fixtures/native-herdr.js";
-import { browserTestToken, openMockSession } from "./support/navigation.js";
+import { browserTestToken, openFixtureSession } from "./support/navigation.js";
 
 test("continue the same native Pi in the browser without closing its terminal", async ({
   page,
@@ -40,7 +40,6 @@ test("continue the same native Pi in the browser without closing its terminal", 
       preferences: new PreferencesStore(join(f.root, "preferences.json")),
       resources: new ResourceStore(),
       git: new GitInspectionService(),
-      mock: false,
       version: "0.0.0-native-test",
       piVersion: piInstallation.version,
     });
@@ -77,7 +76,7 @@ test("continue the same native Pi in the browser without closing its terminal", 
     await page.getByLabel("Access token").fill(browserTestToken);
     await page.getByRole("button", { name: "Pair", exact: true }).click();
     await expect(page.getByRole("main")).toBeVisible();
-    await openMockSession(page, /Native Pi continuity/);
+    await openFixtureSession(page, /Native Pi continuity/);
     const input = page.getByRole("textbox", { name: "Message", exact: true });
     await input.fill("Continue the existing Pi from this browser");
     await page

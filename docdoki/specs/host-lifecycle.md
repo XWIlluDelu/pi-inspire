@@ -68,7 +68,7 @@ failure, with no legacy-engine fallback.
   canonical npm bin metadata, accepts the exact tarball through `npm publish --dry-run` without
   metadata correction, excludes tests and TypeScript source, proves Pi is absent after a
   production-only install, and then proves that installation can start, report status, serve
-  authenticated mock health, stop, and create a real session using one explicitly supplied external
+  authenticated health, stop, and create a real session using one explicitly supplied external
   Pi package for both SDK and RPC.
 
   The project is MIT-licensed, and every Vite build derives `dist/THIRD_PARTY_NOTICES.txt` from the
@@ -361,9 +361,13 @@ capture mechanism and service handoff.
 - The browser persists identity in tab-session storage before POST; invalid or unavailable storage
   blocks dispatch, not read-only Host observation. Recheck retries local recovery and clears the
   browser's blocked state once storage recovers. Explicit retry keeps the same identity.
-  **Clear local restart record…** requires confirmation and discards only browser tracking; it neither
-  sends nor cancels a restart. The Host's pending operation continues to fence new admission.
-  Failed local cleanup preserves the record and reports a storage problem, not an unknown restart.
+  A new Host identity or a matching rejected operation automatically retires browser tracking;
+  uncertain requests retain their identity. Normal pending/recovery controls offer no local-record
+  cleanup. Only malformed saved data offers **Reset restart recovery…** beside its error, with
+  confirmation; unavailable storage retries without this reset action. Reset discards only browser
+  tracking, neither sending nor cancelling a restart. The Host's pending operation continues to
+  fence new admission. Failed local cleanup preserves the record and reports a storage problem,
+  not an unknown restart.
   A rejected receipt is labelled **last attempt**, because it is historical rather than a current
   busy check.
 - The CLI checks readiness after restart; the browser reports reconnection to a new Host.
@@ -402,6 +406,6 @@ capture mechanism and service handoff.
   `0700`/`0600`; Windows uses the current user-profile ACL boundary. A configured path is accepted
   only inside an existing private current-user directory.
 
-- The mock Host is a deterministic presentation fixture. Runtime/security/lifecycle checks use
-  `RuntimeController` and `PiRpcProcess` directly. Browser acceptance uses bounded mock delivery
-  and one worker to avoid overlapping prompts through its shared projection.
+- Production has one Host/Runtime path. Browser acceptance uses isolated native session files,
+  real workspace resources and Pi with a deterministic offline provider. Presentation fixtures and
+  narrowly scoped transport faults do not implement a second runtime or fabricate mutation results.

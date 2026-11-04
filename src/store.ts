@@ -838,7 +838,6 @@ export class AppStore {
       const updateProjection = this.updates.bootstrap(boot.updateStatus);
       this.set({
         prefs: preferences,
-        mock: boot.mock,
         version: boot.version,
         piVersion: boot.piVersion,
         ...updateProjection,

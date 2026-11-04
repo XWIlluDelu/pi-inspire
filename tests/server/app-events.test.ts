@@ -46,7 +46,7 @@ describe("WebSocket observation and transport limits", () => {
   }
 
   it("confirms a stable large HTTP-open window without retransmitting its body and keeps the event barrier", async () => {
-    const window = await runtime.openSession("mock-active");
+    const window = await runtime.openSession("fixture-active");
     window.active!.transcriptPage.messages = [
       {
         role: "user",
@@ -56,13 +56,13 @@ describe("WebSocket observation and transport limits", () => {
     ];
     const open = vi.spyOn(runtime, "openSession").mockResolvedValue(window);
     const snapshot = vi.spyOn(runtime, "snapshot").mockResolvedValue(window);
-    const observed = await connect("detail=mock-older");
+    const observed = await connect("detail=fixture-history");
     try {
       observed.frames.length = 0;
       const opened = await request(application.server)
         .post("/api/sessions/open")
         .set("Authorization", `Bearer ${token}`)
-        .send({ id: "mock-active" })
+        .send({ id: "fixture-active" })
         .expect(200);
       expect(JSON.stringify(opened.body).length).toBeGreaterThan(500_000);
       let finish!: (value: typeof window) => void;
@@ -76,7 +76,7 @@ describe("WebSocket observation and transport limits", () => {
       observed.socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-active",
+          sessionId: "fixture-active",
           revision: 1,
           authorityId: opened.body.authorityId,
           snapshotDigest: opened.body.snapshotDigest,
@@ -87,7 +87,7 @@ describe("WebSocket observation and transport limits", () => {
       );
       runtime.emit("event", {
         type: "agent_start",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         sessionStatus: { runState: "running" },
       });
       expect(observed.frames).toEqual([]);
@@ -111,7 +111,7 @@ describe("WebSocket observation and transport limits", () => {
         observed.socket.send(
           JSON.stringify({
             type: "detail_interest",
-            sessionId: "mock-active",
+            sessionId: "fixture-active",
             revision,
             authorityId,
             snapshotDigest: opened.body.snapshotDigest,
@@ -142,29 +142,31 @@ describe("WebSocket observation and transport limits", () => {
         };
       },
     });
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
     const originalSnapshot = runtime.snapshot.bind(runtime);
     vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
       if (sessionId) expect(observers.get(sessionId)).toBeGreaterThan(0);
       return originalSnapshot(sessionId);
     });
-    const a = await connect("detail=mock-active");
-    const b = await connect("detail=mock-active");
+    const a = await connect("detail=fixture-active");
+    const b = await connect("detail=fixture-active");
     try {
-      expect(observers.get("mock-active")).toBe(2);
+      expect(observers.get("fixture-active")).toBe(2);
       a.socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-older",
+          sessionId: "fixture-history",
           revision: 1,
         }),
       );
-      await vi.waitFor(() => expect(observers.get("mock-older")).toBe(1));
-      expect(observers.get("mock-active")).toBe(1);
+      await vi.waitFor(() => expect(observers.get("fixture-history")).toBe(1));
+      expect(observers.get("fixture-active")).toBe(1);
       b.socket.close();
-      await vi.waitFor(() => expect(observers.has("mock-active")).toBe(false));
-      expect(observers.get("mock-older")).toBe(1);
+      await vi.waitFor(() =>
+        expect(observers.has("fixture-active")).toBe(false),
+      );
+      expect(observers.get("fixture-history")).toBe(1);
       a.socket.send(
         JSON.stringify({
           type: "detail_interest",
@@ -176,11 +178,11 @@ describe("WebSocket observation and transport limits", () => {
       a.socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-active",
+          sessionId: "fixture-active",
           revision: 3,
         }),
       );
-      await vi.waitFor(() => expect(observers.get("mock-active")).toBe(1));
+      await vi.waitFor(() => expect(observers.get("fixture-active")).toBe(1));
       await application.close();
       expect(observers.size).toBe(0);
     } finally {
@@ -192,12 +194,15 @@ describe("WebSocket observation and transport limits", () => {
   it.each(["open", "already closing"] as const)(
     "drains an %s event peer without waiting for a close ACK",
     async (state) => {
-      await runtime.openSession("mock-active");
+      await runtime.openSession("fixture-active");
       const release = vi.fn();
       Object.assign(runtime, { retainSessionView: vi.fn(() => release) });
-      const peer = await rawWebSocket(`${baseUrl}/events?detail=mock-active`, {
-        Authorization: `Bearer ${token}`,
-      });
+      const peer = await rawWebSocket(
+        `${baseUrl}/events?detail=fixture-active`,
+        {
+          Authorization: `Bearer ${token}`,
+        },
+      );
       try {
         await vi.waitFor(() =>
           expect(peer.messages.some((frame) => frame.type === "snapshot")).toBe(
@@ -225,10 +230,10 @@ describe("WebSocket observation and transport limits", () => {
       new Error("Session is gone"),
     );
     const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
     await new Promise<void>((resolve) => socket.once("close", () => resolve()));
-    expect(retain).toHaveBeenCalledWith("mock-active");
+    expect(retain).toHaveBeenCalledWith("fixture-active");
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
   });
 
@@ -275,8 +280,8 @@ describe("WebSocket observation and transport limits", () => {
   });
 
   it("isolates two socket detail interests while retaining global outcomes and needs-input", async () => {
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
     const connect = async (id: string, digest?: string) => {
       const frames: DetailFrame[] = [];
       const socket = eventSocket(
@@ -286,21 +291,24 @@ describe("WebSocket observation and transport limits", () => {
       await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
       return { socket, frames };
     };
-    const a = await connect("mock-active");
-    const b = await connect("mock-older");
+    const a = await connect("fixture-active");
+    const b = await connect("fixture-history");
     try {
-      expect(a.frames[0]?.data?.active?.sessionId).toBe("mock-active");
-      expect(b.frames[0]?.data?.active?.sessionId).toBe("mock-older");
-      const resumed = await connect("mock-active", a.frames[0]?.snapshotDigest);
+      expect(a.frames[0]?.data?.active?.sessionId).toBe("fixture-active");
+      expect(b.frames[0]?.data?.active?.sessionId).toBe("fixture-history");
+      const resumed = await connect(
+        "fixture-active",
+        a.frames[0]?.snapshotDigest,
+      );
       expect(resumed.frames[0]).toMatchObject({
         unchanged: true,
-        detailSessionId: "mock-active",
+        detailSessionId: "fixture-active",
         detailRevision: 0,
       });
       resumed.socket.close();
-      const changed = await connect("mock-active", "0".repeat(64));
+      const changed = await connect("fixture-active", "0".repeat(64));
       expect(changed.frames[0]?.unchanged).toBeUndefined();
-      expect(changed.frames[0]?.data?.active?.sessionId).toBe("mock-active");
+      expect(changed.frames[0]?.data?.active?.sessionId).toBe("fixture-active");
       changed.socket.close();
       a.frames.length = 0;
       b.frames.length = 0;
@@ -312,7 +320,7 @@ describe("WebSocket observation and transport limits", () => {
         message: 1n,
         sessionStatus: { runState: "running" },
       });
-      for (const sessionId of ["mock-active", "mock-older"]) {
+      for (const sessionId of ["fixture-active", "fixture-history"]) {
         runtime.emit("event", {
           type: "agent_start",
           sessionId,
@@ -370,8 +378,8 @@ describe("WebSocket observation and transport limits", () => {
         ).toHaveLength(2),
       );
       for (const [viewer, selected, background] of [
-        [a, "mock-active", "mock-older"],
-        [b, "mock-older", "mock-active"],
+        [a, "fixture-active", "fixture-history"],
+        [b, "fixture-history", "fixture-active"],
       ] as const) {
         expect(
           viewer.frames
@@ -399,8 +407,8 @@ describe("WebSocket observation and transport limits", () => {
   });
 
   it("fences changed interest snapshots and queues global and new-owner changes across the read", async () => {
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-older");
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
     const originalSnapshot = runtime.snapshot.bind(runtime);
     let release!: () => void;
     let releaseNew!: () => void;
@@ -414,34 +422,34 @@ describe("WebSocket observation and transport limits", () => {
       .spyOn(runtime, "snapshot")
       .mockImplementation(async (sessionId) => {
         const snapshot = await originalSnapshot(sessionId);
-        await (sessionId === "mock-active" ? gate : newGate);
+        await (sessionId === "fixture-active" ? gate : newGate);
         return snapshot;
       });
     const frames: DetailFrame[] = [];
     const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
     socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
     try {
       await new Promise<void>((resolve) => socket.once("open", resolve));
       runtime.emit("event", {
         type: "agent_start",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         sessionStatus: { runState: "running" },
       });
       socket.send(
         JSON.stringify({
           type: "detail_interest",
-          sessionId: "mock-older",
+          sessionId: "fixture-history",
           revision: 1,
         }),
       );
       await vi.waitFor(() =>
-        expect(snapshotSpy).toHaveBeenCalledWith("mock-older"),
+        expect(snapshotSpy).toHaveBeenCalledWith("fixture-history"),
       );
       runtime.emit("event", {
         type: "message_update",
-        sessionId: "mock-older",
+        sessionId: "fixture-history",
         streamDelta: true,
         streamMessageKey: "new-assistant",
         streamTextLength: 9,
@@ -458,7 +466,7 @@ describe("WebSocket observation and transport limits", () => {
       release();
       runtime.emit("event", {
         type: "agent_settled",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         messages: ["old-owner-body"],
         sessionStatus: { runState: "idle" },
       });
@@ -470,7 +478,7 @@ describe("WebSocket observation and transport limits", () => {
       expect(frames.filter((frame) => frame.type === "snapshot")).toHaveLength(
         1,
       );
-      expect(frames[0]?.data?.active?.sessionId).toBe("mock-older");
+      expect(frames[0]?.data?.active?.sessionId).toBe("fixture-history");
       expect(frames.map((frame) => frame.type)).toEqual([
         "snapshot",
         "agent_start",
@@ -478,7 +486,7 @@ describe("WebSocket observation and transport limits", () => {
         "agent_settled",
       ]);
       expect(JSON.stringify(frames)).not.toContain("old-owner-body");
-      expect(snapshotSpy).toHaveBeenCalledWith("mock-older");
+      expect(snapshotSpy).toHaveBeenCalledWith("fixture-history");
     } finally {
       release();
       releaseNew();
@@ -497,7 +505,7 @@ describe("WebSocket observation and transport limits", () => {
       return snapshot();
     });
     const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
     try {
       await new Promise<void>((resolve, reject) => {
@@ -509,7 +517,7 @@ describe("WebSocket observation and transport limits", () => {
       // overtake the snapshot frame.
       runtime.emit("event", {
         type: "message_update",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
       });
       releaseSnapshot();
 
@@ -554,9 +562,9 @@ describe("WebSocket observation and transport limits", () => {
   });
 
   it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
-    await runtime.openSession("mock-active");
+    await runtime.openSession("fixture-active");
     const detail = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
     const background = eventSocket(`${baseUrl.replace("http", "ws")}/events`);
     const frames: Array<Record<string, unknown> & { type: string }> = [];
@@ -582,7 +590,7 @@ describe("WebSocket observation and transport limits", () => {
       let cumulativeBytes = 0;
       const emit = (event: unknown) =>
         runtime.emit("event", {
-          sessionId: "mock-active",
+          sessionId: "fixture-active",
           ...(event as Record<string, unknown>),
         });
       emit({ type: "message_start", message });
@@ -706,9 +714,9 @@ describe("WebSocket observation and transport limits", () => {
   });
 
   it("batches ordered assistant deltas without retransmitting cumulative messages", async () => {
-    await runtime.openSession("mock-active");
+    await runtime.openSession("fixture-active");
     const socket = eventSocket(
-      `${baseUrl.replace("http", "ws")}/events?detail=mock-active`,
+      `${baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
     );
     try {
       await new Promise<void>((resolve, reject) => {
@@ -734,7 +742,7 @@ describe("WebSocket observation and transport limits", () => {
       );
       runtime.emit("event", {
         type: "message_update",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         streamDelta: true,
         streamMessageKey: "live:assistant-1",
         streamTextLength: 1,
@@ -750,7 +758,7 @@ describe("WebSocket observation and transport limits", () => {
       });
       runtime.emit("event", {
         type: "message_update",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         streamDelta: true,
         streamMessageKey: "live:assistant-1",
         streamTextLength: 2,
@@ -767,7 +775,7 @@ describe("WebSocket observation and transport limits", () => {
       const frame = await batchFrame;
       expect(frame).toMatchObject({
         type: "message_update_batch",
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         streamMessageKey: "live:assistant-1",
         streamTextLength: 2,
         assistantMessageEvents: [

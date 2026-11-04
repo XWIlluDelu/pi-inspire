@@ -150,7 +150,6 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   bootstrapped: boolean;
   /** Monotonic identity of the current HTTP/WebSocket authority. */
   transportGeneration: number;
-  mock: boolean;
   /** Host-reported runtime versions, shown on the settings page. */
   version: string;
   piVersion: string;
@@ -326,7 +325,6 @@ export function createInitialAppState(): AppState {
     connectionProblem: null,
     bootstrapped: false,
     transportGeneration: 0,
-    mock: false,
     version: "",
     piVersion: "",
     inspireUpdateCheck: null,

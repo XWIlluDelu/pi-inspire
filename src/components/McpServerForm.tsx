@@ -2,6 +2,7 @@ import { Plus, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   MCP_EXPOSURES,
+  type McpClientRegistration,
   type McpConfigEntry,
   type McpConfigScope,
   type McpConfigSnapshot,
@@ -286,10 +287,10 @@ export function McpServerForm({
     patch.exposure === undefined ? entry?.exposure : patch.exposure;
   const registration =
     patch.oauth?.clientRegistration === null
-      ? "dcr"
+      ? "auto"
       : (patch.oauth?.clientRegistration ??
         entry?.oauthClientRegistration ??
-        "dcr");
+        "auto");
   // Protected values are not read back. Presence is enough to detect CIMD conflicts;
   // the Host validates the complete merged object, including stored callback URLs.
   const oauth: Record<string, unknown> = {
@@ -724,6 +725,7 @@ export function McpServerForm({
                       value={registration}
                       disabled={busy}
                       options={[
+                        { value: "auto", label: "Automatic (Pi default)" },
                         {
                           value: "dcr",
                           label: "Client ID or dynamic registration",
@@ -733,7 +735,7 @@ export function McpServerForm({
                       onChange={(value) =>
                         change("oauth", {
                           ...patch.oauth,
-                          clientRegistration: value as "dcr" | "cimd",
+                          clientRegistration: value as McpClientRegistration,
                         })
                       }
                     />

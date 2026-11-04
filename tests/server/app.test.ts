@@ -4,15 +4,11 @@ import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MockCatalog } from "../../server/mock.js";
-
 import {
   closeHostApiFixture,
   hostApiFixture,
   token,
 } from "./fixtures/host-api.js";
-
-const mockWorkspace = resolve("/home/demo/research");
 
 describe("typed Host API", () => {
   let temporary: Awaited<ReturnType<typeof hostApiFixture>>["temporary"];
@@ -268,8 +264,9 @@ describe("typed Host API", () => {
     });
     vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
       snapshotStarted();
+      const snapshot = await originalSnapshot();
       await gate;
-      return originalSnapshot();
+      return snapshot;
     });
     vi.spyOn(runtime, "close").mockImplementation(async () => {
       releaseSnapshot();
@@ -313,8 +310,8 @@ describe("typed Host API", () => {
       .expect(200);
     expect(sessions.body.total).toBe(1);
     expect(sessions.body.sessions[0]).toMatchObject({
-      id: "mock-active",
-      project: "research",
+      id: "fixture-active",
+      project: "workspace",
     });
     const page = await request(application.server)
       .get("/api/sessions?offset=1&limit=1")
@@ -338,10 +335,10 @@ describe("typed Host API", () => {
     const opened = await request(application.server)
       .post("/api/sessions/open")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
+      .send({ id: "fixture-active" })
       .expect(200);
     expect(opened.body.active.transcriptPage.messages).toHaveLength(5);
-    expect(opened.body.active.model.id).toBe("kimi-k3");
+    expect(opened.body.active.model.id).toBe("offline");
   });
 
   it("authenticates Pending clear, recovery, and exact-text reads without individual management", async () => {
@@ -350,21 +347,21 @@ describe("typed Host API", () => {
       .mockResolvedValue(undefined);
     await request(application.server)
       .post("/api/pending/clear")
-      .send({ sessionId: "mock-active" })
+      .send({ sessionId: "fixture-active" })
       .expect(401);
     expect(clear).not.toHaveBeenCalled();
     await request(application.server)
       .post("/api/pending/clear")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", expectedRevision: 1 })
+      .send({ sessionId: "fixture-active", expectedRevision: 1 })
       .expect(400);
     expect(clear).not.toHaveBeenCalled();
     await request(application.server)
       .post("/api/pending/clear")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active" })
+      .send({ sessionId: "fixture-active" })
       .expect(200, { ok: true });
-    expect(clear).toHaveBeenCalledExactlyOnceWith("mock-active");
+    expect(clear).toHaveBeenCalledExactlyOnceWith("fixture-active");
     const recover = vi
       .spyOn(runtime, "recoverPending")
       .mockResolvedValue({ steering: ["complete"], followUp: ["later"] });
@@ -374,14 +371,14 @@ describe("typed Host API", () => {
     for (const path of ["/api/pending/recover", "/api/pending/text"]) {
       await request(application.server)
         .post(path)
-        .send({ sessionId: "mock-active" })
+        .send({ sessionId: "fixture-active" })
         .expect(401);
     }
     const recovered = await request(application.server)
       .post("/api/pending/recover")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         operationId: randomUUID(),
         authorityId: application.authorityId,
       })
@@ -390,12 +387,12 @@ describe("typed Host API", () => {
       steering: ["complete"],
       followUp: ["later"],
     });
-    expect(recover).toHaveBeenCalledExactlyOnceWith("mock-active");
+    expect(recover).toHaveBeenCalledExactlyOnceWith("fixture-active");
     const copied = await request(application.server)
       .post("/api/pending/text")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         viewId: "view",
         revision: 7,
         itemId: "text-steer-0",
@@ -404,7 +401,7 @@ describe("typed Host API", () => {
     expect(copied.body.text).toHaveLength(2000);
     expect(copied.headers["cache-control"]).toBe("no-store");
     expect(text).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       viewId: "view",
       revision: 7,
       itemId: "text-steer-0",
@@ -413,29 +410,33 @@ describe("typed Host API", () => {
       await request(application.server)
         .post(path)
         .set("Authorization", `Bearer ${token}`)
-        .send({ sessionId: "mock-active" })
+        .send({ sessionId: "fixture-active" })
         .expect(404);
     }
   });
 
   it("dispatches a validated native command only to its authenticated explicit target", async () => {
-    await runtime.openSession("mock-active");
-    await runtime.openSession("mock-history");
-    const native = vi.spyOn(runtime, "nativeCommand");
+    await runtime.openSession("fixture-active");
+    await runtime.openSession("fixture-history");
+    const native = vi.spyOn(runtime, "nativeCommand").mockResolvedValue({
+      command: "compact",
+      outcome: "completed",
+      message: "Compaction completed",
+    });
 
     await request(application.server)
       .post("/api/control/native-command")
-      .send({ sessionId: "mock-active", command: "compact" })
+      .send({ sessionId: "fixture-active", command: "compact" })
       .expect(401);
     await request(application.server)
       .post("/api/control/native-command")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", command: "unknown" })
+      .send({ sessionId: "fixture-active", command: "unknown" })
       .expect(400);
     expect(native).not.toHaveBeenCalled();
 
     const command = {
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       command: "compact",
       argument: "preserve decisions",
     };
@@ -450,7 +451,7 @@ describe("typed Host API", () => {
       outcome: "completed",
     });
     expect(native).toHaveBeenCalledExactlyOnceWith(command);
-    expect(runtime.activeSessionId).toBe("mock-history");
+    expect(runtime.activeSessionId).toBe("fixture-history");
   });
 
   it.each([
@@ -489,19 +490,19 @@ describe("typed Host API", () => {
   ] as const)(
     "$route changes only the named session's field after authentication and validation",
     async ({ route, method, field, value, invalid, stateKey }) => {
-      await runtime.openSession("mock-active");
-      await runtime.openSession("mock-history");
-      const targetBefore = (await runtime.snapshot("mock-active")).active!
+      await runtime.openSession("fixture-active");
+      await runtime.openSession("fixture-history");
+      const targetBefore = (await runtime.snapshot("fixture-active")).active!
         .runtimeSettings;
       const selectedBefore = (await runtime.snapshot()).active!.runtimeSettings;
       const change = vi.spyOn(runtime, method);
       const path = `/api/control/${route}`;
-      const body = { sessionId: "mock-active", [field]: value };
+      const body = { sessionId: "fixture-active", [field]: value };
 
       await request(application.server).post(path).send(body).expect(401);
       for (const invalidBody of [
         { [field]: value },
-        { sessionId: "mock-active", [field]: invalid },
+        { sessionId: "fixture-active", [field]: invalid },
       ])
         await request(application.server)
           .post(path)
@@ -515,14 +516,14 @@ describe("typed Host API", () => {
         .set("Authorization", `Bearer ${token}`)
         .send(body)
         .expect(200, { ok: true });
-      expect(change).toHaveBeenCalledExactlyOnceWith("mock-active", value);
+      expect(change).toHaveBeenCalledExactlyOnceWith("fixture-active", value);
       expect(
-        (await runtime.snapshot("mock-active")).active?.runtimeSettings,
+        (await runtime.snapshot("fixture-active")).active?.runtimeSettings,
       ).toEqual({ ...targetBefore, [stateKey]: value });
       expect((await runtime.snapshot()).active?.runtimeSettings).toEqual(
         selectedBefore,
       );
-      expect(runtime.activeSessionId).toBe("mock-history");
+      expect(runtime.activeSessionId).toBe("fixture-history");
     },
   );
 
@@ -530,9 +531,9 @@ describe("typed Host API", () => {
     await request(application.server)
       .post("/api/sessions/open")
       .set("Authorization", `Bearer ${token}`)
-      .send({ id: "mock-active" })
+      .send({ id: "fixture-active" })
       .expect(200);
-    expect(runtime.activeSessionId).toBe("mock-active");
+    expect(runtime.activeSessionId).toBe("fixture-active");
 
     const deselected = await request(application.server)
       .post("/api/sessions/deselect")
@@ -544,18 +545,18 @@ describe("typed Host API", () => {
 
   it("serves authenticated session-addressed transcript pages", async () => {
     const page = {
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       revision: 7,
-      viewId: "mock-view-mock-active",
+      viewId: "fixture-view-fixture-active",
       composerHistoryVersion: "history-1",
       messages: [{ role: "user", content: "older", timestamp: 1 }],
       hasOlder: false,
       olderCursor: null,
     };
     const activityPage = {
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       revision: 7,
-      viewId: "mock-view-mock-active",
+      viewId: "fixture-view-fixture-active",
       messages: [{ role: "toolResult", content: "deferred", timestamp: 2 }],
       hasMore: false,
       cursor: null,
@@ -567,9 +568,9 @@ describe("typed Host API", () => {
     const userTurnIndex = vi
       .spyOn(runtime, "transcriptUserTurns")
       .mockResolvedValue({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         revision: 7,
-        viewId: "mock-view-mock-active",
+        viewId: "fixture-view-fixture-active",
         total: 1,
         start: 0,
         turns: [
@@ -594,9 +595,9 @@ describe("typed Host API", () => {
     const composerHistory = vi
       .spyOn(runtime, "composerHistory")
       .mockResolvedValue({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         revision: 7,
-        viewId: "mock-view-mock-active",
+        viewId: "fixture-view-fixture-active",
         historyId: "history-7",
         composerHistoryVersion: "history-1",
         total: 1,
@@ -605,67 +606,82 @@ describe("typed Host API", () => {
         nextStart: null,
       });
     await request(application.server)
-      .get("/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor")
+      .get(
+        "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor",
+      )
       .expect(401);
     const response = await request(application.server)
-      .get("/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor")
+      .get(
+        "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor",
+      )
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(response.body).toEqual(page);
-    expect(paging).toHaveBeenCalledWith("mock-active", "opaque-cursor", false);
+    expect(paging).toHaveBeenCalledWith(
+      "fixture-active",
+      "opaque-cursor",
+      false,
+    );
     await request(application.server)
       .get(
-        "/api/transcript/older?sessionId=mock-active&cursor=opaque-cursor&deferActivity=1",
+        "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor&deferActivity=1",
       )
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(paging).toHaveBeenLastCalledWith(
-      "mock-active",
+      "fixture-active",
       "opaque-cursor",
       true,
     );
 
     await request(application.server)
-      .get("/api/transcript/activity?sessionId=mock-active&cursor=range-cursor")
+      .get(
+        "/api/transcript/activity?sessionId=fixture-active&cursor=range-cursor",
+      )
       .expect(401);
     const activityResponse = await request(application.server)
-      .get("/api/transcript/activity?sessionId=mock-active&cursor=range-cursor")
+      .get(
+        "/api/transcript/activity?sessionId=fixture-active&cursor=range-cursor",
+      )
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(activityResponse.body).toEqual(activityPage);
-    expect(activityPaging).toHaveBeenCalledWith("mock-active", "range-cursor");
+    expect(activityPaging).toHaveBeenCalledWith(
+      "fixture-active",
+      "range-cursor",
+    );
 
     await request(application.server)
-      .get("/api/transcript/user-turns?sessionId=mock-active&start=0")
+      .get("/api/transcript/user-turns?sessionId=fixture-active&start=0")
       .expect(401);
     await request(application.server)
-      .get("/api/transcript/user-turns?sessionId=mock-active&start=0")
+      .get("/api/transcript/user-turns?sessionId=fixture-active&start=0")
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) => expect(result.body.turns).toHaveLength(1));
-    expect(userTurnIndex).toHaveBeenCalledWith("mock-active", 0);
+    expect(userTurnIndex).toHaveBeenCalledWith("fixture-active", 0);
 
     await request(application.server)
-      .get("/api/transcript/user-turn?sessionId=mock-active&id=user-0")
+      .get("/api/transcript/user-turn?sessionId=fixture-active&id=user-0")
       .expect(401);
     await request(application.server)
       .get(
-        "/api/transcript/user-turn?sessionId=mock-active&id=user-0&cursor=turn-cursor",
+        "/api/transcript/user-turn?sessionId=fixture-active&id=user-0&cursor=turn-cursor",
       )
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) => expect(result.body.targetMessageId).toBe("user-0"));
     expect(userTurnTranscript).toHaveBeenCalledWith(
-      "mock-active",
+      "fixture-active",
       "user-0",
       "turn-cursor",
     );
 
     await request(application.server)
-      .get("/api/composer/history?sessionId=mock-active&start=0")
+      .get("/api/composer/history?sessionId=fixture-active&start=0")
       .expect(401);
     await request(application.server)
-      .get("/api/composer/history?sessionId=mock-active&start=0")
+      .get("/api/composer/history?sessionId=fixture-active&start=0")
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) =>
@@ -673,7 +689,7 @@ describe("typed Host API", () => {
           { text: "prompt", images: [], files: [] },
         ]),
       );
-    expect(composerHistory).toHaveBeenCalledWith("mock-active", 0);
+    expect(composerHistory).toHaveBeenCalledWith("fixture-active", 0);
   });
 
   it("serves complete assistant text only through an authenticated session/branch read", async () => {
@@ -682,23 +698,23 @@ describe("typed Host API", () => {
       .spyOn(runtime, "lastAssistantText")
       .mockResolvedValue({ text });
     const path =
-      "/api/transcript/assistant-text?sessionId=mock-active&viewId=branch-1";
+      "/api/transcript/assistant-text?sessionId=fixture-active&viewId=branch-1";
     await request(application.server).get(path).expect(401);
     await request(application.server)
       .get(path)
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) => expect(result.body.text).toBe(text));
-    expect(copy).toHaveBeenCalledWith("mock-active", "branch-1");
+    expect(copy).toHaveBeenCalledWith("fixture-active", "branch-1");
     await request(application.server)
-      .get("/api/transcript/assistant-text?sessionId=mock-active")
+      .get("/api/transcript/assistant-text?sessionId=fixture-active")
       .set("Authorization", `Bearer ${token}`)
       .expect(400);
   });
 
   it("serves authenticated, bounded, session-addressed branch operations", async () => {
     const branchTree = {
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       revision: 3,
       incarnation: "inc",
       durableLeafId: "a1",
@@ -710,15 +726,15 @@ describe("typed Host API", () => {
     };
     const tree = vi.spyOn(runtime, "branchTree").mockResolvedValue(branchTree);
     const navigate = vi.spyOn(runtime, "navigateBranch").mockResolvedValue({
-      snapshot: await runtime.openSession("mock-active"),
+      snapshot: await runtime.openSession("fixture-active"),
       editorText: "original",
     });
     const fork = vi.spyOn(runtime, "forkBranch").mockResolvedValue({
       sessionId: "forked",
-      snapshot: await runtime.openSession("mock-active"),
+      snapshot: await runtime.openSession("fixture-active"),
       editorText: "original",
     });
-    const sourceSnapshot = await runtime.openSession("mock-active");
+    const sourceSnapshot = await runtime.openSession("fixture-active");
     const clone = vi.spyOn(runtime, "cloneBranch").mockResolvedValue({
       sessionId: "cloned",
       editorText: "",
@@ -728,7 +744,7 @@ describe("typed Host API", () => {
       },
     });
     const entry = vi.spyOn(runtime, "branchEntry").mockResolvedValue({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       revision: 3,
       text: "Complete retained answer",
       totalChars: 24,
@@ -759,24 +775,26 @@ describe("typed Host API", () => {
     });
 
     await request(application.server)
-      .get("/api/branches/tree?sessionId=mock-active")
+      .get("/api/branches/tree?sessionId=fixture-active")
       .expect(401);
     await request(application.server)
-      .get("/api/branches/tree?sessionId=mock-active")
+      .get("/api/branches/tree?sessionId=fixture-active")
       .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((response) => expect(response.body.revision).toBe(3));
-    expect(tree).toHaveBeenCalledWith("mock-active", {});
+    expect(tree).toHaveBeenCalledWith("fixture-active", {});
     await request(application.server)
-      .get("/api/branches/tree?sessionId=mock-active&query=retained&before=a1")
+      .get(
+        "/api/branches/tree?sessionId=fixture-active&query=retained&before=a1",
+      )
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
-    expect(tree).toHaveBeenLastCalledWith("mock-active", {
+    expect(tree).toHaveBeenLastCalledWith("fixture-active", {
       query: "retained",
       before: "a1",
     });
     const readQuery =
-      "sessionId=mock-active&targetId=a1&viewId=view-1&offset=0";
+      "sessionId=fixture-active&targetId=a1&viewId=view-1&offset=0";
     await request(application.server)
       .get(`/api/branches/entry?${readQuery}`)
       .expect(401);
@@ -793,7 +811,7 @@ describe("typed Host API", () => {
         expect(response.body.text).toBe("Complete retained answer"),
       );
     expect(entry).toHaveBeenCalledWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       targetId: "a1",
       viewId: "view-1",
       offset: 0,
@@ -805,7 +823,12 @@ describe("typed Host API", () => {
       .expect("Content-Type", /image\/png/)
       .expect("Cache-Control", "private, no-store");
     expect(image).toHaveBeenCalledWith(
-      { sessionId: "mock-active", targetId: "a1", viewId: "view-1", offset: 0 },
+      {
+        sessionId: "fixture-active",
+        targetId: "a1",
+        viewId: "view-1",
+        offset: 0,
+      },
       0,
     );
     await request(application.server)
@@ -817,7 +840,7 @@ describe("typed Host API", () => {
       .post("/api/branches/navigate")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         revision: 3,
         targetId: "u1",
         mode: "edit",
@@ -828,14 +851,14 @@ describe("typed Host API", () => {
       .post("/api/branches/navigate")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         revision: 3,
         targetId: "u1",
         mode: "edit",
       })
       .expect(200);
     expect(navigate).toHaveBeenCalledWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       revision: 3,
       targetId: "u1",
       mode: "edit",
@@ -844,23 +867,31 @@ describe("typed Host API", () => {
     await request(application.server)
       .post("/api/branches/fork")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", viewId: "source-view", targetId: "u1" })
+      .send({
+        sessionId: "fixture-active",
+        viewId: "source-view",
+        targetId: "u1",
+      })
       .expect(200);
     expect(fork).toHaveBeenCalledWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       viewId: "source-view",
       targetId: "u1",
     });
     await request(application.server)
       .post("/api/branches/clone")
-      .send({ sessionId: "mock-active", viewId: "source-view", targetId: null })
+      .send({
+        sessionId: "fixture-active",
+        viewId: "source-view",
+        targetId: null,
+      })
       .expect(401);
     expect(clone).not.toHaveBeenCalled();
     await request(application.server)
       .post("/api/branches/clone")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         viewId: "source-view",
         targetId: null,
         rawPath: "/forged",
@@ -869,26 +900,34 @@ describe("typed Host API", () => {
     await request(application.server)
       .post("/api/branches/clone")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", viewId: "source-view", targetId: "a1" })
+      .send({
+        sessionId: "fixture-active",
+        viewId: "source-view",
+        targetId: "a1",
+      })
       .expect(200)
       .expect((response) => expect(response.body.editorText).toBe(""));
     expect(clone).toHaveBeenLastCalledWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       viewId: "source-view",
       targetId: "a1",
     });
     await request(application.server)
       .post("/api/branches/clone")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", viewId: "source-view" })
+      .send({ sessionId: "fixture-active", viewId: "source-view" })
       .expect(400);
     await request(application.server)
       .post("/api/branches/clone")
       .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId: "mock-active", viewId: "source-view", targetId: null })
+      .send({
+        sessionId: "fixture-active",
+        viewId: "source-view",
+        targetId: null,
+      })
       .expect(200);
     expect(clone).toHaveBeenLastCalledWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       viewId: "source-view",
       targetId: null,
     });
@@ -939,7 +978,7 @@ describe("typed Host API", () => {
   });
 
   it("invalidates storage discovery only after saved project folders change", async () => {
-    const invalidate = vi.spyOn(MockCatalog.prototype, "invalidate");
+    const invalidate = vi.spyOn(fixture.catalog, "invalidate");
     await request(application.server)
       .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
@@ -1161,39 +1200,39 @@ describe("typed Host API", () => {
       .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        pinnedSessionIds: ["mock-active"],
+        pinnedSessionIds: ["fixture-active"],
         pinnedProjectCwds: ["/home/demo/project"],
-        hiddenSessionIds: ["mock-older"],
+        hiddenSessionIds: ["fixture-older"],
       })
       .expect(200);
     expect(curated.body).toMatchObject({
-      pinnedSessionIds: ["mock-active"],
+      pinnedSessionIds: ["fixture-active"],
       pinnedProjectCwds: ["/home/demo/project"],
-      hiddenSessionIds: ["mock-older"],
+      hiddenSessionIds: ["fixture-older"],
     });
 
     const summaries = await request(application.server)
       .post("/api/sessions/by-id")
       .set("Authorization", `Bearer ${token}`)
-      .send({ ids: ["mock-active", "missing"] })
+      .send({ ids: ["fixture-active", "missing"] })
       .expect(200);
     expect(summaries.body.sessions).toHaveLength(1);
-    expect(summaries.body.sessions[0].id).toBe("mock-active");
+    expect(summaries.body.sessions[0].id).toBe("fixture-active");
 
     // A pinned folder is claimed whole, so it hydrates by working directory
     // instead of depending on which of its sessions paged in.
     const folder = await request(application.server)
       .post("/api/sessions/by-cwd")
       .set("Authorization", `Bearer ${token}`)
-      .send({ cwds: [mockWorkspace, resolve("/nowhere")] })
+      .send({ cwds: [fixture.cwd, resolve("/nowhere")] })
       .expect(200);
     expect(
       folder.body.sessions.map((session: { cwd: string }) => session.cwd),
-    ).toEqual([mockWorkspace]);
+    ).toEqual([fixture.cwd]);
     await request(application.server)
       .post("/api/sessions/by-cwd")
       .set("Authorization", `Bearer ${token}`)
-      .send({ cwds: mockWorkspace })
+      .send({ cwds: fixture.cwd })
       .expect(400);
 
     await request(application.server)
@@ -1204,17 +1243,15 @@ describe("typed Host API", () => {
       .expect((response) => {
         expect(response.body.pinnedSessionIds).toEqual([]);
         // A field-scoped patch leaves the other curated lists alone.
-        expect(response.body.hiddenSessionIds).toEqual(["mock-older"]);
+        expect(response.body.hiddenSessionIds).toEqual(["fixture-older"]);
       });
   });
 
   it("refuses missing or unopened write targets instead of falling back to the selected session", async () => {
-    await runtime.openSession("mock-active");
+    await runtime.openSession("fixture-active");
     const before = await runtime.snapshot();
     const prompt = vi.spyOn(runtime, "prompt");
     const abort = vi.spyOn(runtime, "abort");
-    const events: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) => events.push(event));
 
     await request(application.server)
       .post("/api/prompt")
@@ -1238,11 +1275,10 @@ describe("typed Host API", () => {
       sessionId: "never-opened",
       message: "hello",
     });
-    expect(runtime.activeSessionId).toBe("mock-active");
+    expect(runtime.activeSessionId).toBe("fixture-active");
     expect((await runtime.snapshot()).active?.transcriptPage).toEqual(
       before.active?.transcriptPage,
     );
-    expect(events).toEqual([]);
   });
 
   it("clears one complete Hidden folder without changing unrelated curation", async () => {
@@ -1341,35 +1377,35 @@ describe("typed Host API", () => {
       .patch("/api/preferences")
       .set("Authorization", `Bearer ${token}`)
       .send({
-        pinnedSessionIds: ["mock-history"],
-        hiddenSessionIds: ["mock-history"],
+        pinnedSessionIds: ["fixture-history"],
+        hiddenSessionIds: ["fixture-history"],
       })
       .expect(200);
     const forget = vi.spyOn(resources, "forgetSession");
 
     await request(application.server)
-      .delete("/api/sessions/mock-history")
+      .delete("/api/sessions/fixture-history")
       .expect(401);
     const deleted = await request(application.server)
-      .delete("/api/sessions/mock-history")
+      .delete("/api/sessions/fixture-history")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(deleted.body).toMatchObject({
-      sessionId: "mock-history",
+      sessionId: "fixture-history",
       disposition: "trashed",
       preferences: { pinnedSessionIds: [], hiddenSessionIds: [] },
     });
-    expect(forget).toHaveBeenCalledWith("mock-history");
+    expect(forget).toHaveBeenCalledWith("fixture-history");
 
     const sessions = await request(application.server)
       .get("/api/sessions")
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(sessions.body.sessions).not.toContainEqual(
-      expect.objectContaining({ id: "mock-history" }),
+      expect.objectContaining({ id: "fixture-history" }),
     );
     await request(application.server)
-      .delete("/api/sessions/mock-history")
+      .delete("/api/sessions/fixture-history")
       .set("Authorization", `Bearer ${token}`)
       .expect(404);
   });

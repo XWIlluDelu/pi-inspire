@@ -30,7 +30,7 @@ describe("HTTP prompt operation ownership", () => {
       files: [],
     });
     const delivery = promptDelivery({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       message: "deliver once",
     });
     const first = await request(application.server)
@@ -49,7 +49,7 @@ describe("HTTP prompt operation ownership", () => {
     });
     expect(duplicate.body).toEqual(first.body);
     expect(prompt).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       message: "deliver once",
     });
 
@@ -91,7 +91,7 @@ describe("HTTP prompt operation ownership", () => {
     const observed = observationFixture.application;
     const delivery = {
       ...promptDelivery({
-        sessionId: "mock-active",
+        sessionId: "fixture-active",
         message: "slow synthetic preflight",
       }),
       authorityId: observed.authorityId,
@@ -172,7 +172,7 @@ describe("HTTP prompt operation ownership", () => {
         }),
     );
     const delivery = promptDelivery({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       message: "disconnect synthetic observer",
     });
     const observer = new AbortController();
@@ -208,7 +208,7 @@ describe("HTTP prompt operation ownership", () => {
         Object.assign(new Error("Synthetic rejection"), { status: 409 }),
       );
     const delivery = promptDelivery({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       message: "Synthetic refused prompt",
     });
     for (let attempt = 0; attempt < 2; attempt += 1)
@@ -247,7 +247,7 @@ describe("HTTP prompt operation ownership", () => {
       }),
     );
     const delivery = promptDelivery({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       message: "unknown synthetic outcome",
     });
     for (let attempt = 0; attempt < 2; attempt += 1)
@@ -276,7 +276,7 @@ describe("HTTP prompt operation ownership", () => {
   it("fails closed after a prompt response receipt retires", async () => {
     const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue(null);
     const delivery = promptDelivery({
-      sessionId: "mock-active",
+      sessionId: "fixture-active",
       message: "retain the identity",
     });
     await request(application.server)

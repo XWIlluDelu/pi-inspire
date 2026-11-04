@@ -9,7 +9,6 @@ export interface InstanceState {
   token: string;
   startedAt: string;
   processStartTime: string;
-  mock: boolean;
   shutdownControlVersion?: 1;
   httpControlVersion?: 1;
 }
@@ -18,12 +17,11 @@ export interface ExpectedInstance {
   root: string;
   host: string;
   port: number;
-  mock?: boolean;
 }
 
 export type InspectionResult =
   | { kind: "absent" | "stale" }
-  | { kind: "mode-conflict" | "unavailable"; state: InstanceState }
+  | { kind: "unavailable"; state: InstanceState }
   | { kind: "healthy"; state: InstanceState; url: string };
 
 export type StopResult =

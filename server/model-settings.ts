@@ -1,16 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  readFile,
-  readlink,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { ModelRuntime as NativeModelRuntime } from "@earendil-works/pi-coding-agent";
-import lockfile from "proper-lockfile";
 import stripJsonComments from "strip-json-comments";
 import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
 import type {
@@ -20,7 +11,10 @@ import type {
   PiModelPreferences,
   ProviderDeclaration,
 } from "../shared/model-settings.js";
-import { configurationEditLockPaths } from "./configuration-edit-locks.js";
+import {
+  editConfigurationFile,
+  readConfigurationText as textAt,
+} from "./configuration-file.js";
 import { modelSettings } from "./model-catalog.js";
 import { validateModelConfig } from "./model-metadata.js";
 import {
@@ -36,14 +30,6 @@ const revision = (text: string | undefined) =>
   createHash("sha256")
     .update(text === undefined ? "missing" : `file:${text}`)
     .digest("hex");
-async function textAt(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw requestError("Pi configuration could not be read", 409);
-  }
-}
 function object(text: string | undefined, comments = false): JsonObject {
   const source = text?.replace(/^\uFEFF/u, "");
   const value =
@@ -148,101 +134,27 @@ function declarationProjection(config: JsonObject): ProviderDeclaration[] {
   });
 }
 
-async function fileTarget(path: string): Promise<string> {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  try {
-    return await realpath(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  let link: string;
-  try {
-    link = await readlink(path);
-  } catch (error) {
-    if (
-      !["ENOENT", "EINVAL"].includes(
-        (error as NodeJS.ErrnoException).code ?? "",
-      )
-    )
-      throw error;
-    return join(await realpath(dirname(path)), basename(path));
-  }
-  return fileTarget(resolve(dirname(path), link));
-}
-
-/** Lock Pi's lexical path and the actual authority when config is symlinked.
- * Replace the target atomically, never the user's configuration symlink. */
 async function editFile(
   path: string,
-  expected: string,
+  expectedRevision: string,
   transform: (current: JsonObject) => Promise<JsonObject>,
   comments = false,
 ): Promise<void> {
-  const target = await fileTarget(path);
-  const lexical = join(await realpath(dirname(path)), basename(path));
-  const releases: Array<() => Promise<void>> = [];
-  let compromised = false;
-  const temporary = join(
-    dirname(target),
-    `.inspire-models-${randomUUID()}.json`,
-  );
-  try {
-    for (const authority of await configurationEditLockPaths(lexical, target)) {
+  await editConfigurationFile(
+    { path, expectedRevision, revision },
+    async (source) => {
+      let parsed: JsonObject;
       try {
-        releases.push(
-          await lockfile.lock(authority, {
-            realpath: false,
-            retries: { retries: 40, factor: 1, minTimeout: 50, maxTimeout: 50 },
-            onCompromised: () => {
-              compromised = true;
-            },
-          }),
-        );
+        parsed = object(source, comments);
       } catch {
         throw requestError(
-          "Pi configuration is being edited elsewhere. Reload and try again.",
+          "Repair the invalid Pi JSON file before saving",
           409,
         );
       }
-    }
-    const current = await textAt(path);
-    if (revision(current) !== expected)
-      throw requestError(
-        "Pi configuration changed elsewhere. Reload before saving.",
-        409,
-      );
-    let parsed: JsonObject;
-    try {
-      parsed = object(current, comments);
-    } catch {
-      throw requestError("Repair the invalid Pi JSON file before saving", 409);
-    }
-    const next = await transform(parsed);
-    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, {
-      mode: 0o600,
-    });
-    if (
-      compromised ||
-      (await fileTarget(path)) !== target ||
-      revision(await textAt(path)) !== expected
-    )
-      throw requestError(
-        "Pi configuration changed elsewhere. Reload before saving.",
-        409,
-      );
-    await rename(temporary, target);
-  } finally {
-    await rm(temporary, { force: true });
-    await Promise.all(
-      releases.reverse().map(async (release) => {
-        try {
-          await release();
-        } catch (error) {
-          if (!compromised) throw error;
-        }
-      }),
-    );
-  }
+      return `${JSON.stringify(await transform(parsed), null, 2)}\n`;
+    },
+  );
 }
 
 export async function commonModelOptions(

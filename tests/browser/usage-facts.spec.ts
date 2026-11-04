@@ -1,10 +1,10 @@
 import { expect, type Page, test } from "@playwright/test";
-import { HISTORY_FIXTURE_SESSION_ID } from "../../server/mock-history";
+import { HISTORY_FIXTURE_SESSION_ID } from "../fixtures/history-session";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 
@@ -30,7 +30,7 @@ for (const width of [1280, 390, 320]) {
     }) => {
       let source!: ActiveSnapshot;
       let envelope!: { type: string; detailSessionId?: string };
-      const transport = await routeMockSnapshots(page, {
+      const transport = await routeSnapshots(page, {
         snapshot(snapshot) {
           if (snapshot.active) source = structuredClone(snapshot);
         },
@@ -39,7 +39,11 @@ for (const width of [1280, 390, 320]) {
         },
       });
       await pairedPage(page);
-      await openMockSession(page, /Calibration history fixture/);
+      await openFixtureSession(
+        page,
+        /Calibration history fixture/,
+        "fixture-calibration-history",
+      );
       await expect
         .poll(() => source?.active?.sessionId)
         .toBe(HISTORY_FIXTURE_SESSION_ID);
@@ -115,7 +119,7 @@ for (const width of [1280, 390, 320]) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       let currentSnapshot!: ActiveSnapshot;
       let snapshotEvent!: { type: string; detailSessionId?: string };
-      const transport = await routeMockSnapshots(page, {
+      const transport = await routeSnapshots(page, {
         snapshot(snapshot) {
           if (!snapshot.active) return;
           snapshot.active.cwd = project;
@@ -141,7 +145,11 @@ for (const width of [1280, 390, 320]) {
         },
       });
       await pairedPage(page);
-      await openMockSession(page, /Calibration history fixture/);
+      await openFixtureSession(
+        page,
+        /Calibration history fixture/,
+        "fixture-calibration-history",
+      );
       // The existing occupancy control now gives pointer and keyboard users a
       // direct way to reach the same local query, without replacing their draft.
       const input = page.getByRole("textbox", { name: "Message", exact: true });

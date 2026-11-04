@@ -25,6 +25,8 @@ export type PersistenceMatcher = (entry: SessionEntry) => boolean;
 
 export interface PersistenceExpectation {
   readonly token: symbol;
+  /** Live message whose complete native payload established this claim. */
+  overlayId?: string;
   matcher: PersistenceMatcher | null;
   readonly exactEntry: SessionEntry | null;
   readonly ready: Promise<void>;

@@ -424,7 +424,6 @@ export async function fixture(
         throw new Error("Git is outside this fixture");
       },
     },
-    mock: false,
     version: "0.0.0-fixture",
     piVersion: piInstallation.version,
     distDir: join(directory, "missing-dist"),

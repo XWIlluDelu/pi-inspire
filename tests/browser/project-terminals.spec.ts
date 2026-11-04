@@ -9,8 +9,8 @@ import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { actionGeometry } from "./support/action-geometry";
 import { focusRingClipping } from "./support/focus-bounds";
 import { hostRequest } from "./support/host-request";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import { terminalWriteCommand } from "./support/terminal-command";
 import { terminalMutationHeaders } from "./support/terminal-operations";
 import { terminalTransportFixture } from "./support/terminal-transport";
@@ -30,7 +30,7 @@ test("terminal failures use shared error feedback with copy and explicit dismiss
     route.fulfill({ status: 503, json: { error: message } }),
   );
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   const error = page.locator(".terminal-pane__error");
@@ -81,7 +81,7 @@ for (const narrow of [false, true]) {
         ["quote-handoff"],
       );
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       const composer = page.getByRole("textbox", {
         name: "Message",
         exact: true,
@@ -158,7 +158,7 @@ for (const touch of [false, true]) {
         });
       });
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
@@ -227,7 +227,7 @@ test("a replacement terminal snapshot retires output still waiting in xterm's pa
     "snapshot-replay",
   ]);
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.evaluate(() => {
     let terminalSocket: WebSocket | undefined;
     const NativeWebSocket = window.WebSocket;
@@ -348,7 +348,7 @@ test("terminal profiles keep long labels, the default marker, and keyboard focus
     }),
   );
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   const trigger = page.getByLabel("Choose terminal profile", { exact: true });
@@ -416,7 +416,7 @@ for (const theme of ["light", "dark"] as const) {
     }, async ({ page }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await page.emulateMedia({ reducedMotion: "reduce" });
-      await routeMockSnapshots(page, {
+      await routeSnapshots(page, {
         bootstrap(body) {
           body.preferences.theme = theme;
         },
@@ -439,7 +439,7 @@ for (const theme of ["light", "dark"] as const) {
             : route.fulfill({ status: 500, json: { error: message } }),
       );
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await page
         .getByRole("button", { name: "Toggle resources panel" })
@@ -500,7 +500,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
   // serial PTY retirement share this budget; each operation keeps its deadline.
   test.setTimeout(60_000);
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.evaluate(() => {
     window.localStorage.setItem(
       "inspire:terminal-ui-settings:v1",
@@ -575,7 +575,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
 
     await page.reload();
     await expect(page.getByRole("main")).toBeVisible();
-    await openMockSession(page, /Review extension event lifecycle/);
+    await openFixtureSession(page, /Review extension event lifecycle/);
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     await page.getByRole("button", { name: "Terminal", exact: true }).click();
     await expect(page.locator(".terminal-tab__select")).toHaveCount(2);
@@ -623,7 +623,7 @@ test("project terminals survive browser detach and keep multiple tabs", {
     await expect(
       page.getByRole("status", { name: "View only", exact: true }),
     ).toBeVisible();
-    await openMockSession(page, /Formula rendering and spectral analysis/);
+    await openFixtureSession(page, /Formula rendering and spectral analysis/);
     await expect(focusedPage.locator(".terminal-pane--focused")).toBeVisible();
     await expect(
       focusedPage.locator(`#terminal-tab-${terminalIds[0]}`),
@@ -669,7 +669,7 @@ test("terminal menus share alignment, mutual exclusion, and nested Escape owners
     });
   });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const created = await hostRequest(page).post("/api/terminals", {
     headers: await terminalMutationHeaders(page),
     data: { cwd: browserWorkspace },
@@ -855,7 +855,7 @@ for (const hasTouch of [false, true]) {
           "search-layout-terminal",
         ]);
         await pairedPage(page);
-        await openMockSession(page, /Review extension event lifecycle/);
+        await openFixtureSession(page, /Review extension event lifecycle/);
         const resources = page.getByRole("button", {
           name: "Toggle resources panel",
           exact: true,
@@ -939,7 +939,7 @@ test.describe("terminal clipboard and focus ownership", () => {
         ["clipboard-focus"],
       );
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
@@ -1087,7 +1087,7 @@ test.describe("international terminal keyboard input", () => {
         ids,
       );
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
@@ -1295,7 +1295,7 @@ test("terminal search keeps IME keys native before ordinary match navigation", a
     "composition-search",
   ]);
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("button", { name: "Terminal", exact: true }).click();
   await expect(
@@ -1350,7 +1350,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
   const firstTerminal = terminals[0]!;
   const secondTerminal = terminals[1]!;
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.evaluate(() =>
     localStorage.setItem(
       "inspire:terminal-ui-settings:v1",
@@ -1658,7 +1658,7 @@ test.describe("touch terminal", () => {
     });
     await pairedPage(page);
     await page.getByRole("button", { name: "Toggle navigation" }).tap();
-    await openMockSession(page, /Review extension event lifecycle/);
+    await openFixtureSession(page, /Review extension event lifecycle/);
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     const response = await hostRequest(page).post("/api/terminals", {
       headers: await terminalMutationHeaders(page),

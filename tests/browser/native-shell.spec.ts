@@ -1,6 +1,6 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 import { pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
@@ -13,7 +13,7 @@ for (const touch of [false, true]) {
     test("fits the output notice without shrinking touch targets or losing the log action", async ({
       page,
     }) => {
-      const send = await openMockEventSession(
+      const send = await openEventSession(
         page,
         "Shell output notice",
         { version: 1, rules: {}, mappings: {} },
@@ -71,7 +71,7 @@ for (const touch of [false, true]) {
 }
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
-// lifecycle integration tests, never the mock Host or independent terminal.
+// lifecycle integration tests, never the test Host or independent terminal.
 test("native shell cards stream, stop, recall and fit the narrow composer without an automatic model turn", async ({
   page,
 }) => {

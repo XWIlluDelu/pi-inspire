@@ -56,13 +56,13 @@ describe("bounded Git diff through the Host and source projection", () => {
         await request(f.application.server)
           .post("/api/sessions/open")
           .set("Authorization", `Bearer ${token}`)
-          .send({ id: "mock-active" })
+          .send({ id: "fixture-active" })
           .expect(200);
         const response = await request(f.application.server)
           .post("/api/git/diff")
           .set("Authorization", `Bearer ${token}`)
           .send({
-            sessionId: "mock-active",
+            sessionId: "fixture-active",
             pathId: Buffer.from("source.ts").toString("base64url"),
             side,
           })

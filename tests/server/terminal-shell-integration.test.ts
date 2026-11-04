@@ -1,26 +1,7 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { ResolvedTerminalProfile } from "../../server/terminal-profiles.js";
-import {
-  ensureTerminalShellIntegration,
-  integratedTerminalLaunch,
-} from "../../server/terminal-shell-integration.js";
-
-const roots: string[] = [];
-
-async function temporaryRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "inspire-shell-integration-"));
-  roots.push(root);
-  return root;
-}
-
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true })),
-  );
-});
+import { integratedTerminalLaunch } from "../../server/terminal-shell-integration.js";
 
 function profile(shell: string, args = ["-l"]): ResolvedTerminalProfile {
   return {
@@ -34,26 +15,6 @@ function profile(shell: string, args = ["-l"]): ResolvedTerminalProfile {
 }
 
 describe("terminal shell integration", () => {
-  it("writes private wrappers without unresolved placeholders", async () => {
-    const directory = join(await temporaryRoot(), "shell");
-    await ensureTerminalShellIntegration(directory, {
-      HOME: "/home/example",
-    });
-    const bash = await readFile(join(directory, "bash-integration.sh"), "utf8");
-    const wrapper = await readFile(join(directory, "bash-init.sh"), "utf8");
-    const powershell = await readFile(
-      join(directory, "powershell-integration.ps1"),
-      "utf8",
-    );
-    expect(bash).toContain("6973;C1;");
-    expect(powershell).toContain("6973;C1;");
-    expect(powershell).toContain("[char]27");
-    expect(powershell).not.toContain('"`e]6973');
-    expect(bash).toContain("${value//$'\\033'/%1B}");
-    expect(wrapper).toContain("${INSPIRE_SHELL_INTEGRATION_DIR}");
-    expect(`${bash}${wrapper}`).not.toContain("__INSPIRE_OPEN__");
-  });
-
   it("preserves unsupported profiles and adds terminal identity", () => {
     const launch = integratedTerminalLaunch(
       profile("/bin/nu", []),

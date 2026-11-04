@@ -9,6 +9,5 @@ await Promise.all([
   import("./terminal-daemon-server.js"),
   import("./terminal-session-manager.js"),
 ]);
-if (process.env.INSPIRE_MOCK !== "1")
-  await resolvePiInstallation({ installationRoot: resolve(process.cwd()) });
+await resolvePiInstallation({ installationRoot: resolve(process.cwd()) });
 console.log("Restart preparation passed.");

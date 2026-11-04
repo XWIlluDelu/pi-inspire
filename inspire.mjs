@@ -268,8 +268,7 @@ async function targetsServiceInstance() {
     context.host !== "127.0.0.1" ||
     context.port !== 4587 ||
     resolve(context.statePath) !==
-      resolve(defaultInstanceStatePath(context.host, context.port)) ||
-    process.env.INSPIRE_MOCK === "1"
+      resolve(defaultInstanceStatePath(context.host, context.port))
   )
     return false;
   // Inherited defaults still address the installed service. A credential override
@@ -328,17 +327,12 @@ function instanceContext() {
   };
 }
 
-function expected(context, mock) {
-  return {
-    root: context.root,
-    host: context.host,
-    port: context.port,
-    ...(mock === undefined ? {} : { mock }),
-  };
+function expected(context) {
+  return { root: context.root, host: context.host, port: context.port };
 }
 
-async function inspect(context, mock) {
-  return inspectInstance(context.statePath, expected(context, mock), {
+async function inspect(context) {
+  return inspectInstance(context.statePath, expected(context), {
     processMarker: distribution ? "build/server/index.js" : "server/index.ts",
   });
 }
@@ -373,8 +367,8 @@ async function showInstanceUrl(result, open = false) {
   if (open) openUrl(url);
 }
 
-async function showExisting(context, mock) {
-  const result = await inspect(context, mock);
+async function showExisting(context) {
+  const result = await inspect(context);
   if (result.kind === "healthy") {
     console.log("INSΠRE is already running.");
     await showInstanceUrl(result, process.env.INSPIRE_OPEN !== "0");
@@ -384,20 +378,13 @@ async function showExisting(context, mock) {
     reportUnavailableHost(result.state);
     return "blocked";
   }
-  if (result.kind === "mode-conflict") {
-    console.error(
-      "This port is occupied by INSΠRE in a different runtime mode.",
-    );
-    console.error("Use 'inspire stop' before switching modes.");
-    return "blocked";
-  }
   // A stale publication is only evidence about the snapshot we inspected.
   // Leave it in place until the launcher owns the instance lock so we cannot
   // delete a replacement state published by a concurrent successful start.
   return "absent";
 }
 
-async function acquireInstanceLock(context, mock, detectExisting = true) {
+async function acquireInstanceLock(context, detectExisting = true) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
     try {
@@ -410,13 +397,13 @@ async function acquireInstanceLock(context, mock, detectExisting = true) {
       if (error?.code !== "ELOCKTIMEOUT") throw error;
     }
     if (detectExisting) {
-      const result = await inspect(context, mock);
+      const result = await inspect(context);
       if (result.kind === "healthy") {
         console.log("INSΠRE is already running.");
         await showInstanceUrl(result, process.env.INSPIRE_OPEN !== "0");
         return null;
       }
-      if (result.kind === "unavailable" || result.kind === "mode-conflict")
+      if (result.kind === "unavailable")
         throw new Error("Another managed INSΠRE instance is not available");
     }
   }
@@ -456,13 +443,13 @@ function runtimeCommand() {
   return [process.execPath, ["--import", "tsx", sourceRuntime]];
 }
 
-async function superviseHost(context, mock, lease) {
+async function superviseHost(context, lease) {
   let child = null;
   let stopping = false;
   let restarting = false;
   // Installed services retain systemd as lifecycle authority. Direct launches
   // use a private parent/child channel, including alternate ports and hosts.
-  const pageRestart = !mock && !isHostServiceExec();
+  const pageRestart = !isHostServiceExec();
   const forward = () => {
     if (stopping) return;
     stopping = true;
@@ -503,9 +490,7 @@ async function superviseHost(context, mock, lease) {
         INSPIRE_INSTALLATION_ROOT: root,
         INSPIRE_STATE_PATH: context.statePath,
         INSPIRE_STOP_REQUEST_PATH: context.stopRequestPath,
-        ...(mock ? { INSPIRE_MOCK: "1" } : {}),
       };
-      if (!mock) delete environment.INSPIRE_MOCK;
       child = spawn(command, args, {
         cwd: root,
         env: environment,
@@ -543,12 +528,12 @@ async function superviseHost(context, mock, lease) {
   }
 }
 
-async function startHost(mock = false, allowService = true, retained = null) {
+async function startHost(allowService = true, retained = null) {
   if (retained && allowService)
     throw new Error(
       "A retained local instance lock cannot be delegated to systemd",
     );
-  if (!mock && allowService) {
+  if (allowService) {
     const service = await manageHostService("start");
     if (service.code === 0) return 0;
     if (service.code !== 3) return service.code;
@@ -559,14 +544,14 @@ async function startHost(mock = false, allowService = true, retained = null) {
   try {
     await mkdir(dirname(context.statePath), { recursive: true, mode: 0o700 });
     if (!lease) {
-      const existing = await showExisting(context, mock);
+      const existing = await showExisting(context);
       if (existing === "shown") return 0;
       if (existing === "blocked") return 1;
-      lease = await acquireInstanceLock(context, mock);
+      lease = await acquireInstanceLock(context);
       if (!lease) return 0;
     }
 
-    const afterLock = await showExisting(context, mock);
+    const afterLock = await showExisting(context);
     if (afterLock === "shown") return 0;
     if (afterLock === "blocked") return 1;
     await lease.assertOwned();
@@ -581,7 +566,7 @@ async function startHost(mock = false, allowService = true, retained = null) {
 
     const hostLease = lease;
     lease = null;
-    return await superviseHost(context, mock, hostLease);
+    return await superviseHost(context, hostLease);
   } finally {
     await lease?.release();
   }
@@ -806,14 +791,14 @@ async function restartHost(all = false) {
   console.log("Restarting INSΠRE Host. Terminals remain running.");
   const stopped = await stopLocalHost(true);
   if (stopped.code !== 0) return stopped.code;
-  return startHost(false, false, stopped);
+  return startHost(false, stopped);
 }
 
 async function statusHost() {
   const service = await manageHostService("status", true);
   if (service.code === 0) {
     const context = instanceContext();
-    const result = await inspect(context, false);
+    const result = await inspect(context);
     if (result.kind === "healthy") {
       if (service.output) console.log(service.output);
       await showInstanceUrl(result);
@@ -833,15 +818,9 @@ async function statusHost() {
   if (service.code === 5 && service.output) console.log(service.output);
 
   const context = instanceContext();
-  let result = await inspect(context, false);
+  const result = await inspect(context);
   if (result.kind === "healthy") {
     console.log("INSΠRE is running.");
-    await showInstanceUrl(result);
-    return 0;
-  }
-  if (result.kind === "mode-conflict") result = await inspect(context, true);
-  if (result.kind === "healthy") {
-    console.log("INSΠRE mock is running.");
     await showInstanceUrl(result);
     return 0;
   }
@@ -853,14 +832,8 @@ async function statusHost() {
 async function waitReady() {
   const context = instanceContext();
   while (true) {
-    const result = await inspect(context, false);
+    const result = await inspect(context);
     if (result.kind === "healthy") return 0;
-    if (result.kind === "mode-conflict") {
-      console.error(
-        "The system service started in the wrong INSΠRE runtime mode.",
-      );
-      return 1;
-    }
     const mainPid = Number.parseInt(process.env.MAINPID ?? "", 10);
     if (Number.isInteger(mainPid) && mainPid > 0) {
       try {
@@ -888,7 +861,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire mock            run the UI-only mock Host\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -905,9 +878,7 @@ async function main() {
     case "":
     case "start":
     case "host":
-      return startHost(false);
-    case "mock":
-      return startHost(true, false);
+      return startHost();
     case "stop":
       return stopHost();
     case "restart":

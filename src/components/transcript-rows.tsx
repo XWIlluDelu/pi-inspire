@@ -17,7 +17,6 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
-import { fileReferenceName } from "../../shared/attachment-context";
 import type {
   GenericExtensionDisplay,
   PendingQueues,
@@ -32,6 +31,7 @@ import {
   messageText,
   type ToolCallContent,
   userMessageDisplayContent,
+  userMessageFileName,
 } from "../events";
 import { fileIconForPath } from "../file-icons";
 import { messageCopyLoader } from "../message-copy";
@@ -216,7 +216,7 @@ export const UserBubble = memo(function UserBubble({
         {references.length > 0 ? (
           <ul className="user-bubble__files" aria-label="Referenced files">
             {references.map((path, index) => {
-              const name = fileReferenceName(path);
+              const name = userMessageFileName(message, path);
               const FileIcon = fileIconForPath(name);
               return (
                 <li

@@ -449,7 +449,6 @@ interface AppDependencies {
   toolPresentations?: ToolPresentationConfigLike;
   resources: ResourceStore;
   git: GitInspectionLike;
-  mock: boolean;
   version: string;
   piVersion: string;
   /** Authenticated timer coordination; it detects installed updates and asks
@@ -777,10 +776,7 @@ export function createInspireServer(deps: AppDependencies): {
   const taskNotifications = new TaskNotifications(
     `${deps.preferences.path}.notifications-${browserAuth.notificationNamespace()}.json`,
     undefined,
-    async (id) => {
-      const session = await deps.catalog.get(id, { refresh: !deps.mock });
-      return session && (deps.mock ? { cwd: session.cwd } : session);
-    },
+    (id) => deps.catalog.get(id, { refresh: true }),
   );
   deps.runtime.on("event", taskNotifications.observe);
   const launchUrl = (origin: string): string =>
@@ -837,7 +833,7 @@ export function createInspireServer(deps: AppDependencies): {
   app.post("/api/host/local-control", async (request, response) => {
     response.set("Cache-Control", "no-store");
     const state = deps.instanceState?.();
-    if (!state || state.token !== deps.token || state.mock !== deps.mock)
+    if (!state || state.token !== deps.token)
       return response
         .status(503)
         .json({ error: "Local control is unavailable" });
@@ -849,7 +845,7 @@ export function createInspireServer(deps: AppDependencies): {
     let result: unknown;
     switch (grant.request.action) {
       case "readiness":
-        result = { appName: "inspire", mock: deps.mock };
+        result = { appName: "inspire" };
         break;
       case "launch-url": {
         let origin = new URL(instanceUrl(state)).origin;
@@ -1002,7 +998,7 @@ export function createInspireServer(deps: AppDependencies): {
   );
 
   app.get("/api/health", (_request, response) => {
-    response.json({ appName: "inspire", mock: deps.mock });
+    response.json({ appName: "inspire" });
   });
 
   app.get("/api/host/herdr", async (_request, response) => {
@@ -1155,7 +1151,6 @@ export function createInspireServer(deps: AppDependencies): {
         .digest("hex"),
       version: deps.version,
       piVersion: deps.piVersion,
-      mock: deps.mock,
       updateStatus,
       preferences: preferenceState.preferences,
       ...(preferenceState.warning

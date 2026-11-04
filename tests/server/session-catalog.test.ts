@@ -318,6 +318,42 @@ async function withSearchFixture(
 }
 
 describe("catalog current metadata", () => {
+  it("reuses a search across pages and observes invalidated sources", async () => {
+    const searching = vi.spyOn(
+      await import("../../server/session-search.js"),
+      "searchSessionRecords",
+    );
+    try {
+      await withSearchFixture(async (root, _index, catalog) => {
+        const first = await catalog.list({ query: "cobalt", limit: 1 });
+        const next = await catalog.list({
+          query: "cobalt",
+          offset: 1,
+          limit: 1,
+        });
+        expect(
+          [...first.sessions, ...next.sessions].map((row) => row.id),
+        ).toEqual(["search-newer", "search-owner"]);
+        expect(searching).toHaveBeenCalledOnce();
+        await appendFile(
+          join(root, "unrelated.jsonl"),
+          JSON.stringify({
+            type: "message",
+            id: "new-match",
+            parentId: "m1",
+            timestamp: "2026-08-01T00:00:05.000Z",
+            message: { role: "user", content: "cobalt", timestamp: 5 },
+          }) + "\n",
+        );
+        catalog.invalidate();
+        expect((await catalog.list({ query: "cobalt" })).total).toBe(3);
+        expect(searching).toHaveBeenCalledTimes(2);
+      });
+    } finally {
+      searching.mockRestore();
+    }
+  });
+
   it("refreshes one session name without a global scan or transcript projection", async () => {
     await withSearchFixture(async (root, index, catalog) => {
       const scan = vi.spyOn(index, "list");

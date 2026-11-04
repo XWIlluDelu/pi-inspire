@@ -56,7 +56,6 @@ async function fixture() {
     INSPIRE_HOST: "127.0.0.1",
     INSPIRE_PORT: String(port),
     INSPIRE_STATE_PATH: path,
-    INSPIRE_MOCK: "1",
     INSPIRE_TERMINAL_IN_PROCESS: "1",
     INSPIRE_OPEN: "0",
     INSPIRE_QUIET: "1",

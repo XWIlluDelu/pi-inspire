@@ -5,14 +5,21 @@ import {
 import type { DiagnosticLogger } from "./diagnostics.js";
 import type { PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
+import type { RuntimeBashController } from "./runtime-bash.js";
+import { newBridgeIdentity } from "./runtime-branch-bridge.js";
+import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
+import type { RuntimeProcessRegistry } from "./runtime-process-registry.js";
+import type { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
 import type { BranchBridgeIdentity, RuntimeSlot } from "./runtime-slot.js";
-import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
+import type { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import type { ProjectionReconcileResult } from "./session-projection.js";
 
 /**
  * RuntimeController retains mutation-gate ownership and the slot registry.
  * This collaborator owns only the lifecycle of an already-addressed Pi worker:
- * fresh-start attestation, safe stop, and writer freshness checks.
+ * fresh-start attestation, safe stop, and writer freshness checks. It calls the
+ * existing process, projection, extension UI and Bash owners directly rather
+ * than routing their APIs back through RuntimeController.
  */
 interface RuntimeWorkerLifecycleHost {
   selectedSessionId(): string | null;
@@ -24,23 +31,11 @@ interface RuntimeWorkerLifecycleHost {
     args: string[],
     bridge: BranchBridgeIdentity,
   ): PiRpcOptions;
-  newBridgeIdentity(): BranchBridgeIdentity;
-  attachProcess(slot: RuntimeSlot, rpc: PiRpcProcess): void;
-  detachProcess(rpc: PiRpcProcess): void;
   reconcile(
     slot: RuntimeSlot,
     force?: boolean,
     startupAttestation?: boolean,
   ): Promise<ProjectionReconcileResult>;
-  clearPendingExtensionUi(
-    slot: RuntimeSlot,
-    reason: "aborted" | "replaced" | "stopped" | "closed",
-  ): void;
-  clearWriterBaseline(slot: RuntimeSlot): void;
-  captureWriterBaseline(slot: RuntimeSlot): void;
-  writerBaselineMatches(slot: RuntimeSlot): boolean;
-  writerOwnershipActive(slot: RuntimeSlot): boolean;
-  clearPartialPersistence(slot: RuntimeSlot): void;
   setProjectionConflict(
     slot: RuntimeSlot,
     kind: ProjectionConflict["kind"],
@@ -50,7 +45,6 @@ interface RuntimeWorkerLifecycleHost {
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   rejectDeferredPrompts(slot: RuntimeSlot, worker: PiRpcProcess): void;
-  retireBash(slot: RuntimeSlot, worker: PiRpcProcess): void;
   scheduleIdleWorkerEviction(): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
 }
@@ -59,7 +53,13 @@ export class RuntimeWorkerLifecycle {
   constructor(
     private readonly host: RuntimeWorkerLifecycleHost,
     private readonly diagnostics: DiagnosticLogger,
-    private readonly startupAttestor: RuntimeStartupAttestor,
+    private readonly collaborators: {
+      startupAttestor: RuntimeStartupAttestor;
+      processRegistry: RuntimeProcessRegistry;
+      projectionCoordinator: RuntimeProjectionCoordinator;
+      extensionUi: RuntimeExtensionUiController;
+      bash: RuntimeBashController;
+    },
   ) {}
 
   async stop(slot: RuntimeSlot, cancelledCommand?: string): Promise<void> {
@@ -79,7 +79,7 @@ export class RuntimeWorkerLifecycle {
       incidentId: slot.conflict?.incidentId,
     });
     if (slot.pendingPartialPersistence) {
-      this.host.clearPartialPersistence(slot);
+      this.collaborators.projectionCoordinator.clearPartialPersistence(slot);
       if (!slot.conflict) {
         const conflict = this.host.setProjectionConflict(
           slot,
@@ -93,7 +93,7 @@ export class RuntimeWorkerLifecycle {
       }
     }
     this.host.rejectDeferredPrompts(slot, rpc);
-    this.host.retireBash(slot, rpc);
+    this.collaborators.bash.retire(slot, rpc);
     void slot.pendingImages?.dispose();
     slot.pendingImages = null;
     slot.process = null;
@@ -102,7 +102,7 @@ export class RuntimeWorkerLifecycle {
     slot.nativeBash = null;
     slot.ready = false;
     slot.compactionReturnState = null;
-    this.host.clearWriterBaseline(slot);
+    this.collaborators.projectionCoordinator.clearWriterBaseline(slot);
     slot.bridge = null;
     // Pre-start preparation has not acquired a Pi view to retire.
     if (slot.startupPhase !== "idle") this.host.renewView(slot);
@@ -114,12 +114,12 @@ export class RuntimeWorkerLifecycle {
       );
       slot.pendingBranchBridge = null;
     }
-    this.host.detachProcess(rpc);
+    this.collaborators.processRegistry.detach(rpc);
     // Retire admission synchronously, including unexpected transport exits.
     // Only a successful actual stop may release this session's writer fence.
     const stopping = rpc.stop(cancelledCommand);
     slot.stopping = stopping;
-    this.host.clearPendingExtensionUi(slot, "stopped");
+    this.collaborators.extensionUi.clear(slot, "stopped");
     slot.extensionDisplays = [];
     slot.extensionStatuses = {};
     slot.toolActivity = {};
@@ -167,8 +167,14 @@ export class RuntimeWorkerLifecycle {
     if (slot.process && slot.ready && !slot.process.available) {
       await this.stop(slot);
     }
-    if (slot.process && slot.ready && !this.host.writerBaselineMatches(slot)) {
-      if (this.host.writerOwnershipActive(slot)) {
+    if (
+      slot.process &&
+      slot.ready &&
+      !this.collaborators.projectionCoordinator.writerBaselineMatches(slot)
+    ) {
+      if (
+        this.collaborators.projectionCoordinator.writerOwnershipActive(slot)
+      ) {
         const conflict = this.host.setProjectionConflict(
           slot,
           "external-change",
@@ -186,7 +192,7 @@ export class RuntimeWorkerLifecycle {
     if (!slot.process || !slot.ready) await this.start(slot);
     if (!slot.process || !slot.ready)
       throw requestError("Pi runtime failed to start", 503);
-    this.host.captureWriterBaseline(slot);
+    this.collaborators.projectionCoordinator.captureWriterBaseline(slot);
     return slot as RuntimeSlot & { process: PiRpcProcess };
   }
 
@@ -202,8 +208,8 @@ export class RuntimeWorkerLifecycle {
     if (slot.stopping) await slot.stopping;
     const projection = slot.projection;
     await projection.suspendReconciliation();
-    const baseline = this.startupAttestor.capture(projection);
-    const bridge = this.host.newBridgeIdentity();
+    const baseline = this.collaborators.startupAttestor.capture(projection);
+    const bridge = newBridgeIdentity();
     let rpc: PiRpcProcess | undefined;
     try {
       rpc = await this.host.createProcess({
@@ -225,7 +231,7 @@ export class RuntimeWorkerLifecycle {
     slot.startupError = null;
     slot.bridge = bridge;
     slot.ready = false;
-    this.host.clearPendingExtensionUi(slot, "replaced");
+    this.collaborators.extensionUi.clear(slot, "replaced");
     slot.piPendingQueues = emptyPendingQueues();
     slot.piPendingInput = { steering: [], followUp: [] };
     let checkingWriterAvailability = false;
@@ -245,8 +251,8 @@ export class RuntimeWorkerLifecycle {
       slot.toolActivity = {};
       slot.availableModels = null;
       slot.commands = null;
-      this.host.attachProcess(slot, rpc);
-      await this.startupAttestor.requireUnchangedPreStartBaseline(
+      this.collaborators.processRegistry.attach(slot, rpc);
+      await this.collaborators.startupAttestor.requireUnchangedPreStartBaseline(
         slot,
         baseline,
       );
@@ -262,7 +268,7 @@ export class RuntimeWorkerLifecycle {
       started = true;
       await rpc.start();
       if (slot.startupError) throw slot.startupError;
-      await this.startupAttestor.attest(slot, rpc, baseline);
+      await this.collaborators.startupAttestor.attest(slot, rpc, baseline);
       // Disk attestation awaits after the last RPC response. Exit or Stop may
       // retire this worker while that final filesystem observation is pending.
       if (slot.process !== rpc || !rpc.available)
@@ -275,7 +281,7 @@ export class RuntimeWorkerLifecycle {
       slot.startupPhase = "complete";
       if (slot.runState === "failed" || slot.runState === "aborted")
         slot.runState = "idle";
-      this.host.captureWriterBaseline(slot);
+      this.collaborators.projectionCoordinator.captureWriterBaseline(slot);
       this.diagnostics.record("info", "slot_worker_ready", {
         sessionId: slot.id,
         slotIncarnation: slot.incarnationId,

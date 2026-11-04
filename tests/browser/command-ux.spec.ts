@@ -2,11 +2,11 @@ import AxeBuilder from "@axe-core/playwright";
 import { test as base, expect, type Page } from "@playwright/test";
 import type { ActiveSnapshot, ModelOption } from "../../shared/contracts";
 import { actionGeometry } from "./support/action-geometry";
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import { moveCaretToEnd } from "./support/native-input";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
@@ -50,7 +50,7 @@ const test = base.extend<{ commandSession: CommandSession }>({
       snapshot = structuredClone(value);
       return value;
     };
-    const transport = await routeMockSnapshots(page, {
+    const transport = await routeSnapshots(page, {
       snapshot: addCommands,
       event: (event) => {
         if (
@@ -76,7 +76,7 @@ const test = base.extend<{ commandSession: CommandSession }>({
     });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await pairedPage(page);
-    await openMockSession(page, /Review extension event lifecycle/);
+    await openFixtureSession(page, /Review extension event lifecycle/);
     const input = page.getByLabel("Message", { exact: true });
     await input.fill(draft);
     await page.locator('input[type="file"]').setInputFiles({
@@ -399,7 +399,7 @@ test("native terminal-only commands remain discoverable in the composer", async 
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Compaction checkpoint fixture/);
+  await openFixtureSession(page, /Compaction checkpoint fixture/);
   await page.getByLabel("Message", { exact: true }).fill("/bug");
   await expect(
     page.getByRole("option", { name: /\/bug.*Terminal only/ }),
@@ -548,7 +548,7 @@ test("continues prose after inline references, including after draft reload", as
 }) => {
   const { input, prompts } = commandSession;
   {
-    await input.fill("/model kimi");
+    await input.fill("/model ");
     await page
       .getByRole("listbox", { name: "Model argument completions" })
       .getByRole("option")
@@ -841,7 +841,7 @@ test("new-session completion opens below its caret line inside the viewport", as
   await page.setViewportSize({ width: 715, height: 571 });
   await pairedPage(page);
   await page.getByRole("button", { name: "Toggle navigation" }).click();
-  await openMockSession(page, /Formula rendering and spectral analysis/);
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
   await page.getByRole("button", { name: "Toggle navigation" }).click();
   await page.getByRole("button", { name: "New session" }).click();
 

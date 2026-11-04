@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolvePiInstallation } from "../../server/pi-installation.js";
+import {
+  resolvePiInstallation,
+  resolvePiInstallationIdentity,
+} from "../../server/pi-installation.js";
 
 const directories: string[] = [];
 
@@ -122,6 +125,123 @@ afterEach(async () => {
 });
 
 describe("Pi installation authority", () => {
+  it("resolves the managed launcher and its symlink to the active package", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "inspire-pi-managed-"));
+    directories.push(directory);
+    const agent = join(directory, "agent");
+    const release = await fakePi(
+      join(agent, "install", "releases", "1.5.0"),
+      "1.5.0",
+    );
+    const bin = join(agent, "bin");
+    await mkdir(bin, { recursive: true });
+    const command = join(bin, process.platform === "win32" ? "pi.cmd" : "pi");
+    await writeFile(
+      command,
+      process.platform === "win32" ? "@exit /b 99\r\n" : "#!/bin/sh\nexit 99\n",
+      { mode: 0o755 },
+    );
+    await writeFile(join(agent, "install", "current-version"), "1.5.0\n");
+
+    const installation = await resolvePiInstallation({ command });
+    expect(installation).toMatchObject({
+      packageRoot: release.packageRoot,
+      version: "1.5.0",
+      cliPath: join(release.packageRoot, "dist", "cli.js"),
+      sdkEntryPath: join(release.packageRoot, "dist", "index.js"),
+    });
+    expect((installation.sdk as unknown as { marker: boolean }).marker).toBe(
+      true,
+    );
+
+    if (process.platform !== "win32") {
+      const alias = join(directory, "pi");
+      await symlink(command, alias);
+      expect(
+        await resolvePiInstallationIdentity({ command: alias }),
+      ).toMatchObject({
+        commandPath: alias,
+        packageRoot: release.packageRoot,
+      });
+    }
+  });
+
+  it("keeps PATH authority and follows managed upgrades without a version-specific override", async () => {
+    const directory = await mkdtemp(
+      join(tmpdir(), "inspire-pi-managed-upgrade-"),
+    );
+    directories.push(directory);
+    const agent = join(directory, "agent");
+    const first = await fakePi(
+      join(agent, "install", "releases", "1.5.0"),
+      "1.5.0",
+    );
+    const next = await fakePi(
+      join(agent, "install", "releases", "1.6.0"),
+      "1.6.0",
+    );
+    const old = await fakePi(join(directory, "old-global"), "0.87.1");
+    const bin = join(agent, "bin");
+    await mkdir(bin, { recursive: true });
+    const command = join(bin, process.platform === "win32" ? "pi.cmd" : "pi");
+    await writeFile(command, "", { mode: 0o755 });
+    const pointer = join(agent, "install", "current-version");
+    await writeFile(pointer, "1.5.0\n");
+    const configured = process.env.INSPIRE_PI_COMMAND;
+    delete process.env.INSPIRE_PI_COMMAND;
+    try {
+      const options = { path: [bin, old.binDirectory].join(delimiter) };
+      expect(await resolvePiInstallationIdentity(options)).toMatchObject({
+        packageRoot: first.packageRoot,
+        version: "1.5.0",
+      });
+      await writeFile(pointer, "1.6.0\n");
+      expect(await resolvePiInstallationIdentity(options)).toMatchObject({
+        packageRoot: next.packageRoot,
+        version: "1.6.0",
+      });
+    } finally {
+      if (configured === undefined) delete process.env.INSPIRE_PI_COMMAND;
+      else process.env.INSPIRE_PI_COMMAND = configured;
+    }
+  });
+
+  it.each(["../escape", "missing-release"])(
+    "reports a broken managed installation instead of falling back to old Pi: %s",
+    async (version) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "inspire-pi-managed-broken-"),
+      );
+      directories.push(directory);
+      const agent = join(directory, "agent");
+      const bin = join(agent, "bin");
+      await mkdir(bin, { recursive: true });
+      await mkdir(join(agent, "install"));
+      await writeFile(
+        join(bin, process.platform === "win32" ? "pi.cmd" : "pi"),
+        "",
+        { mode: 0o755 },
+      );
+      await writeFile(
+        join(agent, "install", "current-version"),
+        version + "\n",
+      );
+      const old = await fakePi(join(directory, "old-global"), "0.87.1");
+      const configured = process.env.INSPIRE_PI_COMMAND;
+      delete process.env.INSPIRE_PI_COMMAND;
+      try {
+        await expect(
+          resolvePiInstallationIdentity({
+            path: [bin, old.binDirectory].join(delimiter),
+          }),
+        ).rejects.toThrow("managed Pi installation");
+      } finally {
+        if (configured === undefined) delete process.env.INSPIRE_PI_COMMAND;
+        else process.env.INSPIRE_PI_COMMAND = configured;
+      }
+    },
+  );
+
   it("loads the SDK and RPC CLI from one explicit Pi package without version gating", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-pi-installation-"));
     directories.push(directory);

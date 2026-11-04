@@ -3,14 +3,12 @@ import {
   lstat,
   mkdir,
   readFile,
-  rename,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import express from "express";
-import lockfile from "proper-lockfile";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpConfigService } from "../../server/mcp-config.js";
@@ -373,6 +371,48 @@ describe("MCP file configuration", () => {
     ).toHaveLength(1);
   });
 
+  it("round-trips automatic OAuth registration without changing protected values or implicit defaults", async () => {
+    await edit({
+      scope: "user",
+      name: "docs",
+      operation: "update",
+      values: {
+        oauth: {
+          clientRegistration: "auto",
+          clientName: "Automatic client",
+          callbackUrl: "http://[::1]/custom-callback",
+        },
+      },
+    });
+    expect((await service.read(cwd)).files[0]!.entries[0]).toMatchObject({
+      oauthClientRegistration: "auto",
+    });
+    await edit({
+      scope: "user",
+      name: "docs",
+      operation: "update",
+      values: { description: "Unrelated edit" },
+    });
+    expect((await json()).mcpServers.docs.oauth).toEqual({
+      ...fixture.mcpServers.docs.oauth,
+      clientRegistration: "auto",
+      clientName: "Automatic client",
+      callbackUrl: "http://[::1]/custom-callback",
+    });
+    await edit({
+      scope: "user",
+      name: "docs",
+      operation: "update",
+      values: { oauth: { clientRegistration: null } },
+    });
+    const oauth = (await json()).mcpServers.docs.oauth;
+    expect(oauth).not.toHaveProperty("clientRegistration");
+    expect(oauth.clientSecret).toBe(fixture.mcpServers.docs.oauth.clientSecret);
+    expect((await service.read(cwd)).files[0]!.entries[0]).not.toHaveProperty(
+      "oauthClientRegistration",
+    );
+  });
+
   it("validates merged OAuth registration and preserves the file until incompatible stored fields are explicitly removed", async () => {
     const path = join(agent, "mcp.json");
     await writeFile(
@@ -545,80 +585,6 @@ describe("MCP file configuration", () => {
       "secret-invalid-json",
     );
   });
-  it("saves a regular filename case alias on a native case-insensitive volume", async (context) => {
-    const lower = join(agent, "mcp.json");
-    const upper = join(agent, "MCP.JSON");
-    await rename(lower, upper);
-    if (
-      !(await access(lower).then(
-        () => true,
-        () => false,
-      ))
-    )
-      return context.skip();
-    await edit({
-      scope: "user",
-      name: "docs",
-      operation: "update",
-      values: { timeout: 27 },
-    });
-    expect((await json(upper)).mcpServers.docs.timeout).toBe(27);
-  });
-
-  it.each(["regular", "symlink"])(
-    "rejects a %s file retargeted during its save even with identical contents",
-    async (kind) => {
-      const file = join(agent, "mcp.json");
-      const original = await readFile(file, "utf8");
-      const initialTarget = join(root, "original.json");
-      if (kind === "symlink") {
-        await rename(file, initialTarget);
-        await symlink(initialTarget, file);
-      }
-      const replacement = join(root, "replacement.json");
-      await writeFile(replacement, original);
-      const before = (await service.read(cwd)).files[0]!;
-      const nativeLock = lockfile.lock.bind(lockfile);
-      const locked: string[] = [];
-      let changed = false;
-      vi.spyOn(lockfile, "lock").mockImplementation(
-        async (authority, options) => {
-          const release = await nativeLock(authority, options);
-          locked.push(authority);
-          if (!changed) {
-            changed = true;
-            await rm(file);
-            await symlink(replacement, file);
-          }
-          return release;
-        },
-      );
-      await expect(
-        service.save(cwd, {
-          scope: "user",
-          name: "docs",
-          operation: "update",
-          revision: before.revision,
-          values: { timeout: 28 },
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(changed).toBe(true);
-      expect(locked).toEqual(
-        kind === "symlink" ? [file, initialTarget].sort() : [file],
-      );
-      expect((await lstat(file)).isSymbolicLink()).toBe(true);
-      expect(await readFile(replacement, "utf8")).toBe(original);
-      if (kind === "symlink")
-        expect(await readFile(initialTarget, "utf8")).toBe(original);
-      await expect(access(`${file}.lock`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      await expect(access(`${initialTarget}.lock`)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    },
-  );
-
   it("preserves user symlinks but refuses project paths outside their selected authority", async () => {
     const userPath = join(agent, "mcp.json"),
       target = join(root, "linked.json");

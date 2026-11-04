@@ -12,6 +12,7 @@
     "extensions/**/*.ts",
     "docs/examples/*.ts",
     "tests/integration/**/*.ts",
+    "tests/fixtures/workbench*.ts", "tests/fixtures/host-services.ts", "tests/fixtures/history-session.ts", "tests/fixtures/pi-workbench-provider.ts",
     "tests/server/fixtures/**/*.ts",
     "tests/web/helpers.ts",
     "tests/web/store-fixture.ts",

@@ -20,6 +20,7 @@ import {
 } from "../../shared/branch-bridge-protocol.js";
 
 import { userMessageEvidence } from "../pending-image-evidence.js";
+import { MAX_SESSION_ID_CHARS } from "../../shared/contracts.js";
 import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
 
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/;
@@ -41,7 +42,8 @@ function parseRequest(argument: string, workerId: string): BranchBridgeRequest {
     typeof value.workerId !== "string" ||
     value.workerId !== workerId ||
     typeof value.sessionId !== "string" ||
-    !TOKEN.test(value.sessionId) ||
+    value.sessionId.length === 0 ||
+    value.sessionId.length > MAX_SESSION_ID_CHARS ||
     typeof value.targetId !== "string" ||
     !ENTRY_ID.test(value.targetId) ||
     (value.summarize !== undefined && typeof value.summarize !== "boolean") ||

@@ -48,6 +48,11 @@ background work running. Before startup, resolve one immutable physical workspac
 project files, attachment context, resources and Git inspection. Later symlink retargeting must not
 split those operations across roots, and the browser does not register a second workspace path.
 
+Live messages acquire durable identity through exact native persistence claims or worker
+witnesses. Bind the live lifecycle ID to the verified entry ID before retiring its overlay;
+timestamps, roles and even equal content are not message identity. Browser projections may be
+lossy, so do not infer that two messages are the same from their rendered content.
+
 ## New-session materialization
 
 Pi reserves a path before creating JSONL, so model, thinking, name, extension state and the first

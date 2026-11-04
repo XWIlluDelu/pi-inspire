@@ -54,10 +54,13 @@ Environment/header values and OAuth client secrets can use Pi's `${NAME}` refere
 `!command` syntax. Inspire stores these literally; it does not execute or resolve them when opening
 Settings. Pi may resolve them when loading/connecting the server.
 
-The OAuth **Client registration** field shows the saved method. Use **Client ID or dynamic
-registration** for a supplied client ID or dynamic registration, or **Pi metadata document (CIMD)**
-when the server requires Pi's published client metadata. CIMD cannot be combined with a client ID
-or client name; switching to it requires explicitly removing any stored values in those fields.
+The OAuth **Client registration** field shows the saved method. **Automatic (Pi default)** lets Pi
+choose its published client metadata document when supported, otherwise dynamic registration.
+A supplied client ID stays in use; a client name or nonstandard callback selects dynamic registration.
+Use **Client ID or dynamic registration** to explicitly select that path, or **Pi metadata document
+(CIMD)** to require the published document. CIMD cannot be combined with a client ID or client name;
+switching to it requires explicitly removing any stored values in those fields.
+Leaving the default untouched does not add a registration field to the file.
 A custom CIMD callback must use `http://localhost` or `http://127.0.0.1` with the path `/callback`.
 Invalid combinations are rejected without changing the file.
 

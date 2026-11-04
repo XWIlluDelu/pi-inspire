@@ -1,10 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 async function openFixture(page: Page) {
-  await openMockSession(page, /Compaction checkpoint fixture/);
+  await openFixtureSession(page, /Compaction checkpoint fixture/);
   await expect(page.locator(".context-checkpoint")).toBeVisible();
 }
 

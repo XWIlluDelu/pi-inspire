@@ -77,8 +77,8 @@ export function modelSettings(cwd: string, agentDir = getAgentDir()) {
     projectTrusted: false,
   });
   settings.setProjectTrusted(
-    !hasTrustRequiringProjectResources(cwd) ||
-      (new ProjectTrustStore(agentDir).get(cwd) ??
+    new ProjectTrustStore(agentDir).get(cwd) ??
+      (!hasTrustRequiringProjectResources(cwd) ||
         settings.getDefaultProjectTrust() === "always"),
   );
   return settings;

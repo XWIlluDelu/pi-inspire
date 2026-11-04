@@ -2,7 +2,7 @@ import { hostRequest } from "./support/host-request";
 import { expect, type Page, test } from "@playwright/test";
 import type { ModelOption } from "../../shared/contracts";
 
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import { pairAndOpen, pairedPage } from "./support/navigation";
 
 test.use({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
@@ -33,14 +33,15 @@ async function modelScenario(page: Page, inherited: boolean) {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await routeMockSnapshots(page, {
+  await routeSnapshots(page, {
     snapshot: (snapshot) => {
       const active = snapshot.active;
-      if (inherited && active?.sessionId === "mock-history")
+      if (inherited && active?.sessionId === "fixture-history")
         Object.assign(active, {
           model: router,
           thinkingLevel: "high",
           availableModels: models,
+          modelDiscovery: undefined,
         });
     },
     bootstrap: (body) => {
@@ -66,19 +67,21 @@ async function modelScenario(page: Page, inherited: boolean) {
   );
   let submitted: unknown;
   await page.route("**/api/sessions/new", async (route) => {
-    submitted = route.request().postDataJSON();
-    // Capture the startup contract without creating a mock-only session that
+    const request = route.request().postDataJSON();
+    // Capture the startup contract without creating a fixture-only session that
     // cannot appear in the fixture catalog. Native startup has its own fixture.
     const response = await hostRequest(page).get(
-      "/api/snapshot?detail=mock-history",
+      "/api/snapshot?detail=fixture-history",
     );
     const payload = await response.json();
     Object.assign(payload.active, {
       model: router,
       thinkingLevel: inherited ? "high" : "low",
       availableModels: models,
+      modelDiscovery: undefined,
     });
     await route.fulfill({ response, json: payload });
+    submitted = request;
   });
   await page.route("**/api/prompt", (route) =>
     route.fulfill({ status: 202, json: { accepted: true } }),

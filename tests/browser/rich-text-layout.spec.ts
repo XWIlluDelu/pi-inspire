@@ -4,7 +4,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 import { firstTextBaseline } from "./support/text-baseline";
 
 const checklist = `# Checklist
@@ -154,7 +154,7 @@ for (const surface of [
     const file = join(browserWorkspace, "task-layout.md");
     if (surface === "document") await writeFile(file, checklist);
     try {
-      const send = await openMockEventSession(
+      const send = await openEventSession(
         page,
         `Task layout: ${surface}`,
         customMessageConfiguration,

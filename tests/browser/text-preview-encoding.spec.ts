@@ -2,7 +2,7 @@ import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test("BOM text previews decode Unicode and download original bytes", {
   tag: "@cross-browser",
@@ -34,7 +34,10 @@ test("BOM text previews decode Unicode and download original bytes", {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await pairedPage(page);
-    await openMockSession(page, /Resource virtualization and sandbox fixture/);
+    await openFixtureSession(
+      page,
+      /Resource virtualization and sandbox fixture/,
+    );
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const pane = page.locator(".ctx");
     for (const fixture of fixtures) {
