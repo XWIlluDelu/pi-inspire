@@ -7,58 +7,110 @@
 }
 
 .pdf-preview__toolbar {
+  --floating-tool-size: 28px;
+  --floating-tool-icon: 16px;
   display: flex;
   align-items: center;
   flex: none;
-  padding: 0 4px;
+  gap: 2px;
+  padding: 11px var(--space-3);
   border-bottom: 1px solid var(--hairline);
   font: 500 var(--text-xs)/var(--leading-ui) var(--font-sans);
 }
 
+/* Reserve a stable second row below file actions. Collapsing that overlay
+   must not move a PDF control between pointerdown and click. */
+@container context-pane (max-width: 420px) {
+  .pdf-preview__toolbar {
+    padding-top: 48px;
+  }
+}
+
 .pdf-preview__toolbar .icon-button {
-  width: 44px;
-  height: 44px;
+  width: var(--floating-tool-size);
+  height: var(--floating-tool-size);
   flex: none;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+}
+
+.pdf-preview__toolbar .icon-button > svg {
+  width: var(--floating-tool-icon);
+  height: var(--floating-tool-icon);
+}
+
+.pdf-preview__toolbar .icon-button:hover:not(:disabled) {
+  background: var(--bg-inset);
+  color: var(--ink);
 }
 
 .pdf-preview__page-number {
   min-width: 3.5em;
   text-align: center;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .pdf-preview__spacer {
-  flex: 1;
+  flex: 0 0 1px;
+  height: 16px;
+  margin-inline: var(--space-1);
+  background: var(--hairline);
 }
 
 .pdf-preview__fit {
-  min-width: 44px;
-  height: 44px;
-  padding: 0 4px;
-  color: var(--ink);
+  min-width: 36px;
+  height: var(--floating-tool-size);
+  padding: 0 var(--space-2);
+  color: var(--muted);
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
   cursor: pointer;
   font: inherit;
+  font-variant-numeric: tabular-nums;
 }
 
 .pdf-preview__fit:hover {
   background: var(--bg-inset);
+  color: var(--ink);
 }
 
-.pdf-preview__page {
+@media (pointer: coarse), (max-width: 900px) {
+  .pdf-preview__toolbar .icon-button,
+  .pdf-preview__fit {
+    min-height: 32px;
+    height: 32px;
+  }
+
+  .pdf-preview__toolbar .icon-button {
+    min-width: 32px;
+    width: 32px;
+  }
+}
+
+.pdf-preview__viewport {
   position: relative;
   flex: 1;
   min-height: 0;
 }
 
+.pdf-preview__pages { position: relative; }
+
+.pdf-preview__page {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
 .pdf-preview__scroll {
   height: 100%;
   overflow: auto;
-  padding: 12px;
+  padding: 0 12px;
   scrollbar-gutter: stable;
+  overflow-anchor: none;
 }
 
 .pdf-preview__state {
