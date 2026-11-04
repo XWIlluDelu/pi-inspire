@@ -123,6 +123,10 @@ describe("snapshot transitions", () => {
       branchTree: {} as AppState["branchTree"],
       selectedResourceReference: "README.md",
       resourcePreview: {} as AppState["resourcePreview"],
+      resourceTabs: [
+        { reference: "README.md" },
+        { reference: "pi-embedded://message/0/image/0" },
+      ],
       editorText: { text: "draft", nonce: 1 },
     });
     const sameProjection = deriveSnapshotTransition(
@@ -156,12 +160,14 @@ describe("snapshot transitions", () => {
     expect(snapshotLifecyclePatch(previous, replaced)).toMatchObject({
       selectedResourceReference: null,
       resourcePreview: null,
+      resourceTabs: [{ reference: "README.md" }],
     });
     expect(snapshotLifecyclePatch(previous, changedView)).toMatchObject({
       branchTreeStale: true,
       branchTreeError: null,
       branchActionId: null,
       selectedResourceReference: null,
+      resourceTabs: [{ reference: "README.md" }],
     });
     expect(
       snapshotLifecyclePatch(previous, changedSession, {
@@ -175,6 +181,7 @@ describe("snapshot transitions", () => {
       attachments: [],
       workspaceQuery: "restored",
       selectedGitPathId: null,
+      resourceTabs: [],
     });
   });
 });

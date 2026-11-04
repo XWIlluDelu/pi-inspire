@@ -8,6 +8,7 @@ import {
   openCommandPalette,
   openFixtureSession,
   pairedPage,
+  reloadSession,
 } from "./support/navigation";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
@@ -27,7 +28,7 @@ async function openHistory(page: Page) {
   });
   if ((await toggle.getAttribute("aria-expanded")) === "false")
     await toggle.click();
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   const history = page.getByRole("region", { name: "Conversation history" });
   await expect(history).toBeVisible();
   return history;
@@ -59,7 +60,7 @@ test("History read failure keeps Retry reachable in short panes", async ({
   if ((await toggle.getAttribute("aria-expanded")) === "false")
     await toggle.click();
   const pane = page.locator(".ctx");
-  await pane.getByRole("button", { name: "History", exact: true }).click();
+  await pane.getByRole("tab", { name: "History", exact: true }).click();
   await expect(
     pane.getByText("History is unavailable.", { exact: true }),
   ).toBeVisible();
@@ -839,7 +840,7 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
     },
   });
   expect(copied.ok()).toBe(true);
-  await page.reload();
+  await reloadSession(page, (await copied.json()).snapshot.active.sessionId);
   const composer = page.getByLabel("Message", { exact: true });
   await composer.fill("Confirmed draft");
   const history = await openHistory(page);

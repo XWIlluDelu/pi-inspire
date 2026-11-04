@@ -6,17 +6,18 @@ import {
 } from "../../shared/resource-references";
 import { decodeTextPreview } from "../../shared/text-preview";
 import { type Api, ApiError } from "../api";
+import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   classifiedResourceFailure,
   injectHtmlPreviewCsp,
   MAX_MEDIA_PREVIEW_BYTES,
   NOTEBOOK_PREVIEW_BYTES,
+  type ResourceFileTab,
   type ResourcePreview,
   TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
 import { transcriptProjectionKey } from "../transcript-projection-key";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 
 interface ResourceControllerState {
   sessionId: string | null;
@@ -29,6 +30,7 @@ interface ResourceControllerState {
   selectedResourceReference: string | null;
   selectedResourceWorkspacePath: string | null;
   resourcePreview: ResourcePreview | null;
+  resourceTabs: ResourceFileTab[];
   resourceAvailability: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths: Record<string, string>;
 }
@@ -43,6 +45,7 @@ interface ResourceControllerPatch {
   selectedResourceReference?: string | null;
   selectedResourceWorkspacePath?: string | null;
   resourcePreview?: ResourcePreview | null;
+  resourceTabs?: ResourceFileTab[];
   resourceAvailability?: Record<string, ResourceProbeResult>;
   resourceWorkspacePaths?: Record<string, string>;
 }
@@ -133,12 +136,36 @@ export class ResourceController {
     this.revokePreviewObjectUrl();
   }
 
-  /** A new pairing/bootstrap may retain the same session projection but it
-   * cannot inherit requests or blob content authorized under the old API.
-   * Clear that transient authority before the new transport becomes live. */
+  /** Retire content authority while retaining named-file navigation. A pane
+   * gesture during bootstrap may persist these fields before restoration;
+   * temporary empty tabs would overwrite the user's saved workbench. */
   invalidateForTransportReplacement(): void {
+    this.cancelRequest();
     this.cancelProbes(true);
-    this.clearSelection();
+    this.revokePreviewObjectUrl();
+    const state = this.host.state();
+    const reference = state.selectedResourceReference;
+    const positional = reference?.startsWith("pi-embedded://");
+    this.host.patch({
+      resourceTabs: state.resourceTabs.filter(
+        (tab) => !tab.reference.startsWith("pi-embedded://"),
+      ),
+      ...(positional
+        ? {
+            selectedResourceReference: null,
+            selectedResourceWorkspacePath: null,
+            fileBrowserView: "browse",
+          }
+        : {}),
+      resourcePreview:
+        !positional &&
+        reference &&
+        state.resourcesOpen &&
+        state.contextMode === "files" &&
+        state.fileBrowserView === "preview"
+          ? { status: "loading", reference }
+          : null,
+    });
   }
 
   private ownsTransport(api: Api, generation: number): boolean {
@@ -649,6 +676,15 @@ export class ResourceController {
     contextMode: "files" | "changes" = "files",
     knownWorkspacePath?: string,
   ): Promise<void> {
+    const existing = this.host
+      .state()
+      .resourceTabs.find(
+        (tab) =>
+          tab.reference === reference ||
+          (knownWorkspacePath !== undefined &&
+            tab.workspacePath === knownWorkspacePath),
+      );
+    if (existing) reference = existing.reference;
     const api = this.host.api();
     const transportGeneration = this.host.transportGeneration();
     const {
@@ -674,10 +710,31 @@ export class ResourceController {
     if (!retained) this.revokePreviewObjectUrl();
     this.host.patch({
       resourcesOpen: true,
-      contextMode,
+      contextMode: "files",
       fileBrowserView: "preview",
       selectedResourceReference: reference,
       selectedResourceWorkspacePath: knownWorkspacePath ?? null,
+      resourceTabs: existing
+        ? this.host.state().resourceTabs.map((tab) =>
+            tab.reference === reference
+              ? {
+                  ...tab,
+                  view: contextMode === "changes" ? "changes" : undefined,
+                }
+              : tab,
+          )
+        : [
+            ...this.host.state().resourceTabs,
+            {
+              reference,
+              ...(knownWorkspacePath
+                ? { workspacePath: knownWorkspacePath }
+                : {}),
+              ...(contextMode === "changes"
+                ? { view: "changes" as const }
+                : {}),
+            },
+          ],
       resourcePreview: retained
         ? { ...retained, refreshing: true, refreshError: undefined }
         : { status: "loading", reference },
@@ -695,32 +752,17 @@ export class ResourceController {
       );
     };
     const backoff = new RecoveryBackoff();
-    // Retry transport reads, not validation failures or interactive HTML.
-    const read = async <T>(perform: () => Promise<T>): Promise<T> => {
-      while (!stale()) {
-        try {
-          return await perform();
-        } catch (error) {
-          if (
-            !isTransientFailure(error) ||
-            stale() ||
-            !(await backoff.wait(request.signal))
-          )
-            throw error;
-        }
-      }
-      throw Object.assign(new Error("The preview selection changed"), {
-        name: "AbortError",
-      });
-    };
     try {
-      const descriptor = await read(() =>
-        api.resolveResource(
-          sessionId,
-          reference,
-          request.signal,
-          knownWorkspacePath,
-        ),
+      const descriptor = await backoff.read(
+        () =>
+          api.resolveResource(
+            sessionId,
+            reference,
+            request.signal,
+            knownWorkspacePath,
+          ),
+        request.signal,
+        () => !stale(),
       );
       if (stale()) return;
       // Bare filename recovery intentionally returns the canonical workspace
@@ -728,6 +770,17 @@ export class ResourceController {
       // — not textual equality — binds this response to the request.
       if (descriptor.sessionId !== sessionId || descriptor.viewId !== viewId) {
         throw new Error("The Host returned a resource for another selection");
+      }
+      if (descriptor.workspacePath) {
+        this.host.patch({
+          resourceTabs: this.host
+            .state()
+            .resourceTabs.map((tab) =>
+              tab.reference === reference
+                ? { ...tab, workspacePath: descriptor.workspacePath }
+                : tab,
+            ),
+        });
       }
       // Resolution confirms or corrects preflight standing. Advance first so
       // an older probe cannot overwrite this result when it arrives later.
@@ -764,16 +817,19 @@ export class ResourceController {
         });
         return;
       }
-      const content = await read(() =>
-        api.resourceContent(descriptor.id, sessionId, {
-          byteLimit:
-            descriptor.kind === "notebook"
-              ? NOTEBOOK_PREVIEW_BYTES
-              : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
-                ? TEXT_PREVIEW_BYTES
-                : MAX_MEDIA_PREVIEW_BYTES + 1,
-          signal: request.signal,
-        }),
+      const content = await backoff.read(
+        () =>
+          api.resourceContent(descriptor.id, sessionId, {
+            byteLimit:
+              descriptor.kind === "notebook"
+                ? NOTEBOOK_PREVIEW_BYTES
+                : textLike || (svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+                  ? TEXT_PREVIEW_BYTES
+                  : MAX_MEDIA_PREVIEW_BYTES + 1,
+            signal: request.signal,
+          }),
+        request.signal,
+        () => !stale(),
       );
       if (stale()) return;
       const blob = content.blob;

@@ -247,30 +247,30 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 ## Startup, welcome, and directory selection
 
 - Opening the product follows a remembered user choice: resume the previous session or show a
-  welcome page. Resume yields to any explicit open, create, or deselect intent that begins while the
-  initial catalog is loading. Bootstrap or socket loss keeps the last confirmed surface where one
-  exists and retries automatically instead of presenting the interruption as a red operation error.
-  Authentication failure means the host answered and opens the one-time browser-pairing surface; a
-  network failure to the exact loopback origin means only that the host is not reachable (the
-  browser cannot prove why), and names the address, `./inspire` recovery command, automatic retry,
-  and manual retry without claiming that the service is certainly stopped.
+  welcome page. Resume yields to any explicit open, create, or deselect intent that begins while
+  the initial catalog is loading. Bootstrap or socket loss keeps the last confirmed surface where
+  one exists and retries automatically instead of showing the interruption as a red operation
+  error. Authentication failure means the host answered and opens the one-time browser-pairing
+  surface. A network failure to the exact loopback origin means only that the host is not reachable
+  (the browser cannot prove why): it names the address, `./inspire` recovery command, automatic
+  retry, and manual retry without claiming that the service is certainly stopped.
 
   A later live-stream interruption preserves the last settled state and starts with the narrower
   reconnect explanation, then adopts the more specific bootstrap result. Settings and contextual
   Files/Changes/History load on demand within a stable shell and focus boundary. Loading, ready and
-  failure preserve the dialog/drawer owner, Close control and keyboard containment; resolving content
-  does not restart shell entry animations. [[design-system]] owns loading geometry, delay, status and
-  recovery presentation. Before React bootstraps, a validated browser-local
-  cache may apply only the saved theme, palette, content text size, and reading width to prevent a
-  wrong first paint; host preferences remain authoritative and immediately replace stale cache
-  state. [[design-system]] owns PWA metadata: active Window Controls Overlay follows the workspace
-  frame, while ordinary tabs and standalone fallback use neutral hints. Installed icons retain
-  their fixed neutral identity. The production origin is installable as a standalone PWA. Its service
-  worker caches only the versioned application shell and same-origin static assets, never API, event,
-  attachment or resource responses.
+  failure keep the dialog/drawer owner, Close control and keyboard containment; resolving content
+  does not restart shell entry animations. [[design-system]] owns loading geometry, delay, status
+  and recovery presentation.
 
-  The cached shell can present those host-aware states, but cannot start a local process; Pi/session
-  capability still requires the loopback host and its authenticated API.
+  Before React bootstraps, a validated browser-local cache may apply only the saved theme,
+  palette, content text size, and reading width to prevent a wrong first paint; host preferences
+  remain authoritative and immediately replace stale cache state. [[design-system]] owns PWA
+  metadata: active Window Controls Overlay follows the workspace frame, ordinary tabs and
+  standalone fallback use neutral hints, and installed icons keep their fixed neutral identity. The
+  production origin is installable as a standalone PWA. Its service worker caches only the
+  versioned application shell and same-origin static assets, never API, event, attachment or
+  resource responses. The cached shell can present the host-aware states above but cannot start a
+  local process; Pi/session capability still requires the loopback host and its authenticated API.
 
 - The welcome page host-deselects any visible session before presenting the
   first-message/project-directory composer, so the prior session no longer owns topbar status,
@@ -366,10 +366,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   session shortcuts remain direct palette actions.
 
   On a narrow workbench, action dialogs and extension questions share the existing transient
-  inspection history owner. Browser Back cancels the active extension question before closing
-  the surface underneath it. A question awaiting its native response, or a failed cancellation,
-  retains its layer for feedback and retry. Explicit dismissal consumes its entry rather than
-  leaving an empty return stop. Drafts stay with their session; no routes are added.
+  inspection history owner. Browser Back cancels the active extension question before closing the
+  surface underneath it. A question awaiting its native response, or a failed cancellation, keeps
+  its layer for feedback and retry. Explicit dismissal consumes its entry without leaving an empty
+  return stop. Drafts stay with their session; no routes are added.
 
   Existing graphical actions open their own controls. Commands needing prompt review or arguments
   use the transient preparation boundary in [[composer]], not a second persistent editor or queue.

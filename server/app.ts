@@ -15,7 +15,6 @@ import {
 } from "../shared/composer-artifact-references.js";
 import {
   type BootstrapResponse,
-  type GitDiffSide,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
   MAX_COMPOSER_HISTORY_ENTRIES,
@@ -48,6 +47,7 @@ import {
   socketTicketSchema,
   secretMatches as tokenMatches,
 } from "./browser-auth.js";
+import { showInFileManager } from "./file-manager.js";
 import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionLike } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
@@ -406,7 +406,6 @@ const gitDiffSchema = z.object({
     .min(1)
     .max(16_384)
     .regex(/^[A-Za-z0-9_-]+$/),
-  side: z.enum(["staged", "unstaged"] satisfies GitDiffSide[]),
 });
 const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
 const MAX_PROMPT_OPERATION_RESULTS = 2_048;
@@ -1746,11 +1745,11 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
   app.post("/api/git/diff", async (request, response) => {
-    const { sessionId, pathId, side } = gitDiffSchema.parse(request.body);
+    const { sessionId, pathId } = gitDiffSchema.parse(request.body);
     const cwd = openSessionCwd(sessionId);
     response.json(
       await withRequestSignal(request, response, (signal) =>
-        deps.git.diff(cwd, pathId, side, signal),
+        deps.git.diff(cwd, pathId, signal),
       ),
     );
   });
@@ -1804,6 +1803,21 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(
       await deps.resources.resolve(context, reference, true, workspacePath),
     );
+  });
+  app.post("/api/resources/show-in-file-manager", async (request, response) => {
+    const { sessionId, reference, workspacePath, directory } =
+      resourceResolveSchema
+        .extend({ directory: z.boolean().default(false) })
+        .parse(request.body);
+    const context = await deps.runtime.resourceContext(sessionId);
+    const path = await deps.resources.fileManagerPath(
+      context,
+      reference,
+      workspacePath,
+      directory,
+    );
+    await showInFileManager(path, directory);
+    response.json({ ok: true });
   });
   app.post("/api/resources/:id/interactive", async (request, response) => {
     const { sessionId, html } = z

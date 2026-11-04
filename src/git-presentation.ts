@@ -30,12 +30,18 @@ export function presentGitFacet(
     return { mark: "!", label: `conflict ${change.conflict.code}` };
   if (change.untracked)
     return { mark: "U", label: "Untracked — not yet added to Git" };
-  if (change.staged && change.unstaged)
-    return { mark: "±", label: "staged and unstaged changes" };
-  if (change.staged)
-    return { mark: "S", label: `staged ${change.staged.kind}` };
-  if (change.unstaged)
-    return { mark: "M", label: `unstaged ${change.unstaged.kind}` };
+  if (change.worktree) {
+    const marks = {
+      added: "A",
+      modified: "M",
+      deleted: "D",
+      renamed: "R",
+      copied: "C",
+      "type-changed": "T",
+      unmerged: "!",
+    };
+    return { mark: marks[change.worktree.kind], label: change.worktree.kind };
+  }
   return null;
 }
 
@@ -51,7 +57,7 @@ export function gitDecorationForChange(
   if (!change) return null;
   if (change.conflict) return "conflict";
   if (change.untracked) return "untracked";
-  if (change.staged || change.unstaged) return "modified";
+  if (change.worktree) return "modified";
   return null;
 }
 

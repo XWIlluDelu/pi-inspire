@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import {
   access,
-  mkdtemp,
   mkdir,
+  mkdtemp,
+  readFile,
   rename as renamePath,
   rm,
   stat,
@@ -21,10 +22,10 @@ import {
   GIT_TIMEOUT_MS,
   GitInspectionError,
   GitInspectionService,
-  parsePorcelainV2,
-  spawnGit,
-  parseUnifiedDiff,
   type GitRunner,
+  parsePorcelainV2,
+  parseUnifiedDiff,
+  spawnGit,
 } from "../../server/git-inspection.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -51,6 +52,7 @@ function runnerForStatus(
   extra?: (
     args: readonly string[],
   ) => { stdout: Buffer; truncated?: boolean } | undefined,
+  netChanges = Buffer.alloc(0),
 ) {
   const calls: readonly string[][] = [];
   const runner: GitRunner = async (args) => {
@@ -79,6 +81,13 @@ function runnerForStatus(
     if (args.includes("status"))
       return {
         stdout: output,
+        stderr: Buffer.alloc(0),
+        truncated: false,
+        code: 0,
+      };
+    if (args.includes("--name-status"))
+      return {
+        stdout: netChanges,
         stderr: Buffer.alloc(0),
         truncated: false,
         code: 0,
@@ -116,11 +125,6 @@ describe("porcelain-v2 parser", () => {
       staged: { kind: "modified" },
       unstaged: { kind: "modified" },
     });
-    expect(parsed.response.groups.staged).toEqual([both.path.id]);
-    expect(parsed.response.groups.unstaged).toEqual([
-      both.path.id,
-      Buffer.from("deleted.txt").toString("base64url"),
-    ]);
     const arbitrary = parsed.response.files[1]!;
     expect(arbitrary.path.id).toBe(invalid.toString("base64url"));
     expect(arbitrary.path.utf8Path).toBeUndefined();
@@ -158,10 +162,10 @@ describe("porcelain-v2 parser", () => {
       kind: "copied",
       originalPath: { utf8Path: "source name" },
     });
-    expect(parsed.response.files[2]?.conflict).toEqual({ code: "UU" });
-    expect(parsed.response.groups.conflicted).toEqual([
-      Buffer.from("conflict").toString("base64url"),
-    ]);
+    expect(parsed.response.files[2]).toMatchObject({
+      path: { id: Buffer.from("conflict").toString("base64url") },
+      conflict: { code: "UU" },
+    });
     expect(parsed.response.files[3]?.submodule).toEqual({
       commitChanged: true,
       trackedModified: true,
@@ -340,8 +344,10 @@ describe("porcelain-v2 parser", () => {
     const parsed = parsePorcelainV2(statusBuffer(...headers(), ...records));
     expect(parsed.response).toMatchObject({ total: 1_005, truncated: true });
     expect(parsed.response.files).toHaveLength(1_000);
-    expect(parsed.response.groups.untracked).toHaveLength(1_000);
-    expect(new Set(parsed.response.groups.untracked).size).toBe(1_000);
+    expect(parsed.response.files.every((file) => file.untracked)).toBe(true);
+    expect(
+      new Set(parsed.response.files.map((file) => file.path.id)).size,
+    ).toBe(1_000);
   });
 });
 
@@ -361,8 +367,30 @@ describe("bounded diff contract", () => {
     });
     if (result.kind === "repository") {
       expect(result.files).toHaveLength(1_000);
-      expect(result.groups.untracked).toHaveLength(1_000);
+      expect(result.files.every((file) => file.untracked)).toBe(true);
     }
+  });
+
+  it("applies the file cap after canceled index edits are removed", async () => {
+    const records = Array.from({ length: 1_005 }, (_, index) =>
+      ordinary("MM", "N...", Buffer.from(`file-${index}`)),
+    );
+    const fake = runnerForStatus(
+      statusBuffer(...headers(), ...records),
+      undefined,
+      Buffer.from("M\0file-1004\0"),
+    );
+    const result = await new GitInspectionService(fake.runner).status(
+      "/workspace",
+    );
+    expect(result).toMatchObject({
+      kind: "repository",
+      total: 1,
+      truncated: false,
+      files: [
+        { path: { utf8Path: "file-1004" }, worktree: { kind: "modified" } },
+      ],
+    });
   });
 
   it("numbers unified text, including omitted and zero hunk counts", () => {
@@ -468,11 +496,11 @@ describe("bounded diff contract", () => {
         args.includes("--numstat")
           ? { stdout: Buffer.from("2100\t2100\tmany.txt\0") }
           : { stdout: patch },
+      Buffer.from("M\0many.txt\0"),
     );
     const result = await new GitInspectionService(fake.runner).diff(
       "/workspace",
       path.toString("base64url"),
-      "unstaged",
     );
     expect(result).toMatchObject({ kind: "text", truncated: true });
     if (result.kind === "text") {
@@ -484,30 +512,34 @@ describe("bounded diff contract", () => {
     }
   });
 
-  it("authorizes a fresh facet and uses only the closed safe diff argv", async () => {
+  it("authorizes a fresh net change and uses only the closed safe diff argv", async () => {
     const path = Buffer.from("file.txt");
     const fixture = statusBuffer(...headers(), ordinary("MM", "N...", path));
-    const fake = runnerForStatus(fixture, (args) =>
-      args.includes("--numstat")
-        ? { stdout: Buffer.from("1\t1\tfile.txt\0") }
-        : {
-            stdout: Buffer.from(
-              "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
-            ),
-          },
+    const fake = runnerForStatus(
+      fixture,
+      (args) =>
+        args.includes("--numstat")
+          ? { stdout: Buffer.from("1\t1\tfile.txt\0") }
+          : {
+              stdout: Buffer.from(
+                "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
+              ),
+            },
+      Buffer.from("M\0file.txt\0"),
     );
     const result = await new GitInspectionService(fake.runner).diff(
       "/workspace",
       path.toString("base64url"),
-      "staged",
     );
     expect(result).toMatchObject({
       kind: "text",
-      side: "staged",
       truncated: false,
     });
     const diffCalls = fake.calls.filter((args) => args.includes("diff"));
-    expect(diffCalls).toHaveLength(2);
+    const contentCalls = diffCalls.filter(
+      (args) => !args.includes("--name-status"),
+    );
+    expect(contentCalls).toHaveLength(2);
     for (const args of fake.calls) {
       expect(args).toEqual(
         expect.arrayContaining(["-c", "core.fsmonitor=false"]),
@@ -519,8 +551,6 @@ describe("bounded diff contract", () => {
     for (const args of diffCalls) {
       expect(args).toContain("--no-ext-diff");
       expect(args).toContain("--no-textconv");
-      expect(args.at(-2)).toBe("--");
-      expect(args.at(-1)).toBe("file.txt");
       expect(args).not.toEqual(
         expect.arrayContaining([
           "add",
@@ -535,7 +565,11 @@ describe("bounded diff contract", () => {
         ]),
       );
     }
-    expect(diffCalls.every((args) => args.includes("--cached"))).toBe(true);
+    for (const args of contentCalls) {
+      expect(args.at(-2)).toBe("--");
+      expect(args.at(-1)).toBe("file.txt");
+      expect(args).toContain(hash);
+    }
   });
 
   it("returns explicit binary, conflict, submodule, empty, unsupported and truncated states", async () => {
@@ -544,16 +578,18 @@ describe("bounded diff contract", () => {
       ...headers(),
       ordinary(".M", "N...", binaryPath),
     );
-    const binary = runnerForStatus(binaryFixture, (args) =>
-      args.includes("--numstat")
-        ? { stdout: Buffer.from("-\t-\tbinary.dat\0") }
-        : undefined,
+    const binary = runnerForStatus(
+      binaryFixture,
+      (args) =>
+        args.includes("--numstat")
+          ? { stdout: Buffer.from("-\t-\tbinary.dat\0") }
+          : undefined,
+      Buffer.from("M\0binary.dat\0"),
     );
     expect(
       await new GitInspectionService(binary.runner).diff(
         "/w",
         binaryPath.toString("base64url"),
-        "unstaged",
       ),
     ).toMatchObject({ kind: "binary" });
 
@@ -568,31 +604,32 @@ describe("bounded diff contract", () => {
       await new GitInspectionService(conflict.runner).diff(
         "/w",
         conflictPath.toString("base64url"),
-        "unstaged",
       ),
     ).toMatchObject({ kind: "conflict", code: "UU" });
 
     const modulePath = Buffer.from("module");
     const module = runnerForStatus(
       statusBuffer(...headers(), ordinary(".M", "SC..", modulePath)),
+      undefined,
+      Buffer.from("M\0module\0"),
     );
     expect(
       await new GitInspectionService(module.runner).diff(
         "/w",
         modulePath.toString("base64url"),
-        "unstaged",
       ),
     ).toMatchObject({ kind: "submodule" });
 
     const invalid = Buffer.from([0xff]);
     const unsupported = runnerForStatus(
       statusBuffer(...headers(), ordinary(".M", "N...", invalid)),
+      undefined,
+      Buffer.concat([Buffer.from("M\0"), invalid, Buffer.from([0])]),
     );
     expect(
       await new GitInspectionService(unsupported.runner).diff(
         "/w",
         invalid.toString("base64url"),
-        "unstaged",
       ),
     ).toMatchObject({ kind: "unsupported", reason: "path-encoding" });
 
@@ -600,12 +637,12 @@ describe("bounded diff contract", () => {
     const empty = runnerForStatus(
       statusBuffer(...headers(), ordinary(".M", "N...", textPath)),
       () => ({ stdout: Buffer.alloc(0) }),
+      Buffer.from("M\0empty.txt\0"),
     );
     expect(
       await new GitInspectionService(empty.runner).diff(
         "/w",
         textPath.toString("base64url"),
-        "unstaged",
       ),
     ).toMatchObject({ kind: "empty" });
 
@@ -618,10 +655,11 @@ describe("bounded diff contract", () => {
               stdout: Buffer.from("@@ -1 +1 @@\n-old\n+partial"),
               truncated: true,
             },
+      Buffer.from("M\0empty.txt\0"),
     );
     const truncatedResult = await new GitInspectionService(
       truncated.runner,
-    ).diff("/w", textPath.toString("base64url"), "unstaged");
+    ).diff("/w", textPath.toString("base64url"));
     expect(truncatedResult).toMatchObject({ kind: "text", truncated: true });
     if (truncatedResult.kind === "text")
       expect(truncatedResult.lines.at(-1)?.text).toContain("truncated");
@@ -733,7 +771,7 @@ describe("bounded diff contract", () => {
     GIT_TIMEOUT_MS + 8_000,
   );
 
-  it("rejects forged IDs before any diff command and preserves operational failures", async () => {
+  it("rejects forged IDs before reading content and preserves operational failures", async () => {
     const path = Buffer.from("safe.txt");
     const fixture = statusBuffer(...headers(), ordinary(".M", "N...", path));
     const fake = runnerForStatus(fixture);
@@ -741,10 +779,9 @@ describe("bounded diff contract", () => {
       new GitInspectionService(fake.runner).diff(
         "/w",
         Buffer.from("other").toString("base64url"),
-        "unstaged",
       ),
     ).rejects.toMatchObject({ status: 409 });
-    expect(fake.calls.some((args) => args.includes("diff"))).toBe(false);
+    expect(fake.calls.some((args) => args.includes("--numstat"))).toBe(false);
 
     const failure: GitRunner = async () => {
       throw new GitInspectionError("Git inspection timed out", 503);
@@ -928,21 +965,13 @@ describe("real temporary repository", () => {
         unstaged: { kind: "modified" },
       });
       expect(
-        (await service.diff(join(root, "nested"), both.path.id, "staged")).kind,
-      ).toBe("text");
-      expect(
-        (await service.diff(join(root, "nested"), both.path.id, "unstaged"))
-          .kind,
+        (await service.diff(join(root, "nested"), both.path.id)).kind,
       ).toBe("text");
       const magic = status.files.find(
         (file) => file.path.utf8Path === ":(glob)*.txt",
       )!;
       expect(magic.path.workspacePath).toBeUndefined();
-      const magicDiff = await service.diff(
-        join(root, "nested"),
-        magic.path.id,
-        "unstaged",
-      );
+      const magicDiff = await service.diff(join(root, "nested"), magic.path.id);
       expect(magicDiff.kind).toBe("text");
       if (magicDiff.kind === "text")
         expect(
@@ -956,20 +985,19 @@ describe("real temporary repository", () => {
         originalPath: { utf8Path: "other.txt" },
       });
       expect(
-        (await service.diff(join(root, "nested"), renamed.path.id, "staged"))
-          .kind,
+        (await service.diff(join(root, "nested"), renamed.path.id)).kind,
       ).toBe("text");
-      for (const workspacePath of ["new file.txt", "binary.dat", "link.txt"]) {
+      for (const [workspacePath, kind] of [
+        ["new file.txt", "text"],
+        ["binary.dat", "binary"],
+        ["link.txt", "unsupported"],
+      ]) {
         const untracked = status.files.find(
           (file) => file.path.workspacePath === workspacePath,
         )!;
         expect(
-          await service.diff(
-            join(root, "nested"),
-            untracked.path.id,
-            "unstaged",
-          ),
-        ).toMatchObject({ kind: "unsupported", reason: "untracked-content" });
+          await service.diff(join(root, "nested"), untracked.path.id),
+        ).toMatchObject({ kind });
       }
     },
   );
@@ -1006,7 +1034,7 @@ describe("real temporary repository", () => {
         const change = byPath(path);
         expect(change, path).toBeDefined();
         await expect(
-          bounded(service.diff(root, change.path.id, "unstaged")),
+          bounded(service.diff(root, change.path.id)),
         ).resolves.toMatchObject({
           kind: "unsupported",
           reason: "untracked-content",
@@ -1015,11 +1043,7 @@ describe("real temporary repository", () => {
 
       await expect(
         bounded(
-          service.diff(
-            root,
-            Buffer.from("named-pipe").toString("base64url"),
-            "unstaged",
-          ),
+          service.diff(root, Buffer.from("named-pipe").toString("base64url")),
         ),
       ).rejects.toMatchObject({ status: 409 });
 
@@ -1028,12 +1052,187 @@ describe("real temporary repository", () => {
       await renamePath(join(root, "swap"), join(root, "swap-original"));
       await symlink(outside, join(root, "swap"));
       await expect(
-        bounded(service.diff(root, victim.path.id, "unstaged")),
+        bounded(service.diff(root, victim.path.id)),
       ).rejects.toMatchObject({ status: 409 });
     },
   );
 
-  it("compares both sides of a staged rename without inventing added source", async () => {
+  it("shows one HEAD-to-worktree change per file, including staged edits and untracked files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-net-git-"));
+    directories.push(root);
+    const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
+    await git("init", "-q");
+    await git("config", "user.email", "test@example.invalid");
+    await git("config", "user.name", "Test");
+    for (const path of [
+      "staged",
+      "unstaged",
+      "both",
+      "canceled",
+      "deleted",
+      "rename-old",
+      "recreated",
+    ])
+      await writeFile(
+        join(root, path),
+        path === "rename-old"
+          ? "rename unique\nsecond rename\nthird rename\n"
+          : path === "deleted"
+            ? "deleted unique\nsecond deleted\nthird deleted\n"
+            : "base\nsecond\nthird\n",
+      );
+    await git("add", ".");
+    await git("commit", "-qm", "base");
+    const base = "base\nsecond\nthird\n";
+    await writeFile(join(root, "staged"), "staged\nsecond\nthird\n");
+    await writeFile(join(root, "both"), "staged\nsecond\nthird\n");
+    await writeFile(join(root, "canceled"), "staged\nsecond\nthird\n");
+    await git("add", "staged", "both", "canceled");
+    await writeFile(join(root, "unstaged"), "working\nsecond\nthird\n");
+    await writeFile(join(root, "both"), "final\nsecond\nthird\n");
+    await writeFile(join(root, "canceled"), base);
+    await rm(join(root, "deleted"));
+    await git("mv", "rename-old", "rename-new");
+    await writeFile(join(root, "new-file"), "new line\nlast line");
+    await writeFile(join(root, "new-binary"), Buffer.from([0, 1, 2]));
+    // A removed index entry with the original file still on disk is another
+    // legitimate cancellation; porcelain emits both D and ? for this identity.
+    await git("rm", "--cached", "recreated");
+    const indexBefore = await readFile(join(root, ".git", "index"));
+    const service = new GitInspectionService();
+    const status = await service.status(root);
+    expect(status.kind).toBe("repository");
+    if (status.kind !== "repository") return;
+
+    expect(status.total).toBe(7);
+    expect(status.files.map((file) => file.path.utf8Path).sort()).toEqual([
+      "both",
+      "deleted",
+      "new-binary",
+      "new-file",
+      "rename-new",
+      "staged",
+      "unstaged",
+    ]);
+    expect(status.files.every((file) => file.worktree)).toBe(true);
+    const byPath = (path: string) =>
+      status.files.find((file) => file.path.utf8Path === path)!;
+    for (const [path, line] of [
+      ["staged", "+staged"],
+      ["unstaged", "+working"],
+      ["both", "+final"],
+    ]) {
+      const diff = await service.diff(root, byPath(path!).path.id);
+      expect(diff).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
+      if (diff.kind === "text") {
+        expect(diff.lines.map((row) => row.text)).toContain("-base");
+        expect(diff.lines.map((row) => row.text)).toContain(line);
+      }
+    }
+    expect(await service.diff(root, byPath("deleted").path.id)).toMatchObject({
+      kind: "text",
+      additions: 0,
+      deletions: 3,
+    });
+    expect(byPath("rename-new").worktree).toMatchObject({
+      kind: "renamed",
+      originalPath: { utf8Path: "rename-old" },
+    });
+    expect(
+      await service.diff(root, byPath("rename-new").path.id),
+    ).toMatchObject({ kind: "text", additions: 0, deletions: 0 });
+    const added = await service.diff(root, byPath("new-file").path.id);
+    expect(added).toMatchObject({ kind: "text", additions: 2, deletions: 0 });
+    if (added.kind === "text") {
+      expect(added.lines.map((line) => line.text)).toContain("+new line");
+      expect(added.lines.map((line) => line.text)).toContain("+last line");
+      expect(added.lines.map((line) => line.text).join("\n")).not.toContain(
+        "inspire-git-diff-",
+      );
+    }
+    expect(
+      await service.diff(root, byPath("new-binary").path.id),
+    ).toMatchObject({ kind: "binary" });
+    await expect(
+      service.diff(root, Buffer.from("canceled").toString("base64url")),
+    ).rejects.toMatchObject({ status: 409 });
+    await writeFile(join(root, "recreated"), "replacement\n");
+    const replaced = await service.status(root);
+    expect(replaced.kind).toBe("repository");
+    if (replaced.kind === "repository") {
+      const file = replaced.files.find(
+        (file) => file.path.utf8Path === "recreated",
+      )!;
+      expect(file.worktree).toEqual({ kind: "modified" });
+      expect(await service.diff(root, file.path.id)).toMatchObject({
+        kind: "text",
+        additions: 1,
+        deletions: 3,
+      });
+    }
+    const indexAfter = await readFile(join(root, ".git", "index"));
+    expect(indexAfter.equals(indexBefore)).toBe(true);
+  });
+
+  it("does not report a restored rename source as removed or renamed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-restored-source-"));
+    directories.push(root);
+    const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
+    await git("init", "-q");
+    await git("config", "user.email", "test@example.invalid");
+    await git("config", "user.name", "Test");
+    await writeFile(join(root, "before"), "same\n");
+    await git("add", ".");
+    await git("commit", "-qm", "base");
+    await git("mv", "before", "after");
+    await writeFile(join(root, "before"), "same\n");
+    const service = new GitInspectionService();
+    const status = await service.status(root);
+    expect(status).toMatchObject({ kind: "repository", total: 1 });
+    if (status.kind !== "repository") return;
+    expect(status.files[0]).toMatchObject({
+      path: { utf8Path: "after" },
+      worktree: { kind: "added" },
+    });
+    expect(status.files[0]?.worktree?.originalPath).toBeUndefined();
+    expect(await service.diff(root, status.files[0]!.path.id)).toMatchObject({
+      kind: "text",
+      additions: 1,
+      deletions: 0,
+    });
+  });
+
+  it("uses an empty baseline before the first commit and omits newly staged files removed again", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inspire-unborn-net-"));
+    directories.push(root);
+    await exec("git", ["init", "-q", root]);
+    await writeFile(join(root, "staged"), "staged\n");
+    await writeFile(join(root, "gone"), "gone\n");
+    await exec("git", ["-C", root, "add", "."]);
+    await writeFile(join(root, "staged"), "final\n");
+    await rm(join(root, "gone"));
+    await writeFile(join(root, "untracked"), "new\n");
+    await writeFile(join(root, "empty"), "");
+    const service = new GitInspectionService();
+    const status = await service.status(root);
+    expect(status).toMatchObject({
+      kind: "repository",
+      head: { kind: "unborn" },
+      total: 3,
+    });
+    if (status.kind !== "repository") return;
+    for (const file of status.files) {
+      expect(file.worktree).toEqual({ kind: "added" });
+      const diff = await service.diff(root, file.path.id);
+      expect(diff).toMatchObject({
+        kind: "text",
+        additions: file.path.utf8Path === "empty" ? 0 : 1,
+        deletions: 0,
+      });
+    }
+  });
+
+  it("compares a rename from HEAD through later staged and working edits", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-rename-"));
     directories.push(root);
     await exec("git", ["init", "-q", root]);
@@ -1056,7 +1255,7 @@ describe("real temporary repository", () => {
     const service = new GitInspectionService();
     const pathId = Buffer.from("new name.txt").toString("base64url");
 
-    const pureRename = await service.diff(root, pathId, "staged");
+    const pureRename = await service.diff(root, pathId);
     expect(pureRename).toMatchObject({
       kind: "text",
       additions: 0,
@@ -1078,25 +1277,17 @@ describe("real temporary repository", () => {
       join(root, "new name.txt"),
       source.replace("line 2\n", "working\n"),
     );
-    const staged = await service.diff(root, pathId, "staged");
-    const working = await service.diff(root, pathId, "unstaged");
-    for (const diff of [staged, working]) {
-      expect(diff).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
-    }
-    if (staged.kind === "text" && working.kind === "text") {
-      expect(
-        staged.lines
-          .filter((line) => line.kind === "delete" || line.kind === "add")
-          .map((line) => line.text),
-      ).toEqual(["-line 2", "+staged"]);
+    const working = await service.diff(root, pathId);
+    expect(working).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
+    if (working.kind === "text") {
       expect(
         working.lines
           .filter((line) => line.kind === "delete" || line.kind === "add")
           .map((line) => line.text),
-      ).toEqual(["-staged", "+working"]);
+      ).toEqual(["-line 2", "+working"]);
       expect(
         working.lines.some((line) => line.text.startsWith("rename from")),
-      ).toBe(false);
+      ).toBe(true);
     }
   });
 
@@ -1140,9 +1331,10 @@ describe("real temporary repository", () => {
       (file) => file.path.utf8Path === "conflict.txt",
     )!;
     expect(conflict.conflict).toEqual({ code: "UU" });
-    await expect(
-      service.diff(root, conflict.path.id, "unstaged"),
-    ).resolves.toMatchObject({ kind: "conflict", code: "UU" });
+    await expect(service.diff(root, conflict.path.id)).resolves.toMatchObject({
+      kind: "conflict",
+      code: "UU",
+    });
   });
 
   it.runIf(process.platform !== "win32")(
@@ -1209,9 +1401,9 @@ describe("real temporary repository", () => {
         (file) => file.path.utf8Path === "modules/local",
       )!;
       expect(module.submodule).toMatchObject({ trackedModified: true });
-      await expect(
-        service.diff(root, module.path.id, "unstaged"),
-      ).resolves.toMatchObject({ kind: "submodule" });
+      await expect(service.diff(root, module.path.id)).resolves.toMatchObject({
+        kind: "submodule",
+      });
     },
   );
 });

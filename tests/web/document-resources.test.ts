@@ -81,11 +81,16 @@ describe("document image ownership and budgets", () => {
     const fetchImage = vi.fn(() => gate.promise);
     const owner = new DocumentImageResources(fetchImage);
     const first = owner.load("one.png");
-    expect(owner.load("one.png")).toBe(first);
+    const duplicate = owner.load("one.png");
     const rest = Array.from({ length: 6 }, (_, n) => owner.load(`${n}.png`));
     expect(fetchImage).toHaveBeenCalledTimes(4);
     gate.resolve(new Blob(["image"]));
-    await Promise.all([first, ...rest]);
+    const [firstUrl, duplicateUrl] = await Promise.all([
+      first,
+      duplicate,
+      ...rest,
+    ]);
+    expect(duplicateUrl).toBe(firstUrl);
     expect(fetchImage).toHaveBeenCalledTimes(7);
     expect(URL.createObjectURL).toHaveBeenCalledTimes(7);
     owner.dispose();

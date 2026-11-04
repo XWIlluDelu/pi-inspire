@@ -17,13 +17,9 @@ import {
 
 const exec = promisify(execFile);
 describe("bounded Git diff through the Host and source projection", () => {
-  it.each([
-    [0, "unstaged"],
-    [600, "unstaged"],
-    [0, "staged"],
-  ] as const)(
-    "keeps a change at line 2200 reachable with %i-byte prefix rows (%s)",
-    async (width, side) => {
+  it.each([0, 600])(
+    "keeps a change at line 2200 reachable with %i-byte prefix rows",
+    async (width) => {
       const root = await mkdtemp(join(tmpdir(), "inspire-git-prefix-"));
       const f = await hostApiFixture();
       const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
@@ -48,11 +44,9 @@ describe("bounded Git diff through the Host and source projection", () => {
         );
         source[2199] = "const changed = 42;";
         await writeFile(join(root, "source.ts"), source.join("\n") + "\n");
-        if (side === "staged") await git("add", ".");
         const service = new GitInspectionService();
         f.git.status = (_cwd, signal) => service.status(root, signal);
-        f.git.diff = (_cwd, id, selectedSide, signal) =>
-          service.diff(root, id, selectedSide, signal);
+        f.git.diff = (_cwd, id, signal) => service.diff(root, id, signal);
         await request(f.application.server)
           .post("/api/sessions/open")
           .set("Authorization", `Bearer ${token}`)
@@ -64,7 +58,6 @@ describe("bounded Git diff through the Host and source projection", () => {
           .send({
             sessionId: "fixture-active",
             pathId: Buffer.from("source.ts").toString("base64url"),
-            side,
           })
           .expect(200);
         const diff = response.body as Extract<

@@ -1,7 +1,6 @@
 import {
   type BranchTreeResponse,
   defaultPreferences,
-  type GitDiffSide,
   type GitStatusResponse,
   type InspirePreferences,
   type ModelOption,
@@ -36,7 +35,7 @@ import {
   type WorkspaceBrowserState,
 } from "./controllers/workspace-controller";
 import { type EventSlice, emptyEventSlice } from "./events";
-import type { ResourcePreview } from "./resource-preview";
+import type { ResourceFileTab, ResourcePreview } from "./resource-preview";
 
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
  * null right after a compaction until the next assistant response reports
@@ -148,6 +147,8 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   connection: ManagedConnectionState;
   connectionProblem: ManagedConnectionProblem;
   bootstrapped: boolean;
+  /** Initial bootstrap and saved launch selection have not settled yet. */
+  startupPending: boolean;
   /** Monotonic identity of the current HTTP/WebSocket authority. */
   transportGeneration: number;
   /** Host-reported runtime versions, shown on the settings page. */
@@ -281,12 +282,12 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * citation and line-location semantics. */
   selectedResourceWorkspacePath: string | null;
   resourcePreview: ResourcePreview | null;
+  resourceTabs: ResourceFileTab[];
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
   gitStatusLoading: boolean;
   gitStatusRefreshing: boolean;
   selectedGitPathId: string | null;
-  selectedGitSide: GitDiffSide | null;
   gitDiff: GitDiffView | null;
   /** Preflight standing for the bounded Files-pane references. A textual
    * mention stays unverified until the host classifies it for this branch
@@ -303,6 +304,7 @@ export function emptyResourceInspectionState(): Pick<
   | "selectedResourceReference"
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
+  | "resourceTabs"
   | "resourceAvailability"
   | "resourceWorkspacePaths"
 > {
@@ -311,6 +313,7 @@ export function emptyResourceInspectionState(): Pick<
     selectedResourceReference: null,
     selectedResourceWorkspacePath: null,
     resourcePreview: null,
+    resourceTabs: [],
     resourceAvailability: {},
     resourceWorkspacePaths: {},
   };
@@ -324,6 +327,7 @@ export function createInitialAppState(): AppState {
     connection: "connecting",
     connectionProblem: null,
     bootstrapped: false,
+    startupPending: true,
     transportGeneration: 0,
     version: "",
     piVersion: "",
@@ -418,7 +422,6 @@ export function createInitialAppState(): AppState {
     gitStatusLoading: false,
     gitStatusRefreshing: false,
     selectedGitPathId: null,
-    selectedGitSide: null,
     gitDiff: null,
     error: null,
   };

@@ -383,22 +383,35 @@
 
 .topbar__status:not(:empty) { min-width: 44px; }
 
+/* Without session identity there is no text baseline to share. Center the
+   connection state in the action row instead of baseline's start fallback. */
+.topbar:not(:has(> .topbar__ident, > .topbar__rename)) > .topbar__status {
+  align-self: center;
+}
+
 .topbar__status > .chip {
   min-width: 0;
   max-width: 100%;
 }
 
-/* A reconnect is background transport work, not a warning-shaped button.
-   Faults keep their warning chip; the label remains accessible when compact. */
+/* Reconnecting is quiet text, not a warning-shaped button; faults keep
+   their warning chip and labels stay accessible when compact.
+   The label, not the glyph, supplies the baseline shared with the title and
+   mono metadata, while the glyph stays optically centered beside it. */
 .topbar__connection {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--space-1);
   min-width: 0;
   max-width: 100%;
   color: var(--muted);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+
+.topbar__connection > svg {
+  align-self: center;
+  flex: none;
 }
 
 .topbar__extension-status {

@@ -24,7 +24,7 @@ Display labels and rendering strategy are separate: a card may say MCP while its
 `codemode` call keeps the Codemode tree renderer. Presentation projections retain the recorded tool
 name, arguments and result for raw inspection and resource extraction.
 
-The Intercom reading projection selects structured body text instead of parsing a generated
+A structured custom-message reading projection selects structured body text instead of parsing a generated
 Markdown wrapper. Its absent-provenance guard preserves the original cross-machine origin warning.
 Unrecognized custom-message shapes retain generic inspection. See [[tool-presentations]] and
 [[conversation]].

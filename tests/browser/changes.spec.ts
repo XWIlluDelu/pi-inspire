@@ -11,7 +11,7 @@ for (const touch of [false, true]) {
       viewport: { width: 1366, height: 768 },
       hasTouch: touch,
       deviceScaleFactor: touch ? 2 : 1,
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
     test("keeps file navigation and shared path-copy outlines inside clipped regions", async ({
       page,
@@ -452,9 +452,6 @@ for (const touch of [false, true]) {
       ).toBeDisabled();
       await expect(pane.locator(".source-diff__line--active")).toHaveCount(2);
       if (touch) {
-        await expect(
-          pane.getByRole("combobox", { name: "Comparison side" }),
-        ).toHaveCount(0);
         const savedBeforeNavigation = await position();
         await pane.getByRole("tab", { name: "Changes", exact: true }).click();
         await expect(pane.locator(".res__list")).toBeVisible();
@@ -624,6 +621,13 @@ for (const hasTouch of [false, true]) {
         const headerBox = (await header.boundingBox())!;
         expect(headerBox.y).toBeCloseTo(changesContent.y, 1);
         expect(listBox.y).toBeCloseTo(headerBox.y + headerBox.height, 1);
+        const branchIcon = (await header
+          .locator(".res__index-branch-icon")
+          .boundingBox())!;
+        const summaryBandCenter = (changesContent.y + listBox.y) / 2;
+        expect(
+          Math.abs(branchIcon.y + branchIcon.height / 2 - summaryBandCenter),
+        ).toBeLessThanOrEqual(0.5);
         expect(listBox.y + listBox.height).toBeCloseTo(
           changesContent.y + changesContent.height,
           1,

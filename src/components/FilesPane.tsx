@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import {
   type MutableRefObject,
   memo,
@@ -14,9 +14,9 @@ import { fileIconForPath } from "../file-icons";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
-import { ContextSplitBody } from "./ContextSplitBody";
+import { ChangesDetail } from "./ChangesPane";
 import type { ContextPaneView } from "./context-pane-view";
-import { FilePreview } from "./FilePreview";
+import { FilePreview, type FileReadingState } from "./FilePreview";
 import { PiLoader } from "./PiLoader";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import {
@@ -78,8 +78,12 @@ const RecentFileRow = memo(function RecentFileRow({
       ]
         .filter(Boolean)
         .join(", ")}
-      title={unavailable ? (availability?.message ?? displayPath) : displayPath}
-      onClick={() => void store.openResource(reference)}
+      title={`${unavailable ? (availability?.message ?? displayPath) : displayPath}\nCtrl+click: Show in file manager`}
+      onClick={(event) => {
+        if (event.ctrlKey || event.metaKey)
+          void store.showInFileManager(reference, workspacePath);
+        else void store.openResource(reference);
+      }}
     >
       <Icon size={13} aria-hidden />
       <span
@@ -102,14 +106,16 @@ const RecentFileRow = memo(function RecentFileRow({
           {facet.mark}
         </span>
       ) : unavailable ? (
-        <AlertTriangle
-          size={12}
-          aria-label={
-            availability.availability === "ambiguous"
-              ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
-              : `File unavailable: ${availability.message ?? availability.availability}`
-          }
-        />
+        <span className="recent-file__warning">
+          <AlertTriangle
+            size={12}
+            aria-label={
+              availability.availability === "ambiguous"
+                ? `File reference ambiguous: ${availability.message ?? "choose a match"}`
+                : `File unavailable: ${availability.message ?? availability.availability}`
+            }
+          />
+        </span>
       ) : null}
     </button>
   );
@@ -223,37 +229,21 @@ function FileBrowser({
   );
 }
 
-function WorkspaceIndexHeader({ state }: { state: ContextPaneView }) {
-  const projectLabel = workspaceLabel(state.cwd);
-  return (
-    <div className="file-search-controls res__index-header">
-      <button
-        type="button"
-        className="res__index-header--back"
-        aria-label={`Back to file browser for ${projectLabel}`}
-        title={state.cwd ?? projectLabel}
-        onClick={() => store.showFileBrowser()}
-      >
-        <ArrowLeft size={14} aria-hidden />
-        <span className="res__index-title">{projectLabel}</span>
-      </button>
-      <WorkspaceVisibilityToggle />
-    </div>
-  );
-}
-
 export function FilesPane({
   state,
   rows,
   loading,
   error,
+  browseScrollTop,
+  readingState,
 }: {
   state: ContextPaneView;
   rows: ResourceRow[];
   loading: boolean;
   error: string | null;
+  browseScrollTop: MutableRefObject<number>;
+  readingState?: FileReadingState;
 }) {
-  const browseScrollTop = useRef(0);
   if (state.fileBrowserView === "browse")
     return (
       <div className="res__body res__body--files">
@@ -266,12 +256,32 @@ export function FilesPane({
         />
       </div>
     );
+  const changes =
+    state.resourceTabs.find(
+      (tab) => tab.reference === state.selectedResourceReference,
+    )?.view === "changes";
   return (
-    <ContextSplitBody
-      mode="files"
-      header={<WorkspaceIndexHeader state={state} />}
-      index={<WorkspaceTree revealRequests />}
-      detail={<FilePreview state={state} />}
-    />
+    <div className="res__body res__body--files res__body--file-tab">
+      {changes ? (
+        <ChangesDetail
+          key={state.selectedResourceReference}
+          state={state}
+          readingState={readingState}
+          render={(controls, content) => (
+            <FilePreview
+              state={state}
+              readingState={readingState}
+              changes={{ controls, content }}
+            />
+          )}
+        />
+      ) : (
+        <FilePreview
+          key={state.selectedResourceReference}
+          state={state}
+          readingState={readingState}
+        />
+      )}
+    </div>
   );
 }
