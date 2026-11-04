@@ -27,14 +27,14 @@ vi.mock("../../src/pdf-renderer", () => ({
   },
 }));
 
-function fakePdf() {
+function fakePdf(numPages = 2) {
   const renderPage = vi.fn(() => ({
     promise: Promise.resolve(),
     cancel: vi.fn(),
   }));
   const cleanup = vi.fn();
   const document = {
-    numPages: 2,
+    numPages,
     getPage: vi.fn(async (number: number) => ({
       getViewport: ({ scale }: { scale: number }) => ({
         width: 600 * scale,
@@ -59,17 +59,28 @@ describe("static PDF preview", () => {
     mocks.load.mockReset();
     mocks.cancelText.mockReset();
     vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(424);
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(424);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return Number.parseFloat(
+          this.querySelector<HTMLElement>(".pdf-preview__pages")?.style
+            .height ?? "500",
+        );
+      },
+    );
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders one page with selectable text, page navigation and zoom, never active embeds", async () => {
+  it("renders neighbouring selectable pages with navigation and anchored zoom, never active embeds", async () => {
     const pdf = fakePdf();
     mocks.load.mockReturnValue(pdf.task);
     const { container, unmount } = render(
       <PdfPreview blob={pdfBlob()} name="report.pdf" />,
     );
     await screen.findByText("Page 1 selectable text");
-    expect(container.querySelectorAll("canvas")).toHaveLength(1);
+    expect(container.querySelectorAll("canvas")).toHaveLength(2);
     expect(
       container.querySelector("iframe, object, embed, a, form"),
     ).toBeNull();
@@ -81,16 +92,20 @@ describe("static PDF preview", () => {
     expect(
       screen.getByRole("button", { name: "Next PDF page" }),
     ).toBeDisabled();
-    expect(container.querySelectorAll("canvas")).toHaveLength(1);
-    const scroll = screen.getByRole("region", { name: "PDF page 2" });
+    expect(container.querySelectorAll("canvas")).toHaveLength(2);
+    const scroll = screen.getByRole("region", { name: "PDF pages" });
     scroll.scrollTop = 80;
+    fireEvent.scroll(scroll);
     fireEvent.click(screen.getByRole("button", { name: "Zoom in PDF" }));
     await waitFor(() =>
       expect(
         Math.abs(container.querySelector("canvas")!.width - 500),
       ).toBeLessThanOrEqual(1),
     );
-    await waitFor(() => expect(scroll.scrollTop).toBeCloseTo(100));
+    // Scale the position within the page, not the reader's fixed top gutter.
+    await waitFor(() =>
+      expect(scroll.scrollTop).toBeCloseTo(12 + (80 - 12) * 1.25),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Fit PDF to width" }));
     await waitFor(() =>
       expect(container.querySelector("canvas")!.width).toBe(400),
@@ -100,6 +115,46 @@ describe("static PDF preview", () => {
     unmount();
     expect(pdf.task.destroy).toHaveBeenCalledTimes(1);
     expect(mocks.cancelText).toHaveBeenCalled();
+  });
+
+  it("releases offscreen canvases instead of rendering an entire long document", async () => {
+    const pdf = fakePdf(100);
+    mocks.load.mockReturnValue(pdf.task);
+    const { container } = render(
+      <PdfPreview blob={pdfBlob()} name="long-report.pdf" />,
+    );
+    await screen.findByText("Page 1 selectable text");
+    expect(pdf.document.getPage.mock.calls.length).toBeLessThanOrEqual(3);
+    const scroll = screen.getByRole("region", { name: "PDF pages" });
+    scroll.scrollTop = 20_000;
+    fireEvent.scroll(scroll);
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "PDF page 1" })).toBeNull(),
+    );
+    await waitFor(() => expect(pdf.cleanup).toHaveBeenCalled());
+    expect(container.querySelectorAll("canvas").length).toBeLessThanOrEqual(4);
+    expect(pdf.document.getPage.mock.calls.length).toBeLessThan(12);
+  });
+
+  it("fits mixed portrait and landscape pages independently", async () => {
+    const pdf = fakePdf();
+    const original = pdf.document.getPage.getMockImplementation()!;
+    pdf.document.getPage.mockImplementation(async (number) => ({
+      ...(await original(number)),
+      getViewport: ({ scale }: { scale: number }) => ({
+        width: (number === 1 ? 600 : 800) * scale,
+        height: (number === 1 ? 800 : 400) * scale,
+      }),
+    }));
+    mocks.load.mockReturnValue(pdf.task);
+    render(<PdfPreview blob={pdfBlob()} name="mixed.pdf" />);
+    await screen.findByText("Page 2 selectable text");
+    const portrait = screen.getByRole("region", { name: "PDF page 1" });
+    const landscape = screen.getByRole("region", { name: "PDF page 2" });
+    await waitFor(() =>
+      expect(parseFloat(landscape.style.height)).toBeCloseTo(200),
+    );
+    expect(parseFloat(portrait.style.height)).toBeCloseTo((400 * 800) / 600);
   });
 
   it("does not start a worker if byte decoding finishes after closing the preview", async () => {
@@ -128,15 +183,15 @@ describe("static PDF preview", () => {
     expect(stale.document.getPage).not.toHaveBeenCalled();
   });
 
-  it("cancels a page render when navigating, without letting its completion replace the next page", async () => {
+  it("cancels obsolete page renders on zoom without letting their completion replace the new surface", async () => {
     const pdf = fakePdf();
     const first = deferred<void>();
     const cancel = vi.fn(() => first.reject(new Error("cancelled")));
     pdf.renderPage.mockReturnValueOnce({ promise: first.promise, cancel });
     mocks.load.mockReturnValue(pdf.task);
     render(<PdfPreview blob={pdfBlob()} name="report.pdf" />);
-    await waitFor(() => expect(pdf.renderPage).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole("button", { name: "Next PDF page" }));
+    await waitFor(() => expect(pdf.renderPage).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in PDF" }));
     await screen.findByText("Page 2 selectable text");
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("PDF page unavailable")).toBeNull();

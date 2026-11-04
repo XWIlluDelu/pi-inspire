@@ -337,14 +337,20 @@ keeps at most 32 live capabilities; stopping releases the corresponding capabili
 keeps the 256 KiB text-preview bound; assets stream instead of being bundled into the page or
 copied into browser-owned blobs.
 
-PDF uses a lazy, local PDF.js worker to render one page at a time, with selectable text, page
-navigation, zoom, and fit-to-width. Zoom and resize preserve the reading position. It renders static
-page content; document scripts, interactive links/forms, and embedded media are inactive. Malformed
-or password-protected files show a readable error while retaining Download.
+PDF uses a lazy, local PDF.js worker with continuous vertical scrolling and selectable text. The
+page indicator follows the reading position; previous/next controls scroll to a page rather than
+replace it. Zoom and fit-to-width keep the current page and its reading position across resizing.
+Only visible pages and one neighbouring page on each side keep canvas/text surfaces; unvisited
+pages reserve estimated space until their actual dimensions are known. Mixed page sizes keep their
+own proportions. The reader renders static page content; document scripts, interactive
+links/forms, and embedded media are inactive. Malformed or password-protected files show a readable
+error and keep Download. Where PDF controls and floating file actions cannot fit side by side, PDF
+controls keep a stable row below the file actions. Expanding or collapsing file actions never moves
+a PDF button during a pointer gesture.
 
-A Chromium 153 check found that its native viewer blocked rendering in an empty sandbox,
-but executed PDF OpenAction JavaScript without that sandbox despite `script-src 'none'`.
-The reader therefore uses static PDF.js rather than an embedded native viewer.
+The reader uses static PDF.js, not an embedded native viewer: a Chromium 153 check found that the
+native viewer blocked rendering in an empty sandbox but executed PDF OpenAction JavaScript without
+that sandbox despite `script-src 'none'`.
 
 The page backing canvas is capped at four million pixels, 8192 pixels per dimension, and a device
 pixel ratio of two. Closing or replacing the reader cancels rendering and destroys its worker.
@@ -438,6 +444,6 @@ selection races. The workbench browser test also opens a cited HTML fixture cont
 and checks that static rendering sends no external HTTP(S) request. Interactive HTML API/component
 and desktop/narrow browser checks cover explicit start/stop, loaded-version execution, local modules,
 fetch and ranged media, external resources, opaque-origin isolation, revocation, stale starts,
-branch/file changes, and local scope. PDF checks cover painted pixels,
-selectable text, page/zoom state across layout changes, worker disposal, and inactive document actions.
+branch/file changes, and local scope. PDF checks cover painted pixels, selectable text, page/zoom
+state across layout changes, worker disposal, and inactive document actions.
 [[workbench-implementation]] explains reference resolution and filesystem/Git separation.
