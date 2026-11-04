@@ -36,15 +36,13 @@ export function DirectoryPicker({
   const pathRef = useRef(path);
   pathRef.current = path;
   const listingTransport = useRef<number | null>(null);
+  // Each new read aborts its predecessor, including its pending retry and late result.
   const listingRequest = useRef<AbortController | null>(null);
   const dialogRef = useModalFocus<HTMLDivElement>(
     true,
     "directory-picker",
     onCancel,
   );
-  // Only the newest request may write state — rapid navigation must not
-  // let a slow earlier level overwrite a later one.
-  const ticket = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
   const restoreListFocus = useRef(false);
   useLayoutEffect(() => {
@@ -77,14 +75,12 @@ export function DirectoryPicker({
       hidden?: boolean;
     } = {},
   ) => {
-    const mine = ++ticket.current;
     listingRequest.current?.abort();
     const request = new AbortController();
     const recovery = new RecoveryBackoff();
     listingRequest.current = request;
     const owns = () =>
       !request.signal.aborted &&
-      ticket.current === mine &&
       store.getState().transportGeneration === transportGeneration;
     requested.current = { path, fallbackHome };
     restoreListFocus.current = Boolean(
@@ -99,23 +95,12 @@ export function DirectoryPicker({
       setListing(null);
     setLoading(true);
     setError(null);
-    const read = async (
-      target?: string,
-    ): Promise<HostDirListing | undefined> => {
-      while (owns()) {
-        try {
-          return await store.browseHostDirs(target, hidden);
-        } catch (cause) {
-          if (!owns()) return undefined;
-          if (
-            !isTransientFailure(cause) ||
-            !(await recovery.wait(request.signal))
-          )
-            throw cause;
-        }
-      }
-      return undefined;
-    };
+    const read = (target?: string) =>
+      recovery.read(
+        () => store.browseHostDirs(target, hidden),
+        request.signal,
+        owns,
+      );
     return read(path)
       .catch((cause: unknown) => {
         if (!owns()) return undefined;
@@ -170,20 +155,12 @@ export function DirectoryPicker({
     // Advisory drive discovery must not block directory navigation.
     void (async () => {
       try {
-        while (owns()) {
-          try {
-            const result = await store.browseHostRoots();
-            if (owns()) setRoots(result.roots);
-            return;
-          } catch (cause) {
-            if (!owns()) return;
-            if (
-              !isTransientFailure(cause) ||
-              !(await recovery.wait(request.signal))
-            )
-              throw cause;
-          }
-        }
+        const result = await recovery.read(
+          () => store.browseHostRoots(),
+          request.signal,
+          owns,
+        );
+        if (owns()) setRoots(result.roots);
       } catch {
         if (owns()) setRootsUnavailable(true);
       } finally {
@@ -194,7 +171,6 @@ export function DirectoryPicker({
       request.abort();
       recovery.reset();
       listingRequest.current?.abort();
-      ticket.current += 1;
     };
   }, [transportGeneration]);
 

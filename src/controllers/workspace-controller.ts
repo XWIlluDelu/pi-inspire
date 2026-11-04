@@ -1,6 +1,6 @@
 import type { ProjectDirEntry } from "../../shared/contracts";
 import { type Api, ApiError, type ProjectFileResult } from "../api";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { RecoveryBackoff } from "../recovery-backoff";
 
 export interface WorkspaceBrowserState {
   workspaceShowHidden: boolean;
@@ -68,8 +68,6 @@ function parentsOf(path: string): string[] {
 export class WorkspaceController {
   private directoryRequests = new Map<string, AbortController>();
   private searchRequest: AbortController | null = null;
-  private directoryRecoveries = new Map<string, RecoveryBackoff>();
-  private searchRecovery = new RecoveryBackoff();
   private refreshGeneration = 0;
   private revealNonce = 0;
   private statesByCwd = new Map<string, WorkspaceBrowserState>();
@@ -95,9 +93,6 @@ export class WorkspaceController {
     this.refreshGeneration += 1;
     for (const request of this.directoryRequests.values()) request.abort();
     this.directoryRequests.clear();
-    for (const recovery of this.directoryRecoveries.values()) recovery.reset();
-    this.directoryRecoveries.clear();
-    this.searchRecovery.reset();
     this.searchRequest?.abort();
     this.searchRequest = null;
   }
@@ -169,7 +164,16 @@ export class WorkspaceController {
   invalidateForTransportReplacement(): void {
     this.cancelRequests();
     this.statesByCwd.clear();
-    this.host.patch(emptyWorkspaceBrowserState());
+    const state = this.host.state();
+    this.host.patch({
+      ...emptyWorkspaceBrowserState(),
+      // Navigation belongs to the browser; fetched rows belong to the retired
+      // transport. Keep intent available to gestures made during bootstrap.
+      workspaceShowHidden: state.workspaceShowHidden,
+      workspaceExpandedDirs: state.workspaceExpandedDirs,
+      workspaceQuery: state.workspaceQuery,
+      workspaceSearchLoading: Boolean(state.workspaceQuery.trim()),
+    });
   }
 
   async loadDirectory(
@@ -192,7 +196,6 @@ export class WorkspaceController {
     const transportGeneration = this.host.transportGeneration();
     this.directoryRequests.set(dir, request);
     const recovery = new RecoveryBackoff();
-    this.directoryRecoveries.set(dir, recovery);
     const currentRequest = () =>
       this.directoryRequests.get(dir) === request &&
       !request.signal.aborted &&
@@ -207,25 +210,16 @@ export class WorkspaceController {
       ),
     });
     try {
-      let response;
-      while (true) {
-        try {
-          response = await api.listFiles(sessionId, dir, {
+      const response = await recovery.read(
+        () =>
+          api.listFiles(sessionId, dir, {
             signal: request.signal,
             refresh: options.refresh,
             showHidden: before.workspaceShowHidden,
-          });
-          break;
-        } catch (error) {
-          if (!currentRequest()) return;
-          if (
-            !isTransientFailure(error) ||
-            !(await recovery.wait(request.signal))
-          )
-            throw error;
-          if (!currentRequest()) return;
-        }
-      }
+          }),
+        request.signal,
+        currentRequest,
+      );
       if (!currentRequest()) return;
       const current = this.host.state();
       this.host.patch({
@@ -257,10 +251,9 @@ export class WorkspaceController {
         },
       });
     } finally {
+      recovery.reset();
       if (this.directoryRequests.get(dir) === request) {
         this.directoryRequests.delete(dir);
-        recovery.reset();
-        this.directoryRecoveries.delete(dir);
         const current = this.host.state();
         this.host.patch({
           workspaceLoadingDirs: current.workspaceLoadingDirs.filter(
@@ -321,7 +314,6 @@ export class WorkspaceController {
   setQuery(query: string): void {
     this.searchRequest?.abort();
     this.searchRequest = null;
-    this.searchRecovery.reset();
     const state = this.host.state();
     const sameQuery = state.workspaceQuery === query;
     this.host.patch({
@@ -338,10 +330,11 @@ export class WorkspaceController {
     const api = this.host.api();
     const { sessionId, cwd } = this.host.state();
     if (!api || !sessionId || !cwd) return;
+    this.searchRequest?.abort();
     const request = new AbortController();
+    const recovery = new RecoveryBackoff();
     const transportGeneration = this.host.transportGeneration();
     this.searchRequest = request;
-    this.searchRecovery.reset();
     const showHidden = this.host.state().workspaceShowHidden;
     const ownsQuery = () =>
       this.searchRequest === request &&
@@ -353,27 +346,12 @@ export class WorkspaceController {
       workspaceSearchError: null,
     });
     try {
-      let response;
-      while (true) {
-        try {
-          response = await api.searchFiles(
-            sessionId,
-            query,
-            100,
-            request.signal,
-            showHidden,
-          );
-          break;
-        } catch (error) {
-          if (!ownsQuery()) return;
-          if (
-            !isTransientFailure(error) ||
-            !(await this.searchRecovery.wait(request.signal))
-          )
-            throw error;
-          if (!ownsQuery()) return;
-        }
-      }
+      const response = await recovery.read(
+        () =>
+          api.searchFiles(sessionId, query, 100, request.signal, showHidden),
+        request.signal,
+        ownsQuery,
+      );
       if (!ownsQuery()) return;
       this.host.patch({
         workspaceMatches: response.files,
@@ -392,10 +370,8 @@ export class WorkspaceController {
         workspaceSearchError: messageOf(error, "Workspace search failed"),
       });
     } finally {
-      if (this.searchRequest === request) {
-        this.searchRequest = null;
-        this.searchRecovery.reset();
-      }
+      recovery.reset();
+      if (this.searchRequest === request) this.searchRequest = null;
     }
   }
 

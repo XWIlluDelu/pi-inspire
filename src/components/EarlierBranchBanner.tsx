@@ -44,13 +44,10 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
       wrap.style.setProperty("--earlier-branch-banner-bottom", `${bottom}px`);
     };
     measure();
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(measure);
-    observer?.observe(banner);
+    const observer = new ResizeObserver(measure);
+    observer.observe(banner);
     return () => {
-      observer?.disconnect();
+      observer.disconnect();
       wrap.style.removeProperty("--earlier-branch-banner-bottom");
     };
   }, [viewingEarlierBranch]);

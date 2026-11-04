@@ -24,6 +24,7 @@ import {
   ContextPaneLoading,
   ContextPaneShell,
 } from "./components/ContextPaneShell";
+import { ContextPaneState } from "./components/ContextPaneState";
 import { ExportDialog } from "./components/ExportDialog";
 import { ExtensionDisplayDock } from "./components/ExtensionDisplays";
 import {
@@ -474,6 +475,7 @@ export function App() {
     (source) => ({
       needsToken: source.needsToken,
       bootstrapped: source.bootstrapped,
+      startupPending: source.startupPending,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
       extensionOverlayOpen: source.extensionUiRequests.length > 0,
@@ -491,9 +493,6 @@ export function App() {
       projectionConflict: source.projectionConflict,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
       readOnlyReason: source.readOnlyReason,
-      fileBrowserView: source.fileBrowserView,
-      selectedGitPathId: source.selectedGitPathId,
-      selectedResourceReference: source.selectedResourceReference,
     }),
     shallowEqual,
   );
@@ -608,19 +607,7 @@ export function App() {
   const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const inspectionLayers = [
-    ...(state.resourcesOpen
-      ? [
-          "context",
-          ...(state.contextMode === "files" &&
-          state.fileBrowserView === "preview"
-            ? ["file"]
-            : []),
-          ...(state.contextMode === "changes" &&
-          (state.selectedGitPathId || state.selectedResourceReference)
-            ? ["change"]
-            : []),
-        ]
-      : []),
+    ...(state.resourcesOpen ? ["context"] : []),
     ...(mobileNavOpen ? ["navigation"] : []),
     ...(settingsOpen ? ["settings"] : []),
     ...(paletteOpen ? ["palette"] : []),
@@ -640,12 +627,9 @@ export function App() {
       if (!remaining.includes("settings")) setSettingsOpen(false);
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
-      else if (!remaining.includes("file") && state.contextMode === "files")
-        store.showFileBrowser();
-      else if (!remaining.includes("change") && state.contextMode === "changes")
-        store.showChangesBrowser();
     },
     "__inspireWorkbench",
+    { background: true },
   );
   const openSessionSearch = useCallback(() => {
     setPaletteOpen(false);
@@ -1056,6 +1040,12 @@ export function App() {
         ) : null}
         {state.sessionId ? (
           <ConversationStage transcriptRef={transcriptRef} />
+        ) : !state.bootstrapped || state.startupPending ? (
+          <ContextPaneState
+            className="deferred-loading"
+            icon={<PiLoader size={17} aria-hidden />}
+            title="Loading workspace"
+          />
         ) : (
           <Welcome
             showRecent={narrowViewport ? !mobileNavOpen : navCollapsed}
@@ -1073,7 +1063,7 @@ export function App() {
               paneSelector=".ctx"
               edge="start"
               min={320}
-              max={() => 920}
+              max={(viewportWidth) => viewportWidth}
               label="Resize files panel"
               variant="ctx"
               layoutKey={String(navCollapsed)}

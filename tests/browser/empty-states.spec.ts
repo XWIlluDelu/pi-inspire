@@ -5,7 +5,12 @@ import {
   emptyPendingQueues,
 } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
-import { openCommandPalette, pairedPage } from "./support/navigation";
+import {
+  openCommandPalette,
+  openProjectTerminal,
+  pairedPage,
+  reloadSession,
+} from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 
@@ -105,13 +110,10 @@ for (const viewport of [
     await page.keyboard.press("Escape");
 
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "New terminal", exact: true }),
+    ).toBeDisabled();
     const terminalState = page.locator(".terminal-empty");
-    await expect(terminalState).toContainText("No project selected");
-    await expect(terminalState.locator("strong")).toHaveCSS(
-      "font-weight",
-      "500",
-    );
     if (narrow)
       await page.getByRole("button", { name: "Close context pane" }).click();
     else
@@ -124,7 +126,7 @@ for (const viewport of [
       data: { cwd: browserWorkspace, name: "Empty-state fixture" },
     });
     expect(created.ok()).toBe(true);
-    await page.reload();
+    await reloadSession(page, (await created.json()).active.sessionId);
     await expect(
       page.getByRole("button", { name: /^Session actions:/ }),
     ).toHaveText("Empty-state fixture");
@@ -153,7 +155,7 @@ for (const viewport of [
       await page
         .getByRole("button", { name: "Toggle resources panel" })
         .click();
-      await page.getByRole("button", { name: "Terminal", exact: true }).click();
+      await openProjectTerminal(page);
       await expect(terminalState).toContainText("Loading terminals");
       release();
       await expect(terminalState).toContainText("Project terminal");

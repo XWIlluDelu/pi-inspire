@@ -11,6 +11,7 @@ import {
 import {
   memo,
   type Ref,
+  useCallback,
   useContext,
   useEffect,
   useId,
@@ -40,6 +41,7 @@ import {
   usePresentationAdapters,
 } from "../presentation-adapters";
 import { store } from "../store";
+import { useImageUrl } from "../use-image-url";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
@@ -596,30 +598,11 @@ export const UnknownRoleRow = memo(function UnknownRoleRow({
 });
 
 function PendingImage({ id, alt }: { id: string; alt: string }) {
-  const [src, setSrc] = useState<string>();
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const request = new AbortController();
-    let objectUrl: string | undefined;
-    void store.loadAttachmentImage(id, request.signal).then(
-      (blob) => {
-        if (request.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setSrc(objectUrl);
-      },
-      (reason: unknown) => {
-        if (!request.signal.aborted)
-          setError(
-            reason instanceof Error ? reason.message : "Image unavailable",
-          );
-      },
-    );
-    return () => {
-      request.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [id]);
+  const loadImage = useCallback(
+    (signal: AbortSignal) => store.loadAttachmentImage(id, signal),
+    [id],
+  );
+  const { src, error } = useImageUrl(loadImage);
 
   return (
     <ImagePreview

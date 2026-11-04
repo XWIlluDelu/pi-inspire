@@ -89,13 +89,12 @@ export function useImageViewport(src: string, onBackdrop: () => void) {
       update(resizeImage(current.current, geometry.current));
     };
     resize();
-    const observer =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
-    observer?.observe(canvas);
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
     window.addEventListener("resize", resize);
     window.addEventListener("blur", clearGesture);
     return () => {
-      observer?.disconnect();
+      observer.disconnect();
       window.removeEventListener("resize", resize);
       window.removeEventListener("blur", clearGesture);
     };

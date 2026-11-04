@@ -651,6 +651,42 @@ export class ResourceStore {
     );
   }
 
+  async fileManagerPath(
+    context: ResourceContext,
+    reference: string,
+    workspacePath?: string,
+    directory = false,
+  ): Promise<string> {
+    if (directory) {
+      if (workspacePath === undefined)
+        throw requestError("Choose a workspace directory", 400);
+      const selected = await exactWorkspacePath(workspacePath, context.cwd);
+      const root = await realpath(context.cwd);
+      const path = await realpath(selected).catch(() => null);
+      if (path === null) throw requestError("The directory was not found", 404);
+      if ((await filesystemRelativePath(root, path)) === null)
+        throw requestError("The directory is outside the project", 403);
+      if (!(await lstat(path)).isDirectory())
+        throw requestError("The reference is not a directory", 400);
+      return path;
+    }
+    const descriptor = await this.resolve(
+      context,
+      reference,
+      true,
+      workspacePath,
+    );
+    const resource = this.get(descriptor.id, context.sessionId, context.viewId);
+    try {
+      if (!resource.path)
+        throw requestError("This resource has no file on disk", 400);
+      return resource.path;
+    } finally {
+      this.handles.delete(descriptor.id);
+      this.release(resource);
+    }
+  }
+
   private async resolveUsingIndex(
     context: ResourceContext,
     reference: string,

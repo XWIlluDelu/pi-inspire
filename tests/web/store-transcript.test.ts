@@ -230,6 +230,7 @@ describe("transcript paging", () => {
           ? {
               body: {
                 sessionId: "s1",
+                viewId: "view-s1",
                 revision: 4,
                 messages: [
                   { role: "assistant", content: "middle", timestamp: 2 },
@@ -242,6 +243,7 @@ describe("transcript paging", () => {
           : {
               body: {
                 sessionId: "s1",
+                viewId: "view-s1",
                 revision: 4,
                 messages: [{ role: "user", content: "old", timestamp: 1 }],
                 hasOlder: false,
@@ -288,6 +290,7 @@ describe("transcript paging", () => {
         return {
           body: {
             sessionId: "s1",
+            viewId: "view-s1",
             revision: 4,
             messages: [{ role: "user", content: "old", timestamp: 1 }],
             hasOlder: false,
@@ -341,6 +344,32 @@ describe("transcript paging", () => {
       });
     }
 
+    it.each([undefined, "another-view"])(
+      "rejects an older page whose required view identity is %s",
+      async (viewId) => {
+        installPaging(() => ({
+          body: {
+            sessionId: "s1",
+            revision: 4,
+            viewId,
+            messages: [{ role: "user", content: "foreign page", timestamp: 1 }],
+            hasOlder: false,
+            olderCursor: null,
+          },
+        }));
+        const { store } = await initStore();
+        await expect(store.loadOlderMessages()).resolves.toBe(false);
+        expect(
+          store.getState().messages.map((message) => message.content),
+        ).toEqual(["new"]);
+        expect(store.getState()).toMatchObject({
+          loadingOlderMessages: false,
+          hasOlderMessages: true,
+          olderMessagesCursor: "cursor-1",
+        });
+      },
+    );
+
     it("bounds transient failures locally and clears the error after successful recovery", async () => {
       let healthy = false;
       const read = vi.fn(() =>
@@ -348,6 +377,7 @@ describe("transcript paging", () => {
           ? {
               body: {
                 sessionId: "s1",
+                viewId: "view-s1",
                 revision: 4,
                 messages: [{ role: "user", content: "old", timestamp: 1 }],
                 hasOlder: false,
@@ -825,6 +855,7 @@ describe("transcript paging", () => {
           body: {
             sessionId: "s1",
             revision: 4,
+            viewId: "view-s1",
             incarnation: "inc",
             appendFromRevision: 4,
             messages: [
@@ -871,6 +902,7 @@ describe("transcript paging", () => {
         return {
           body: {
             sessionId: "s1",
+            viewId: "view-s1",
             revision: 3,
             messages: [{ role: "user", content: "stale", timestamp: 1 }],
             hasOlder: false,

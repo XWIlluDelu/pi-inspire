@@ -315,7 +315,9 @@ export const TerminalView = memo(function TerminalView({
   }, []);
 
   const currentDimensions = useCallback(() => {
-    const proposed = fitRef.current?.proposeDimensions();
+    const proposed = activeRef.current
+      ? fitRef.current?.proposeDimensions()
+      : undefined;
     return safeDimensions(proposed, descriptorRef.current);
   }, []);
 
@@ -692,7 +694,7 @@ export const TerminalView = memo(function TerminalView({
       }
       if (xtermRef.current !== xterm) return;
       updateTheme();
-      fit.fit();
+      if (activeRef.current) fit.fit();
       connection.start();
     };
     void initialize();
@@ -972,9 +974,9 @@ export const TerminalView = memo(function TerminalView({
                   <Square size={12} aria-hidden />
                 ) : transport !== "connected" ? (
                   transport === "offline" ? (
-                    <Circle size={14} aria-hidden />
+                    <Circle size={16} aria-hidden />
                   ) : (
-                    <PiLoader size={14} aria-hidden />
+                    <PiLoader size={16} aria-hidden />
                   )
                 ) : writable ? (
                   <button
@@ -991,14 +993,11 @@ export const TerminalView = memo(function TerminalView({
                       updateModifiers(pending);
                     }}
                   >
-                    <Keyboard size={14} aria-hidden />
+                    <Keyboard size={16} aria-hidden />
                   </button>
                 ) : (
-                  <Eye size={14} aria-hidden />
+                  <Eye size={16} aria-hidden />
                 )}
-                <span className="terminal-view__status-label">
-                  {statusLabel}
-                </span>
               </span>
               <button
                 type="button"
@@ -1011,7 +1010,7 @@ export const TerminalView = memo(function TerminalView({
                 aria-expanded={search.open}
                 title="Search terminal output"
               >
-                <Search size={14} aria-hidden />
+                <Search size={16} aria-hidden />
               </button>
             </>,
             toolbarHost,
