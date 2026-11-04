@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import {
   FIRST_TEXT_BASELINE_TOLERANCE_PX,
   firstTextBaseline,
@@ -57,7 +57,7 @@ test("notebook execution counts share a bounded gutter without covering source",
   );
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   const host = hostRequest(page);
   const before = await (await host.get("/api/preferences")).json();
   try {
@@ -162,7 +162,10 @@ for (const mode of ["notebook", "changes"] as const) {
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await pairedPage(page);
-    await openMockSession(page, /Resource virtualization and sandbox fixture/);
+    await openFixtureSession(
+      page,
+      /Resource virtualization and sandbox fixture/,
+    );
     const host = hostRequest(page);
     const before = await (await host.get("/api/preferences")).json();
     await page.getByRole("button", { name: "Toggle resources panel" }).click();

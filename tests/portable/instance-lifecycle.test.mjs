@@ -36,13 +36,13 @@ function childServer(path, token) {
       const grant = control.accept(state, JSON.parse(Buffer.concat(chunks)));
       if (!grant) return response.writeHead(401).end();
       response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify(control.reply(grant, { appName: "inspire", mock: false })));
+      response.end(JSON.stringify(control.reply(grant, { appName: "inspire" })));
     });
     server.listen(0, "127.0.0.1", async () => {
       state = {
         schemaVersion: 1, pid: process.pid, root: process.cwd(), host: "127.0.0.1",
         port: server.address().port, token, startedAt: new Date().toISOString(),
-        processStartTime: await processStartIdentity(process.pid), mock: false,
+        processStartTime: await processStartIdentity(process.pid),
         shutdownControlVersion: 1, httpControlVersion: 1,
       };
       await writeInstanceState(path, state);
@@ -111,7 +111,6 @@ test("inspects a proven Host and stops it without sending a bearer", async (cont
     root: state.root,
     host: state.host,
     port: state.port,
-    mock: false,
   };
   assert.equal((await inspectInstance(path, expected)).kind, "healthy");
   const stopped = await stopManagedInstance(path, expected, {

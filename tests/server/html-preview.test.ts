@@ -15,8 +15,7 @@ import { promisify } from "node:util";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
-import { AttachmentStore } from "../../server/attachments.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { type ResourceContext, ResourceStore } from "../../server/resources.js";
 import { HTML_PREVIEW_BYTES } from "../../shared/html-preview.js";
@@ -47,7 +46,7 @@ describe("interactive HTML capabilities", () => {
       messages: [],
     };
     resources = new ResourceStore();
-    const runtime = new MockRuntime();
+    const { runtime, catalog, attachments } = hostServices(temporary);
     vi.spyOn(runtime, "resourceContext").mockImplementation(
       async () => context,
     );
@@ -55,8 +54,8 @@ describe("interactive HTML capabilities", () => {
       token,
       runtime,
       resources,
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(temporary, "uploads")),
+      catalog,
+      attachments,
       preferences: new PreferencesStore(join(temporary, "preferences.json")),
       git: {
         status: async () => ({ kind: "not-repository" }),
@@ -64,7 +63,6 @@ describe("interactive HTML capabilities", () => {
           throw new Error("Not used");
         },
       },
-      mock: true,
       version: "test",
       piVersion: "test",
       distDir: join(temporary, "missing-dist"),

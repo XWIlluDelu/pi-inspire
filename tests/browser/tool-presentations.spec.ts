@@ -3,9 +3,8 @@ import { join, sep } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { createInspireServer } from "../../server/app";
-import { AttachmentStore } from "../../server/attachments";
 import { GitInspectionService } from "../../server/git-inspection";
-import { MockCatalog, MockRuntime } from "../../server/mock";
+import { workbenchFixture } from "../fixtures/workbench";
 import { PreferencesStore } from "../../server/preferences";
 import { ResourceStore } from "../../server/resources";
 import { ToolPresentationConfigStore } from "../../server/tool-presentation-config";
@@ -15,7 +14,7 @@ import type { ToolCallContent } from "../../src/events";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
 import { observeClipboardWrites } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 
 test.use({ serviceWorkers: "block" });
 
@@ -57,12 +56,12 @@ const configuration: ToolPresentationConfiguration = {
 };
 
 // Drive the actual application's event transport and transcript, while the
-// isolated mock Host continues to supply pairing, catalog and snapshots.
+// isolated test Host continues to supply pairing, catalog and snapshots.
 async function openReview(
   page: Page,
   preferences: Record<string, unknown> = {},
 ) {
-  return openMockEventSession(page, "Tool presentation review", configuration, {
+  return openEventSession(page, "Tool presentation review", configuration, {
     theme: "light",
     toolVisibility: "expanded",
     activityFoldVisibility: "expanded",
@@ -1178,30 +1177,18 @@ for (const [palette, theme] of [
   });
 }
 
-// Native read/bash produce the recorded artifacts offline. The mock Runtime
-// supplies shell/catalog state only; transcript paging and resource authority
-// use SessionProjection and the real Host HTTP resource endpoints.
+// Native read/bash persist the artifacts offline; the real Runtime and Host
+// expose their saved session through normal projection and resource endpoints.
 test("saved tool images and full logs reopen through the authorized viewers on desktop and narrow screens", async ({
   page,
 }, testInfo) => {
   const fixture = await toolResultResourcesFixture();
-  const runtime = new MockRuntime();
-  const snapshot = await runtime.openSession(fixture.record.id);
-  Object.assign(snapshot.active!, {
-    cwd: fixture.record.cwd,
-    sessionName: fixture.record.name,
-    transcriptPage: fixture.page,
-  });
-  runtime.resourceContext = async (sessionId) => {
-    expect(sessionId).toBe(fixture.record.id);
-    return {
-      sessionId,
-      cwd: fixture.record.cwd!,
-      viewId: fixture.page.viewId,
-      revision: fixture.page.revision,
-      messages: fixture.messages,
-    };
-  };
+  const { runtime, catalog, attachments } = await workbenchFixture(
+    fixture.root,
+    { cwd: fixture.record.cwd, seed: false },
+  );
+  catalog.sessionDirectories = async () => [fixture.root];
+  await runtime.openSession(fixture.record.id);
   const preferences = new PreferencesStore(
     join(fixture.root, "preferences.json"),
   );
@@ -1213,15 +1200,14 @@ test("saved tool images and full logs reopen through the authorized viewers on d
   const host = createInspireServer({
     token: "tool-resources-test-token",
     runtime,
-    catalog: new MockCatalog(),
-    attachments: new AttachmentStore(join(fixture.root, "uploads")),
+    catalog,
+    attachments,
     preferences,
     toolPresentations: new ToolPresentationConfigStore(
       join(fixture.root, "presentations.json"),
     ),
     resources: new ResourceStore(),
     git: new GitInspectionService(),
-    mock: true,
     version: "tool-resources-test",
     piVersion: fixture.piVersion,
     // This fixture owns the native API/resource boundary, not the UI build.
@@ -1253,6 +1239,14 @@ test("saved tool images and full logs reopen through the authorized viewers on d
     await page.getByLabel("Access token").fill("tool-resources-test-token");
     await page.getByRole("button", { name: "Pair", exact: true }).click();
     await expect(page.getByRole("main")).toBeVisible();
+    await page.evaluate(
+      (sessionId) =>
+        sessionStorage.setItem(
+          "inspire:workbench:v1:last-session",
+          JSON.stringify({ sessionId }),
+        ),
+      fixture.record.id,
+    );
     for (const presentation of ["native", "generic"] as const) {
       if (presentation === "generic") {
         await page.setViewportSize({ width: 390, height: 844 });
@@ -1337,7 +1331,7 @@ test("saved tool images and full logs reopen through the authorized viewers on d
         ),
       );
       expect(descriptor.sessionId).toBe(fixture.record.id);
-      expect(descriptor.viewId).toBe(fixture.page.viewId);
+      expect(descriptor.viewId).toBeTruthy();
       await expect(
         page.getByRole("region", { name: "File source", exact: true }),
       ).toContainText("native line 1");

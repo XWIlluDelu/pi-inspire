@@ -1,14 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import { hostRequest } from "./support/host-request";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test("HTML interaction isolates real resources and revokes execution across desktop/drawer transitions", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   const externalRequests: string[] = [];
   await page.route("https://preview.example.test/**", async (route) => {
     externalRequests.push(route.request().url());

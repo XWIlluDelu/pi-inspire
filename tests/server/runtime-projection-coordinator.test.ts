@@ -113,6 +113,7 @@ async function fixture() {
   };
   const owner = new RuntimePersistenceOwnershipController(
     {
+      promptFileName: () => null,
       async readNewSessionEntries() {
         return structuredClone(durableEntries);
       },

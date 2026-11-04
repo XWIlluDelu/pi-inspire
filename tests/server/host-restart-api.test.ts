@@ -6,8 +6,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
 import { HostRestartController } from "../../server/host-restart.js";
-import { MockRuntime, MockCatalog } from "../../server/mock.js";
-import { AttachmentStore } from "../../server/attachments.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 
@@ -20,7 +19,7 @@ describe("authenticated page restart API", () => {
   it("authenticates both routes, rejects stale/malformed scope, and exposes one preparation to late observers", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-restart-api-"));
     cleanup.push(() => rm(directory, { recursive: true, force: true }));
-    const runtime = new MockRuntime();
+    const { runtime, catalog, attachments } = hostServices(directory);
     let rejectPreparation!: (error: Error) => void;
     const prepare = vi.fn(
       () =>
@@ -37,8 +36,8 @@ describe("authenticated page restart API", () => {
     const application = createInspireServer({
       token: "fixture-token",
       runtime,
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(directory, "uploads")),
+      catalog,
+      attachments,
       preferences: new PreferencesStore(join(directory, "preferences.json")),
       resources: new ResourceStore(),
       git: {
@@ -47,7 +46,6 @@ describe("authenticated page restart API", () => {
           throw new Error("unused");
         },
       },
-      mock: true,
       version: "test",
       piVersion: "test",
       hostRestart: controller,

@@ -55,7 +55,6 @@ async function scenario(webPort?: number) {
     INSPIRE_STATE_PATH: sentinel,
     INSPIRE_TOKEN: inheritedToken,
     INSPIRE_PI_COMMAND: process.env.INSPIRE_PI_COMMAND,
-    INSPIRE_MOCK: "1",
     INSPIRE_OPEN: "0",
     INSPIRE_TERMINAL_IN_PROCESS: "1",
     BROWSER: "none",

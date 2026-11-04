@@ -7,12 +7,12 @@ import {
   incomingIntercom,
 } from "../web/fixtures/custom-message-presentation";
 import { renderedColors } from "./support/colors";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 
 test.use({ serviceWorkers: "block" });
 
 async function openReview(page: Page) {
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Custom message review",
     customMessageConfiguration,

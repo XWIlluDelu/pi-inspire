@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { BranchTreeResponse } from "../../shared/contracts";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
@@ -9,7 +9,11 @@ test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
 async function openHistory(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openMockSession(page, /Calibration history fixture/);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
   const toggle = page.getByRole("button", {
     name: "Toggle resources panel",
     exact: true,

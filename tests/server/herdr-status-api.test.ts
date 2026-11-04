@@ -4,8 +4,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createInspireServer } from "../../server/app.js";
-import { AttachmentStore } from "../../server/attachments.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 import type { HerdrEnhancementStatus } from "../../shared/herdr.js";
@@ -15,9 +14,7 @@ async function fixture(getHerdrStatus?: () => Promise<HerdrEnhancementStatus>) {
   const preferences = new PreferencesStore(join(directory, "preferences.json"));
   const application = createInspireServer({
     token: "fixture-token",
-    runtime: new MockRuntime(),
-    catalog: new MockCatalog(),
-    attachments: new AttachmentStore(join(directory, "uploads")),
+    ...hostServices(directory),
     preferences,
     resources: new ResourceStore(),
     git: {
@@ -26,7 +23,6 @@ async function fixture(getHerdrStatus?: () => Promise<HerdrEnhancementStatus>) {
         throw new Error("unused");
       },
     },
-    mock: true,
     version: "test",
     piVersion: "test",
     getHerdrStatus,

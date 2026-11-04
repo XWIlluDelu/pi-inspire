@@ -92,7 +92,6 @@ if (args[1] === 'show') console.log([
     "INSPIRE_HOST",
     "INSPIRE_PORT",
     "INSPIRE_TOKEN",
-    "INSPIRE_MOCK",
     "SYSTEMD_EXEC_PID",
   ])
     delete (env as Record<string, string | undefined>)[name];

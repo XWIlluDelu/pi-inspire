@@ -35,12 +35,6 @@ import {
   MaintenanceRestartController,
 } from "./maintenance-restart.js";
 import { McpConfigService } from "./mcp-config.js";
-import {
-  MOCK_AVAILABLE_MODELS,
-  MockCatalog,
-  MockGitInspection,
-  MockRuntime,
-} from "./mock.js";
 import { ModelMetadataCatalog } from "./model-metadata.js";
 import { ModelSettingsService } from "./model-settings.js";
 import { resolvePiInstallationIdentity } from "./pi-installation.js";
@@ -61,15 +55,8 @@ import {
   ProviderAuthService,
 } from "./provider-auth.js";
 import { ResourceStore } from "./resources.js";
-import {
-  RuntimeController,
-  type RuntimeLike,
-  type RuntimeWorkerStatus,
-} from "./runtime.js";
-import {
-  createHostSessionCatalog,
-  type SessionCatalogLike,
-} from "./session-catalog.js";
+import { RuntimeController, type RuntimeWorkerStatus } from "./runtime.js";
+import { createHostSessionCatalog } from "./session-catalog.js";
 import {
   currentStaticAssetPaths,
   defaultStaticAssetCacheDirectory,
@@ -120,57 +107,33 @@ if (!Number.isInteger(port) || port < 1 || port > 65_535)
 const tokenPath =
   process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
 const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
-const mock = process.env.INSPIRE_MOCK === "1";
 const repositoryUrl =
   typeof packageJson.repository === "string"
     ? packageJson.repository
     : packageJson.repository?.url;
-const updateChecker = mock
-  ? undefined
-  : new GitHubReleaseUpdateChecker({
-      currentVersion: packageJson.version,
-      repositoryUrl,
+const updateChecker = new GitHubReleaseUpdateChecker({
+  currentVersion: packageJson.version,
+  repositoryUrl,
+});
+const piUpdateChecker = new PiUpdateChecker({
+  currentVersion: piInstallation.version,
+  readInstalledVersion: async () =>
+    (await resolvePiInstallationIdentity({ installationRoot: root })).version,
+  checkExtensions: async () => {
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(root, agentDir, {
+      projectTrusted: false,
     });
-const piUpdateChecker = mock
-  ? undefined
-  : new PiUpdateChecker({
-      currentVersion: piInstallation.version,
-      readInstalledVersion: async () =>
-        (await resolvePiInstallationIdentity({ installationRoot: root }))
-          .version,
-      checkExtensions: async () => {
-        const agentDir = getAgentDir();
-        const settingsManager = SettingsManager.create(root, agentDir, {
-          projectTrusted: false,
-        });
-        if (settingsManager.drainErrors().length > 0)
-          throw new Error("Pi settings are unavailable");
-        return new DefaultPackageManager({
-          cwd: root,
-          agentDir,
-          settingsManager,
-        }).checkForAvailableUpdates();
-      },
-    });
-const runningSource = mock
-  ? { kind: "package" as const, version: packageJson.version }
-  : await inspectInspireSource(root);
-const configuredMockStreamInterval = mock
-  ? process.env.INSPIRE_MOCK_STREAM_INTERVAL_MS
-  : undefined;
-const mockStreamIntervalMs = configuredMockStreamInterval
-  ? Number(configuredMockStreamInterval)
-  : undefined;
-if (
-  mockStreamIntervalMs !== undefined &&
-  (!Number.isInteger(mockStreamIntervalMs) ||
-    mockStreamIntervalMs < 10 ||
-    mockStreamIntervalMs > 1_000)
-) {
-  throw new Error(
-    "INSPIRE_MOCK_STREAM_INTERVAL_MS must be an integer from 10 to 1000",
-  );
-}
+    if (settingsManager.drainErrors().length > 0)
+      throw new Error("Pi settings are unavailable");
+    return new DefaultPackageManager({
+      cwd: root,
+      agentDir,
+      settingsManager,
+    }).checkForAvailableUpdates();
+  },
+});
+const runningSource = await inspectInspireSource(root);
 const configuredLogPath = process.env.INSPIRE_LOG_PATH;
 const diagnosticLogPath =
   configuredLogPath || defaultDiagnosticLogPath(root, host, port);
@@ -181,7 +144,6 @@ const diagnostics = await openDiagnosticLogger({
     processId: process.pid,
     version: packageJson.version,
     piVersion: piInstallation.version,
-    mock,
     host,
     port,
   },
@@ -199,7 +161,6 @@ const preferences = new PreferencesStore(
 );
 const herdr = new HerdrEnhancement({
   enabled: (await preferences.read()).herdrEnabled,
-  mock,
   registry: new HerdrWorkerRegistry(
     defaultHerdrWorkerDirectory(root, host, port),
   ),
@@ -207,62 +168,50 @@ const herdr = new HerdrEnhancement({
 });
 void herdr.initialize();
 const attachments = new AttachmentStore();
-let catalog: SessionCatalogLike;
-let runtime: RuntimeLike;
-let sessionActivity: PiSessionActivity | undefined;
+const catalog = createHostSessionCatalog(process.cwd(), preferences);
 const modelMetadata = new ModelMetadataCatalog();
-if (mock) {
-  catalog = new MockCatalog();
-  runtime = new MockRuntime({
-    streamIntervalMs: mockStreamIntervalMs,
-    attachments,
-  });
-} else {
-  catalog = createHostSessionCatalog(process.cwd(), preferences);
-  const sessionOccupancy = new PiSessionOccupancy();
-  const managedRuntime = new RuntimeController(
-    catalog,
-    attachments,
-    (options) => herdr.createProcess(options),
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    diagnostics,
+const sessionOccupancy = new PiSessionOccupancy();
+const runtime = new RuntimeController(
+  catalog,
+  attachments,
+  (options) => herdr.createProcess(options),
+  undefined,
+  undefined,
+  undefined,
+  undefined,
+  diagnostics,
+)
+  .setTerminalSessionStore({
+    has: async (id) =>
+      (await preferences.read()).terminalSessionIds.includes(id),
+    set: (id, terminal) => preferences.setTerminalSession(id, terminal),
+  })
+  .setModelMetadataCatalog(modelMetadata)
+  .setExternalSessionConnector((sessionId, sessionFile) =>
+    herdr.connectExternalSession(sessionId, sessionFile, sessionOccupancy),
   )
-    .setTerminalSessionStore({
-      has: async (id) =>
-        (await preferences.read()).terminalSessionIds.includes(id),
-      set: (id, terminal) => preferences.setTerminalSession(id, terminal),
-    })
-    .setModelMetadataCatalog(modelMetadata)
-    .setExternalSessionConnector((sessionId, sessionFile) =>
-      herdr.connectExternalSession(sessionId, sessionFile, sessionOccupancy),
-    )
-    .setExternalSessionGuard((sessionId, sessionFile) =>
-      sessionOccupancy.assertWritable(sessionId, sessionFile),
-    )
-    .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
-      herdr.updateWorkerStatus(rpc, status);
-    });
-  runtime = managedRuntime;
-  sessionActivity = new PiSessionActivity({
-    catalog,
-    publish: (activities) => {
-      managedRuntime.emit("event", {
-        type: "external_session_activity",
-        activities,
-      });
-    },
+  .setExternalSessionGuard((sessionId, sessionFile) =>
+    sessionOccupancy.assertWritable(sessionId, sessionFile),
+  )
+  .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
+    herdr.updateWorkerStatus(rpc, status);
   });
-  sessionActivity.start();
-}
+const sessionActivity = new PiSessionActivity({
+  catalog,
+  publish: (activities) => {
+    runtime.emit("event", {
+      type: "external_session_activity",
+      activities,
+    });
+  },
+});
+sessionActivity.start();
 const toolPresentations = new ToolPresentationConfigStore(
   process.env.INSPIRE_TOOL_PRESENTATIONS_PATH ||
     defaultToolPresentationConfigPath(root),
 );
 const resources = new ResourceStore();
-const git = mock ? new MockGitInspection() : new GitInspectionService();
+const git = new GitInspectionService();
 let terminal: TerminalService;
 if (process.env.INSPIRE_TERMINAL_IN_PROCESS === "1") {
   terminal = new TerminalSessionManager();
@@ -279,38 +228,35 @@ if (process.env.INSPIRE_TERMINAL_IN_PROCESS === "1") {
     );
   });
 }
-const modelRuntime = mock
-  ? null
-  : await ModelRuntime.create({ refreshOnCreate: false }).catch((error) => {
-      console.error(
-        "Unable to initialize Pi provider authentication:",
-        error instanceof Error ? error.message : String(error),
-      );
-      return null;
-    });
+const modelRuntime = await ModelRuntime.create({
+  refreshOnCreate: false,
+}).catch((error) => {
+  console.error(
+    "Unable to initialize Pi provider authentication:",
+    error instanceof Error ? error.message : String(error),
+  );
+  return null;
+});
 const readAvailableModels = async (refresh = false, cwd = process.cwd()) => {
-  if (mock) return structuredClone(MOCK_AVAILABLE_MODELS);
   return (await modelMetadata.read(cwd, refresh)).models;
 };
-const maintenanceRestart = mock
-  ? undefined
-  : new MaintenanceRestartController({
-      runtime,
-      root,
-      piVersion: piInstallation.version,
-      runningSource,
-      diagnostics,
-    });
+const maintenanceRestart = new MaintenanceRestartController({
+  runtime,
+  root,
+  piVersion: piInstallation.version,
+  runningSource,
+  diagnostics,
+});
 const updateCoordinator = new UpdateCoordinator({
   currentPiVersion: piInstallation.version,
   inspireChecker: updateChecker,
   piChecker: piUpdateChecker,
-  statePath: mock ? undefined : defaultUpdateStatePath(root, host, port),
+  statePath: defaultUpdateStatePath(root, host, port),
   diagnostics,
 });
 const distDir = join(root, "dist");
 let staticAssetCacheDirs: string[] = [];
-if (!mock) {
+{
   const cacheDirectory = defaultStaticAssetCacheDirectory(root);
   try {
     const cache = await prepareStaticAssetCache(
@@ -342,7 +288,6 @@ const application = createInspireServer({
   resources,
   git,
   terminal,
-  mock,
   version: packageJson.version,
   piVersion: piInstallation.version,
   getHerdrStatus: () => herdr.status(),
@@ -350,33 +295,20 @@ const application = createInspireServer({
   hostRestart: new HostRestartController(
     runtime,
     hostRestartBackend(root, {
-      enabled: !mock,
+      enabled: true,
       systemdEnabled: host === "127.0.0.1" && port === 4587,
       restart: () =>
         shutdown("launcher-owned Host restart", HOST_RESTART_EXIT_CODE),
     }),
   ),
   updateCoordinator,
-  bootstrapModels: () =>
-    mock
-      ? structuredClone(MOCK_AVAILABLE_MODELS)
-      : (modelMetadata.peek(process.cwd())?.models ?? []),
+  bootstrapModels: () => modelMetadata.peek(process.cwd())?.models ?? [],
   availableModels: readAvailableModels,
   invalidateModels: () => modelMetadata.invalidate(),
-  modelMetadata: async (cwd: string, refresh?: boolean) =>
-    mock
-      ? {
-          models: structuredClone(MOCK_AVAILABLE_MODELS),
-          virtualModels: [],
-          defaults: {
-            cwd,
-            model: structuredClone(MOCK_AVAILABLE_MODELS[0] ?? null),
-            thinkingLevel: "medium" as const,
-          },
-        }
-      : modelMetadata.read(cwd, refresh),
-  modelSettings: mock ? undefined : new ModelSettingsService(),
-  mcpConfig: mock ? undefined : new McpConfigService(),
+  modelMetadata: (cwd: string, refresh?: boolean) =>
+    modelMetadata.read(cwd, refresh),
+  modelSettings: new ModelSettingsService(),
+  mcpConfig: new McpConfigService(),
   providerAuth: modelRuntime
     ? new ProviderAuthService(
         modelRuntime,
@@ -401,7 +333,7 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   closeShutdownControl?.();
-  sessionActivity?.close();
+  sessionActivity.close();
   let exitCode = requestedExitCode;
   console.log(`Shutting down after ${reason}…`);
   diagnostics.record("info", "host_stopping", { reason, requestedExitCode });
@@ -470,7 +402,6 @@ async function announceStarted(): Promise<void> {
     token,
     startedAt: new Date().toISOString(),
     processStartTime: await processStartIdentity(process.pid),
-    mock,
     ...(statePath
       ? { shutdownControlVersion: 1 as const, httpControlVersion: 1 as const }
       : {}),
@@ -494,7 +425,7 @@ async function announceStarted(): Promise<void> {
   diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = application.launchUrl(new URL(instanceUrl(instanceState)).origin);
   if (process.env.INSPIRE_QUIET !== "1") {
-    console.log(`\n  INSΠRE ${packageJson.version}${mock ? " (mock)" : ""}`);
+    console.log(`\n  INSΠRE ${packageJson.version}`);
     console.log(`  ${url}\n`);
   }
   if (process.env.INSPIRE_OPEN === "1") {

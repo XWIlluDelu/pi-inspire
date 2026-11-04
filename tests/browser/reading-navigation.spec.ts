@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { renderedColors } from "./support/colors";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 
 // These suites own mocked Host responses, not Service Worker fetch handling.
@@ -16,7 +16,7 @@ test("prompt outline metadata stays readable and shares the text baseline withou
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
   const count = (ordinal: number) =>
     ordinal % 3 === 2 ? 12 : (ordinal % 3) + 1;
-  await routeMockSnapshots(page, {
+  await routeSnapshots(page, {
     snapshot(snapshot) {
       let ordinal = 0;
       for (const record of snapshot.active?.transcriptPage.messages ?? []) {
@@ -41,7 +41,7 @@ test("prompt outline metadata stays readable and shares the text baseline withou
     await route.fulfill({ response, json: data });
   });
   await pairedPage(page);
-  await openMockSession(page, /Prompt map long-session fixture/);
+  await openFixtureSession(page, /Prompt map long-session fixture/);
   await page.addStyleTag({
     content: "*{transition:none!important;animation:none!important}",
   });
@@ -185,7 +185,7 @@ for (const narrow of [false, true]) {
     await pairedPage(page);
     if (narrow)
       await page.getByRole("button", { name: "Toggle navigation" }).click();
-    await openMockSession(page, /Formula rendering and spectral analysis/);
+    await openFixtureSession(page, /Formula rendering and spectral analysis/);
     const log = page.getByRole("log");
     const wrap = page.locator(".transcript-wrap");
     const latest = page.getByRole("button", { name: "Jump to latest" });
@@ -408,7 +408,7 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Prompt map long-session fixture/);
+  await openFixtureSession(page, /Prompt map long-session fixture/);
   await page.setViewportSize({ width: 1_280, height: 1_400 });
   const transcript = page.locator(".transcript");
   await transcript.evaluate((element) => {
@@ -596,7 +596,7 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await pairedPage(page);
-    await openMockSession(page, /Formula rendering and spectral analysis/);
+    await openFixtureSession(page, /Formula rendering and spectral analysis/);
     const log = page.getByRole("log");
     const rail = page.locator(".transcript-wrap > .srail");
     const thumb = rail.locator(".srail__thumb");

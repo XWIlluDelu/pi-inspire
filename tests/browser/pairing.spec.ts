@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, type Page, test } from "@playwright/test";
 import {
-  openMockSession,
+  openFixtureSession,
   pairedPage,
   browserTestToken as token,
 } from "./support/navigation";
@@ -31,7 +31,7 @@ test("pairing opens the workbench without external requests, cookies, or persist
       externalRequests.push(url.href);
   });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await expect(
     page.getByRole("complementary", { name: "Context panel" }),

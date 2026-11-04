@@ -3,7 +3,7 @@ import type { HostUpdateStatus } from "../../shared/contracts";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
-import { routeMockSnapshots } from "./support/mock-host";
+import { routeSnapshots } from "./support/host-events";
 import {
   openCommandPalette,
   pairAndOpen,
@@ -26,7 +26,7 @@ test("update checks keep button geometry stable throughout checking and results"
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
-  const transport = await routeMockSnapshots(page, {
+  const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       body.updateStatus = status;
     },

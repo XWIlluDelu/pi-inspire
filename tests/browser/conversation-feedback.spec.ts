@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 import { textBaseline } from "./support/text-baseline";
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
@@ -12,7 +12,7 @@ for (const touch of [false, true]) {
     test("context and error controls remain aligned with independent disclosure, copy and dismissal", async ({
       page,
     }) => {
-      const send = await openMockEventSession(
+      const send = await openEventSession(
         page,
         "Feedback boundaries",
         checkpointAdapterConfiguration,

@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { hostRequest } from "./support/host-request";
-import { openMockEventSession, routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openEventSession, routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
@@ -11,7 +11,7 @@ test("Files refresh preserves Source mode and reading offsets", async ({
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
   await pane
@@ -100,7 +100,7 @@ for (const mode of ["Files", "Changes"] as const) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await pairedPage(page);
-    await openMockSession(page, /Resource virtualization and sandbox fixture/);
+    await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const pane = page.locator(".ctx");
     await pane.getByRole("button", { name: mode, exact: true }).click();
@@ -207,7 +207,7 @@ for (const mode of ["Files", "Changes"] as const) {
 test("conversation image-reference marks follow the first caption line across reading surfaces", async ({
   page,
 }) => {
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Image references",
     customMessageConfiguration,
@@ -307,7 +307,7 @@ test("file path toolbars distinguish the reader from browser chrome across palet
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   const host = hostRequest(page);
   const before = await (await host.get("/api/preferences")).json();
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
@@ -392,7 +392,7 @@ test("Markdown and notebook prose follow reading size without scaling resource c
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   const host = hostRequest(page);
   const before = await (await host.get("/api/preferences")).json();
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
@@ -468,13 +468,13 @@ for (const theme of ["light", "dark"] as const) {
     }) => {
       await page.setViewportSize({ width: 1280, height: 900 });
       await page.emulateMedia({ reducedMotion: "reduce" });
-      await routeMockSnapshots(page, {
+      await routeSnapshots(page, {
         bootstrap(body) {
           body.preferences.theme = theme;
         },
       });
       await pairedPage(page);
-      await openMockSession(
+      await openFixtureSession(
         page,
         /Resource virtualization and sandbox fixture/,
       );

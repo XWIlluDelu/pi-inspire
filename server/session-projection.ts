@@ -31,9 +31,9 @@ import {
   type UserTurnIndexPage,
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
-import { messageFallbackCorrelation } from "../shared/message-identity.js";
 import { resultChildCalls } from "../shared/tool-activity.js";
 import { userTurnSummary } from "../shared/user-turns.js";
+import { userMessageContent } from "../shared/user-message.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -570,6 +570,7 @@ function withoutPersistedImageData(
 function boundedTranscriptItem(
   value: unknown,
   persistedIndex?: number,
+  fileNameForPath?: ComposerHistoryFileNameResolver,
 ): BoundedTranscriptItem {
   const browserValue = withoutPersistedImageData(
     interruptAssistantToolCalls(value),
@@ -588,6 +589,17 @@ function boundedTranscriptItem(
           objectEntries: 256,
         })
       : undefined;
+  const fileNames =
+    sourceRecord?.role === "user" && fileNameForPath
+      ? Object.fromEntries(
+          userMessageContent(sourceRecord.content).references.flatMap(
+            (path) => {
+              const name = fileNameForPath(path);
+              return name ? [[path, name]] : [];
+            },
+          ),
+        )
+      : {};
   const identityMetadata = sourceRecord
     ? {
         ...(typeof sourceRecord.__inspireMessageId === "string"
@@ -623,6 +635,9 @@ function boundedTranscriptItem(
       ? {
           ...(projected as Record<string, unknown>),
           ...identityMetadata,
+          ...(Object.keys(fileNames).length
+            ? { __inspireFileNames: fileNames }
+            : {}),
           ...(calls ? { __inspireCalls: calls } : {}),
           ...(sourceRecord?.role === "toolResult" &&
           typeof sourceRecord.isError === "boolean"
@@ -716,11 +731,14 @@ function withinTranscriptPageBudget<T>(page: T): T {
   return page;
 }
 
-export function boundedTranscriptProjection(value: unknown): {
+export function boundedTranscriptProjection(
+  value: unknown,
+  fileNameForPath?: ComposerHistoryFileNameResolver,
+): {
   value: unknown;
   bytes: number;
 } {
-  const item = boundedTranscriptItem(value);
+  const item = boundedTranscriptItem(value, undefined, fileNameForPath);
   return { value: item.value, bytes: Buffer.byteLength(item.serialized) };
 }
 
@@ -1018,6 +1036,7 @@ export class SessionProjection
     session: SessionRecord,
     private readonly readHooks?: SessionProjectionReadHooks,
     initialMaterializationPending = false,
+    private readonly fileNameForPath?: ComposerHistoryFileNameResolver,
   ) {
     super();
     this.sessionId = session.id;
@@ -1039,11 +1058,13 @@ export class SessionProjection
     session: SessionRecord,
     readHooks: SessionProjectionReadHooks | undefined,
     initialMaterializationPending: boolean,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
   ): Promise<SessionProjection> {
     const projection = new SessionProjection(
       session,
       readHooks,
       initialMaterializationPending,
+      fileNameForPath,
     );
     const result = await projection.reconcile(true);
     const loaded = initialMaterializationPending
@@ -1067,8 +1088,14 @@ export class SessionProjection
   static open(
     session: SessionRecord,
     readHooks?: SessionProjectionReadHooks,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
   ): Promise<SessionProjection> {
-    return SessionProjection.openMode(session, readHooks, false);
+    return SessionProjection.openMode(
+      session,
+      readHooks,
+      false,
+      fileNameForPath,
+    );
   }
 
   /** Create the sole projection for a Pi-owned new session whose reported
@@ -1076,8 +1103,14 @@ export class SessionProjection
   static openPending(
     session: SessionRecord,
     readHooks?: SessionProjectionReadHooks,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
   ): Promise<SessionProjection> {
-    return SessionProjection.openMode(session, readHooks, true);
+    return SessionProjection.openMode(
+      session,
+      readHooks,
+      true,
+      fileNameForPath,
+    );
   }
 
   get revision(): number {
@@ -2099,17 +2132,15 @@ export class SessionProjection
     viewId = this.incarnation,
   ): TranscriptPage {
     const persisted = this.viewMessages(effectiveLeafId);
-    const persistedCorrelation = new Set(
-      persisted
-        .map((value) => {
-          if (!value || typeof value !== "object") return null;
-          const record = value as Record<string, unknown>;
-          const copy = { ...record };
-          delete copy.__inspireMessageId;
-          return messageFallbackCorrelation(copy);
-        })
-        .filter((key): key is string => key !== null),
-    );
+    if (overlay.length === 0) {
+      return this.buildPage(
+        persisted,
+        persisted.length,
+        persisted.length,
+        effectiveLeafId,
+        viewId,
+      );
+    }
     const persistedIndexByEntryId = new Map(
       persisted.flatMap((value, index) => {
         if (!value || typeof value !== "object" || Array.isArray(value))
@@ -2147,14 +2178,13 @@ export class SessionProjection
           };
           continue;
         }
+        if (entryId) {
+          combined.push(item);
+          continue;
+        }
       }
-      let key: string | null = null;
-      if (item && typeof item === "object") {
-        const copy = { ...(item as Record<string, unknown>) };
-        delete copy.__inspireLiveId;
-        key = messageFallbackCorrelation(copy);
-      }
-      if (!key || !persistedCorrelation.has(key)) combined.push(item);
+      // Correlation and even equal content cannot establish durable identity.
+      combined.push(item);
     }
     return this.buildPage(
       combined,
@@ -2525,7 +2555,7 @@ export class SessionProjection
         cursor += 1;
         continue;
       }
-      const item = boundedTranscriptItem(value, cursor);
+      const item = boundedTranscriptItem(value, cursor, this.fileNameForPath);
       const range =
         pendingStart === null
           ? null
@@ -2628,6 +2658,7 @@ export class SessionProjection
       const item = boundedTranscriptItem(
         source[index],
         index < persistedLength ? index : undefined,
+        this.fileNameForPath,
       );
       const projected = item.value;
       const serialized = item.serialized;
@@ -2698,7 +2729,11 @@ export class SessionProjection
         continue;
       }
 
-      const item = boundedTranscriptItem(sourceItem, index);
+      const item = boundedTranscriptItem(
+        sourceItem,
+        index,
+        this.fileNameForPath,
+      );
       const nextRange =
         pendingActivityEnd === null
           ? null
@@ -2797,7 +2832,11 @@ export class SessionProjection
     });
     while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
-      const item = boundedTranscriptItem(source[index], index);
+      const item = boundedTranscriptItem(
+        source[index],
+        index,
+        this.fileNameForPath,
+      );
       const candidate = [...reversed, item.value].reverse();
       if (
         Buffer.byteLength(JSON.stringify(shell(index, candidate))) >

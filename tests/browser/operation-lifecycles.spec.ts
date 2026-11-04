@@ -4,7 +4,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { terminalMutationHeaders } from "./support/terminal-operations";
 
-// Isolated mock Host and in-process PTYs from playwright.config.ts, never the daily Host.
+// Isolated test Host and in-process PTYs from playwright.config.ts, never the daily Host.
 test.use({ serviceWorkers: "block" });
 
 async function openTerminal(page: Page, pair: boolean) {

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { ActiveSnapshot, BootstrapPayload } from "../../shared/contracts";
 import {
   openCommandPalette,
-  openMockSession,
+  openFixtureSession,
   pairedPage,
 } from "./support/navigation";
 
@@ -51,7 +51,7 @@ test("unavailable-project history keeps its reading surface at desktop and phone
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairedPage(page);
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   const note = page.getByText(
     "Project folder unavailable. This session is read-only.",
   );
@@ -124,7 +124,7 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   }
 
   available = true;
-  await openMockSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(note).toHaveCount(0);
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),

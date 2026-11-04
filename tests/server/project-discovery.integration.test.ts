@@ -82,7 +82,6 @@ function host(
     attachments,
     resources: new ResourceStore(),
     git: new GitInspectionService(),
-    mock: false,
     version: "test",
     piVersion: "test",
   });

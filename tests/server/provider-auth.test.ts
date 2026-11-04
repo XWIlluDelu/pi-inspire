@@ -5,8 +5,7 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
-import { AttachmentStore } from "../../server/attachments.js";
-import { MockCatalog, MockRuntime } from "../../server/mock.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, piInstallation } from "../../server/pi-runtime.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -416,9 +415,7 @@ describe("public native provider authentication", () => {
   it("cancels a standalone native login when its Host closes", async () => {
     const application = createInspireServer({
       token: "fixture",
-      runtime: new MockRuntime(),
-      catalog: new MockCatalog(),
-      attachments: new AttachmentStore(join(root, "uploads")),
+      ...hostServices(root),
       preferences: new PreferencesStore(join(root, "preferences.json")),
       resources: new ResourceStore(),
       git: {
@@ -428,7 +425,6 @@ describe("public native provider authentication", () => {
         },
       },
       providerAuth: service,
-      mock: true,
       version: "fixture",
       piVersion: piInstallation.version,
     });

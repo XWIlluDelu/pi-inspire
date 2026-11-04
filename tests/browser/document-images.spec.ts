@@ -1,5 +1,5 @@
 import { expect, type Locator, test } from "@playwright/test";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 async function openFile(resources: Locator, name: string) {
   const back = resources.getByRole("button", { name: "Back to file browser" });
@@ -23,7 +23,7 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
     await route.abort();
   });
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const resources = page.getByRole("complementary", { name: "Context panel" });
   await openFile(resources, "document-images.md");
@@ -88,7 +88,7 @@ test("Notebook image outputs use the same reader as a standalone image file", as
   page,
 }) => {
   await pairedPage(page);
-  await openMockSession(page, /Resource virtualization and sandbox fixture/);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const resources = page.getByRole("complementary", { name: "Context panel" });
   await openFile(resources, "document-images.ipynb");

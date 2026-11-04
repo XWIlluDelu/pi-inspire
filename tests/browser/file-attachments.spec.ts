@@ -1,37 +1,19 @@
 import { readFileSync } from "node:fs";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { addAttachmentContext } from "../../server/attachments";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { observeClipboardWrites } from "./support/clipboard";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 
-// Prompt serialization is a routed MockRuntime seam, not a service-worker test.
+// Exercise native artifact admission and persisted file references through the Host.
 test.use({ serviceWorkers: "block" });
-
-// The browser MockRuntime does not run artifact admission. Exercise the real
-// writer at its transport boundary; Host ownership/delivery has server coverage.
-async function serializeMockAttachments(page: Page, names: string[]) {
-  await page.route("**/api/prompt", (route) => {
-    const request = route.request().postDataJSON();
-    const files = request.attachmentIds.map((id: string, index: number) => ({
-      kind: "file" as const,
-      path: `/cache/attachments/123-1792213034751-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/${id}-${names[index]}`,
-    }));
-    return route.continue({
-      postData: JSON.stringify({
-        ...request,
-        message: addAttachmentContext(request.message, files, []),
-      }),
-    });
-  });
-}
 
 test("sent file prompts show filenames, survive reload and recall, and retain copy source", {
   tag: "@cross-browser",
 }, async ({ page, context, browserName }) => {
   if (browserName === "chromium")
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await openMockEventSession(
+  await openEventSession(
     page,
     "Sent file references",
     emptyToolPresentationConfiguration(),
@@ -49,7 +31,6 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
     "bundle.zip",
     "研究".repeat(50) + ".txt",
   ];
-  await serializeMockAttachments(page, names);
   const uploaded = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/attachments" &&
@@ -155,6 +136,10 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
       }),
     )
     .toBe(names[0]);
+  await search.fill(names.at(-1)!);
+  await expect(page.getByLabel("Transcript search matches")).toHaveText(
+    "1 match",
+  );
   await search.fill("JSON paths");
   await expect(page.getByLabel("Transcript search matches")).toHaveText(
     "0 matches",
@@ -201,7 +186,7 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
 test("mixed attachments stay above prose with shared spacing, including attachment-only turns", async ({
   page,
 }) => {
-  const send = await openMockEventSession(
+  const send = await openEventSession(
     page,
     "Mixed attachment placement",
     emptyToolPresentationConfiguration(),
@@ -301,13 +286,12 @@ test("mixed attachments stay above prose with shared spacing, including attachme
 test("file-only sends remain visible without an empty text block", {
   tag: "@cross-browser",
 }, async ({ page }) => {
-  await openMockEventSession(
+  await openEventSession(
     page,
     "File-only reference",
     emptyToolPresentationConfiguration(),
     {},
   );
-  await serializeMockAttachments(page, ["only-reference.md"]);
   await page.locator(".composer__file-input").setInputFiles({
     name: "only-reference.md",
     mimeType: "text/markdown",

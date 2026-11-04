@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { expect, vi } from "vitest";
 import { createInspireServer } from "../../../server/app.js";
 import { AttachmentStore } from "../../../server/attachments.js";
-import { MockGitInspection } from "../../../server/mock.js";
+import { GitInspectionService } from "../../../server/git-inspection.js";
 import { PiRpcProcess } from "../../../server/pi-rpc.js";
 import { piInstallation } from "../../../server/pi-runtime.js";
 import { PreferencesStore } from "../../../server/preferences.js";
@@ -240,8 +240,7 @@ export async function nativeSessionWorkbench(
     preferences,
     version: "0.0.0",
     piVersion: piInstallation.version,
-    git: new MockGitInspection(),
-    mock: false,
+    git: new GitInspectionService(),
   });
   cleanup.push(() => application.close());
   await new Promise<void>((ready) =>

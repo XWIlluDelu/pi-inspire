@@ -55,7 +55,6 @@ function state(): InstanceState {
     pid: process.pid,
     processStartTime: "fixture-birth",
     startedAt: "2026-10-19T00:00:00.000Z",
-    mock: true,
     token: randomBytes(64).toString("base64url"),
     httpControlVersion: 1,
   };
@@ -69,7 +68,7 @@ describe("local HTTP peer proofs", () => {
     expect(JSON.stringify(message)).not.toContain(owner.token);
     const grant = control.accept(owner, message)!;
     expect(grant).not.toBeNull();
-    const response = control.reply(grant, { appName: "inspire", mock: true });
+    const response = control.reply(grant, { appName: "inspire" });
     expect(JSON.stringify(response)).not.toContain(owner.token);
     expect(verifyInstanceControlResponse(owner, message, response)).toBe(true);
     expect(control.accept(owner, message)).toBeNull();
@@ -101,7 +100,6 @@ describe("local HTTP peer proofs", () => {
     "root",
     "host",
     "port",
-    "mock",
     "token",
   ] as const)("binds client and server proofs to the owner's %s", (field) => {
     const owner = state();
@@ -252,7 +250,7 @@ describe("readiness at an untrusted port", () => {
         body: Buffer.concat(chunks).toString("utf8"),
       });
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ appName: "inspire", mock: true }));
+      res.end(JSON.stringify({ appName: "inspire" }));
     });
     const directory = await mkdtemp(join(tmpdir(), "inspire-untrusted-port-"));
     directories.push(directory);
@@ -399,7 +397,7 @@ describe("Host local-control ingress", () => {
         .post("/api/host/local-control")
         .send(ready)
         .expect(200);
-      expect(response.body.result).toEqual({ appName: "inspire", mock: true });
+      expect(response.body.result).toEqual({ appName: "inspire" });
       expect(response.headers["cache-control"]).toBe("no-store");
       expect(verifyInstanceControlResponse(owner, ready, response.body)).toBe(
         true,

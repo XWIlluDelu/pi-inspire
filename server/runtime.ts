@@ -539,11 +539,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       new PiRpcProcess(options),
     private readonly openSessionProjection: (
       session: SessionRecord,
-    ) => Promise<SessionProjectionView> = SessionProjection.open,
+    ) => Promise<SessionProjectionView> = (session) =>
+      SessionProjection.open(session, undefined, (path) =>
+        attachments.promptFileName(path),
+      ),
     private readonly branchBridgeTimeoutMs: number | null = null,
     private readonly openForkProjection: (
       session: SessionRecord,
-    ) => Promise<SessionProjectionView> = SessionProjection.open,
+    ) => Promise<SessionProjectionView> = (session) =>
+      SessionProjection.open(session, undefined, (path) =>
+        attachments.promptFileName(path),
+      ),
     private readonly deleteSessionRecord: DeleteSessionRecord = (
       session,
       version,
@@ -555,6 +561,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     super();
     this.persistenceOwnership = new RuntimePersistenceOwnershipController(
       {
+        promptFileName: (path) => this.attachments.promptFileName(path),
         readNewSessionEntries: (slot, rpc) =>
           this.readNewSessionEntries(slot, rpc),
       },
@@ -725,24 +732,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
         workerOptions: (cwd, args, bridge) =>
           this.workerOptions(cwd, args, bridge),
-        newBridgeIdentity,
-        attachProcess: (slot, rpc) => this.processRegistry.attach(slot, rpc),
-        detachProcess: (rpc) => this.processRegistry.detach(rpc),
-        retireBash: (slot, rpc) => this.bash.retire(slot, rpc),
         reconcile: (slot, force, startupAttestation) =>
           this.reconcileSlot(slot, force, startupAttestation),
-        clearPendingExtensionUi: (slot, reason) =>
-          this.extensionUi.clear(slot, reason),
-        clearWriterBaseline: (slot) =>
-          this.projectionCoordinator.clearWriterBaseline(slot),
-        captureWriterBaseline: (slot) =>
-          this.projectionCoordinator.captureWriterBaseline(slot),
-        writerBaselineMatches: (slot) =>
-          this.projectionCoordinator.writerBaselineMatches(slot),
-        writerOwnershipActive: (slot) =>
-          this.projectionCoordinator.writerOwnershipActive(slot),
-        clearPartialPersistence: (slot) =>
-          this.projectionCoordinator.clearPartialPersistence(slot),
         setProjectionConflict: (slot, kind, message, diagnosticFields) =>
           this.setProjectionConflict(slot, kind, message, diagnosticFields),
         renewView: (slot) => this.renewView(slot),
@@ -754,7 +745,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.logRuntimeError(sessionId, error, event),
       },
       diagnostics,
-      this.startupAttestor,
+      {
+        startupAttestor: this.startupAttestor,
+        processRegistry: this.processRegistry,
+        projectionCoordinator: this.projectionCoordinator,
+        extensionUi: this.extensionUi,
+        bash: this.bash,
+      },
     );
     this.workerPool = new RuntimeWorkerPool({
       isClosing: () => this.closing,
@@ -2672,17 +2669,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.assertNotClosing();
       let projection: SessionProjectionView;
       if (slot.sessionPath) {
-        const pendingProjection = await SessionProjection.openPending({
-          id: sessionId,
-          cwd,
-          path: slot.sessionPath,
-          name,
-          created: new Date(),
-          modified: new Date(),
-          messageCount: 0,
-          firstMessage: "",
-          source: null,
-        });
+        const pendingProjection = await SessionProjection.openPending(
+          {
+            id: sessionId,
+            cwd,
+            path: slot.sessionPath,
+            name,
+            created: new Date(),
+            modified: new Date(),
+            messageCount: 0,
+            firstMessage: "",
+            source: null,
+          },
+          undefined,
+          (path) => this.attachments.promptFileName(path),
+        );
         await pendingProjection.suspendReconciliation();
         try {
           this.assertNotClosing();

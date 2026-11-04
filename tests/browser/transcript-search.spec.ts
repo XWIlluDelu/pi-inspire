@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 
 const configuration = checkpointAdapterConfiguration;
 const current = () => {
@@ -21,7 +21,7 @@ test("compact code actions keep square centered icons before and after copying",
   page,
   context,
 }) => {
-  const emit = await openMockEventSession(
+  const emit = await openEventSession(
     page,
     "Compact code action geometry",
     configuration,
@@ -110,7 +110,7 @@ test("compact code actions keep square centered icons before and after copying",
 test("composition keys do not navigate transcript matches or dismiss search", async ({
   page,
 }) => {
-  const emit = await openMockEventSession(
+  const emit = await openEventSession(
     page,
     "Composition-owned search",
     configuration,
@@ -167,7 +167,7 @@ test("composition keys do not navigate transcript matches or dismiss search", as
 test("search counts only visible shell and checkpoint text", async ({
   page,
 }) => {
-  const emit = await openMockEventSession(
+  const emit = await openEventSession(
     page,
     "Visible search text",
     configuration,
@@ -225,7 +225,7 @@ test("literal highlights follow scope, occurrences and disclosure without changi
   page,
   context,
 }) => {
-  const emit = await openMockEventSession(
+  const emit = await openEventSession(
     page,
     "Search highlights",
     configuration,
@@ -393,7 +393,7 @@ test("literal highlights follow scope, occurrences and disclosure without changi
 test("highlights recover when a searched virtual row mounts and clear on session change", async ({
   page,
 }) => {
-  const emit = await openMockEventSession(
+  const emit = await openEventSession(
     page,
     "Virtual search highlights",
     configuration,
@@ -447,7 +447,7 @@ test.describe("touch reading controls", () => {
     page,
     context,
   }) => {
-    const emit = await openMockEventSession(
+    const emit = await openEventSession(
       page,
       "Touch code actions",
       configuration,

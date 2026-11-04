@@ -31,7 +31,7 @@ export function instanceIdentity(state) {
         state.root,
         state.host,
         state.port,
-        state.mock,
+        false, // Reserved identity slot; keep existing authenticated control proofs valid.
       ]),
     )
     .digest("base64url");

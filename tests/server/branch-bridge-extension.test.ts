@@ -9,7 +9,7 @@ import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
 const command = "inspire_branch_abcdefghijklmnopqrstuvwxyz123456";
 const statusKey = "inspire_status_abcdefghijklmnopqrstuvwxyz123456";
 const workerId = "worker_abcdefghijklmnopqrstuvwxyz123456";
-const sessionId = "33333333-3333-4333-8333-333333333333";
+const sessionId = "session-a";
 
 afterEach(() => vi.unstubAllEnvs());
 

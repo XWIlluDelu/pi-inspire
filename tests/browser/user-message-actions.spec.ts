@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
-import { openMockEventSession } from "./support/mock-host";
+import { openEventSession } from "./support/host-events";
 
 test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
 
@@ -14,7 +14,7 @@ for (const touch of [false, true]) {
       test("Copy and Fork stay together beside or below text and image bubbles without resizing them", async ({
         page,
       }) => {
-        const send = await openMockEventSession(
+        const send = await openEventSession(
           page,
           "User message actions",
           emptyToolPresentationConfiguration(),

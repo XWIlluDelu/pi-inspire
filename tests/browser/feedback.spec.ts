@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { routeMockSnapshots } from "./support/mock-host";
-import { openMockSession, pairedPage } from "./support/navigation";
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({
   serviceWorkers: "block",
@@ -14,7 +14,7 @@ for (const theme of ["light", "dark"] as const) {
     }) => {
       await page.setViewportSize({ width, height: 844 });
       let sessionId: string | null = null;
-      const transport = await routeMockSnapshots(page, {
+      const transport = await routeSnapshots(page, {
         snapshot: (snapshot) => {
           sessionId = snapshot.active?.sessionId ?? null;
         },
@@ -23,7 +23,7 @@ for (const theme of ["light", "dark"] as const) {
         },
       });
       await pairedPage(page);
-      await openMockSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(page, /Review extension event lifecycle/);
       const input = page.getByRole("textbox", { name: "Message", exact: true });
       await expect(input).toBeVisible();
       await expect(page.getByRole("main").locator(".banner")).toHaveCount(0);
