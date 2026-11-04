@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../../shared/assistant-stream";
 import { socketTicket } from "../../src/browser-auth";
 import {
@@ -74,6 +74,10 @@ function harness() {
   return { controller, host };
 }
 
+beforeEach(() => {
+  vi.stubGlobal("WebSocket", ImmediateCloseSocket);
+});
+
 afterEach(() => {
   for (const controller of controllers.splice(0)) controller.stop();
   vi.unstubAllGlobals();
@@ -85,7 +89,6 @@ afterEach(() => {
 describe("ConnectionController", () => {
   it("backs off ticket failures and fences stale or stopped admissions", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const admission = vi.mocked(socketTicket);
     const original = admission.getMockImplementation();
@@ -125,7 +128,6 @@ describe("ConnectionController", () => {
 
   it("keeps socket-local interest through selection, stale snapshots, and resume", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const state = { ...host.state(), sessionId: "a" as string | null };
     host.state.mockImplementation(() => state);
@@ -167,7 +169,6 @@ describe("ConnectionController", () => {
   });
 
   it("sends a selection committed while the handshake was still connecting", async () => {
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const state = { ...host.state() };
     host.state.mockImplementation(() => state);
@@ -184,7 +185,6 @@ describe("ConnectionController", () => {
   });
 
   it("detaches a replaced socket before an eager close callback can reconnect", async () => {
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("first");
@@ -201,7 +201,6 @@ describe("ConnectionController", () => {
 
   it("tries one lightweight resume before falling back to bootstrap", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("retry-token");
@@ -223,7 +222,6 @@ describe("ConnectionController", () => {
 
   it("opens from an unchanged runtime snapshot after applying its out-of-band witness", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("token");
@@ -246,7 +244,6 @@ describe("ConnectionController", () => {
 
   it("resumes unchanged after out-of-band observations but invalidates on runtime changes", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("token");
@@ -291,7 +288,6 @@ describe("ConnectionController", () => {
 
   it("publishes open only after applying the authoritative first snapshot", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("token");
@@ -317,7 +313,6 @@ describe("ConnectionController", () => {
     "bounds a blackhole (socket opened: %s)",
     async (opened) => {
       vi.useFakeTimers();
-      vi.stubGlobal("WebSocket", ImmediateCloseSocket);
       const { controller, host } = harness();
       await controller.connect("token");
       const socket = ImmediateCloseSocket.instances[0]!;
@@ -343,7 +338,6 @@ describe("ConnectionController", () => {
 
   it("gives a slow valid snapshot its own budget after a slow connection", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -367,7 +361,6 @@ describe("ConnectionController", () => {
 
   it("allows slow selection snapshots but bounds a missing one despite healthy heartbeats", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     const state = { ...host.state() };
     host.state.mockImplementation(() => state);
@@ -390,7 +383,6 @@ describe("ConnectionController", () => {
 
   it("retires a socket error without depending on a later close event", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -407,7 +399,6 @@ describe("ConnectionController", () => {
   it("resets its inactivity watchdog on valid heartbeat frames", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("token");
@@ -431,7 +422,6 @@ describe("ConnectionController", () => {
   it("keeps a recent stream on visibility return but rebuilds it on online", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
 
     await controller.connect("token");
@@ -451,7 +441,6 @@ describe("ConnectionController", () => {
 
   it("coalesces complete partial messages but flushes before lifecycle events", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -492,7 +481,6 @@ describe("ConnectionController", () => {
 
   it("merges ordered delta batches and flushes them before lifecycle events", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -532,7 +520,6 @@ describe("ConnectionController", () => {
 
   it("publishes a bounded delta batch before retaining its continuation", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -571,7 +558,6 @@ describe("ConnectionController", () => {
 
   it("releases the latest partial message on its render timer", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -604,7 +590,6 @@ describe("ConnectionController", () => {
 
   it("rebuilds instead of dropping a malformed frame from a live sequence", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -627,7 +612,6 @@ describe("ConnectionController", () => {
     "rejects a first snapshot without its %s witness",
     async (_field, event) => {
       vi.useFakeTimers();
-      vi.stubGlobal("WebSocket", ImmediateCloseSocket);
       const { controller, host } = harness();
       await controller.connect("token");
       const socket = ImmediateCloseSocket.instances[0]!;
@@ -642,7 +626,6 @@ describe("ConnectionController", () => {
 
   it("rejects a malformed authoritative snapshot after synchronization", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     await controller.connect("token");
     const socket = ImmediateCloseSocket.instances[0]!;
@@ -650,8 +633,8 @@ describe("ConnectionController", () => {
     socket.emit(snapshot);
 
     socket.emit({
-      type: "snapshot",
-      data: { active: null, runState: "unknown", sessionStatuses: {} },
+      ...snapshot,
+      data: { ...snapshot.data, runState: "unknown" },
     });
 
     expect(socket.closeCount).toBe(1);
@@ -661,7 +644,6 @@ describe("ConnectionController", () => {
 
   it("rebuilds from a snapshot when a live reducer rejects an event", async () => {
     vi.useFakeTimers();
-    vi.stubGlobal("WebSocket", ImmediateCloseSocket);
     const { controller, host } = harness();
     host.applyEvent.mockImplementation((event: { type?: string }) => {
       if (event.type === "agent_start") throw new Error("invalid transition");

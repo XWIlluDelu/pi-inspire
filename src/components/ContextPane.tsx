@@ -1,4 +1,12 @@
-import { RefreshCw, X } from "lucide-react";
+import {
+  FileText,
+  Folder,
+  GitCompareArrows,
+  History,
+  RefreshCw,
+  SquareTerminal,
+  X,
+} from "lucide-react";
 import {
   lazy,
   memo,
@@ -12,17 +20,22 @@ import {
 import { fencedMarkdown } from "../../shared/markdown-fence";
 import {
   RESOURCE_LIST_INITIAL_SIZE,
+  resourceReferenceLabel,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
 import { gitChangeCount } from "../git-presentation";
-import { resourceRows as toResourceRows } from "../resources";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { resourceRows as toResourceRows } from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
+import { readHistoryReading, workbenchSessionKey } from "../workbench-session";
 import { BranchTree } from "./BranchTree";
-import { ChangesPane, type ChangesReadingPositions } from "./ChangesPane";
+import { ChangesPane } from "./ChangesPane";
+import { ContextTabStrip } from "./ContextTabStrip";
 import { selectContextPaneView } from "./context-pane-view";
+import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
 import { PiLoader } from "./PiLoader";
 
@@ -49,7 +62,50 @@ export const ContextPane = memo(function ContextPane({
   const [terminalReloadKey, setTerminalReloadKey] = useState(0);
   const resourceRequest = useRef<AbortController | null>(null);
   const resourceRecovery = useMemo(() => new RecoveryBackoff(), []);
-  const changesReadings = useRef<ChangesReadingPositions>(new Map());
+  const changesScrollTop = useMemo(
+    () => ({ current: 0 }),
+    [state.sessionId, state.cwd],
+  );
+  const fileReadings = useMemo(
+    () => new Map<string, FileReadingState>(),
+    [state.sessionId, state.cwd, transportGeneration],
+  );
+  const browseScrollTop = useMemo(
+    () => ({ current: 0 }),
+    [state.sessionId, state.cwd, transportGeneration],
+  );
+  const historyReading = useMemo(
+    () => readHistoryReading(workbenchSessionKey(state.sessionId, state.cwd)),
+    [state.sessionId, state.cwd],
+  );
+  const [terminalVisited, setTerminalVisited] = useState(false);
+  const [terminalTabsHost, setTerminalTabsHost] =
+    useState<HTMLDivElement | null>(null);
+  const fileTabsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (state.contextMode === "terminal" || (state.resourcesOpen && state.cwd))
+      setTerminalVisited(true);
+  }, [state.contextMode, state.resourcesOpen, state.cwd]);
+  const activateTerminal = useCallback(
+    () => store.setContextMode("terminal"),
+    [],
+  );
+  useEffect(() => {
+    for (const reference of fileReadings.keys())
+      if (!state.resourceTabs.some((tab) => tab.reference === reference))
+        fileReadings.delete(reference);
+  }, [fileReadings, state.resourceTabs]);
+  const activeFile =
+    state.contextMode === "files" && state.fileBrowserView === "preview";
+  const selectedReference = state.selectedResourceReference;
+  if (selectedReference && !fileReadings.has(selectedReference))
+    fileReadings.set(
+      selectedReference,
+      store.fileReadingState(selectedReference),
+    );
+  const fileReading = selectedReference
+    ? fileReadings.get(selectedReference)
+    : undefined;
   const recentRows = useMemo(
     () =>
       resourcePage?.sessionId === state.sessionId &&
@@ -196,13 +252,23 @@ export const ContextPane = memo(function ContextPane({
     [],
   );
 
+  const gitDetailView = !state.resourcesOpen
+    ? null
+    : state.contextMode === "changes"
+      ? "changes"
+      : state.contextMode !== "files"
+        ? null
+        : state.fileBrowserView === "browse"
+          ? "browse"
+          : state.resourceTabs.find(
+                (tab) => tab.reference === state.selectedResourceReference,
+              )?.view === "changes"
+            ? "diff"
+            : null;
   useEffect(() => {
-    const visible =
-      state.resourcesOpen &&
-      (state.contextMode === "files" || state.contextMode === "changes");
-    store.setGitSurfaceVisible("resources-pane", visible);
+    store.setGitSurfaceVisible("resources-pane", gitDetailView !== null);
     return () => store.setGitSurfaceVisible("resources-pane", false);
-  }, [state.contextMode, state.resourcesOpen]);
+  }, [gitDetailView]);
 
   const handleTerminalOpenFile = useCallback((reference: string) => {
     store.setContextMode("files");
@@ -232,92 +298,208 @@ export const ContextPane = memo(function ContextPane({
     [],
   );
 
-  const handleRefresh = () => {
-    if (state.contextMode === "files") {
-      store.cancelResourceProbes();
-      void Promise.all([
-        state.fileBrowserView === "browse"
-          ? loadResources()
-          : Promise.resolve(),
-        store.refreshWorkspaceBrowser(),
-        state.fileBrowserView === "preview" && state.selectedResourceReference
-          ? store.openResource(
-              state.selectedResourceReference,
-              "files",
-              state.selectedResourceWorkspacePath ?? undefined,
-            )
-          : Promise.resolve(),
-      ]);
-      return;
-    }
-    if (state.contextMode === "changes") {
-      void store.refreshGitInspection();
-      return;
-    }
+  const refreshScope = JSON.stringify([
+    state.sessionId,
+    state.cwd,
+    transportGeneration,
+    state.contextMode,
+    state.fileBrowserView,
+    selectedReference,
+  ]);
+  const [manualRefresh, setManualRefresh] = useState<{ scope: string } | null>(
+    null,
+  );
+  const refreshing = manualRefresh?.scope === refreshScope;
+  const handleRefresh = async () => {
+    if (refreshing) return;
     if (state.contextMode === "terminal") {
       setTerminalReloadKey((value) => value + 1);
       return;
     }
-    void store.loadBranchTree();
+    // Background observations update their content without animating this action.
+    // Only the user's refresh owns the button feedback, within the current view.
+    const request = { scope: refreshScope };
+    setManualRefresh(request);
+    try {
+      if (state.contextMode === "files") {
+        store.cancelResourceProbes();
+        await Promise.all([
+          state.fileBrowserView === "browse"
+            ? loadResources()
+            : Promise.resolve(),
+          store.refreshWorkspaceBrowser(),
+          state.fileBrowserView === "preview" && selectedReference
+            ? store.refreshFileTab()
+            : Promise.resolve(),
+        ]);
+      } else if (state.contextMode === "changes") {
+        await store.refreshGitInspection();
+      } else {
+        await store.loadBranchTree();
+      }
+    } finally {
+      setManualRefresh((current) => (current === request ? null : current));
+    }
   };
-  const refreshing =
-    state.contextMode === "files"
-      ? (state.fileBrowserView === "browse" && resourceStatus === "loading") ||
-        (state.fileBrowserView === "preview" &&
-          (state.resourcePreview?.status === "loading" ||
-            (state.resourcePreview?.status === "ready" &&
-              state.resourcePreview.refreshing))) ||
-        state.workspaceLoadingDirs.length > 0 ||
-        state.workspaceSearchLoading
-      : state.contextMode === "changes"
-        ? state.gitStatusLoading || state.gitStatusRefreshing
-        : state.contextMode === "branches"
-          ? state.branchTreeLoading
-          : false;
   const contents = (
     <>
       <div className="ctx__header" ref={recoverModalFocus}>
-        <div className="ctx__modes" role="group" aria-label="Context mode">
-          {(["files", "changes", "branches", "terminal"] as const).map(
-            (mode) => {
+        <div
+          className="ctx__tabs"
+          role="tablist"
+          aria-label="Context tabs"
+          onKeyDown={(event) => {
+            if (
+              !(event.target instanceof HTMLElement) ||
+              event.target.getAttribute("role") !== "tab"
+            )
+              return;
+            const tabs = [
+              ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                '[role="tab"]',
+              ),
+            ].filter((tab) => !tab.closest("[hidden]"));
+            const index = tabs.indexOf(event.target as HTMLButtonElement);
+            const next =
+              event.key === "ArrowRight"
+                ? (index + 1) % tabs.length
+                : event.key === "ArrowLeft"
+                  ? (index + tabs.length - 1) % tabs.length
+                  : event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? tabs.length - 1
+                      : -1;
+            if (next < 0) return;
+            event.preventDefault();
+            tabs[next]?.focus();
+            tabs[next]?.click();
+          }}
+        >
+          <ContextTabStrip stripRef={fileTabsRef}>
+            {state.resourceTabs.map((tab) => {
+              const path =
+                tab.workspacePath ??
+                tab.git?.displayPath ??
+                resourceReferenceLabel(tab.reference);
+              const label = path.split(/[\\/]/u).at(-1) || path;
+              const selected =
+                activeFile && selectedReference === tab.reference;
+              return (
+                <div
+                  key={tab.reference}
+                  className={`ctx__file-tab ${selected ? "ctx__file-tab--active" : ""}`}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-label={label}
+                    title={path}
+                    aria-selected={selected}
+                    aria-controls="context-file-content"
+                    tabIndex={selected ? 0 : -1}
+                    onClick={(event) => {
+                      if (event.ctrlKey || event.metaKey) {
+                        event.preventDefault();
+                        void store.showInFileManager(
+                          tab.reference,
+                          tab.workspacePath,
+                        );
+                        return;
+                      }
+                      void store.selectResourceTab(tab.reference);
+                    }}
+                  >
+                    <FileText size={13} aria-hidden />
+                    <span>{label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ctx__file-close"
+                    aria-label={`Close ${label}`}
+                    title={`Close ${label}`}
+                    onClick={(event) => {
+                      const restoreFocus =
+                        document.activeElement === event.currentTarget;
+                      store.closeResourceTab(tab.reference);
+                      if (restoreFocus)
+                        requestAnimationFrame(() => {
+                          fileTabsRef.current
+                            ?.closest(".ctx__tabs")
+                            ?.querySelector<HTMLElement>(
+                              '[role="tab"][aria-selected="true"]',
+                            )
+                            ?.focus();
+                        });
+                    }}
+                  >
+                    <X size={13} aria-hidden />
+                  </button>
+                </div>
+              );
+            })}
+            <div className="ctx__terminal-tabs" ref={setTerminalTabsHost} />
+          </ContextTabStrip>
+          <div className="ctx__modes">
+            {(["files", "changes", "branches"] as const).map((mode) => {
               const label =
                 mode === "files"
                   ? "Files"
                   : mode === "changes"
                     ? "Changes"
-                    : mode === "branches"
-                      ? "History"
-                      : "Terminal";
+                    : "History";
+              const Icon =
+                mode === "files"
+                  ? Folder
+                  : mode === "changes"
+                    ? GitCompareArrows
+                    : History;
+              const selected =
+                state.contextMode === mode && (mode !== "files" || !activeFile);
               const changesCount =
                 mode === "changes" ? (gitChangeCount(state.gitStatus) ?? 0) : 0;
-              const title =
-                mode === "changes" && changesCount > 0
-                  ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
-                  : undefined;
               return (
                 <button
                   type="button"
                   key={mode}
+                  role="tab"
                   aria-label={label}
-                  title={title}
-                  aria-pressed={state.contextMode === mode}
-                  data-terminal-focus-trigger={
-                    mode === "terminal" ? "" : undefined
+                  title={
+                    changesCount
+                      ? `${label} (${changesCount} ${changesCount === 1 ? "change" : "changes"})`
+                      : label
                   }
-                  onClick={() => store.setContextMode(mode)}
+                  aria-selected={selected}
+                  aria-controls={`context-${mode}-content`}
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => {
+                    if (mode === "files") store.showFileBrowser();
+                    else store.setContextMode(mode);
+                  }}
                 >
-                  <span className="ctx__mode-label">
-                    <span>{label}</span>
-                    {changesCount > 0 ? (
-                      <span className="ctx__mode-badge" aria-hidden="true">
-                        {changesCount > 99 ? "99+" : changesCount}
-                      </span>
-                    ) : null}
-                  </span>
+                  <Icon size={16} aria-hidden />
+                  {changesCount > 0 ? (
+                    <span className="ctx__mode-badge" aria-hidden="true">
+                      {changesCount > 99 ? "99+" : changesCount}
+                    </span>
+                  ) : null}
                 </button>
               );
-            },
-          )}
+            })}
+            <button
+              type="button"
+              aria-label="New terminal"
+              title="New terminal"
+              disabled={!state.cwd}
+              data-terminal-focus-trigger
+              onClick={() => {
+                store.setContextMode("terminal");
+                queueTerminalAction("new", state.cwd);
+              }}
+            >
+              <SquareTerminal size={16} aria-hidden />
+            </button>
+          </div>
         </div>
         <div className="ctx__header-actions">
           <button
@@ -354,43 +536,76 @@ export const ContextPane = memo(function ContextPane({
         </div>
       </div>
       {state.contextMode === "files" ? (
-        <FilesPane
-          state={state}
-          rows={recentRows}
-          loading={resourceStatus === "loading"}
-          error={resourceError}
-        />
-      ) : state.contextMode === "changes" ? (
-        <ChangesPane
-          state={state}
-          readingPositions={changesReadings.current}
-          narrow={isModal}
-        />
-      ) : state.contextMode === "branches" ? (
-        <div className="res__body res__body--branches">
-          <BranchTree onContextChange={isModal ? onClose : undefined} />
-        </div>
-      ) : (
-        <Suspense
-          fallback={
-            <div
-              className="terminal-empty terminal-empty--loading"
-              role="status"
-            >
-              <PiLoader size={17} aria-hidden />
-              Loading terminal…
-            </div>
-          }
+        <div
+          className="ctx__content"
+          id={activeFile ? "context-file-content" : "context-files-content"}
+          role="tabpanel"
+          aria-label={activeFile ? "File" : "Files"}
         >
-          <TerminalPane
-            cwd={state.cwd}
-            reloadKey={terminalReloadKey}
-            onOpenFile={handleTerminalOpenFile}
-            onSendToComposer={handleTerminalSelection}
-            onCommandComplete={handleTerminalCommandComplete}
+          <FilesPane
+            state={state}
+            rows={recentRows}
+            loading={resourceStatus === "loading"}
+            error={resourceError}
+            browseScrollTop={browseScrollTop}
+            readingState={fileReading}
           />
-        </Suspense>
-      )}
+        </div>
+      ) : state.contextMode === "changes" ? (
+        <div
+          className="ctx__content"
+          id="context-changes-content"
+          role="tabpanel"
+          aria-label="Changes"
+        >
+          <ChangesPane state={state} browseScrollTop={changesScrollTop} />
+        </div>
+      ) : state.contextMode === "branches" ? (
+        <div
+          className="res__body res__body--branches"
+          id="context-branches-content"
+          role="tabpanel"
+          aria-label="History"
+        >
+          <BranchTree
+            key={workbenchSessionKey(state.sessionId, state.cwd)}
+            readingState={historyReading}
+            onContextChange={isModal ? onClose : undefined}
+          />
+        </div>
+      ) : null}
+      {terminalVisited || state.contextMode === "terminal" ? (
+        <div
+          className="ctx__content"
+          id="context-terminal-content"
+          role="tabpanel"
+          aria-label="Terminal"
+          hidden={state.contextMode !== "terminal"}
+        >
+          <Suspense
+            fallback={
+              <div
+                className="terminal-empty terminal-empty--loading"
+                role="status"
+              >
+                <PiLoader size={17} aria-hidden />
+                Loading terminal…
+              </div>
+            }
+          >
+            <TerminalPane
+              cwd={state.cwd}
+              sharedTabsHost={terminalTabsHost}
+              onActivate={activateTerminal}
+              active={state.resourcesOpen && state.contextMode === "terminal"}
+              reloadKey={terminalReloadKey}
+              onOpenFile={handleTerminalOpenFile}
+              onSendToComposer={handleTerminalSelection}
+              onCommandComplete={handleTerminalCommandComplete}
+            />
+          </Suspense>
+        </div>
+      ) : null}
     </>
   );
   return contents;

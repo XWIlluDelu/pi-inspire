@@ -12,7 +12,6 @@ import type {
   BranchTreeResponse,
   ComposerHistoryPage,
   GitDiffResponse,
-  GitDiffSide,
   GitStatusResponse,
   HiddenClearResponse,
   HostDirListing,
@@ -1193,16 +1192,11 @@ export function createApi(token: string | null = null) {
         `/api/git/status?sessionId=${encodeURIComponent(sessionId)}`,
         { signal },
       ),
-    gitDiff: (
-      sessionId: string,
-      pathId: string,
-      side: GitDiffSide,
-      signal?: AbortSignal,
-    ) =>
+    gitDiff: (sessionId: string, pathId: string, signal?: AbortSignal) =>
       post<GitDiffResponse>(
         token,
         "/api/git/diff",
-        { sessionId, pathId, side },
+        { sessionId, pathId },
         { signal },
         { mutation: false },
       ),
@@ -1260,6 +1254,18 @@ export function createApi(token: string | null = null) {
         { signal },
         { mutation: false },
       ),
+    showInFileManager: (
+      sessionId: string,
+      reference: string,
+      workspacePath?: string,
+      directory = false,
+    ) =>
+      post<{ ok: true }>(token, "/api/resources/show-in-file-manager", {
+        sessionId,
+        reference,
+        ...(workspacePath !== undefined ? { workspacePath } : {}),
+        directory,
+      }),
     createHtmlPreview: (id: string, sessionId: string, html: string) =>
       post<HtmlPreviewResponse>(
         token,

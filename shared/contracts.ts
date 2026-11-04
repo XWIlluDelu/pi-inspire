@@ -417,7 +417,6 @@ export type GitDeltaKind =
   | "copied"
   | "type-changed"
   | "unmerged";
-export type GitDiffSide = "staged" | "unstaged";
 
 /** Opaque Git identity. `id` is unpadded base64url of the exact raw
  * repository-relative pathname bytes; display strings never authorize a
@@ -442,18 +441,13 @@ export interface GitSubmoduleState {
 
 export interface GitFileChange {
   path: GitPathIdentity;
+  /** Current working tree relative to HEAD (or the empty tree before the first commit). */
+  worktree?: GitDeltaFacet;
   staged?: GitDeltaFacet;
   unstaged?: GitDeltaFacet;
   conflict?: { code: string };
   untracked: boolean;
   submodule?: GitSubmoduleState;
-}
-
-interface GitChangeGroups {
-  conflicted: string[];
-  staged: string[];
-  unstaged: string[];
-  untracked: string[];
 }
 
 export type GitHead =
@@ -467,7 +461,6 @@ export type GitStatusResponse =
       kind: "repository";
       head: GitHead;
       files: GitFileChange[];
-      groups: GitChangeGroups;
       /** Total changed identities parsed before bounded projection. */
       total: number;
       /** True when `files` is only the first bounded projection. */
@@ -483,7 +476,6 @@ export interface GitDiffLine {
 
 interface GitDiffBase {
   path: GitPathIdentity;
-  side: GitDiffSide;
 }
 
 export type GitDiffResponse =

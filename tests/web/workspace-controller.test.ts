@@ -317,6 +317,34 @@ describe("WorkspaceController", () => {
     expect(harness.searchFiles).toHaveBeenCalledTimes(2);
   });
 
+  it("retires a pending query retry when an overlapping refresh starts its search", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const root = deferred<{ entries: [] }>();
+    harness.patch({ workspaceQuery: "file" });
+    harness.listFiles.mockReturnValueOnce(root.promise);
+    harness.searchFiles
+      .mockRejectedValueOnce(new ApiError(503, "temporary"))
+      .mockResolvedValue({
+        files: [{ name: "current.ts", path: "current.ts" }],
+      });
+    const refreshing = harness.controller.refresh();
+    harness.controller.setQuery("file");
+    await vi.advanceTimersByTimeAsync(0);
+    const oldRequest = harness.searchFiles.mock.calls[0][3] as AbortSignal;
+
+    root.resolve({ entries: [] });
+    await refreshing;
+    expect(oldRequest.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(harness.searchFiles).toHaveBeenCalledTimes(2);
+    expect(harness.state()).toMatchObject({
+      workspaceMatches: [{ name: "current.ts", path: "current.ts" }],
+      workspaceSearchLoading: false,
+      workspaceSearchError: null,
+    });
+  });
+
   it("bounds recovery and resumes an exhausted cached search when returning", async () => {
     vi.useFakeTimers();
     const harness = createHarness();
@@ -395,7 +423,12 @@ describe("WorkspaceController", () => {
     await oldTransport;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(harness.listFiles).toHaveBeenCalledTimes(4);
-    expect(harness.state()).toMatchObject(emptyWorkspaceBrowserState());
+    expect(harness.state()).toMatchObject({
+      ...emptyWorkspaceBrowserState(),
+      workspaceShowHidden: true,
+      workspaceQuery: "new",
+      workspaceSearchLoading: true,
+    });
   });
 
   it("keeps a failed directory refresh visible and lets a new visit revalidate it", async () => {
@@ -426,16 +459,24 @@ describe("WorkspaceController", () => {
     });
   });
 
-  it("clears stale projections on transport replacement and reports auth expiry", async () => {
+  it("clears stale projections but retains navigation on transport replacement and reports auth expiry", async () => {
     const harness = createHarness();
     harness.patch({
       workspaceLevels: { "": [{ name: "old", type: "file" }] },
       workspaceQuery: "old",
       workspaceMatches: [{ name: "old", path: "old" }],
+      workspaceExpandedDirs: ["src"],
+      workspaceShowHidden: true,
     });
     harness.replaceTransport();
     harness.controller.invalidateForTransportReplacement();
-    expect(harness.state()).toMatchObject(emptyWorkspaceBrowserState());
+    expect(harness.state()).toMatchObject({
+      ...emptyWorkspaceBrowserState(),
+      workspaceQuery: "old",
+      workspaceSearchLoading: true,
+      workspaceExpandedDirs: ["src"],
+      workspaceShowHidden: true,
+    });
 
     harness.listFiles.mockRejectedValue(new ApiError(401, "Unauthorized"));
     await harness.controller.loadDirectory("");

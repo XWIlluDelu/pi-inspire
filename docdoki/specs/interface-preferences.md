@@ -163,7 +163,7 @@ a fresh resource scan and package update results cannot establish current-worker
 - Available Pi, extension, and INSΠRE updates share one notice that opens Settings at System.
   Host snapshots, status events, and results own execution state. Browser request-pending state
   separately prevents duplicate clicks until Host execution is observed; the button uses one
-  `Checking…` state throughout. Transient request failures recover with bounded backoff while retaining
+  `Checking…` state throughout. Transient request failures recover with bounded backoff, keeping
   previous results. Observed Host execution ends request recovery, including when its HTTP response
   arrives late or is lost. A persistent or non-transient request failure is reported once in Versions
   without replacing known results. A new request or observed Host check clears that request error;

@@ -72,7 +72,10 @@ import { TerminalView } from "./TerminalView";
 
 interface TerminalPaneProps {
   cwd: string | null;
+  active?: boolean;
   reloadKey?: number;
+  sharedTabsHost?: HTMLElement | null;
+  onActivate?(): void;
   onOpenFile?(reference: string): void;
   onSendToComposer?(text: string): void;
   onCommandComplete?(): void;
@@ -128,7 +131,10 @@ function notificationTerminalLabel(terminal: TerminalDescriptor): string {
 
 export const TerminalPane = memo(function TerminalPane({
   cwd: sessionCwd,
+  active = true,
   reloadKey = 0,
+  sharedTabsHost,
+  onActivate,
   onOpenFile,
   onSendToComposer,
   onCommandComplete,
@@ -164,6 +170,13 @@ export const TerminalPane = memo(function TerminalPane({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(launchTarget?.focus ?? false);
+  const sharedTabs = Boolean(sharedTabsHost && !focused);
+  const [controlsExpanded, setControlsExpanded] = useState(true);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const controlsToggleRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    setControlsExpanded(true);
+  }, [cwd, activeId]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uiSettings, setUiSettings] = useState<TerminalUiSettings>(() =>
     loadTerminalUiSettings(),
@@ -218,7 +231,7 @@ export const TerminalPane = memo(function TerminalPane({
   const activeTabId = activeTerminal?.id;
 
   useLayoutEffect(() => {
-    if (!activeTabId) return;
+    if (!active || !activeTabId || sharedTabs) return;
     const tab = document.getElementById(`terminal-tab-${activeTabId}`);
     const strip = tab?.closest(".terminal-tabs");
     if (!tab || !strip) return;
@@ -228,7 +241,7 @@ export const TerminalPane = memo(function TerminalPane({
     const observer = new ResizeObserver(reveal);
     observer.observe(strip);
     return () => observer.disconnect();
-  }, [activeTabId]);
+  }, [active, activeTabId, sharedTabs]);
 
   useEffect(() => {
     if (launchTarget || lastSessionCwdRef.current === sessionCwd) return;
@@ -316,14 +329,15 @@ export const TerminalPane = memo(function TerminalPane({
   }, [api, globalLoading]);
 
   useEffect(() => {
+    if (!active && !sharedTabsHost) return;
     void load();
     return () => {
       requestGeneration.current += 1;
     };
-  }, [load, reloadKey]);
+  }, [active, load, reloadKey, sharedTabsHost]);
 
   useEffect(() => {
-    if (!cwd) return;
+    if (!active || !cwd) return;
     let cancelled = false;
     let polling = false;
     const poll = async () => {
@@ -344,7 +358,7 @@ export const TerminalPane = memo(function TerminalPane({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [api, cwd, catalogController]);
+  }, [active, api, cwd, catalogController]);
 
   useEffect(
     () =>
@@ -360,7 +374,7 @@ export const TerminalPane = memo(function TerminalPane({
   );
 
   useEffect(() => {
-    if (!cwd || !catalog) return;
+    if (!active || !cwd || !catalog) return;
     storeActiveTerminal(cwd, activeId);
     if (!activeId) return;
     setOpenedIds((current) => {
@@ -381,7 +395,7 @@ export const TerminalPane = memo(function TerminalPane({
       next.delete(activeId);
       return next;
     });
-  }, [activeId, catalog, cwd]);
+  }, [active, activeId, catalog, cwd]);
 
   useEffect(() => {
     const knownOffsets = knownOutputOffsetsRef.current;
@@ -393,7 +407,7 @@ export const TerminalPane = memo(function TerminalPane({
         return (
           previous !== undefined &&
           terminal.nextOutputOffset > previous &&
-          terminal.id !== activeId
+          (!active || terminal.id !== activeId)
         );
       })
       .map((terminal) => terminal.id);
@@ -402,13 +416,13 @@ export const TerminalPane = memo(function TerminalPane({
     }
     if (newlyUnread.length > 0)
       setUnreadIds((current) => new Set([...current, ...newlyUnread]));
-  }, [activeId, terminals]);
+  }, [active, activeId, terminals]);
 
   useEffect(() => {
     const ids = new Set(terminals.map((terminal) => terminal.id));
     setOpenedIds((current) => {
       const next = new Set([...current].filter((id) => ids.has(id)));
-      if (activeId && ids.has(activeId)) next.add(activeId);
+      if (active && activeId && ids.has(activeId)) next.add(activeId);
       return next;
     });
     setUnreadIds(
@@ -417,7 +431,7 @@ export const TerminalPane = memo(function TerminalPane({
     setBellIds((current) => new Set([...current].filter((id) => ids.has(id))));
     if (catalog && activeId && !ids.has(activeId))
       setActiveId(terminals[0]?.id ?? null);
-  }, [activeId, catalog, terminals]);
+  }, [active, activeId, catalog, terminals]);
 
   useEffect(() => {
     const pane = paneRef.current;
@@ -524,7 +538,14 @@ export const TerminalPane = memo(function TerminalPane({
   };
 
   useEffect(() => {
-    if (!cwd || !catalog || loading || creating || !hasTerminalInsertion(cwd))
+    if (
+      !active ||
+      !cwd ||
+      !catalog ||
+      loading ||
+      creating ||
+      !hasTerminalInsertion(cwd)
+    )
       return;
     const running =
       terminals.find(
@@ -539,6 +560,7 @@ export const TerminalPane = memo(function TerminalPane({
     autoCreateInsertionRef.current = attemptKey;
     void createTerminal();
   }, [
+    active,
     activeId,
     catalog,
     createTerminal,
@@ -568,7 +590,7 @@ export const TerminalPane = memo(function TerminalPane({
   const markBell = useCallback(
     (terminal: TerminalDescriptor) => {
       if (uiSettings.bell === "off") return;
-      const background = terminal.id !== activeId || document.hidden;
+      const background = !active || terminal.id !== activeId || document.hidden;
       if (background)
         setBellIds((current) => new Set(current).add(terminal.id));
       if (background && uiSettings.bell === "desktop")
@@ -580,7 +602,7 @@ export const TerminalPane = memo(function TerminalPane({
           },
         );
     },
-    [activeId, uiSettings.bell],
+    [active, activeId, uiSettings.bell],
   );
 
   const handleCommandComplete = useCallback(
@@ -596,7 +618,7 @@ export const TerminalPane = memo(function TerminalPane({
         !uiSettings.longTaskNotifications ||
         message.durationMs === null ||
         message.durationMs < uiSettings.longTaskThresholdSeconds * 1_000 ||
-        (terminal.id === activeId && !document.hidden)
+        (active && terminal.id === activeId && !document.hidden)
       )
         return;
       setBellIds((current) => new Set(current).add(terminal.id));
@@ -610,6 +632,7 @@ export const TerminalPane = memo(function TerminalPane({
       );
     },
     [
+      active,
       activeId,
       onCommandComplete,
       uiSettings.longTaskNotifications,
@@ -800,12 +823,38 @@ export const TerminalPane = memo(function TerminalPane({
     event: KeyboardEvent<HTMLButtonElement>,
     index: number,
   ) => {
+    const reorderShortcut = event.shiftKey && (event.ctrlKey || event.metaKey);
+    if (sharedTabs && !reorderShortcut) {
+      const tabs = [
+        ...(event.currentTarget
+          .closest('[role="tablist"]')
+          ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []),
+      ].filter((tab) => !tab.closest("[hidden]"));
+      const index = tabs.indexOf(event.currentTarget);
+      const next =
+        event.key === "ArrowRight"
+          ? (index + 1) % tabs.length
+          : event.key === "ArrowLeft"
+            ? (index + tabs.length - 1) % tabs.length
+            : event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? tabs.length - 1
+                : -1;
+      if (next >= 0) {
+        event.preventDefault();
+        event.stopPropagation();
+        tabs[next]?.focus();
+        tabs[next]?.click();
+      }
+      return;
+    }
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const direction = event.key === "ArrowRight" ? 1 : -1;
     const current = terminals[index];
-    const reorderShortcut = event.shiftKey && (event.ctrlKey || event.metaKey);
     if (reorderShortcut) {
+      event.stopPropagation();
       const target = terminals[index + direction];
       if (current && target)
         void reorder(current.id, target.id, direction > 0 ? "after" : "before");
@@ -831,6 +880,7 @@ export const TerminalPane = memo(function TerminalPane({
 
   terminalActionHandlerRef.current = ({ action, projectCwd }) => {
     if (
+      !active ||
       projectCwd !== cwd ||
       !catalogController.active ||
       (!launchTarget && sessionCwd !== lastSessionCwdRef.current)
@@ -869,10 +919,11 @@ export const TerminalPane = memo(function TerminalPane({
       subscribeTerminalActions((action) =>
         terminalActionHandlerRef.current(action),
       ),
-    [activeId, cwd, terminals],
+    [active, activeId, cwd, terminals],
   );
 
   useEffect(() => {
+    if (!active) return;
     const handleShortcut = (event: globalThis.KeyboardEvent) => {
       if (
         uiSettings.shortcutMode !== "workbench" ||
@@ -904,7 +955,13 @@ export const TerminalPane = memo(function TerminalPane({
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, [activeTerminal, createTerminal, terminals, uiSettings.shortcutMode]);
+  }, [
+    active,
+    activeTerminal,
+    createTerminal,
+    terminals,
+    uiSettings.shortcutMode,
+  ]);
 
   if (!cwd) {
     return (
@@ -938,10 +995,126 @@ export const TerminalPane = memo(function TerminalPane({
     globalGroups.set(terminal.projectCwd, group);
   }
 
+  const terminalTabs = (
+    <div
+      className={
+        sharedTabs ? "terminal-tabs terminal-tabs--shared" : "terminal-tabs"
+      }
+      {...(!sharedTabs
+        ? { role: "toolbar" as const, "aria-label": "Project terminals" }
+        : {})}
+    >
+      {terminals.map((terminal, index) => (
+        <div
+          key={terminal.id}
+          className={
+            sharedTabs
+              ? `ctx__file-tab${active && terminal.id === activeId ? " ctx__file-tab--active" : ""}`
+              : `terminal-tab${terminal.id === activeId ? " terminal-tab--active" : ""}`
+          }
+          role="presentation"
+          draggable
+          onDragStart={() => {
+            draggedId.current = terminal.id;
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleDrop(event, terminal.id)}
+        >
+          {renameId === terminal.id ? (
+            <input
+              className="inline-rename-input terminal-tab__rename"
+              value={renameValue}
+              autoFocus
+              size={1}
+              maxLength={120}
+              aria-label="Terminal name"
+              onChange={(event) => setRenameValue(event.target.value)}
+              onBlur={() => void commitRename()}
+              onKeyDown={(event) => {
+                if (isComposingKeyboardEvent(event.nativeEvent)) return;
+                event.stopPropagation();
+                if (event.key === "Enter") void commitRename();
+                else if (event.key === "Escape") {
+                  renamePendingRef.current = false;
+                  setRenameId(null);
+                }
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              id={`terminal-tab-${terminal.id}`}
+              className={
+                sharedTabs ? "ctx__terminal-select" : "terminal-tab__select"
+              }
+              {...(sharedTabs
+                ? {
+                    role: "tab" as const,
+                    "aria-selected": active && terminal.id === activeId,
+                  }
+                : { "aria-pressed": terminal.id === activeId })}
+              data-terminal-focus-trigger
+              aria-label={`${terminalLabel(terminal)}${unreadIds.has(terminal.id) ? ", new output" : ""}${bellIds.has(terminal.id) ? ", bell" : ""}`}
+              aria-controls={
+                sharedTabs
+                  ? "context-terminal-content"
+                  : openedIds.has(terminal.id)
+                    ? `terminal-view-${terminal.id}`
+                    : undefined
+              }
+              aria-keyshortcuts="Control+Shift+ArrowLeft Control+Shift+ArrowRight Meta+Shift+ArrowLeft Meta+Shift+ArrowRight"
+              tabIndex={
+                terminal.id === activeId && (!sharedTabs || active) ? 0 : -1
+              }
+              onClick={() => {
+                setActiveId(terminal.id);
+                onActivate?.();
+              }}
+              onDoubleClick={() => beginRename(terminal)}
+              onKeyDown={(event) => handleTabKey(event, index)}
+              title={`${terminalLabel(terminal)} — ${terminal.currentCwd}`}
+            >
+              {sharedTabs ? (
+                <span className="ctx__terminal-icon" aria-hidden>
+                  <span
+                    className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                  />
+                </span>
+              ) : (
+                <span
+                  className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                  aria-hidden
+                />
+              )}
+              <span className="terminal-tab__label">
+                {terminalLabel(terminal)}
+              </span>
+              {bellIds.has(terminal.id) ? (
+                <Bell className="terminal-tab__bell" size={10} aria-hidden />
+              ) : null}
+              {unreadIds.has(terminal.id) ? (
+                <span className="terminal-tab__unread" aria-hidden />
+              ) : null}
+            </button>
+          )}
+          <button
+            type="button"
+            className={sharedTabs ? "ctx__file-close" : "terminal-tab__close"}
+            onClick={() => void closeTerminal(terminal)}
+            aria-label={`Close ${terminalLabel(terminal)}`}
+            title="Close terminal"
+          >
+            <X size={sharedTabs ? 13 : 12} aria-hidden />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div
       ref={paneRef}
-      className={`terminal-pane${focused ? " terminal-pane--focused" : ""}`}
+      className={`terminal-pane${focused ? " terminal-pane--focused" : ""}${sharedTabs ? " terminal-pane--shared" : ""}`}
       onKeyDown={onMenuKeyDown}
       onClickCapture={(event) => {
         // Capture also covers controls portalled from the active xterm view.
@@ -965,406 +1138,399 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       ) : null}
-      <div className="terminal-tabs-shell">
+      {sharedTabs && sharedTabsHost
+        ? createPortal(terminalTabs, sharedTabsHost)
+        : null}
+      <div
+        className="terminal-tabs-shell"
+        onKeyDown={(event) => {
+          if (
+            event.defaultPrevented ||
+            event.key !== "Escape" ||
+            !sharedTabs ||
+            !controlsExpanded
+          )
+            return;
+          if (dismissTerminalMenu(paneRef.current, event.target)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          setControlsExpanded(false);
+          controlsToggleRef.current?.focus();
+        }}
+      >
+        {!sharedTabs ? terminalTabs : null}
         <div
-          className="terminal-tabs"
-          role="toolbar"
-          aria-label="Project terminals"
+          className="terminal-controls"
+          ref={controlsRef}
+          hidden={sharedTabs && !controlsExpanded}
         >
-          {terminals.map((terminal, index) => (
-            <div
-              key={terminal.id}
-              className={`terminal-tab${terminal.id === activeId ? " terminal-tab--active" : ""}`}
-              role="presentation"
-              draggable
-              onDragStart={() => {
-                draggedId.current = terminal.id;
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => handleDrop(event, terminal.id)}
-            >
-              {renameId === terminal.id ? (
-                <input
-                  className="terminal-tab__rename"
-                  value={renameValue}
-                  autoFocus
-                  maxLength={120}
-                  aria-label="Terminal name"
-                  onChange={(event) => setRenameValue(event.target.value)}
-                  onBlur={() => void commitRename()}
-                  onKeyDown={(event) => {
-                    if (isComposingKeyboardEvent(event.nativeEvent)) return;
-                    event.stopPropagation();
-                    if (event.key === "Enter") void commitRename();
-                    else if (event.key === "Escape") {
-                      renamePendingRef.current = false;
-                      setRenameId(null);
-                    }
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  id={`terminal-tab-${terminal.id}`}
-                  className="terminal-tab__select"
-                  data-terminal-focus-trigger
-                  aria-pressed={terminal.id === activeId}
-                  aria-label={`${terminalLabel(terminal)}${unreadIds.has(terminal.id) ? ", new output" : ""}${bellIds.has(terminal.id) ? ", bell" : ""}`}
-                  aria-controls={
-                    openedIds.has(terminal.id)
-                      ? `terminal-view-${terminal.id}`
-                      : undefined
-                  }
-                  aria-keyshortcuts="Control+Shift+ArrowLeft Control+Shift+ArrowRight Meta+Shift+ArrowLeft Meta+Shift+ArrowRight"
-                  tabIndex={terminal.id === activeId ? 0 : -1}
-                  onClick={() => setActiveId(terminal.id)}
-                  onDoubleClick={() => beginRename(terminal)}
-                  onKeyDown={(event) => handleTabKey(event, index)}
-                  title={`${terminalLabel(terminal)} — ${terminal.currentCwd}`}
-                >
-                  <span
-                    className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                    aria-hidden
-                  />
-                  <span className="terminal-tab__label">
-                    {terminalLabel(terminal)}
-                  </span>
-                  {bellIds.has(terminal.id) ? (
-                    <Bell
-                      className="terminal-tab__bell"
-                      size={10}
-                      aria-hidden
-                    />
-                  ) : null}
-                  {unreadIds.has(terminal.id) ? (
-                    <span className="terminal-tab__unread" aria-hidden />
-                  ) : null}
-                </button>
-              )}
-              <button
-                type="button"
-                className="terminal-tab__close"
-                onClick={() => void closeTerminal(terminal)}
-                aria-label={`Close ${terminalLabel(terminal)}`}
-                title="Close terminal"
-              >
-                <X size={12} aria-hidden />
-              </button>
-            </div>
-          ))}
-        </div>
-        <div
-          className={`terminal-tabs__new${hasProfileChoice ? " terminal-tabs__new--profiles" : ""}`}
-        >
-          <button
-            type="button"
-            className="icon-button"
-            data-terminal-focus-trigger
-            onClick={() => void createTerminal()}
-            disabled={creating}
-            aria-label="New terminal"
-            title="New terminal"
+          <div
+            className={`terminal-tabs__new${hasProfileChoice ? " terminal-tabs__new--profiles" : ""}`}
           >
-            <Plus size={15} aria-hidden />
-          </button>
-          {hasProfileChoice ? (
-            <details
-              ref={profileMenuRef}
-              name={menuGroupName}
-              className="terminal-menu terminal-menu--profiles"
-              data-terminal-menu
-            >
-              <summary
-                className="terminal-tabs__profile"
-                aria-label="Choose terminal profile"
-                title="Choose terminal profile"
-                aria-disabled={creating}
-                onClick={(event) => {
-                  if (creating) event.preventDefault();
-                }}
-              >
-                <Plus
-                  className="terminal-tabs__profile-new"
-                  size={15}
-                  aria-hidden
-                />
-                <ChevronDown
-                  className="terminal-tabs__profile-chevron"
-                  size={12}
-                  aria-hidden
-                />
-              </summary>
-              <div className="terminal-menu__popover terminal-menu__popover--profiles">
-                {availableProfiles.map((profile) => (
-                  <button
-                    type="button"
-                    key={profile.id}
-                    data-terminal-focus-trigger
-                    disabled={creating}
-                    onClick={() => void createTerminal(profile)}
-                  >
-                    <span>{profile.label}</span>
-                    {profile.isDefault ? <small>Default</small> : null}
-                  </button>
-                ))}
-              </div>
-            </details>
-          ) : null}
-        </div>
-        <div ref={setToolbarHost} className="terminal-view-controls" />
-        <button
-          type="button"
-          className="icon-button terminal-tabs__focus"
-          onClick={() => setFocused((value) => !value)}
-          aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
-          title={focused ? "Exit focus" : "Focus terminal"}
-        >
-          {focused ? (
-            <Minimize2 size={14} aria-hidden />
-          ) : (
-            <Maximize2 size={14} aria-hidden />
-          )}
-        </button>
-        <details
-          className="terminal-menu terminal-menu--more"
-          name={menuGroupName}
-          data-terminal-menu
-          onToggle={(event) => {
-            if (
-              event.target !== event.currentTarget ||
-              event.currentTarget.open
-            )
-              return;
-            for (const group of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
-              "details[open]",
-            ))
-              group.open = false;
-          }}
-        >
-          <summary
-            className="icon-button"
-            aria-label="Terminal actions"
-            title="Terminal actions"
-          >
-            <MoreHorizontal size={15} aria-hidden />
-          </summary>
-          <div className="terminal-menu__popover">
-            <div ref={setMenuHost} className="terminal-menu__view" />
             <button
               type="button"
-              className="terminal-menu__focus"
-              onClick={() => setFocused((value) => !value)}
+              className="icon-button"
+              hidden={sharedTabs}
+              data-terminal-focus-trigger
+              onClick={() => void createTerminal()}
+              disabled={creating}
+              aria-label="New terminal"
+              title="New terminal"
             >
-              {focused ? (
-                <Minimize2 size={14} aria-hidden />
-              ) : (
-                <Maximize2 size={14} aria-hidden />
-              )}
-              {focused ? "Exit focused terminal" : "Focus terminal"}
+              <Plus size={15} aria-hidden />
             </button>
-            {activeTerminal ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => beginRename(activeTerminal)}
+            {hasProfileChoice ? (
+              <details
+                ref={profileMenuRef}
+                name={menuGroupName}
+                className="terminal-menu terminal-menu--profiles"
+                data-terminal-menu
+              >
+                <summary
+                  className="terminal-tabs__profile"
+                  aria-label="Choose terminal profile"
+                  title="Choose terminal profile"
+                  aria-disabled={creating}
+                  onClick={(event) => {
+                    if (creating) event.preventDefault();
+                  }}
                 >
-                  <Pencil size={14} aria-hidden /> Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openInWindow(activeTerminal)}
-                >
-                  <ExternalLink size={14} aria-hidden /> Open in window
-                </button>
-                <details
-                  className="terminal-menu__group"
-                  data-terminal-menu-group
-                >
-                  <summary>
-                    <SquareTerminal size={14} aria-hidden /> Manage terminal
-                    <ChevronRight
-                      className="terminal-menu__chevron"
-                      size={13}
-                      aria-hidden
-                    />
-                  </summary>
-                  <div>
-                    {terminals.indexOf(activeTerminal) > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const target =
-                            terminals[terminals.indexOf(activeTerminal) - 1];
-                          if (target)
-                            void reorder(
-                              activeTerminal.id,
-                              target.id,
-                              "before",
-                            );
-                        }}
-                      >
-                        <ArrowLeft size={14} aria-hidden /> Move tab left
-                      </button>
-                    ) : null}
-                    {terminals.indexOf(activeTerminal) <
-                    terminals.length - 1 ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const target =
-                            terminals[terminals.indexOf(activeTerminal) + 1];
-                          if (target)
-                            void reorder(activeTerminal.id, target.id, "after");
-                        }}
-                      >
-                        <ArrowRight size={14} aria-hidden /> Move tab right
-                      </button>
-                    ) : null}
+                  <Plus
+                    className="terminal-tabs__profile-new"
+                    size={15}
+                    aria-hidden
+                  />
+                  <ChevronDown
+                    className="terminal-tabs__profile-chevron"
+                    size={12}
+                    aria-hidden
+                  />
+                </summary>
+                <div className="terminal-menu__popover terminal-menu__popover--profiles">
+                  {availableProfiles.map((profile) => (
                     <button
                       type="button"
+                      key={profile.id}
                       data-terminal-focus-trigger
-                      onClick={() => void restartTerminal(activeTerminal)}
+                      disabled={creating}
+                      onClick={() => void createTerminal(profile)}
                     >
-                      <RotateCcw size={14} aria-hidden /> Restart
+                      <span>{profile.label}</span>
+                      {profile.isDefault ? <small>Default</small> : null}
                     </button>
-                    <button
-                      type="button"
-                      className="terminal-menu__danger"
-                      onClick={() => void closeTerminal(activeTerminal)}
-                    >
-                      <Trash2 size={14} aria-hidden /> Close
-                    </button>
-                    {activeTerminal.status === "running" ? (
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </div>
+          <div ref={setToolbarHost} className="terminal-view-controls" />
+          <button
+            type="button"
+            className="icon-button terminal-tabs__focus"
+            onClick={() => setFocused((value) => !value)}
+            aria-label={focused ? "Exit focused terminal" : "Focus terminal"}
+            title={focused ? "Exit focus" : "Focus terminal"}
+          >
+            {focused ? (
+              <Minimize2 size={16} aria-hidden />
+            ) : (
+              <Maximize2 size={16} aria-hidden />
+            )}
+          </button>
+          <details
+            className="terminal-menu terminal-menu--more"
+            name={menuGroupName}
+            data-terminal-menu
+            onToggle={(event) => {
+              if (
+                event.target !== event.currentTarget ||
+                event.currentTarget.open
+              )
+                return;
+              for (const group of event.currentTarget.querySelectorAll<HTMLDetailsElement>(
+                "details[open]",
+              ))
+                group.open = false;
+            }}
+          >
+            <summary
+              className="icon-button"
+              aria-label="Terminal actions"
+              title="Terminal actions"
+            >
+              <MoreHorizontal size={16} aria-hidden />
+            </summary>
+            <div className="terminal-menu__popover">
+              <div ref={setMenuHost} className="terminal-menu__view" />
+              <button
+                type="button"
+                className="terminal-menu__focus"
+                onClick={() => setFocused((value) => !value)}
+              >
+                {focused ? (
+                  <Minimize2 size={14} aria-hidden />
+                ) : (
+                  <Maximize2 size={14} aria-hidden />
+                )}
+                {focused ? "Exit focused terminal" : "Focus terminal"}
+              </button>
+              {activeTerminal ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => beginRename(activeTerminal)}
+                  >
+                    <Pencil size={14} aria-hidden /> Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openInWindow(activeTerminal)}
+                  >
+                    <ExternalLink size={14} aria-hidden /> Open in window
+                  </button>
+                  <details
+                    className="terminal-menu__group"
+                    data-terminal-menu-group
+                  >
+                    <summary>
+                      <SquareTerminal size={14} aria-hidden /> Manage terminal
+                      <ChevronRight
+                        className="terminal-menu__chevron"
+                        size={13}
+                        aria-hidden
+                      />
+                    </summary>
+                    <div>
+                      {terminals.indexOf(activeTerminal) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target =
+                              terminals[terminals.indexOf(activeTerminal) - 1];
+                            if (target)
+                              void reorder(
+                                activeTerminal.id,
+                                target.id,
+                                "before",
+                              );
+                          }}
+                        >
+                          <ArrowLeft size={14} aria-hidden /> Move tab left
+                        </button>
+                      ) : null}
+                      {terminals.indexOf(activeTerminal) <
+                      terminals.length - 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target =
+                              terminals[terminals.indexOf(activeTerminal) + 1];
+                            if (target)
+                              void reorder(
+                                activeTerminal.id,
+                                target.id,
+                                "after",
+                              );
+                          }}
+                        >
+                          <ArrowRight size={14} aria-hidden /> Move tab right
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        data-terminal-focus-trigger
+                        onClick={() => void restartTerminal(activeTerminal)}
+                      >
+                        <RotateCcw size={14} aria-hidden /> Restart
+                      </button>
                       <button
                         type="button"
                         className="terminal-menu__danger"
-                        onClick={() => void closeTerminal(activeTerminal, true)}
+                        onClick={() => void closeTerminal(activeTerminal)}
                       >
-                        <X size={14} aria-hidden /> Force terminate
+                        <Trash2 size={14} aria-hidden /> Close
                       </button>
-                    ) : null}
-                  </div>
-                </details>
-                <div className="terminal-menu__separator" />
-              </>
-            ) : null}
-            <details
-              className="terminal-menu__group terminal-menu__projects"
-              data-terminal-menu-group
-              onToggle={(event) => {
-                if (
-                  event.target === event.currentTarget &&
-                  event.currentTarget.open
-                )
-                  void loadGlobal();
-              }}
-            >
-              <summary aria-label="Terminals in all projects">
-                <FolderKanban size={14} aria-hidden /> All terminals
-                <ChevronRight
-                  className="terminal-menu__chevron"
-                  size={13}
-                  aria-hidden
-                />
-              </summary>
-              <div>
-                <label className="terminal-menu__search">
-                  <Search size={13} aria-hidden />
-                  <input
-                    value={terminalFilter}
-                    onChange={(event) => setTerminalFilter(event.target.value)}
-                    placeholder="Find terminal or project"
-                    aria-label="Find terminal or project"
+                      {activeTerminal.status === "running" ? (
+                        <button
+                          type="button"
+                          className="terminal-menu__danger"
+                          onClick={() =>
+                            void closeTerminal(activeTerminal, true)
+                          }
+                        >
+                          <X size={14} aria-hidden /> Force terminate
+                        </button>
+                      ) : null}
+                    </div>
+                  </details>
+                  <div className="terminal-menu__separator" />
+                </>
+              ) : null}
+              <details
+                className="terminal-menu__group terminal-menu__projects"
+                data-terminal-menu-group
+                onToggle={(event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    event.currentTarget.open
+                  )
+                    void loadGlobal();
+                }}
+              >
+                <summary aria-label="Terminals in all projects">
+                  <FolderKanban size={14} aria-hidden /> All terminals
+                  <ChevronRight
+                    className="terminal-menu__chevron"
+                    size={13}
+                    aria-hidden
                   />
-                </label>
-                {globalLoading && !globalCatalog ? (
-                  <div className="terminal-menu__message">Loading…</div>
-                ) : globalGroups.size === 0 ? (
-                  <div className="terminal-menu__message">
-                    {terminalFilter ? "No matching terminals" : "No terminals"}
-                  </div>
-                ) : (
-                  [...globalGroups].map(([projectCwd, projectTerminals]) => {
-                    const name = projectLabel(projectCwd);
-                    const parent = parentSegment(projectCwd);
-                    const showParent =
-                      parent &&
-                      ((projectNameCounts.get(name) ?? 0) > 1 ||
-                        (terminalMatches(parent).length > 0 &&
-                          terminalMatches(name).length === 0));
-                    return (
-                      <div className="terminal-menu__project" key={projectCwd}>
-                        <div title={projectCwd}>
-                          <span className="terminal-menu__project-identity">
-                            <span className="terminal-menu__project-name">
-                              <SearchMatchText
-                                text={name}
-                                ranges={terminalMatches(name)}
-                              />
-                            </span>
-                            {showParent ? (
-                              <span className="terminal-menu__project-context">
-                                @
+                </summary>
+                <div>
+                  <label className="terminal-menu__search">
+                    <Search size={13} aria-hidden />
+                    <input
+                      value={terminalFilter}
+                      onChange={(event) =>
+                        setTerminalFilter(event.target.value)
+                      }
+                      placeholder="Find terminal or project"
+                      aria-label="Find terminal or project"
+                    />
+                  </label>
+                  {globalLoading && !globalCatalog ? (
+                    <div className="terminal-menu__message">Loading…</div>
+                  ) : globalGroups.size === 0 ? (
+                    <div className="terminal-menu__message">
+                      {terminalFilter
+                        ? "No matching terminals"
+                        : "No terminals"}
+                    </div>
+                  ) : (
+                    [...globalGroups].map(([projectCwd, projectTerminals]) => {
+                      const name = projectLabel(projectCwd);
+                      const parent = parentSegment(projectCwd);
+                      const showParent =
+                        parent &&
+                        ((projectNameCounts.get(name) ?? 0) > 1 ||
+                          (terminalMatches(parent).length > 0 &&
+                            terminalMatches(name).length === 0));
+                      return (
+                        <div
+                          className="terminal-menu__project"
+                          key={projectCwd}
+                        >
+                          <div title={projectCwd}>
+                            <span className="terminal-menu__project-identity">
+                              <span className="terminal-menu__project-name">
                                 <SearchMatchText
-                                  text={parent}
-                                  ranges={terminalMatches(parent)}
+                                  text={name}
+                                  ranges={terminalMatches(name)}
                                 />
                               </span>
-                            ) : null}
-                          </span>
-                          {projectCwd === cwd ? <small>Current</small> : null}
-                        </div>
-                        {projectTerminals.map((terminal) => (
-                          <button
-                            type="button"
-                            key={terminal.id}
-                            onClick={() => {
-                              setActiveId(terminal.id);
-                              setCwd(projectCwd);
-                            }}
-                          >
-                            <span
-                              className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                              aria-hidden
-                            />
-                            <span>
-                              <SearchMatchText
-                                text={terminalLabel(terminal)}
-                                ranges={terminalMatches(
-                                  terminalLabel(terminal),
-                                )}
-                              />
+                              {showParent ? (
+                                <span className="terminal-menu__project-context">
+                                  @
+                                  <SearchMatchText
+                                    text={parent}
+                                    ranges={terminalMatches(parent)}
+                                  />
+                                </span>
+                              ) : null}
                             </span>
-                            <small>
-                              <SearchMatchText
-                                text={terminal.currentCommand}
-                                ranges={terminalMatches(
-                                  terminal.currentCommand,
-                                )}
+                            {projectCwd === cwd ? <small>Current</small> : null}
+                          </div>
+                          {projectTerminals.map((terminal) => (
+                            <button
+                              type="button"
+                              key={terminal.id}
+                              onClick={() => {
+                                setActiveId(terminal.id);
+                                setCwd(projectCwd);
+                              }}
+                            >
+                              <span
+                                className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
+                                aria-hidden
                               />
-                            </small>
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </details>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.currentTarget
-                  .closest("details")
-                  ?.querySelector("summary")
-                  ?.focus();
-                setSettingsOpen(true);
-              }}
-            >
-              <Settings2 size={14} aria-hidden /> Settings
-            </button>
-          </div>
-        </details>
+                              <span>
+                                <SearchMatchText
+                                  text={terminalLabel(terminal)}
+                                  ranges={terminalMatches(
+                                    terminalLabel(terminal),
+                                  )}
+                                />
+                              </span>
+                              <small>
+                                <SearchMatchText
+                                  text={terminal.currentCommand}
+                                  ranges={terminalMatches(
+                                    terminal.currentCommand,
+                                  )}
+                                />
+                              </small>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </details>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.currentTarget
+                    .closest("details")
+                    ?.querySelector("summary")
+                    ?.focus();
+                  setSettingsOpen(true);
+                }}
+              >
+                <Settings2 size={14} aria-hidden /> Settings
+              </button>
+            </div>
+          </details>
+        </div>
+        {sharedTabs ? (
+          <button
+            type="button"
+            className="icon-button terminal-controls-toggle"
+            ref={controlsToggleRef}
+            aria-label={
+              controlsExpanded
+                ? "Hide terminal controls"
+                : "Show terminal controls"
+            }
+            title={
+              controlsExpanded
+                ? "Hide terminal controls"
+                : "Show terminal controls"
+            }
+            aria-expanded={controlsExpanded}
+            onClick={() => {
+              setControlsExpanded(!controlsExpanded);
+              if (!controlsExpanded)
+                requestAnimationFrame(() => {
+                  if (!controlsRef.current?.hidden)
+                    controlsRef.current
+                      ?.querySelector<HTMLElement>(
+                        "button:not(:disabled):not([hidden]), summary",
+                      )
+                      ?.focus();
+                });
+            }}
+          >
+            {controlsExpanded ? (
+              <ChevronRight size={16} aria-hidden />
+            ) : (
+              <MoreHorizontal size={16} aria-hidden />
+            )}
+          </button>
+        ) : null}
       </div>
 
       {loading && !catalog ? (
@@ -1406,7 +1572,7 @@ export const TerminalPane = memo(function TerminalPane({
                 <TerminalView
                   api={api}
                   terminal={terminal}
-                  active={terminal.id === activeId}
+                  active={active && terminal.id === activeId}
                   settings={uiSettings}
                   toolbarHost={toolbarHost}
                   menuHost={menuHost}
@@ -1424,7 +1590,7 @@ export const TerminalPane = memo(function TerminalPane({
         </div>
       )}
 
-      {settingsOpen
+      {active && settingsOpen
         ? createPortal(
             <TerminalSettingsDialog
               api={api}

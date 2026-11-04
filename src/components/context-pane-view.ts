@@ -15,6 +15,7 @@ export type ContextPaneView = Pick<
   | "selectedResourceReference"
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
+  | "resourceTabs"
   | "resourceAvailability"
   | "resourceWorkspacePaths"
   | "workspaceQuery"
@@ -26,7 +27,6 @@ export type ContextPaneView = Pick<
   | "gitStatusLoading"
   | "gitStatusRefreshing"
   | "selectedGitPathId"
-  | "selectedGitSide"
   | "gitDiff"
   | "branchTreeLoading"
   | "branchActionId"
@@ -44,6 +44,7 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     selectedResourceReference: state.selectedResourceReference,
     selectedResourceWorkspacePath: state.selectedResourceWorkspacePath,
     resourcePreview: state.resourcePreview,
+    resourceTabs: state.resourceTabs,
     resourceAvailability: state.resourceAvailability,
     resourceWorkspacePaths: state.resourceWorkspacePaths,
     workspaceQuery: state.workspaceQuery,
@@ -55,7 +56,6 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     gitStatusLoading: state.gitStatusLoading,
     gitStatusRefreshing: state.gitStatusRefreshing,
     selectedGitPathId: state.selectedGitPathId,
-    selectedGitSide: state.selectedGitSide,
     gitDiff: state.gitDiff,
     branchTreeLoading: state.branchTreeLoading,
     branchActionId: state.branchActionId,

@@ -392,16 +392,6 @@ describe("HTTP resource and upload authority", () => {
       .send({
         sessionId: "fixture-active",
         pathId: "not base64!",
-        side: "unstaged",
-      })
-      .expect(400);
-    await request(application.server)
-      .post("/api/git/diff")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId: "fixture-active",
-        pathId: "ZmlsZS50eHQ",
-        side: "working",
       })
       .expect(400);
     const diff = await request(application.server)
@@ -410,14 +400,12 @@ describe("HTTP resource and upload authority", () => {
       .send({
         sessionId: "fixture-active",
         pathId: "ZmlsZS50eHQ",
-        side: "unstaged",
       })
       .expect(200);
-    expect(diff.body).toMatchObject({ kind: "empty", side: "unstaged" });
+    expect(diff.body).toMatchObject({ kind: "empty" });
     expect(git.diff).toHaveBeenCalledWith(
       fixture.cwd,
       "ZmlsZS50eHQ",
-      "unstaged",
       expect.any(AbortSignal),
     );
 

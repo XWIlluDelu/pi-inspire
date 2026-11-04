@@ -16,7 +16,7 @@ covers:
   - src/styles.css
   - src/styles/{terminal,responsive,settings-overlays,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/{project-terminals,operation-lifecycles,terminal-settings,terminal-theme}.spec.ts
+  - tests/browser/{context-tabs,project-terminals,operation-lifecycles,terminal-settings,terminal-theme}.spec.ts
   - tests/browser/fixtures/terminal-theme.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
@@ -207,17 +207,41 @@ Diagnostics omit terminal input, output, and internal path-bearing failures.
 
 ## Tabs, menus, and settings
 
-The lazy Terminal mode provides profile choice, creation, rename, drag/keyboard ordering, restart,
-close/force-close confirmation, recent-close recreation, status/unread/bell indicators, and an
-all-project navigator. One header owns tabs, new/profile, connection/control state, search, focus, and
-More. At pane widths up to 480px, Focus moves into More to leave room for the active tab and its close
-control. Focus remains available with an empty catalog. Focus mode and a same-origin focused window
-attach the existing terminal. With multiple available profiles, compact/touch creation presents
-one Plus control that opens profile choice; the empty-state New button does the same without
-creating prematurely. A single available profile creates directly. Wider desktop layouts keep default
-New plus a separate chooser; command/keyboard New continues to create the default profile. The
-input-focus icon uses neutral action color; process dots and connecting/reconnecting indicators
-retain their state colors.
+Each project terminal occupies a tab beside open files in the shared contextual strip. Terminal
+tabs use the file tab's padding, close slot, 132px minimum, 180px cap and overflow rules
+([[workspace-layout]]); each 6px status dot sits within the same 13px icon slot. Tabs that do not
+fit move into the shared trailing More tabs menu, without horizontal scrolling or reducing that
+minimum. Selecting a file or tool hides the terminal view without replacing its process or changing
+input ownership. Terminal rename inputs share the session rename editor's surface, border, corners
+and focus treatment, while keeping the tab's compact type and label-aligned width. Enter or blur
+saves; Escape cancels. A manual name overrides automatic titles, and clearing it restores automatic
+naming.
+The top Terminal shortcut creates and activates one default-profile terminal; existing terminals
+are reached through their tabs. The pane reads the catalog when the shared strip first opens so
+existing terminal tabs remain reachable after refresh, including from Files. Background catalog
+polling remains limited to the active terminal surface.
+
+Profile choice, connection/control state, search, focus and More form a compact floating group at
+the same 28px desktop / 32px touch/narrow button tier as file actions, with 16px glyphs and shared
+padding. Closely related controls keep 2px gaps, with 6px between the profile, view, utility and
+collapse groups. Search/selection overlays use the same 8px top / 12px right anchor as floating tools.
+The group sits at the output's top-right, with no second tab/header row; a foreign-project
+context row stays above it, so Back to current project is never covered. Its status/focus and
+search slots are reserved before the view mounts, so connection updates do not resize it. Normal
+writable state has no visible Controlling label; its accessible state/tooltip and keyboard-focus
+action remain. Non-writable states keep connection feedback, the ownership message and Take control
+where ready. An explicit Hide/Show toggle and Escape control the group's visibility; terminal
+output/input interactions and background output preserve that choice. Search, selection actions,
+copy confirmation and a connection error temporarily own the same corner; the group is unavailable until those
+overlays close, and its expanded/collapsed state is unchanged. The group has no default-New button;
+the profile chooser keeps named alternatives.
+At pane widths up to 480px, Focus remains in More. Focus mode and same-origin focused windows
+attach the existing terminal and retain their own accessible tab strip.
+
+Rename, drag/keyboard ordering, close/force-close confirmation, recent-close recreation,
+status/unread/bell indicators and the all-project navigator keep their behavior. Closing a
+running command requires confirmation. Command/keyboard New creates the default profile. The input-focus icon uses
+neutral action color; process dots and connecting/reconnecting indicators retain their state colors.
 
 Selected tabs are revealed on selection or strip resize without stealing focus. Catalog reconciliation
 restores saved selection before persisting a new value. Automatic focus belongs to a fresh activation
@@ -245,18 +269,20 @@ context and filtering does not remove an existing disambiguation cue. Only match
 emphasized, not `@`; clearing search removes query-only context. Ordinary unique headings remain
 unchanged. The identity stays single-line and ellipsizes within the space left by Current.
 
-Terminal Settings is a body-level modal, above the pane's stacking context. Its header/footer remain
-visible around the scrolling body. Appearance, Interaction and Saved output are separate category views,
-with the main Settings desktop sidebar, narrow horizontal strip and safe-area-aware narrow frame.
-Only the active category exposes its controls. Switching or reselecting a category starts its content at the top; scrolling does not
+Terminal Settings is a body-level modal above the pane's stacking context. Its header/footer stay
+visible around the scrolling body. Appearance, Interaction and Saved output are separate category
+views using the main Settings desktop sidebar, narrow horizontal strip, safe-area-aware narrow
+frame, controls and dialog header, with 40px touch controls. Only the active category exposes its
+controls. Switching or reselecting a category starts its content at the top; scrolling does not
 change the selection. Browser preferences and Host loading, saving, clearing and error state survive
-category switches. Settings and Select text restore focus to the visible More summary;
-modal Escape leaves terminal focus mode and the underlying drawer unchanged. **Restore browser defaults**
-resets browser presentation/interaction preferences, not Host history. This action and the browser
-scope caption appear only in Appearance and Interaction; Saved output identifies its Host scope instead. Appearance, Interaction and
-Saved output use the main Settings controls and dialog header, with 40px touch controls. Font size
-uses an inline decrement/value/increment stepper at every width. Wide choices can move below their
-labels on narrow cards. Browser preferences remain distinct from Host output and retention settings.
+category switches. Settings and Select text restore focus to the visible More summary; modal Escape
+leaves terminal focus mode and the underlying drawer unchanged.
+
+Browser preferences stay distinct from Host output and retention settings. **Restore browser
+defaults** resets browser presentation/interaction preferences, not Host history. This action and
+the browser scope caption appear only in Appearance and Interaction; Saved output identifies its
+Host scope instead. Font size uses an inline decrement/value/increment stepper at every width. Wide
+choices can move below their labels on narrow cards.
 
 ## Rendering and input
 

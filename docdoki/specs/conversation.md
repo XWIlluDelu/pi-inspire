@@ -404,29 +404,30 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 ## Pagination and presentation ownership
 
 - When earlier history exists, each upward return to the transcript's near-top boundary
-  automatically requests the next signed, view-bound cursor page; pagination counts visible
-  user/response boundaries while representing intervening activity-only message ranges with lazy
+  automatically requests the next signed, view-bound cursor page. Pagination counts visible
+  user/response boundaries and represents intervening activity-only message ranges with lazy
   descriptors, so a collapsed run cannot force repeated background pages or transfer its hidden
-  body. A short visible page that leaves the viewport inside that boundary continues filling until
-  the boundary moves away or history ends. The existing scroll surface owns this one proximity
-  check, so loading-state rerenders cannot consume the next trigger, and one automatic fill presents
-  one continuous loading state across its bounded page requests.
+  body. A short visible page that leaves the viewport inside that boundary keeps filling until the
+  boundary moves away or history ends. The existing scroll surface owns this single proximity check,
+  so loading-state rerenders cannot consume the next trigger, and one automatic fill shows one
+  continuous loading state across its bounded page requests.
 
-  Coalesce an in-flight request, prepend only while the session generation, view, incarnation,
+  Coalesce an in-flight request. Prepend only while the session generation, view, incarnation,
   revision, and effective leaf remain on the cursor's append-compatible branch lineage, then restore
   the same visible message at the same viewport offset through virtualization. Same-view append
   snapshots preserve loaded pages, pending ranges, and an in-flight older load behind a changed
-  older cursor, while a rewrite or view change cancels and replaces them. Transient page-read failure
-  retains the same load promise, continuous loading state, confirmed messages and viewport anchor
-  through bounded automatic backoff. Each retry rechecks its cursor and append-compatible owner;
-  navigation or transport replacement retires it. Only persistent or non-transient failures expose
-  local retry, and successful loading clears that error. A stale cursor still resyncs from the
-  authoritative snapshot. Deferred range pages retain the same per-message and per-page transport
-  bounds and accept an append-only continuation of their owning branch without accepting a sibling
-  view.
+  older cursor; a rewrite or view change cancels and replaces them.
 
-  The browser explicitly opts into deferred older pages; a tab running the previous bundle across a
-  Host restart keeps the complete legacy page response rather than silently dropping activity
+  Transient page-read failure keeps the same load promise, continuous loading state, confirmed
+  messages and viewport anchor through bounded automatic backoff. Each retry rechecks its cursor and
+  append-compatible owner; navigation or transport replacement retires it. Only persistent or
+  non-transient failures expose local retry, and successful loading clears that error. A stale
+  cursor still resyncs from the authoritative snapshot. Deferred range pages keep the same
+  per-message and per-page transport bounds and accept an append-only continuation of their owning
+  branch, never a sibling view.
+
+  The browser explicitly opts into deferred older pages. A tab running the previous bundle across a
+  Host restart keeps the complete legacy page response instead of silently dropping activity
   descriptors it cannot interpret.
 
 - Refresh reconstructs settled conversation state from Pi, then resumes live updates. Activity timing,

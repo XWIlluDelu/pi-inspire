@@ -76,7 +76,7 @@ export function ContextPaneLoading({
   return (
     <>
       <div className="ctx__header" ref={recoverModalFocus}>
-        <span className="ctx__title">Context</span>
+        <span aria-hidden />
         <div className="ctx__header-actions">
           <button
             type="button"

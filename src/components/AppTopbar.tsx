@@ -102,10 +102,12 @@ function StateChip({
 }
 
 function GitSummary() {
-  const { gitStatus, gitStatusError } = useAppState(
+  const { gitStatus, gitStatusError, changesVisible } = useAppState(
     (state) => ({
       gitStatus: state.gitStatus,
       gitStatusError: state.gitStatusError,
+      // Changes already states the same authoritative count beside the list.
+      changesVisible: state.resourcesOpen && state.contextMode === "changes",
     }),
     shallowEqual,
   );
@@ -114,7 +116,9 @@ function GitSummary() {
   if (!branch || changes === null) return null;
 
   const conflictCount =
-    gitStatus?.kind === "repository" ? gitStatus.groups.conflicted.length : 0;
+    gitStatus?.kind === "repository"
+      ? gitStatus.files.filter((file) => file.conflict).length
+      : 0;
   const changeLabel = changes === 1 ? "1 change" : `${changes} changes`;
   const conflictLabel =
     conflictCount === 1 ? "1 conflict" : `${conflictCount} conflicts`;
@@ -141,7 +145,7 @@ function GitSummary() {
     >
       <GitBranch size={13} className="topbar__git-icon" aria-hidden />
       <span className="topbar__git-branch">{branch}</span>
-      {changes > 0 ? (
+      {changes > 0 && !changesVisible ? (
         <span className="topbar__git-count">
           {changes}
           <span className="topbar__git-count-word">
@@ -435,6 +439,8 @@ export const AppTopbar = memo(function AppTopbar({
       projectionConflict: source.projectionConflict,
       connection: source.connection,
       connectionProblem: source.connectionProblem,
+      workspaceLoading:
+        !source.sessionId && (!source.bootstrapped || source.startupPending),
       resourcesOpen: source.resourcesOpen,
       observesRepository:
         Boolean(source.sessionId) &&
@@ -481,6 +487,7 @@ export const AppTopbar = memo(function AppTopbar({
               const problem = state.connectionProblem;
               const failure =
                 problem !== null && problem.kind !== "stream-interrupted";
+              if (state.workspaceLoading && !failure) return null;
               const label =
                 problem?.kind === "device-offline"
                   ? "Device offline"

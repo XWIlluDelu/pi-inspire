@@ -29,11 +29,14 @@ import {
 describe("Files pane", () => {
   let testToken = 0;
   let gitStatusFails = false;
+  let gitStatusGate: Promise<void> | null = null;
+  let gitStatusRequests = 0;
   let missingProbeReference: string | null = null;
   let invalidProbeReference: string | null = null;
   let resourceListRequests: Array<{ cursor?: string; limit?: number }> = [];
   let resourceProbeRequests = 0;
   let resourceResolveRequests = 0;
+  let resourceResolveGate: Promise<void> | null = null;
   let resourceResolveBodies: Array<{
     reference: string;
     workspacePath?: string;
@@ -50,11 +53,14 @@ describe("Files pane", () => {
 
   beforeEach(async () => {
     gitStatusFails = false;
+    gitStatusGate = null;
+    gitStatusRequests = 0;
     missingProbeReference = null;
     invalidProbeReference = null;
     resourceListRequests = [];
     resourceProbeRequests = 0;
     resourceResolveRequests = 0;
+    resourceResolveGate = null;
     resourceResolveBodies = [];
     resourceListGate = null;
     resourceProbeGate = null;
@@ -136,6 +142,10 @@ describe("Files pane", () => {
           ...(workspacePath ? { workspacePath } : {}),
         });
         if (url.startsWith("/api/git/status")) {
+          gitStatusRequests += 1;
+          const gate = gitStatusGate;
+          gitStatusGate = null;
+          if (gate) await gate;
           if (gitStatusFails)
             return Response.json({ error: "Git timed out" }, { status: 503 });
           return Response.json({
@@ -148,18 +158,17 @@ describe("Files pane", () => {
             files: [
               {
                 path: gitPath("notes", "notes.md", "notes.md"),
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: gitPath("both", "both.ts", "both.ts"),
-                staged: { kind: "modified" },
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: gitPath("rename", "renamed.ts", "renamed.ts"),
-                staged: {
+                worktree: {
                   kind: "renamed",
                   originalPath: gitPath("old", "old.ts", "old.ts"),
                 },
@@ -167,7 +176,7 @@ describe("Files pane", () => {
               },
               {
                 path: gitPath("copy", "copied.ts", "copied.ts"),
-                staged: {
+                worktree: {
                   kind: "copied",
                   originalPath: gitPath("source", "source.ts", "source.ts"),
                 },
@@ -175,17 +184,18 @@ describe("Files pane", () => {
               },
               {
                 path: gitPath("conflict", "conflict.ts", "conflict.ts"),
+                worktree: { kind: "unmerged" },
                 conflict: { code: "UU" },
                 untracked: false,
               },
               {
                 path: gitPath("binary", "image.bin", "image.bin"),
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: gitPath("module", "vendor/module", "vendor/module"),
-                staged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
                 submodule: {
                   commitChanged: true,
@@ -195,42 +205,32 @@ describe("Files pane", () => {
               },
               {
                 path: gitPath("deleted", "gone.ts", "gone.ts"),
-                unstaged: { kind: "deleted" },
+                worktree: { kind: "deleted" },
                 untracked: false,
               },
               {
                 path: gitPath("outside", "outside.ts"),
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
               {
                 path: { id: "bytes", display: "bad\\xff" },
-                unstaged: { kind: "modified" },
+                worktree: { kind: "modified" },
                 untracked: false,
               },
-              { path: gitPath("new", "new.ts", "new.ts"), untracked: true },
+              {
+                path: gitPath("new", "new.ts", "new.ts"),
+                worktree: { kind: "added" },
+                untracked: true,
+              },
             ],
             total: 1_005,
             truncated: true,
-            groups: {
-              conflicted: ["conflict"],
-              staged: ["both", "rename", "copy", "module"],
-              unstaged: [
-                "notes",
-                "both",
-                "binary",
-                "deleted",
-                "outside",
-                "bytes",
-              ],
-              untracked: ["new"],
-            },
           });
         }
         if (url.startsWith("/api/git/diff")) {
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             pathId: string;
-            side: "staged" | "unstaged";
           };
           const paths: Record<string, GitPathIdentity> = {
             notes: gitPath("notes", "notes.md", "notes.md"),
@@ -245,7 +245,7 @@ describe("Files pane", () => {
             bytes: { id: "bytes", display: "bad\\xff" },
             new: gitPath("new", "new.ts", "new.ts"),
           };
-          const base = { path: paths[body.pathId], side: body.side };
+          const base = { path: paths[body.pathId] };
           if (body.pathId === "binary")
             return Response.json({ ...base, kind: "binary" });
           if (body.pathId === "module")
@@ -269,8 +269,14 @@ describe("Files pane", () => {
           if (body.pathId === "new")
             return Response.json({
               ...base,
-              kind: "unsupported",
-              reason: "untracked-content",
+              kind: "text",
+              additions: 1,
+              deletions: 0,
+              truncated: false,
+              encodingLossy: false,
+              lines: [
+                { kind: "add", text: "+new file", oldLine: null, newLine: 1 },
+              ],
             });
           return Response.json({
             ...base,
@@ -383,6 +389,9 @@ describe("Files pane", () => {
         }
         if (url.startsWith("/api/resources/resolve")) {
           resourceResolveRequests += 1;
+          const gate = resourceResolveGate;
+          resourceResolveGate = null;
+          if (gate) await gate;
           const body = JSON.parse(String(init?.body ?? "{}")) as {
             reference: string;
             workspacePath?: string;
@@ -523,6 +532,15 @@ describe("Files pane", () => {
         return Response.json({ error: `unhandled ${url}` }, { status: 404 });
       }),
     );
+    // This suite shares a store; reconnect now intentionally retains navigation.
+    // Start each independent case with an explicitly cleared browser workbench.
+    store.showFileBrowser();
+    for (const tab of store.getState().resourceTabs)
+      store.closeResourceTab(tab.reference);
+    store.setWorkspaceQuery("");
+    for (const dir of store.getState().workspaceExpandedDirs)
+      store.toggleWorkspaceDirectory(dir);
+    store.setWorkspaceShowHidden(false);
     await store.init(`token-${++testToken}`);
     store.setResourcesOpen(false);
     store.setContextMode("files");
@@ -588,9 +606,11 @@ describe("Files pane", () => {
     }
   });
 
-  it("renders grouped changes over a stable source view with change navigation", async () => {
+  it("opens grouped changes in ordinary file tabs with net comparison and hunk navigation", async () => {
     Element.prototype.scrollIntoView = vi.fn();
-    await store.openResource("notes.md", "changes");
+    store.setResourcesOpen(true);
+    store.setContextMode("changes");
+    await store.refreshGitInspection();
     const { container: pane } = render(
       <ContextPane isModal={false} onClose={vi.fn()} />,
     );
@@ -598,20 +618,13 @@ describe("Files pane", () => {
       await screen.findByRole("heading", { name: /Conflicts/ }),
     ).toBeInTheDocument();
     expect(pane.querySelector(".res__index-header")).toHaveTextContent(
-      "feature/git4 staged · 7 working · 1 conflict",
-    );
-    expect(screen.getByRole("heading", { name: /Staged/ })).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /Unstaged/ }),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "notes.md, unstaged modified" }),
-      ).toHaveAttribute("aria-current", "true"),
+      "feature/git1005 changes",
     );
     expect(
-      await screen.findByLabelText("Source changes for notes.md"),
+      screen.getByRole("heading", { name: /Changes/ }),
     ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Source changes for notes.md")).toBeNull();
+    expect(pane.querySelector(".file-detail-header")).toBeNull();
     expect(
       screen.getByText("Showing first 11 of 1005 changed paths."),
     ).toBeInTheDocument();
@@ -620,24 +633,33 @@ describe("Files pane", () => {
     ).toHaveClass("git-deco--untracked");
     expect(
       screen.getByRole("button", {
-        name: "renamed.ts, staged renamed, renamed from old.ts",
+        name: "renamed.ts, renamed, renamed from old.ts",
       }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "copied.ts, staged copied, copied from source.ts",
+        name: "copied.ts, copied, copied from source.ts",
       }),
     ).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "both.ts, unstaged modified" }),
+    fireEvent.click(screen.getByRole("button", { name: "notes.md, modified" }));
+    expect(
+      await screen.findByLabelText("Source changes for notes.md"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "notes.md" })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+    expect(
+      screen.getByRole("button", { name: "notes.md, modified" }),
+    ).toHaveAttribute("aria-current", "true");
+    fireEvent.click(screen.getByRole("button", { name: "both.ts, modified" }));
     const source = await screen.findByLabelText("Source changes for both.ts");
     expect(source).toHaveAttribute("data-pane-scroll-active", "true");
     expect(within(pane).getByTitle("Line changes")).toHaveTextContent("+2−1");
     expect(screen.getByText("Source truncated")).toBeInTheDocument();
     const next = screen.getByRole("button", { name: "Next change" });
-    fireEvent.click(next);
     expect(source.querySelector('[data-change-index="0"]')).toHaveClass(
       "source-diff__line--active",
     );
@@ -646,27 +668,38 @@ describe("Files pane", () => {
       "source-diff__line--active",
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "both.ts, staged modified" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "both.ts, staged modified" }),
-      ).toHaveAttribute("aria-current", "true"),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /image\.bin/ }));
-    expect(await screen.findByText("Binary change")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /conflict\.ts/ }));
-    expect(await screen.findByText("Unresolved conflict")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /vendor\/module/ }));
-    expect(await screen.findByText("Submodule change")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /bad\\xff/ }));
-    expect(await screen.findByText("Source unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     expect(
-      screen.getByText(/cannot be represented as UTF-8/),
-    ).toBeInTheDocument();
+      screen.getAllByRole("button", { name: "both.ts, modified" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "both.ts, modified" }),
+    ).toHaveAttribute("aria-current", "true");
+
+    for (const [name, title] of [
+      [/image\.bin/, "Binary change"],
+      [/conflict\.ts/, "Unresolved conflict"],
+      [/vendor\/module/, "Submodule change"],
+      [/bad\\xff/, "Source unavailable"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      if (title === "Source unavailable")
+        expect(
+          screen.getByText(/cannot be represented as UTF-8/),
+        ).toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole("tab", { name: "Changes" }));
     fireEvent.click(screen.getByRole("button", { name: /new\.ts/ }));
+    const added = await screen.findByRole("region", {
+      name: "Source changes for new.ts",
+    });
+    expect(added).toHaveTextContent("new file");
+    expect(added.querySelectorAll(".source-diff__line--add")).toHaveLength(1);
+    expect(added.querySelector(".source-diff__line--delete")).toBeNull();
+    // The same new-file tab can still return to its ordinary body.
+    fireEvent.click(screen.getByRole("button", { name: "Git changes" }));
     expect(
       await screen.findByRole("region", { name: "File source" }),
     ).toBeInTheDocument();
@@ -708,7 +741,10 @@ describe("Files pane", () => {
     const row = await screen.findByRole("button", {
       name: literal,
     });
-    expect(row).toHaveAttribute("title", literal);
+    expect(row).toHaveAttribute(
+      "title",
+      `${literal}\nCtrl+click: Show in file manager`,
+    );
     expect(row).toHaveTextContent("report%20draft.md");
     expect(screen.queryByRole("button", { name: reference })).toBeNull();
     fireEvent.click(row);
@@ -718,6 +754,80 @@ describe("Files pane", () => {
         reference,
       }),
     );
+  });
+
+  it("shows Ctrl-clicked files and folders without changing the browser selection", async () => {
+    const shown: unknown[] = [];
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input) === "/api/resources/show-in-file-manager") {
+        shown.push(JSON.parse(String(init?.body)));
+        return Response.json({ ok: true });
+      }
+      return originalFetch(input, init);
+    });
+    render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    const folder = await within(pane).findByRole("button", { name: /^src$/ });
+    fireEvent.click(folder, { ctrlKey: true });
+    expect(folder).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(
+      await within(pane).findByRole("button", { name: /^README\.md$/ }),
+      { ctrlKey: true },
+    );
+    fireEvent.click(
+      await within(pane).findByRole("button", { name: /^notes\.md/ }),
+      { metaKey: true },
+    );
+    await waitFor(() =>
+      expect(shown).toEqual([
+        {
+          sessionId: "s1",
+          reference: "src",
+          workspacePath: "src",
+          directory: true,
+        },
+        {
+          sessionId: "s1",
+          reference: "README.md",
+          workspacePath: "README.md",
+          directory: false,
+        },
+        {
+          sessionId: "s1",
+          reference: "notes.md",
+          workspacePath: "notes.md",
+          directory: false,
+        },
+      ]),
+    );
+    expect(resourceResolveRequests).toBe(0);
+    expect(store.getState().fileBrowserView).toBe("browse");
+    fireEvent.click(folder);
+    expect(folder).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("surfaces an unavailable file manager without opening or dropping file tabs", async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      String(input) === "/api/resources/show-in-file-manager"
+        ? Response.json(
+            { error: "No desktop is available to show this item" },
+            { status: 503 },
+          )
+        : originalFetch(input, init),
+    );
+    render(<App />);
+    await act(() => store.showInFileManager("notes.md", "notes.md"));
+    expect(
+      await screen.findByText("No desktop is available to show this item"),
+    ).toBeVisible();
+    expect(resourceResolveRequests).toBe(0);
   });
 
   it("browses, searches, and keeps only the essential file actions", async () => {
@@ -743,7 +853,9 @@ describe("Files pane", () => {
     // Recent-reference observations settle independently of the directory listing.
     await waitFor(() =>
       expect(
-        pane.querySelector('.recent-file[title="demo.html"] > svg'),
+        within(pane)
+          .getByRole("button", { name: "demo.html" })
+          .querySelector("svg"),
       ).toHaveClass("lucide-file-code-corner"),
     );
     const directory = await within(pane).findByRole("button", { name: "src" });
@@ -763,11 +875,11 @@ describe("Files pane", () => {
       await within(pane).findByRole("button", { name: "long.ts" }),
     );
     expect(pane.querySelector(".files-browser")).toBeNull();
-    expect(
-      within(pane).getByRole("button", {
-        name: "Back to file browser for proj",
-      }),
-    ).toHaveTextContent("proj");
+    expect(within(pane).getByRole("tab", { name: "long.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(pane.querySelector(".res__index")).toBeNull();
 
     expect(
       await within(pane).findByRole("region", { name: "File source" }),
@@ -788,9 +900,7 @@ describe("Files pane", () => {
     );
     expect(writeText).toHaveBeenCalledWith("src/long.ts");
 
-    fireEvent.click(
-      pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
-    );
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
     const restoredScroller = pane.querySelector<HTMLElement>(
       ".files-browser__scroll",
     )!;
@@ -814,7 +924,10 @@ describe("Files pane", () => {
     expect(match.querySelector(".resource-path__visible")).toHaveTextContent(
       /^src$/,
     );
-    expect(match).toHaveAttribute("title", "src/main.ts");
+    expect(match).toHaveAttribute(
+      "title",
+      "src/main.ts\nCtrl+click: Show in file manager",
+    );
     expect(match.querySelector(".search-match")).toHaveTextContent(/^main$/);
     fireEvent.click(match);
     expect(
@@ -824,49 +937,61 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
   });
 
-  it("reveals an opened workspace file once without chasing later tree updates", async () => {
-    const originalScrollIntoView = Element.prototype.scrollIntoView;
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
-    try {
-      render(<App />);
-      fireEvent.click(
-        await screen.findByRole("button", { name: "Toggle resources panel" }),
-      );
-      const pane = await screen.findByRole("complementary", {
-        name: "Context panel",
-      });
-      fireEvent.click(await within(pane).findByRole("button", { name: "src" }));
-      fireEvent.click(
-        await within(pane).findByRole("button", { name: "long.ts" }),
-      );
-      await within(pane).findByRole("region", { name: "File source" });
-      expect(resourceResolveBodies.at(-1)).toMatchObject({
-        reference: "src/long.ts",
-        workspacePath: "src/long.ts",
-      });
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
-
-      const resolvesBeforeRefresh = resourceResolveBodies.length;
-      fireEvent.click(
-        within(pane).getByRole("button", { name: "Refresh context pane" }),
-      );
-      await waitFor(() =>
-        expect(resourceResolveBodies.length).toBeGreaterThan(
-          resolvesBeforeRefresh,
-        ),
-      );
-      expect(resourceResolveBodies.at(-1)).toMatchObject({
-        reference: "src/long.ts",
-        workspacePath: "src/long.ts",
-      });
-
-      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
-      fireEvent.click(within(pane).getByRole("button", { name: "src" }));
-      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
-    } finally {
-      Element.prototype.scrollIntoView = originalScrollIntoView;
-    }
+  it("keeps independent file positions through tab and tool switches, and closes only the chosen tab", async () => {
+    render(<App />);
+    await act(async () => {
+      await store.openWorkspaceFile("src/long.ts");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    const first = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    fireEvent.scroll(first, { target: { scrollTop: 137, scrollLeft: 48 } });
+    await act(async () => {
+      await store.openWorkspaceFile("src/main.ts");
+    });
+    const second = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    expect(second.scrollTop).toBe(0);
+    fireEvent.scroll(second, { target: { scrollTop: 52, scrollLeft: 12 } });
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
+    expect(
+      within(pane).getByRole("searchbox", { name: "Search workspace files" }),
+    ).toBeVisible();
+    fireEvent.click(within(pane).getByRole("tab", { name: "long.ts" }));
+    await waitFor(() =>
+      expect(
+        within(pane).getByRole("region", { name: "File source" }).scrollTop,
+      ).toBe(137),
+    );
+    expect(
+      within(pane).getByRole("region", { name: "File source" }).scrollLeft,
+    ).toBe(48);
+    fireEvent.click(within(pane).getByRole("tab", { name: "Changes" }));
+    fireEvent.click(within(pane).getByRole("tab", { name: "main.ts" }));
+    await waitFor(() =>
+      expect(
+        within(pane).getByRole("region", { name: "File source" }).scrollTop,
+      ).toBe(52),
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Close long.ts" }),
+    );
+    expect(within(pane).queryByRole("tab", { name: "long.ts" })).toBeNull();
+    expect(within(pane).getByRole("tab", { name: "main.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(
+      within(pane).getByRole("button", { name: "Close main.ts" }),
+    );
+    expect(within(pane).getByRole("tab", { name: "Files" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("keeps a changed-file selection when returning to Browse", async () => {
@@ -880,14 +1005,12 @@ describe("Files pane", () => {
       expect(store.getState().selectedGitPathId).toBe("notes"),
     );
 
-    fireEvent.click(
-      pane.querySelector<HTMLButtonElement>(".res__index-header--back")!,
-    );
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
     expect(store.getState().selectedGitPathId).toBe("notes");
-    fireEvent.click(within(pane).getByRole("button", { name: "Changes" }));
+    fireEvent.click(within(pane).getByRole("tab", { name: "Changes" }));
     expect(
       await within(pane).findByRole("button", {
-        name: "notes.md, unstaged modified",
+        name: "notes.md, modified",
       }),
     ).toHaveAttribute("aria-current", "true");
   });
@@ -1129,6 +1252,196 @@ describe("Files pane", () => {
         .some((url) => url.startsWith("/api/git/status")),
     ).toBe(false);
   });
+
+  it.each(["changes", "file"] as const)(
+    "keeps the refresh action idle during background Git observation in the %s view",
+    async (view) => {
+      store.setResourcesOpen(true);
+      store.setContextMode("changes");
+      await store.refreshGitInspection();
+      if (view === "file") await store.openGitDiff("notes");
+      render(<ContextPane />);
+      await waitFor(() =>
+        expect(store.getState().gitStatusRefreshing).toBe(false),
+      );
+      const refresh = screen.getByRole("button", {
+        name: "Refresh context pane",
+      });
+      const icon = refresh.querySelector(".lucide-refresh-cw");
+      expect(icon).not.toBeNull();
+      let release!: () => void;
+      gitStatusGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let pending!: Promise<void>;
+      act(() => {
+        pending = store.refreshGitInspection();
+      });
+      try {
+        await waitFor(() =>
+          expect(store.getState().gitStatusRefreshing).toBe(true),
+        );
+        expect(refresh).toBeEnabled();
+        expect(refresh).toHaveAttribute("aria-busy", "false");
+        expect(refresh.querySelector(".lucide-refresh-cw")).toBe(icon);
+        expect(refresh.querySelector(".pi-loading")).toBeNull();
+      } finally {
+        await act(async () => {
+          release();
+          await pending;
+        });
+      }
+      expect(refresh).toBeEnabled();
+      expect(refresh).toHaveAttribute("aria-busy", "false");
+      expect(refresh.querySelector(".lucide-refresh-cw")).toBe(icon);
+    },
+  );
+
+  it("uses summary cadence while reading a body and refreshes immediately on returning to Files", async () => {
+    const view = render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    await within(pane).findByRole("button", { name: "README.md" });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        await store.openResource("notes.md");
+      });
+      const calls = gitStatusRequests;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(19_999);
+      });
+      expect(gitStatusRequests).toBe(calls);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(gitStatusRequests).toBe(calls + 1);
+      await act(async () => {
+        fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
+      });
+      expect(gitStatusRequests).toBe(calls + 2);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks only an explicit refresh busy and prevents duplicate requests until it settles", async () => {
+    store.setResourcesOpen(true);
+    store.setContextMode("changes");
+    await store.refreshGitInspection();
+    render(<ContextPane />);
+    await waitFor(() =>
+      expect(store.getState().gitStatusRefreshing).toBe(false),
+    );
+    const refresh = screen.getByRole("button", {
+      name: "Refresh context pane",
+    });
+    let release!: () => void;
+    gitStatusGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requests = gitStatusRequests;
+    try {
+      fireEvent.click(refresh);
+      await waitFor(() => expect(gitStatusRequests).toBe(requests + 1));
+      expect(refresh).toBeDisabled();
+      expect(refresh).toHaveAttribute("aria-busy", "true");
+      expect(refresh.querySelector(".pi-loading")).not.toBeNull();
+      expect(refresh.querySelector(".lucide-refresh-cw")).toBeNull();
+      fireEvent.click(refresh);
+      expect(gitStatusRequests).toBe(requests + 1);
+    } finally {
+      await act(async () => {
+        release();
+      });
+    }
+    await waitFor(() => expect(refresh).toBeEnabled());
+    expect(refresh).toHaveAttribute("aria-busy", "false");
+    expect(refresh.querySelector(".lucide-refresh-cw")).not.toBeNull();
+    expect(refresh.querySelector(".pi-loading")).toBeNull();
+    expect(gitStatusRequests).toBe(requests + 1);
+  });
+
+  it.each(["tool", "file"] as const)(
+    "keeps the new %s refresh busy when a previous scope's request completes",
+    async (scope) => {
+      await store.refreshGitInspection();
+      await store.openGitDiff("notes");
+      if (scope === "tool") store.setContextMode("changes");
+      render(<ContextPane />);
+      await waitFor(() =>
+        expect(store.getState().gitStatusRefreshing).toBe(false),
+      );
+      const refresh = screen.getByRole("button", {
+        name: "Refresh context pane",
+      });
+      let releaseOld!: () => void;
+      let releaseNew: (() => void) | undefined;
+      gitStatusGate = new Promise<void>((resolve) => {
+        releaseOld = resolve;
+      });
+      try {
+        fireEvent.click(refresh);
+        await waitFor(() =>
+          expect(store.getState().gitStatusRefreshing).toBe(true),
+        );
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        if (scope === "tool") {
+          fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+          await screen.findByRole("button", { name: "README.md" });
+        } else {
+          await act(async () => {
+            await store.openResource("demo.html");
+          });
+          await screen.findByTitle("Preview demo.html");
+        }
+        expect(refresh).toBeEnabled();
+        expect(refresh).toHaveAttribute("aria-busy", "false");
+        expect(refresh.querySelector(".lucide-refresh-cw")).not.toBeNull();
+        const nextGate = new Promise<void>((resolve) => {
+          releaseNew = resolve;
+        });
+        if (scope === "tool") resourceListGate = nextGate;
+        else resourceResolveGate = nextGate;
+        const requests =
+          scope === "tool"
+            ? resourceListRequests.length
+            : resourceResolveRequests;
+        fireEvent.click(refresh);
+        await waitFor(() =>
+          expect(
+            scope === "tool"
+              ? resourceListRequests.length
+              : resourceResolveRequests,
+          ).toBe(requests + 1),
+        );
+        expect(refresh).toBeDisabled();
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        await act(async () => {
+          releaseOld();
+        });
+        await waitFor(() =>
+          expect(store.getState().gitStatusRefreshing).toBe(false),
+        );
+        expect(refresh).toBeDisabled();
+        expect(refresh).toHaveAttribute("aria-busy", "true");
+        expect(refresh.querySelector(".pi-loading")).not.toBeNull();
+      } finally {
+        await act(async () => {
+          releaseOld();
+          releaseNew?.();
+        });
+      }
+      await waitFor(() => expect(refresh).toBeEnabled());
+      expect(refresh).toHaveAttribute("aria-busy", "false");
+      expect(refresh.querySelector(".lucide-refresh-cw")).not.toBeNull();
+    },
+  );
 
   it("marks missing recent references before selection", async () => {
     missingProbeReference = "demo.html";

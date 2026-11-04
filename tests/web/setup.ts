@@ -70,5 +70,12 @@ globalThis.CSS = {
   escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&"),
 } as typeof CSS;
 
-// Each file owns its Fetch/WebSocket stubs; cleanup only mounted React trees.
-afterEach(cleanup);
+// Each case starts with a fresh browser workbench. Reload tests retain storage
+// between mounts inside their own case; unrelated cases must not restore it.
+afterEach(() => {
+  cleanup();
+  for (const key of Object.keys(window.sessionStorage)) {
+    if (key.startsWith("inspire:workbench:v1:"))
+      window.sessionStorage.removeItem(key);
+  }
+});

@@ -166,26 +166,22 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: handle configuration is stable; only pane membership resets the live preference.
   useLayoutEffect(() => {
     applyResponsiveSize();
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(() => {
-            const measured = measure();
-            if (measured)
-              setMetrics((previous) =>
-                previous.current === measured.current &&
-                previous.max === measured.max
-                  ? previous
-                  : measured,
-              );
-          });
+    const observer = new ResizeObserver(() => {
+      const measured = measure();
+      if (measured)
+        setMetrics((previous) =>
+          previous.current === measured.current && previous.max === measured.max
+            ? previous
+            : measured,
+        );
+    });
     const pane = paneElement();
     const center = document.querySelector(".app > .center");
-    if (pane) observer?.observe(pane);
-    if (center) observer?.observe(center);
+    if (pane) observer.observe(pane);
+    if (center) observer.observe(center);
     window.addEventListener("resize", applyResponsiveSize);
     return () => {
-      observer?.disconnect();
+      observer.disconnect();
       window.removeEventListener("resize", applyResponsiveSize);
       pane?.style.removeProperty("flex-shrink");
       document.body.classList.remove(

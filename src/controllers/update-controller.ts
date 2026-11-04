@@ -143,26 +143,21 @@ export class UpdateController {
     const request = ++this.snoozeRequest;
     const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
-    void api.snoozeUpdate(identity).then(
-      (status) => {
-        if (
-          request !== this.snoozeRequest ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
-        this.snoozing = false;
+    const owns = () =>
+      request === this.snoozeRequest &&
+      this.owns(api, requestGeneration, transportGeneration);
+    void api
+      .snoozeUpdate(identity)
+      .then((status) => {
+        if (!owns()) return;
         this.applyStatus(checkedStatus(status));
-      },
-      () => {
-        if (
-          request !== this.snoozeRequest ||
-          !this.owns(api, requestGeneration, transportGeneration)
-        )
-          return;
+        this.snoozing = false;
+      })
+      .catch(() => {
+        if (!owns()) return;
         this.snoozing = false;
         this.host.notify("warning", "Unable to close the update notice.");
-      },
-    );
+      });
   }
 
   private owns(

@@ -1,6 +1,6 @@
 import { ApiError } from "./api";
 
-/** Bounded timing only: callers must own and authorize each retry. */
+/** Bounded recovery: callers must own and authorize each retry. */
 const RETRY_DELAYS_MS = [1_000, 3_000, 10_000] as const;
 
 export function isTransientFailure(error: unknown): boolean {
@@ -16,6 +16,29 @@ export class RecoveryBackoff {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
   private cancelWait: (() => void) | null = null;
+
+  /** Repeat an authorized read within this recovery budget. The caller owns
+   * publication and error feedback; writes never enter this loop. */
+  async read<T>(
+    perform: () => Promise<T>,
+    signal: AbortSignal,
+    owns: () => boolean,
+  ): Promise<T> {
+    while (!signal.aborted && owns()) {
+      try {
+        return await perform();
+      } catch (error) {
+        if (
+          signal.aborted ||
+          !owns() ||
+          !isTransientFailure(error) ||
+          !(await this.wait(signal))
+        )
+          throw error;
+      }
+    }
+    throw new DOMException("The read is no longer current", "AbortError");
+  }
 
   /** Keep a read's promise and loading/viewport ownership through backoff.
    * Cancellation settles the wait; the caller still authorizes every attempt. */

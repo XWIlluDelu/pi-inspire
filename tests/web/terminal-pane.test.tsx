@@ -16,7 +16,12 @@ import type {
 } from "../../shared/terminal-contracts";
 import { TerminalPane } from "../../src/components/TerminalPane";
 import { terminalOperations } from "../../src/controllers/terminal-operation-controller";
-import { queueTerminalAction } from "../../src/terminal-actions";
+import {
+  clearTerminalActions,
+  clearTerminalInsertions,
+  queueTerminalAction,
+  queueTerminalInsertion,
+} from "../../src/terminal-actions";
 import { TerminalCatalogController } from "../../src/terminal-catalog";
 import {
   DEFAULT_TERMINAL_UI_SETTINGS,
@@ -44,10 +49,12 @@ vi.mock("../../src/api", async (importOriginal) => ({
 vi.mock("../../src/components/TerminalView", () => ({
   TerminalView: ({
     terminal,
+    active,
     onBell,
     onCommandComplete,
   }: {
     terminal: TerminalDescriptor;
+    active: boolean;
     onBell(terminal: TerminalDescriptor): void;
     onCommandComplete(
       terminal: TerminalDescriptor,
@@ -74,6 +81,7 @@ vi.mock("../../src/components/TerminalView", () => ({
         <textarea
           className="xterm-helper-textarea"
           aria-label="Fixture terminal input"
+          disabled={!active}
         />
         <input aria-label="Fixture terminal search" />
       </div>
@@ -148,6 +156,8 @@ function action(name: string) {
 
 beforeEach(() => {
   sessionStorage.clear();
+  clearTerminalActions();
+  clearTerminalInsertions();
   viewCallbacks.clear();
   for (const mock of Object.values(api)) mock.mockReset();
   api.terminalSettings.mockResolvedValue({
@@ -548,6 +558,167 @@ describe("terminal creation controls", () => {
 });
 
 describe("terminal project ownership", () => {
+  it("keeps a running terminal when its shared-tab close confirmation is cancelled", async () => {
+    const running = { ...terminal("busy A"), commandRunning: true };
+    api.terminals.mockResolvedValue(catalog([running]));
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
+    try {
+      await within(host).findByRole("tab", { name: "busy A", selected: true });
+      fireEvent.click(
+        within(host).getByRole("button", { name: "Close busy A" }),
+      );
+      expect(confirm).toHaveBeenCalledWith(
+        "Close “busy A” and terminate its running process?",
+      );
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(within(host).getByRole("tab", { name: "busy A" })).toBeVisible();
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
+
+  it("loads shared tabs while inactive and activates an existing terminal without creating one", async () => {
+    const list = document.createElement("div");
+    list.setAttribute("role", "tablist");
+    const file = document.createElement("button");
+    file.setAttribute("role", "tab");
+    file.textContent = "README.md";
+    const host = document.createElement("div");
+    list.append(file, host);
+    document.body.append(list);
+    const onActivate = vi.fn();
+    const view = render(
+      <TerminalPane
+        cwd="/A"
+        active={false}
+        sharedTabsHost={host}
+        onActivate={onActivate}
+      />,
+    );
+    try {
+      const first = await within(list).findByRole("tab", { name: "A shell" });
+      expect(first).toHaveAttribute("aria-selected", "false");
+      expect(
+        screen.queryByRole("toolbar", { name: "Project terminals" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(within(list).getByRole("tab", { name: "A second" }));
+      expect(onActivate).toHaveBeenCalledOnce();
+      expect(api.createTerminal).not.toHaveBeenCalled();
+      view.rerender(
+        <TerminalPane
+          cwd="/A"
+          active
+          sharedTabsHost={host}
+          onActivate={onActivate}
+        />,
+      );
+      const selected = await within(list).findByRole("tab", {
+        name: "A second",
+        selected: true,
+      });
+      fireEvent.keyDown(selected, { key: "Home" });
+      expect(file).toHaveFocus();
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      list.remove();
+    }
+  });
+
+  it("keeps shared controls open during terminal interaction and collapses them explicitly", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
+    try {
+      await within(host).findByRole("tab", { name: "A shell", selected: true });
+      const input = await screen.findByLabelText("Fixture terminal input");
+      fireEvent.change(input, { target: { value: "unfinished command" } });
+      fireEvent.pointerDown(input);
+      fireEvent.click(input);
+      fireEvent.wheel(input);
+      fireEvent.touchStart(input);
+      fireEvent.keyDown(input, { key: "ArrowLeft" });
+      const hide = screen.getByRole("button", {
+        name: "Hide terminal controls",
+      });
+      expect(hide).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByLabelText("Terminal actions")).toBeVisible();
+      fireEvent.click(hide);
+      const toggle = screen.getByRole("button", {
+        name: "Show terminal controls",
+      });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(toggle);
+      expect(screen.getByLabelText("Terminal actions")).toBeVisible();
+      fireEvent.keyDown(
+        screen.getByRole("button", { name: "Hide terminal controls" }),
+        { key: "Escape" },
+      );
+      expect(
+        screen.getByRole("button", { name: "Show terminal controls" }),
+      ).toHaveFocus();
+      expect(input).toHaveValue("unfinished command");
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      host.remove();
+    }
+  });
+
+  it("retains the selected view while hidden without accepting terminal actions", async () => {
+    const view = render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "A shell", pressed: true });
+    fireEvent.click(screen.getByRole("button", { name: "A second" }));
+    const input = await within(
+      screen.getByRole("region", { name: "A second terminal" }),
+    ).findByLabelText("Fixture terminal input");
+    fireEvent.change(input, { target: { value: "unfinished command" } });
+    const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
+    reveal.mockClear();
+
+    view.rerender(<TerminalPane cwd="/A" active={false} />);
+    expect(input).toBeDisabled();
+    act(() => queueTerminalAction("close", "/A"));
+    act(() => queueTerminalAction("restart", "/A"));
+    fireEvent.keyDown(input, { key: "PageUp", ctrlKey: true });
+    expect(api.removeTerminal).not.toHaveBeenCalled();
+    expect(api.restartTerminal).not.toHaveBeenCalled();
+    expect(reveal).not.toHaveBeenCalled();
+
+    view.rerender(<TerminalPane cwd="/A" active />);
+    await screen.findByRole("button", { name: "A second", pressed: true });
+    expect(
+      within(
+        screen.getByRole("region", { name: "A second terminal" }),
+      ).getByLabelText("Fixture terminal input"),
+    ).toBe(input);
+    expect(input).toBeEnabled();
+    expect(input).toHaveValue("unfinished command");
+    expect(api.createTerminal).not.toHaveBeenCalled();
+  });
+
+  it("waits until the pane is shown before creating a terminal for queued insertion", async () => {
+    api.terminals.mockResolvedValue(catalog([]));
+    api.createTerminal.mockResolvedValue(terminal("new shell", "/A", 2));
+    const view = render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "New terminal" });
+    view.rerender(<TerminalPane cwd="/A" active={false} />);
+    act(() => queueTerminalInsertion("pending command", "/A"));
+    await act(async () => {});
+    expect(api.createTerminal).not.toHaveBeenCalled();
+
+    view.rerender(<TerminalPane cwd="/A" active />);
+    await waitFor(() =>
+      expect(api.createTerminal).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" }),
+    );
+    await screen.findByRole("button", { name: "new shell", pressed: true });
+  });
+
   it("restores the selected tab after the initial catalog loads", async () => {
     sessionStorage.setItem("inspire:terminal-active:/A", "A second");
     render(<TerminalPane cwd="/A" />);

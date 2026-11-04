@@ -9,7 +9,6 @@ function diffFor(name: string, source: string[]) {
   return {
     kind: "text",
     path: { id: name, display: name, utf8Path: name },
-    side: "unstaged",
     additions: source.filter((line) => line.startsWith("+")).length,
     deletions: source.filter((line) => line.startsWith("-")).length,
     truncated: false,

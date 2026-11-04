@@ -290,13 +290,11 @@ Neutral surfaces, hairlines and whitespace express depth. Elevation combines con
 shadows: `--shadow-1` is faint and absent in dark mode; `--shadow-2` lifts menus/notices in light and
 classic dark palettes, while botanical dark uses borders and surface contrast; `--shadow-overlay`
 separates dialogs/drawers. Shadows supplement borders without adding an outline. Reading, navigation
-and contextual shells have no elevation. Composer has no resting shadow and uses a crisp focus
-boundary with a faint close ring alongside its independent state treatments.
+and contextual shells have no elevation. Composer has no resting shadow; it uses a crisp focus
+boundary with a faint close ring, alongside its independent state treatments.
 
 [[workspace-layout]] owns pane geometry and resizing. Reading/Composer measures are Narrow 680px,
-Comfortable 820px and Wide 980px, bounded by center-pane width. The 44px topbar aligns the regions.
-Connecting/reconnecting uses a quiet, unboxed, accessibly named transport hint that disappears on
-recovery; offline and Host failures retain warning treatment.
+Comfortable 820px and Wide 980px, bounded by center-pane width.
 
 ## Scrolling
 
@@ -329,6 +327,27 @@ New, Search, folder and session labels share a text axis; counts/ages share the 
 Hidden folders add one indent, independent of workspace-tree nesting. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
+
+The contextual tab/tool header is 32px on fine-pointer desktop, 36px on coarse-pointer desktop,
+and at least 37px in its narrow drawer. Its icons remain 16px; desktop tool tiles are 26px high
+while coarse/narrow controls keep at least 32px targets. Open-file tabs fill the header height,
+and the short refresh separator remains centered. A narrow drawer uses a second row when a
+selected file or terminal tab, overflow and tools cannot fit together; an empty shared strip
+does not reserve that row.
+
+Files, Changes, History and Terminal share the contextual pane. Resource safety and change
+semantics belong to [[resource-preview]]; branch behavior belongs to [[session-branches]].
+
+The contextual header keeps file and terminal tabs in one leading strip with a shared More tabs
+menu instead of horizontal scrolling. Files, Changes and History use fixed trailing icon tabs;
+Terminal is a default-shell creation action. File and terminal labels use the small UI tier. The rail-colored header has one weak hairline against stage-colored
+content. Selected file/terminal tabs keep content-colored fill, accent ink, weak top/left/right edges
+and small top-only corners, with an open bottom joining the content. Fixed Files/Changes/History
+selections share that connected surface and boundary, with no additional underline, as specified in
+[[workspace-layout]]. Hover, transparent close buttons and keyboard focus keep their existing roles.
+Other segmented controls keep their own selection surfaces. Count capsules use
+`--accent-tint`/`--accent-deep`, smaller text on the label baseline and a distinct gap. When a
+complete label/count pair cannot fit, omit the count and keep the exact Changes total in its title.
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
@@ -522,8 +541,8 @@ Loading visuals appear after 250ms, immediately under reduced motion, without de
 or errors. Settings skeletons preserve column, navigation, card and footer geometry but are excluded
 from the accessibility tree and tab order. Context, History and Pi release notes share centered
 status/recovery presentation: loading Π with concise status; failure alert with an unavailable title,
-the actual error as a secondary hint and quiet Retry. State content owns its padding independently
-of document/help content; it does not repeat the unavailable title as a hint.
+the actual error as a secondary hint (never a repeat of the title) and quiet Retry. State content
+owns its padding independently of document/help content.
 
 ## Settings forms, disclosures and configuration actions
 

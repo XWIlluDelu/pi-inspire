@@ -33,6 +33,7 @@ function fixture() {
       descriptor,
       text: "![Curve](curve.png)",
     },
+    resourceTabs: [],
     resourceAvailability: {},
     resourceWorkspacePaths: {},
   };

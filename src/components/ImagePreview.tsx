@@ -1,8 +1,8 @@
 import { AlertTriangle } from "lucide-react";
 import {
   createContext,
+  useCallback,
   useContext,
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -10,6 +10,7 @@ import {
 } from "react";
 import { store } from "../store";
 import { useImageHistory } from "../use-image-history";
+import { useImageUrl } from "../use-image-url";
 import { ImageGalleryContext } from "./ImageGallery";
 import { ImageLightbox } from "./ImageLightbox";
 import { PiLoader } from "./PiLoader";
@@ -162,40 +163,18 @@ export function PersistedImage({
   name?: string;
   className?: string;
 }) {
-  const [src, setSrc] = useState<string>();
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const request = new AbortController();
-    let objectUrl: string | undefined;
-    setSrc(undefined);
-    setError(null);
-    void store
-      .loadEmbeddedImage(
+  const loadImage = useCallback(
+    (signal: AbortSignal) =>
+      store.loadEmbeddedImage(
         sessionId,
         viewId,
         projectionKey,
         reference,
-        request.signal,
-      )
-      .then(
-        (blob) => {
-          if (request.signal.aborted) return;
-          objectUrl = URL.createObjectURL(blob);
-          setSrc(objectUrl);
-        },
-        (reason: unknown) => {
-          if (!request.signal.aborted)
-            setError(
-              reason instanceof Error ? reason.message : "Image unavailable",
-            );
-        },
-      );
-    return () => {
-      request.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [projectionKey, reference, sessionId, viewId]);
+        signal,
+      ),
+    [projectionKey, reference, sessionId, viewId],
+  );
+  const { src, error } = useImageUrl(loadImage);
 
   return (
     <ImagePreview

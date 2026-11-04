@@ -67,6 +67,16 @@ async function configuredRepository() {
   vi.stubEnv("GIT_CONFIG_SYSTEM", system);
   const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
   await git("init", "-q");
+  const commit = () =>
+    git(
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "user.name=Test",
+      "commit",
+      "-qm",
+      "base",
+    );
   const file = join(root, "text.txt");
   const stage = async (content = "first\r\nsecond\r\n") => {
     await writeFile(file, content);
@@ -81,6 +91,7 @@ async function configuredRepository() {
     xdg,
     system,
     git,
+    commit,
     file,
     stage,
     global: join(home, ".gitconfig"),
@@ -151,18 +162,23 @@ describe("effective safe Git configuration in real repositories", () => {
       expect(status.files).toHaveLength(1);
       expect(status.files[0]!.staged).toEqual({ kind: "added" });
       expect(status.files[0]!.unstaged).toBeUndefined();
-      expect(await service.diff(f.root, textId, "staged")).toMatchObject({
+      expect(await service.diff(f.root, textId)).toMatchObject({
         kind: "text",
         additions: 2,
         deletions: 0,
       });
+      expect(await readFile(join(f.root, ".git", "index"))).toEqual(index);
+      await f.commit();
+      const committedIndex = await readFile(join(f.root, ".git", "index"));
       await writeFile(f.file, "other\r\nsecond\r\n");
-      expect(await service.diff(f.root, textId, "unstaged")).toMatchObject({
+      expect(await service.diff(f.root, textId)).toMatchObject({
         kind: "text",
         additions: 1,
         deletions: 1,
       });
-      expect(await readFile(join(f.root, ".git", "index"))).toEqual(index);
+      expect(await readFile(join(f.root, ".git", "index"))).toEqual(
+        committedIndex,
+      );
     },
     15_000,
   );
@@ -320,6 +336,7 @@ describe("effective safe Git configuration in real repositories", () => {
     const f = await configuredRepository();
     await writeFile(f.global, "[core]\n autocrlf = true\n");
     await f.stage();
+    await f.commit();
     const marker = join(f.directory, "command-ran"),
       program = join(f.directory, "probe.cjs");
     await writeFile(
@@ -350,11 +367,7 @@ describe("effective safe Git configuration in real repositories", () => {
     vi.stubEnv("GIT_CONFIG_VALUE_0", "true");
     vi.stubEnv("GIT_CONFIG_KEY_1", "core.fsmonitor");
     vi.stubEnv("GIT_CONFIG_VALUE_1", command);
-    const result = await new GitInspectionService().diff(
-      f.root,
-      textId,
-      "unstaged",
-    );
+    const result = await new GitInspectionService().diff(f.root, textId);
     expect(result).toMatchObject({ kind: "text", additions: 1, deletions: 1 });
     if (result.kind === "text") {
       expect(result.lines.some((line) => line.text === "+other")).toBe(true);
@@ -375,6 +388,7 @@ describe("effective safe Git configuration in real repositories", () => {
     async (scope, method) => {
       const f = await configuredRepository();
       await f.stage("before\n");
+      await f.commit();
       const marker = join(f.directory, "filter-ran"),
         program = join(f.directory, "filter.cjs");
       await writeFile(
@@ -413,12 +427,8 @@ describe("effective safe Git configuration in real repositories", () => {
         detail: expect.stringContaining("clean filter 'Owned.Driver' failed"),
       });
       await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
-      // A size change lets status skip hashing; diff must still block conversion.
       await writeFile(f.file, "different-sized content\n");
-      expect((await service.status(f.root)).kind).toBe("repository");
-      await expect(
-        service.diff(f.root, textId, "unstaged"),
-      ).rejects.toMatchObject({
+      await expect(service.diff(f.root, textId)).rejects.toMatchObject({
         status: 422,
         detail: expect.stringContaining("clean filter 'Owned.Driver' failed"),
       });
@@ -427,7 +437,7 @@ describe("effective safe Git configuration in real repositories", () => {
         join(f.root, ".gitattributes"),
         "*.asset filter=Owned.Driver\n",
       );
-      expect(await service.diff(f.root, textId, "unstaged")).toMatchObject({
+      expect(await service.diff(f.root, textId)).toMatchObject({
         kind: "text",
         additions: 1,
         deletions: 1,
@@ -440,17 +450,18 @@ describe("effective safe Git configuration in real repositories", () => {
   it("honors an explicit repository override that disables a global conversion", async () => {
     const f = await configuredRepository();
     await f.stage("before\n");
+    await f.commit();
     await writeFile(f.global, '[filter "owned"]\n clean = "must-not-run"\n');
     await f.git("config", "filter.owned.clean", "");
     await writeFile(join(f.root, ".gitattributes"), "text.txt filter=owned\n");
     await writeFile(f.file, "after!\n");
-    expect(
-      await new GitInspectionService().diff(f.root, textId, "unstaged"),
-    ).toMatchObject({
-      kind: "text",
-      additions: 1,
-      deletions: 1,
-    });
+    expect(await new GitInspectionService().diff(f.root, textId)).toMatchObject(
+      {
+        kind: "text",
+        additions: 1,
+        deletions: 1,
+      },
+    );
   });
 
   it.each(["color", "suppressBlankEmpty"] as const)(
@@ -458,17 +469,14 @@ describe("effective safe Git configuration in real repositories", () => {
     async (setting) => {
       const f = await configuredRepository();
       await f.stage("before\n\nlast\n");
+      await f.commit();
       await f.git(
         "config",
         setting === "color" ? "color.diff" : "diff.suppressBlankEmpty",
         setting === "color" ? "always" : "true",
       );
       await writeFile(f.file, "after!\n\nlast\n");
-      const result = await new GitInspectionService().diff(
-        f.root,
-        textId,
-        "unstaged",
-      );
+      const result = await new GitInspectionService().diff(f.root, textId);
       expect(result).toMatchObject({
         kind: "text",
         additions: 1,
@@ -611,10 +619,12 @@ describe("effective safe Git configuration in real repositories", () => {
   it("never lazily fetches missing objects through a configured upload-pack program", async () => {
     const f = await configuredRepository();
     await f.stage("before\n");
+    await f.commit();
     const object = (await f.git("rev-parse", ":text.txt")).stdout.trim();
     await rm(
       join(f.root, ".git", "objects", object.slice(0, 2), object.slice(2)),
     );
+    await writeFile(f.file, "after\n");
     const marker = join(f.directory, "uploadpack-ran");
     const program = join(f.directory, "uploadpack.cjs");
     await writeFile(
@@ -632,12 +642,12 @@ describe("effective safe Git configuration in real repositories", () => {
     );
     // Control: ordinary Git really invokes the owned helper for this missing blob.
     await f
-      .git("diff", "--cached", "--no-ext-diff", "--no-textconv")
+      .git("diff", "HEAD", "--no-ext-diff", "--no-textconv")
       .catch(() => undefined);
     await access(marker);
     await rm(marker);
     await expect(
-      new GitInspectionService().diff(f.root, textId, "staged"),
+      new GitInspectionService().diff(f.root, textId),
     ).rejects.toMatchObject({
       status: 502,
     });

@@ -14,6 +14,7 @@ import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   FakeWebSocket,
   installFakeWebSocket,
   installFetch,
@@ -308,6 +309,52 @@ describe("update status controller", () => {
     expect(test.api.snoozeUpdate).toHaveBeenCalledWith(
       '[["inspire","1.1.0"],["pi","0.84.3"]]',
     );
+  });
+
+  it("reports a malformed snooze reply without retrying the write and releases the operation", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    test.bootstrap(
+      updateStatus(4, {
+        inspireUpdateCheck: available(),
+        availableUpdateIdentity: '[["inspire","1.1.0"]]',
+      }),
+    );
+    test.api.snoozeUpdate.mockResolvedValueOnce({} as HostUpdateStatus);
+
+    test.controller.snooze();
+    test.controller.snooze();
+    await vi.runAllTimersAsync();
+    expect(test.notify).toHaveBeenCalledExactlyOnceWith(
+      "warning",
+      "Unable to close the update notice.",
+    );
+    expect(test.api.snoozeUpdate).toHaveBeenCalledTimes(1);
+    expect(test.state().updateSnoozedUntil).toBeNull();
+
+    test.controller.snooze();
+    await vi.runAllTimersAsync();
+    expect(test.api.snoozeUpdate).toHaveBeenCalledTimes(2);
+    expect(test.state().updateSnoozedUntil).toBe(2_000_000);
+  });
+
+  it("ignores a malformed snooze reply after its transport is replaced", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    test.bootstrap(
+      updateStatus(4, {
+        inspireUpdateCheck: available(),
+        availableUpdateIdentity: '[["inspire","1.1.0"]]',
+      }),
+    );
+    const pending = deferred<HostUpdateStatus>();
+    test.api.snoozeUpdate.mockReturnValueOnce(pending.promise);
+    test.controller.snooze();
+    test.replaceTransport();
+    pending.resolve({} as HostUpdateStatus);
+    await vi.runAllTimersAsync();
+    expect(test.notify).not.toHaveBeenCalled();
+    expect(test.state().updateSnoozedUntil).toBeNull();
   });
 
   it("adopts Host broadcasts and ignores an older HTTP completion", async () => {

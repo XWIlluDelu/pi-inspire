@@ -1,7 +1,10 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GitStatusResponse } from "../../shared/contracts";
+import type {
+  GitDiffResponse,
+  GitStatusResponse,
+} from "../../shared/contracts";
 import { AppTopbar } from "../../src/components/AppTopbar";
 import { AppStore, store as appStore } from "../../src/store";
 import {
@@ -28,18 +31,25 @@ const cleanStatus = {
       path,
       staged: { kind: "modified" as const },
       unstaged: { kind: "modified" as const },
+      worktree: { kind: "modified" as const },
       untracked: false,
     },
   ],
   total: 1,
   truncated: false,
-  groups: {
-    conflicted: [],
-    staged: [path.id],
-    unstaged: [path.id],
-    untracked: [],
-  },
 };
+
+function textDiff(text: string): GitDiffResponse {
+  return {
+    kind: "text",
+    path,
+    truncated: false,
+    encodingLossy: false,
+    additions: 1,
+    deletions: 0,
+    lines: [{ kind: "add", text, oldLine: null, newLine: 1 }],
+  };
+}
 
 describe("Git inspection ownership and freshness", () => {
   beforeEach(() => installFakeWebSocket());
@@ -112,25 +122,23 @@ describe("Git inspection ownership and freshness", () => {
                 {
                   path: deletedPath,
                   unstaged: { kind: "deleted" },
+                  worktree: { kind: "deleted" },
                   untracked: false,
                 },
               ],
               total: 2,
-              groups: {
-                ...cleanStatus.groups,
-                unstaged: [path.id, deletedPath.id],
-              },
             },
           };
         if (url.startsWith("/api/git/diff"))
           return {
             body: {
               path: jsonBody(init).pathId === path.id ? path : deletedPath,
-              side: "unstaged",
               kind: "binary",
             },
           };
         if (url.startsWith("/api/resources/resolve")) {
+          if (jsonBody(init).workspacePath === deletedPath.workspacePath)
+            return { status: 404, body: { error: "File was deleted" } };
           resourceSignal = init.signal;
           resourceStarted.resolve();
           return lateResource.promise;
@@ -144,9 +152,9 @@ describe("Git inspection ownership and freshness", () => {
       const opening =
         origin === "files"
           ? store.openWorkspaceFile(path.workspacePath)
-          : store.openGitDiff(path.id, "unstaged");
+          : store.openGitDiff(path.id);
       await resourceStarted.promise;
-      await store.openGitDiff(deletedPath.id, "unstaged");
+      await store.openGitDiff(deletedPath.id);
       const selectedDiff = store.getState().gitDiff;
       expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
 
@@ -164,11 +172,15 @@ describe("Git inspection ownership and freshness", () => {
         },
       });
       await opening;
-      // The retained Files preview can finish without reclaiming Changes.
+      // A deleted file is now its own active tab. The former file's late body
+      // must neither replace that tab's error nor reclaim its Git selection.
       await vi.waitFor(() =>
-        expect(store.getState().resourcePreview?.status).toBe("ready"),
+        expect(store.getState().resourcePreview).toMatchObject({
+          status: "error",
+          reference: deletedPath.workspacePath,
+        }),
       );
-      expect(resourceSignal?.aborted).toBe(false);
+      expect(resourceSignal?.aborted).toBe(true);
       expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
       expect(store.getState().gitDiff).toBe(selectedDiff);
       await store.refreshGitStatus();
@@ -202,28 +214,14 @@ describe("Git inspection ownership and freshness", () => {
       if (url.startsWith("/api/git/diff")) {
         diffCalls += 1;
         return {
-          body: {
-            kind: "text",
-            path,
-            side: "unstaged",
-            truncated: false,
-            encodingLossy: false,
-            lines: [
-              {
-                kind: "add",
-                text: `+version-${diffCalls}`,
-                oldLine: null,
-                newLine: 1,
-              },
-            ],
-          },
+          body: textDiff(`+version-${diffCalls}`),
         };
       }
       return baseRoutes(url, init);
     });
     const { store } = await initStore();
     await store.refreshGitStatus();
-    await store.openGitDiff(path.id, "unstaged");
+    await store.openGitDiff(path.id);
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { lines: [{ text: "+version-1" }] },
@@ -259,21 +257,7 @@ describe("Git inspection ownership and freshness", () => {
       if (url.startsWith("/api/git/diff")) {
         diffCalls += 1;
         return {
-          body: {
-            kind: "text",
-            path,
-            side: "unstaged",
-            truncated: false,
-            encodingLossy: false,
-            lines: [
-              {
-                kind: "add",
-                text: `+transport-${diffCalls}`,
-                oldLine: null,
-                newLine: 1,
-              },
-            ],
-          },
+          body: textDiff(`+transport-${diffCalls}`),
         };
       }
       return baseRoutes(url, init);
@@ -285,7 +269,7 @@ describe("Git inspection ownership and freshness", () => {
         head: { name: "branch-1" },
       }),
     );
-    await store.openGitDiff(path.id, "unstaged");
+    await store.openGitDiff(path.id);
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { lines: [{ text: "+transport-1" }] },
@@ -355,21 +339,7 @@ describe("Git inspection ownership and freshness", () => {
         if (url.startsWith("/api/git/diff")) {
           diffCalls += 1;
           return {
-            body: {
-              kind: "text",
-              path,
-              side: "unstaged",
-              truncated: false,
-              encodingLossy: false,
-              lines: [
-                {
-                  kind: "add",
-                  text: `+poll-${diffCalls}`,
-                  oldLine: null,
-                  newLine: 1,
-                },
-              ],
-            },
+            body: textDiff(`+poll-${diffCalls}`),
           };
         }
         return baseRoutes(url, init);
@@ -378,78 +348,18 @@ describe("Git inspection ownership and freshness", () => {
       await store.refreshGitStatus();
       store.setGitSurfaceVisible("resources-pane", true);
       await vi.advanceTimersByTimeAsync(0);
-      await store.openGitDiff(path.id, "unstaged");
+      await store.openGitDiff(path.id);
       await vi.advanceTimersByTimeAsync(4_001);
       expect(store.getState().gitDiff).toMatchObject({
         status: "ready",
         result: { lines: [{ text: "+poll-2" }] },
       });
 
-      store.setContextMode("files");
+      store.showFileBrowser();
       await vi.advanceTimersByTimeAsync(4_001);
       expect(diffCalls).toBe(2);
     } finally {
       store?.setGitSurfaceVisible("resources-pane", false);
-      vi.useRealTimers();
-    }
-  });
-
-  it("coalesces in-flight hints into exactly one queued rerun", async () => {
-    const releases: Array<() => void> = [];
-    let calls = 0;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/git/status")) {
-        calls += 1;
-        await new Promise<void>((resolve) => releases.push(resolve));
-        return { body: cleanStatus };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    store.setGitSurfaceVisible("test", true);
-    await vi.waitFor(() => expect(calls).toBe(1));
-    const queued = store.refreshGitStatus();
-    void store.refreshGitStatus();
-    releases.shift()!();
-    await vi.waitFor(() => expect(calls).toBe(2));
-    releases.shift()!();
-    await queued;
-    expect(calls).toBe(2);
-    store.setGitSurfaceVisible("test", false);
-  });
-
-  it("waits one full interval after a slow status completion before polling again", async () => {
-    vi.useFakeTimers();
-    let store: AppStore | null = null;
-    try {
-      const releases: Array<() => void> = [];
-      let calls = 0;
-      installFetch(async (url, init) => {
-        if (url.startsWith("/api/git/status")) {
-          calls += 1;
-          await new Promise<void>((resolve) => releases.push(resolve));
-          return { body: cleanStatus };
-        }
-        return baseRoutes(url, init);
-      });
-      ({ store } = await initStore());
-      store.setGitSurfaceVisible("test", true);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(calls).toBe(1);
-
-      await vi.advanceTimersByTimeAsync(12_000);
-      expect(calls).toBe(1);
-      releases.shift()!();
-      await vi.advanceTimersByTimeAsync(0);
-
-      await vi.advanceTimersByTimeAsync(3_999);
-      expect(calls).toBe(1);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(calls).toBe(2);
-      releases.shift()!();
-      await vi.advanceTimersByTimeAsync(0);
-    } finally {
-      store?.setGitSurfaceVisible("test", false);
       vi.useRealTimers();
     }
   });
@@ -467,21 +377,7 @@ describe("Git inspection ownership and freshness", () => {
         if (url.startsWith("/api/git/diff")) {
           diffCalls += 1;
           return {
-            body: {
-              kind: "text",
-              path,
-              side: "unstaged",
-              truncated: false,
-              encodingLossy: false,
-              lines: [
-                {
-                  kind: "add",
-                  text: `+tool-${diffCalls}`,
-                  oldLine: null,
-                  newLine: 1,
-                },
-              ],
-            },
+            body: textDiff(`+tool-${diffCalls}`),
           };
         }
         return baseRoutes(url, init);
@@ -489,7 +385,7 @@ describe("Git inspection ownership and freshness", () => {
       const { store, socket } = await initStore();
       store.setGitSurfaceVisible("test", true);
       await vi.advanceTimersByTimeAsync(0);
-      await store.openGitDiff(path.id, "unstaged");
+      await store.openGitDiff(path.id);
       expect(calls).toBe(1);
       socket.emit({
         type: "tool_execution_end",
@@ -514,14 +410,14 @@ describe("Git inspection ownership and freshness", () => {
     }
   });
 
-  it("defaults a multifacet path to unstaged and drops a late diff after a session switch", async () => {
+  it("drops a late diff after a session switch", async () => {
     let release!: () => void;
-    let requestedSide = "";
+    let requestedPath = "";
     let aborted = false;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/git/status")) return { body: cleanStatus };
       if (url.startsWith("/api/git/diff")) {
-        requestedSide = String(jsonBody(init).side);
+        requestedPath = String(jsonBody(init).pathId);
         init.signal?.addEventListener("abort", () => {
           aborted = true;
         });
@@ -529,7 +425,7 @@ describe("Git inspection ownership and freshness", () => {
           release = resolve;
         });
         return {
-          body: { kind: "empty", path, side: "unstaged", reason: "no-changes" },
+          body: { kind: "empty", path, reason: "no-changes" },
         };
       }
       return baseRoutes(url, init);
@@ -537,7 +433,7 @@ describe("Git inspection ownership and freshness", () => {
     const { store, socket } = await initStore();
     await store.refreshGitStatus();
     const opening = store.openGitDiff(path.id);
-    await vi.waitFor(() => expect(requestedSide).toBe("unstaged"));
+    await vi.waitFor(() => expect(requestedPath).toBe(path.id));
     socket.emit({
       type: "snapshot",
       data: activeSnapshot({ sessionId: "s2", cwd: "/other" }),

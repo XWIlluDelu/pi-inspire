@@ -760,27 +760,6 @@ export class SessionCatalogController {
     }
   }
 
-  private hydrationFailure(
-    kind: "session ids" | "curated folders",
-    error: unknown,
-  ): Error {
-    const message =
-      error instanceof Error ? error.message : "Unknown hydration failure";
-    const label =
-      kind === "session ids" ? "active sessions" : "curated folders";
-    if (error instanceof ApiError) {
-      return new ApiError(
-        error.status,
-        `Failed to load ${label}: ${message}`,
-        error.matches,
-        error.code,
-        error.edge,
-        error.authorityId,
-      );
-    }
-    return new Error(`Failed to load ${label}: ${message}`);
-  }
-
   /** Hydration is a separate atomic union. During an optimistic preference
    * write, rows owned by the last confirmed curation survive until the host
    * accepts or rejects the patch. Every request stays inside route caps. */
@@ -817,16 +796,12 @@ export class SessionCatalogController {
         index,
         index + MAX_SESSION_ID_HYDRATION_IDS,
       );
-      try {
-        const response = await api.sessionsByIds(chunk);
-        if (!isCurrent()) return null;
-        const requested = new Set(chunk);
-        for (const session of response.sessions) {
-          if (requested.has(session.id) && !baseIds.has(session.id))
-            hydration.set(session.id, session);
-        }
-      } catch (error) {
-        throw this.hydrationFailure("session ids", error);
+      const response = await api.sessionsByIds(chunk);
+      if (!isCurrent()) return null;
+      const requested = new Set(chunk);
+      for (const session of response.sessions) {
+        if (requested.has(session.id) && !baseIds.has(session.id))
+          hydration.set(session.id, session);
       }
     }
 
@@ -841,16 +816,12 @@ export class SessionCatalogController {
         index,
         index + MAX_SESSION_CWD_HYDRATION_CWDS,
       );
-      try {
-        const response = await api.sessionsByCwds(chunk);
-        if (!isCurrent()) return null;
-        const requested = new Set(chunk);
-        for (const session of response.sessions) {
-          if (requested.has(session.cwd) && !baseIds.has(session.id))
-            hydration.set(session.id, session);
-        }
-      } catch (error) {
-        throw this.hydrationFailure("curated folders", error);
+      const response = await api.sessionsByCwds(chunk);
+      if (!isCurrent()) return null;
+      const requested = new Set(chunk);
+      for (const session of response.sessions) {
+        if (requested.has(session.cwd) && !baseIds.has(session.id))
+          hydration.set(session.id, session);
       }
     }
     return hydration;

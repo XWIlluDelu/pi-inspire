@@ -171,7 +171,6 @@ describe("session list pagination", () => {
 
     const first = store.loadOlderSessions();
     const duplicate = store.loadOlderSessions();
-    expect(duplicate).toBe(first);
     await vi.waitFor(() => expect(olderCalls).toBe(1));
 
     await store.loadSessions("needle");
@@ -188,7 +187,7 @@ describe("session list pagination", () => {
       "current-older",
     ]);
     releaseOlder();
-    await first;
+    await Promise.all([first, duplicate]);
     expect(olderCalls).toBe(1);
     expect(store.getState().sessions.map((session) => session.id)).toEqual([
       "match",

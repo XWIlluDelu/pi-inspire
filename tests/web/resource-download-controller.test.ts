@@ -31,6 +31,7 @@ function fixture() {
       reference: descriptor.reference,
       descriptor,
     },
+    resourceTabs: [],
     resourceAvailability: {},
     resourceWorkspacePaths: {},
   };

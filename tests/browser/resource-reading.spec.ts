@@ -1,12 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
-import { hostRequest } from "./support/host-request";
 import { openEventSession, routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import { hostRequest } from "./support/host-request";
+import {
+  openFixtureSession,
+  pairedPage,
+  openSettings,
+} from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
-test("Files refresh preserves Source mode and reading offsets", async ({
+test("PDF controls stay reachable and stable when floating file actions collapse", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -16,82 +20,165 @@ test("Files refresh preserves Source mode and reading offsets", async ({
   const pane = page.locator(".ctx");
   await pane
     .getByRole("searchbox", { name: "Search workspace files" })
-    .fill("file-previews/document.md");
+    .fill("report.pdf");
   await pane
     .locator(
-      '[data-workspace-path="tests/browser/fixtures/file-previews/document.md"]',
+      '[data-workspace-path="tests/browser/fixtures/file-previews/report.pdf"]',
     )
     .click();
-  await pane.getByRole("button", { name: "Source", exact: true }).click();
-  const source = pane.getByRole("region", { name: "File source" });
-  const originalHeading = "Observation log · Station 07";
-  const refreshedHeading = "Observation log · Station 08";
-  await expect(source).toContainText(originalHeading);
-  await source.evaluate((element) => {
-    element.scrollTop = 100;
-    element.scrollLeft = 80;
-  });
-  await expect
-    .poll(() => source.evaluate((element) => element.scrollTop))
-    .toBe(100);
-  await expect
-    .poll(() => source.evaluate((element) => element.scrollLeft))
-    .toBe(80);
+  const pdf = pane.getByRole("document", { name: "Preview report.pdf" });
+  const controls = pdf.getByRole("group", { name: "PDF controls" });
+  const fit = controls.getByRole("button", { name: "Fit PDF to width" });
+  await expect(pdf.locator("canvas").first()).toBeVisible();
 
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const contentRequest = "**/api/resources/*/content?**";
-  await page.route(
-    contentRequest,
-    async (route) => {
-      const response = await route.fetch();
-      const original = await response.text();
-      expect(original).toContain(originalHeading);
-      const refreshed = original.replace(originalHeading, refreshedHeading);
-      expect(refreshed).not.toBe(original);
-      expect(refreshed).not.toContain(originalHeading);
-      // Keep the real response's byte-range metadata valid while proving that
-      // the selected file received new content, not only its retained preview.
-      expect(Buffer.byteLength(refreshed)).toBe(Buffer.byteLength(original));
-      await pending;
-      await route.fulfill({ response, body: refreshed });
-    },
-    { times: 1 },
-  );
-  const refresh = pane.getByRole("button", { name: "Refresh context pane" });
-  const requested = page.waitForRequest(contentRequest);
-  try {
-    await refresh.click();
-    await requested;
-    await expect(refresh).toHaveAttribute("aria-busy", "true");
-    await expect(source).toBeVisible();
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const show = pane.getByRole("button", {
+      name: "Show file actions",
+      exact: true,
+    });
+    if (await show.isVisible()) await show.click();
+    await expect(
+      pane.getByRole("button", { name: "Hide file actions", exact: true }),
+    ).toBeVisible();
+    const top = (await controls.boundingBox())!.y;
+    const originalWidth = await pdf
+      .locator("canvas")
+      .first()
+      .evaluate((el) => el.getBoundingClientRect().width);
+    await controls
+      .getByRole("button", { name: "Zoom in PDF", exact: true })
+      .click();
+    await expect(fit).toHaveText("125%");
+    expect((await controls.boundingBox())!.y).toBeCloseTo(top, 1);
+    await expect
+      .poll(() =>
+        pdf
+          .locator("canvas")
+          .first()
+          .evaluate((el) => el.getBoundingClientRect().width),
+      )
+      .toBeGreaterThan(originalWidth);
+    await fit.click();
+    await expect(fit).toHaveText("Fit");
+    await controls.getByRole("button", { name: "Next PDF page" }).click();
+    await expect(pdf.getByRole("region", { name: "PDF page 2" })).toBeVisible();
+    await controls.getByRole("button", { name: "Previous PDF page" }).click();
+    await expect(pdf.getByRole("region", { name: "PDF page 1" })).toBeVisible();
+    expect(
+      await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    ).toBe(true);
+  }
+});
+
+for (const mode of ["Source", "Preview"] as const) {
+  test(`Files refresh preserves ${mode} mode and reading offsets`, async ({
+    page,
+  }) => {
+    // A short window gives the fixture real vertical scrolling; Source also
+    // overflows horizontally so the test exercises both saved offsets.
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await pairedPage(page);
+    await openFixtureSession(
+      page,
+      /Resource virtualization and sandbox fixture/,
+    );
+    await page.getByRole("button", { name: "Toggle resources panel" }).click();
+    const pane = page.locator(".ctx");
+    await pane
+      .getByRole("searchbox", { name: "Search workspace files" })
+      .fill("file-previews/document.md");
+    await pane
+      .locator(
+        '[data-workspace-path="tests/browser/fixtures/file-previews/document.md"]',
+      )
+      .click();
+    if (mode === "Source")
+      await pane.getByRole("button", { name: "Source", exact: true }).click();
+    const source =
+      mode === "Source"
+        ? pane.getByRole("region", { name: "File source" })
+        : pane.locator(".res__preview-document");
+    const horizontalOffset = mode === "Source" ? 80 : 0;
+    const originalHeading = "Observation log · Station 07";
+    const refreshedHeading = "Observation log · Station 08";
     await expect(source).toContainText(originalHeading);
+    await page.evaluate(() => document.fonts.ready);
+    const scrollRange = await source.evaluate((element) => ({
+      vertical: element.scrollHeight - element.clientHeight,
+      horizontal: element.scrollWidth - element.clientWidth,
+    }));
+    expect(scrollRange.vertical).toBeGreaterThanOrEqual(100);
+    expect(scrollRange.horizontal).toBeGreaterThanOrEqual(horizontalOffset);
+    await source.evaluate((element, left) => {
+      element.scrollTop = 100;
+      element.scrollLeft = left;
+    }, horizontalOffset);
     await expect
       .poll(() => source.evaluate((element) => element.scrollTop))
       .toBe(100);
     await expect
       .poll(() => source.evaluate((element) => element.scrollLeft))
-      .toBe(80);
-  } finally {
-    release();
-  }
-  // Global refresh also rescans directories and search results. The selected
-  // file's new content is the completion boundary for its reading position.
-  await expect(source).toContainText(refreshedHeading);
-  await expect(source).not.toContainText(originalHeading);
-  await expect(source).toBeVisible();
-  await expect(
-    pane.getByRole("button", { name: "Preview", exact: true }),
-  ).toBeVisible();
-  await expect
-    .poll(() => source.evaluate((element) => element.scrollTop))
-    .toBe(100);
-  await expect
-    .poll(() => source.evaluate((element) => element.scrollLeft))
-    .toBe(80);
-});
+      .toBe(horizontalOffset);
+
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const contentRequest = "**/api/resources/*/content?**";
+    await page.route(
+      contentRequest,
+      async (route) => {
+        const response = await route.fetch();
+        const original = await response.text();
+        expect(original).toContain(originalHeading);
+        const refreshed = original.replace(originalHeading, refreshedHeading);
+        expect(refreshed).not.toBe(original);
+        expect(refreshed).not.toContain(originalHeading);
+        // Keep the real response's byte-range metadata valid while proving that
+        // the selected file received new content, not only its retained preview.
+        expect(Buffer.byteLength(refreshed)).toBe(Buffer.byteLength(original));
+        await pending;
+        await route.fulfill({ response, body: refreshed });
+      },
+      { times: 1 },
+    );
+    const refresh = pane.getByRole("button", { name: "Refresh context pane" });
+    const requested = page.waitForRequest(contentRequest);
+    try {
+      await refresh.click();
+      await requested;
+      await expect(refresh).toHaveAttribute("aria-busy", "true");
+      await expect(source).toBeVisible();
+      await expect(source).toContainText(originalHeading);
+      await expect
+        .poll(() => source.evaluate((element) => element.scrollTop))
+        .toBe(100);
+      await expect
+        .poll(() => source.evaluate((element) => element.scrollLeft))
+        .toBe(horizontalOffset);
+    } finally {
+      release();
+    }
+    // Global refresh also rescans directories and search results. The selected
+    // file's new content is the completion boundary for its reading position.
+    await expect(source).toContainText(refreshedHeading);
+    await expect(source).not.toContainText(originalHeading);
+    await expect(source).toBeVisible();
+    await expect(
+      pane.getByRole("button", {
+        name: mode === "Source" ? "Preview" : "Source",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollTop))
+      .toBe(100);
+    await expect
+      .poll(() => source.evaluate((element) => element.scrollLeft))
+      .toBe(horizontalOffset);
+  });
+}
 
 for (const mode of ["Files", "Changes"] as const) {
   test(`${mode} preview errors scroll inside the reader and keep Retry reachable in short windows`, {
@@ -100,10 +187,13 @@ for (const mode of ["Files", "Changes"] as const) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await pairedPage(page);
-    await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
+    await openFixtureSession(
+      page,
+      /Resource virtualization and sandbox fixture/,
+    );
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const pane = page.locator(".ctx");
-    await pane.getByRole("button", { name: mode, exact: true }).click();
+    await pane.getByRole("tab", { name: mode, exact: true }).click();
     let unavailable = true;
     await page.route(
       mode === "Files" ? "**/api/resources/resolve" : "**/api/git/diff",
@@ -129,13 +219,9 @@ for (const mode of ["Files", "Changes"] as const) {
         )
         .click();
     } else {
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
     }
-    const frame = pane.locator(
-      mode === "Files" ? ".file-preview__content" : ".changes__content",
-    );
+    const frame = pane.locator(".file-preview__content");
     const state = frame.locator(":scope > .res__state");
     const retry = state.getByRole("button", { name: "Retry", exact: true });
     await expect(state).toContainText(
@@ -163,14 +249,14 @@ for (const mode of ["Files", "Changes"] as const) {
       await expect(frame).toHaveCSS("overflow-y", "auto");
       await expect
         .poll(async () => {
-          // The split height settles after the viewport and drawer transition.
+          // The reader height settles after the viewport and drawer transition.
           await frame.evaluate((el) => {
             el.scrollTop = el.scrollHeight;
           });
           return retry.evaluate((button) => {
             const bounds = button.getBoundingClientRect();
             const parent = button
-              .closest(".file-preview__content, .changes__content")!
+              .closest(".file-preview__content")!
               .getBoundingClientRect();
             const visible = document.elementFromPoint(
               bounds.x + bounds.width / 2,
@@ -192,9 +278,9 @@ for (const mode of ["Files", "Changes"] as const) {
     await expect(state).toHaveCount(0);
     await expect(frame).toHaveCSS("overflow-y", "hidden");
     if (mode === "Files") {
-      await expect(pane.locator(".file-detail-header")).toContainText(
-        "document.md",
-      );
+      await expect(
+        pane.getByRole("button", { name: /Copy path .*document\.md/ }),
+      ).toBeVisible();
       await expect(
         pane.getByRole("heading", { name: "Observation log · Station 07" }),
       ).toBeVisible();
@@ -302,7 +388,7 @@ test("conversation image-reference marks follow the first caption line across re
   }
 });
 
-test("file path toolbars distinguish the reader from browser chrome across palettes", async ({
+test("floating file actions distinguish the reader from browser chrome across palettes", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -322,7 +408,7 @@ test("file path toolbars distinguish the reader from browser chrome across palet
     .click();
   await expect(pane.locator(".rich-text p").first()).toBeVisible();
   try {
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
@@ -348,10 +434,10 @@ test("file path toolbars distinguish the reader from browser chrome across palet
           .getByRole("button", { name: palette, exact: true })
           .click();
         const surfaces = await pane.evaluate((el) => {
-          const index = el.querySelector(".res__index-header")!;
-          const detail = el.querySelector(".file-detail-header")!;
+          const index = el.querySelector(".ctx__header")!;
+          const detail = el.querySelector(".file-preview__actions")!;
           const probe = document.createElement("span");
-          probe.style.backgroundColor = "var(--bg-surface)";
+          probe.style.backgroundColor = "var(--bg-file-surface)";
           detail.append(probe);
           const result = {
             index: getComputedStyle(index).backgroundColor,
@@ -368,13 +454,16 @@ test("file path toolbars distinguish the reader from browser chrome across palet
     await settings.press("Escape");
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      const header = pane.locator(".file-detail-header");
-      if (width > 900) await expect(header).toHaveCSS("height", "34px");
-      else {
+      const header = pane.locator(".file-preview__actions");
+      await expect(header).toHaveCSS("position", "absolute");
+      await expect(header).toHaveCSS("height", width <= 900 ? "38px" : "34px");
+      if (width <= 900) {
         await expect(
-          pane.getByRole("button", { name: "Back to Files", exact: true }),
+          pane.getByRole("tab", { name: "Files", exact: true }),
         ).toBeVisible();
-        expect((await header.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+        expect(
+          (await header.getByRole("button").first().boundingBox())!.height,
+        ).toBeGreaterThanOrEqual(32);
       }
       expect(
         await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
@@ -398,14 +487,11 @@ test("Markdown and notebook prose follow reading size without scaling resource c
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   const pane = page.locator(".ctx");
   const chromeSize = await pane
-    .getByRole("button", { name: "Files", exact: true })
+    .getByRole("tab", { name: "Files", exact: true })
     .evaluate((el) => getComputedStyle(el).fontSize);
   try {
     for (const file of ["document.md", "notebook.ipynb"]) {
-      const back = pane.getByRole("button", {
-        name: /Back to file browser for/,
-      });
-      if (await back.isVisible()) await back.click();
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
       await pane
         .getByRole("searchbox", { name: "Search workspace files" })
         .fill(file);
@@ -423,9 +509,7 @@ test("Markdown and notebook prose follow reading size without scaling resource c
         ["comfortable", "15.5px"],
         ["large", "17px"],
       ]) {
-        await page
-          .getByRole("button", { name: "Settings", exact: true })
-          .click();
+        await openSettings(page);
         const settings = page.getByRole("dialog", {
           name: "Settings",
           exact: true,
@@ -445,7 +529,7 @@ test("Markdown and notebook prose follow reading size without scaling resource c
         await settings.press("Escape");
         await expect(paragraph).toHaveCSS("font-size", size!);
         await expect(
-          pane.getByRole("button", { name: "Files", exact: true }),
+          pane.getByRole("tab", { name: "Files", exact: true }),
         ).toHaveCSS("font-size", chromeSize);
       }
       await page.setViewportSize({ width: 390, height: 844 });

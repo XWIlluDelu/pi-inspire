@@ -78,8 +78,13 @@
   box-shadow: var(--shadow-overlay);
 }
 
+/* A fixed row height lets the floating terminal tools start below it. */
+.terminal-pane {
+  --terminal-context-h: 33px;
+}
+
 .terminal-project-context {
-  min-height: 30px;
+  height: var(--terminal-context-h);
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -90,6 +95,17 @@
   color: var(--muted);
   background: var(--bg-raised);
   font: 400 var(--text-xs) / 1.2 var(--font-sans);
+}
+
+.terminal-project-context > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-project-context button {
+  flex: none;
 }
 
 .terminal-project-context strong {
@@ -115,6 +131,10 @@
 }
 
 @media (pointer: coarse) {
+  .terminal-pane {
+    --terminal-context-h: 53px;
+  }
+
   .terminal-project-context button {
     min-height: 44px;
   }
@@ -147,6 +167,130 @@
 
 .terminal-tabs::-webkit-scrollbar {
   display: none;
+}
+
+/* Shared workbench tabs stay in their existing strip; controls alone overlay
+   the terminal so no second header consumes output rows. */
+.file-preview__actions,
+.terminal-pane--shared .terminal-tabs-shell {
+  --floating-tool-size: 28px;
+  --floating-tool-icon: 16px;
+}
+
+.terminal-pane--shared .terminal-tabs-shell :is(.icon-button, .terminal-tabs__profile) {
+  width: var(--floating-tool-size);
+  min-width: var(--floating-tool-size);
+  height: var(--floating-tool-size);
+  min-height: var(--floating-tool-size);
+  border-radius: var(--radius-control);
+}
+
+.terminal-pane--shared .terminal-tabs-shell :is(.icon-button, .terminal-tabs__profile) > svg {
+  width: var(--floating-tool-icon);
+  height: var(--floating-tool-icon);
+}
+
+/* Reserve the status/focus and search slots before the active view mounts.
+   Connection and ownership updates then replace glyphs without moving tools. */
+.terminal-pane--shared .terminal-view-controls {
+  flex: 0 0 calc(2 * var(--floating-tool-size) + 2px);
+  min-height: var(--floating-tool-size);
+}
+
+.terminal-pane--shared .terminal-view__status {
+  flex: 0 0 var(--floating-tool-size);
+  width: var(--floating-tool-size);
+  height: var(--floating-tool-size);
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+  .file-preview__actions,
+  .terminal-pane--shared .terminal-tabs-shell {
+    --floating-tool-size: 32px;
+  }
+}
+
+.terminal-tabs--shared,
+.terminal-controls {
+  display: contents;
+}
+
+.ctx__terminal-select { flex: 1; }
+.ctx__file-tab > .ctx__terminal-select { cursor: pointer; }
+.ctx__file-tab .terminal-tab__status { align-self: center; }
+.ctx__terminal-icon {
+  display: inline-flex;
+  flex: 0 0 13px;
+  height: 13px;
+  align-items: center;
+  justify-content: center;
+}
+.ctx__file-tab .terminal-tab__rename {
+  align-self: center;
+  width: calc(100% - 46px);
+  /* Same 13px icon slot as files; input contributes 1px border + 5px padding. */
+  margin-left: 20px;
+  margin-right: 4px;
+}
+
+.terminal-pane--shared .terminal-tabs-shell {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
+  min-height: 0;
+  max-width: calc(100% - 2 * var(--space-3));
+  height: auto;
+  flex: none;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-file-surface);
+}
+
+.terminal-pane--shared:has(> .terminal-project-context) .terminal-tabs-shell {
+  top: calc(var(--terminal-context-h) + var(--space-2));
+}
+
+.terminal-pane--shared .terminal-controls {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.terminal-controls[hidden],
+.terminal-pane--shared .terminal-controls[hidden] { display: none; }
+.terminal-controls-toggle { flex: 0 0 auto; }
+.terminal-pane--shared .terminal-controls-toggle[aria-expanded="true"] {
+  margin-inline-start: var(--space-1);
+}
+.terminal-pane--shared .terminal-tabs__new:has(details) + .terminal-view-controls,
+.terminal-pane--shared .terminal-tabs__focus {
+  margin-inline-start: var(--space-1);
+}
+.terminal-pane--shared .terminal-tabs-shell:has(> .terminal-controls-toggle[aria-expanded="false"]) {
+  padding-inline: 2px;
+}
+.terminal-pane--shared .terminal-tabs__new {
+  border: 0;
+  padding: 0;
+}
+.terminal-pane--shared .terminal-tabs__new > button[hidden] { display: none; }
+.terminal-pane--shared .terminal-tabs__new:has(> button[hidden]):not(:has(details)) { display: none; }
+.terminal-pane--shared .terminal-tabs__profile-new { display: none; }
+.terminal-pane--shared .terminal-tabs__profile-chevron { display: block; }
+
+/* Temporary search, selection and error overlays own this corner. Keep the
+   user's expanded/collapsed choice for when the overlay closes. */
+.terminal-pane--shared:has(.terminal-views__item:not([hidden]) :is(.terminal-search, .terminal-selection, .terminal-copy-confirmation, .terminal-view__error)) .terminal-tabs-shell {
+  visibility: hidden;
 }
 
 .terminal-tab {
@@ -201,13 +345,8 @@
   height: 23px;
   /* Match the label after its 8px inset, 6px status, and 6px gap. */
   margin-left: 14px;
-  border: 1px solid var(--accent-focus);
-  border-radius: var(--radius-xs);
-  padding: 0 5px;
-  color: var(--ink);
-  background: var(--bg-surface);
+  padding-inline: 5px;
   font: 500 var(--text-xs)/1 var(--font-sans);
-  outline: none;
 }
 
 .terminal-tab__label {
@@ -591,16 +730,6 @@
   white-space: nowrap;
 }
 
-.terminal-view__status-label {
-  display: none;
-}
-
-@container project-terminal (min-width: 560px) {
-  .terminal-view__status-label {
-    display: inline;
-  }
-}
-
 .terminal-view__status--connecting > svg,
 .terminal-view__status--reconnecting > svg {
   color: var(--warning);
@@ -617,6 +746,12 @@
   align-items: flex-end;
   gap: 6px;
   pointer-events: none;
+}
+
+.terminal-pane--shared .terminal-view__overlays {
+  top: var(--space-2);
+  right: var(--space-3);
+  max-width: calc(100% - 2 * var(--space-3));
 }
 
 .terminal-view__overlays > * {
@@ -761,6 +896,7 @@
 .terminal-search__count {
   min-width: 42px;
   color: var(--faint);
+  font: var(--text-xs) / var(--leading-ui) var(--font-mono);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
