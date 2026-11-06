@@ -463,6 +463,77 @@ it("preserves secret drafts across transport changes and saves only the selected
   });
 });
 
+it.each([undefined, "auto"] as const)(
+  "shows automatic registration for %s without writing it during unrelated edits",
+  (registration) => {
+    const config = snapshot();
+    const entry = config.files[0]!.entries[0]!;
+    entry.oauthClientRegistration = registration;
+    const save = vi.fn();
+    render(
+      <McpServerForm
+        entry={entry}
+        initialScope="user"
+        snapshot={config}
+        busy={false}
+        error={null}
+        onSave={save}
+        onReadConnection={fixture.host.readMcpConnection}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText("Advanced configuration"));
+    fireEvent.click(screen.getByText("OAuth client configuration"));
+    expect(
+      screen.getByRole("combobox", { name: "Client registration" }),
+    ).toHaveTextContent("Automatic (Pi default)");
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Description only" },
+    });
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Save" }).closest("form")!,
+    );
+    expect(save).toHaveBeenCalledWith("user", "docs", {
+      description: "Description only",
+    });
+  },
+);
+
+it("switches to automatic registration without discarding stored client fields", () => {
+  const config = snapshot();
+  const entry = config.files[0]!.entries[0]!;
+  entry.oauthClientRegistration = "dcr";
+  entry.oauthFields.push("clientId", "clientName", "callbackUrl");
+  const save = vi.fn();
+  render(
+    <McpServerForm
+      entry={entry}
+      initialScope="user"
+      snapshot={config}
+      busy={false}
+      error={null}
+      onSave={save}
+      onReadConnection={fixture.host.readMcpConnection}
+      onCancel={() => {}}
+    />,
+  );
+  fireEvent.click(screen.getByText("Advanced configuration"));
+  fireEvent.click(screen.getByText("OAuth client configuration"));
+  fireEvent.click(
+    screen.getByRole("combobox", { name: "Client registration" }),
+  );
+  fireEvent.click(
+    screen.getByRole("option", { name: "Automatic (Pi default)" }),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.submit(
+    screen.getByRole("button", { name: "Save" }).closest("form")!,
+  );
+  expect(save).toHaveBeenCalledWith("user", "docs", {
+    oauth: { clientRegistration: "auto" },
+  });
+});
+
 it("shows CIMD registration, keeps incompatible client fields out of valid edits, and requires explicit removal when changing methods", () => {
   const config = snapshot();
   const entry = config.files[0]!.entries[0]!;

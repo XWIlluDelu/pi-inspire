@@ -1,6 +1,8 @@
 /** File configuration only; none of these values attest a Pi worker's loaded state. */
 export type McpConfigScope = "user" | "project";
 export type McpExposure = "codemode" | "deferred" | "direct" | "hidden";
+export const MCP_CLIENT_REGISTRATIONS = ["auto", "dcr", "cimd"] as const;
+export type McpClientRegistration = (typeof MCP_CLIENT_REGISTRATIONS)[number];
 export const MCP_EXPOSURES: McpExposure[] = [
   "codemode",
   "deferred",
@@ -21,7 +23,7 @@ export interface McpConfigValues {
   headers?: Record<string, string | null>;
   toolExposure?: Record<string, McpExposure | null>;
   oauth?: {
-    clientRegistration?: "dcr" | "cimd" | null;
+    clientRegistration?: McpClientRegistration | null;
     clientId?: string | null;
     clientSecret?: string | null;
     callbackPort?: number | null;
@@ -60,7 +62,7 @@ export interface McpConfigEntry {
   headerKeys: string[];
   oauthFields: string[];
   /** Registration policy is public; OAuth credentials remain write-only. */
-  oauthClientRegistration?: "dcr" | "cimd";
+  oauthClientRegistration?: McpClientRegistration;
   toolExposure: Record<string, McpExposure>;
   extraFieldCount: number;
 }
@@ -125,10 +127,9 @@ export function mcpOAuthError(value: unknown): string | undefined {
   const registration = oauth.clientRegistration;
   if (
     registration !== undefined &&
-    registration !== "dcr" &&
-    registration !== "cimd"
+    !MCP_CLIENT_REGISTRATIONS.some((mode) => mode === registration)
   )
-    return "OAuth client registration must be DCR or CIMD.";
+    return "OAuth client registration must be Auto, DCR or CIMD.";
   if (registration === "cimd") {
     if (oauth.clientId !== undefined || oauth.clientName !== undefined)
       return "CIMD cannot use a client ID or client name. Remove those values or change the registration method.";
