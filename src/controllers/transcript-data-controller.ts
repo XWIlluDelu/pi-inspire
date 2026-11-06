@@ -16,7 +16,7 @@ import {
   transcriptRevisionContains,
 } from "../app-state";
 import { asMessage, type ChatMessage, messageKey } from "../events";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { RecoveryBackoff } from "../recovery-backoff";
 
 const PROMPT_MAP_PAGE_SIZE = 100;
 
@@ -76,7 +76,6 @@ function unseen<T>(
  * paging, and deferred activity materialization. */
 export class TranscriptDataController {
   private olderTranscriptRequest: AbortController | null = null;
-  private olderRecovery = new RecoveryBackoff();
   private activityTranscriptRequests = new Map<string, AbortController>();
   private userTurnIndexRequests = new Map<string, AbortController>();
   private userTurnIndexPromises = new Map<string, Promise<UserTurnAnchor[]>>();
@@ -165,7 +164,6 @@ export class TranscriptDataController {
   invalidate(): void {
     this.olderTranscriptRequest?.abort();
     this.olderTranscriptRequest = null;
-    this.olderRecovery.reset();
     for (const request of this.activityTranscriptRequests.values())
       request.abort();
     this.activityTranscriptRequests.clear();
@@ -181,10 +179,10 @@ export class TranscriptDataController {
     const cursor = this.host.state().olderMessagesCursor;
     if (!scope || !cursor || this.host.state().loadingOlderMessages)
       return false;
-    const { api, sessionId, revision, viewId, incarnation } = scope;
+    const { api, sessionId } = scope;
     const request = new AbortController();
+    const recovery = new RecoveryBackoff();
     this.olderTranscriptRequest = request;
-    this.olderRecovery.reset();
     // A Prompt Map seek can move the paging boundary without changing the
     // session/view/revision. The old page no longer belongs at the front.
     const ownsCursor = () =>
@@ -193,35 +191,12 @@ export class TranscriptDataController {
       this.host.state().olderMessagesCursor === cursor;
     this.host.patch({ loadingOlderMessages: true, olderMessagesError: null });
     try {
-      let page;
-      while (true) {
-        try {
-          page = await api.olderTranscript(sessionId, cursor, request.signal);
-          break;
-        } catch (error) {
-          if (!ownsCursor() || !this.ownsScope(scope, true)) return false;
-          if (
-            !isTransientFailure(error) ||
-            !(await this.olderRecovery.wait(request.signal))
-          )
-            throw error;
-          if (!ownsCursor() || !this.ownsScope(scope, true)) return false;
-        }
-      }
-      const pageLineageCompatible = transcriptRevisionContains(
-        page.revision,
-        page.appendFromRevision ?? page.revision,
-        revision,
+      const page = await recovery.read(
+        () => api.olderTranscript(sessionId, cursor, request.signal),
+        request.signal,
+        () => ownsCursor() && this.ownsScope(scope, true),
       );
-      if (
-        !ownsCursor() ||
-        !this.ownsScope(scope, true) ||
-        page.sessionId !== sessionId ||
-        !pageLineageCompatible ||
-        (page.viewId ?? viewId) !== viewId ||
-        (page.incarnation ?? incarnation) !== incarnation
-      )
-        return false;
+      if (!ownsCursor() || !this.ownsPage(scope, request, page)) return false;
       const older = unseen(
         new Set(this.host.state().messages.map(messageIdentity)),
         page.messages.map(asMessage),
@@ -267,9 +242,9 @@ export class TranscriptDataController {
       );
       return false;
     } finally {
+      recovery.reset();
       if (this.olderTranscriptRequest === request) {
         this.olderTranscriptRequest = null;
-        this.olderRecovery.reset();
         if (this.ownsScope(scope))
           this.host.patch({ loadingOlderMessages: false });
       }
@@ -301,7 +276,6 @@ export class TranscriptDataController {
         let historyId: string | null = null;
         let total: number | null = null;
         const entries: ComposerHistoryEntry[] = [];
-        let changed = false;
         while (true) {
           const page = await api.composerHistory(sessionId, start);
           if (
@@ -350,7 +324,6 @@ export class TranscriptDataController {
             historyId = page.historyId;
             total = page.total;
           } else if (page.historyId !== historyId || page.total !== total) {
-            changed = true;
             break;
           }
           entries.push(...page.entries);
@@ -368,7 +341,6 @@ export class TranscriptDataController {
             );
           start = page.nextStart;
         }
-        if (!changed) break;
       }
       return null;
     } catch (error) {

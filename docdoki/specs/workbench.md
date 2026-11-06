@@ -238,9 +238,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   server order. Curated, selected, and live-session hydration is deduplicated and chunked within the
   host route bounds; it can add visible rows but never advances the chronological cursor.
 
-  Hydration and preservation failures retain the last confirmed union and recover automatically in
-  a bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks;
-  a not-yet-materialized live row is expected and never resets loaded base pages. Initial/search and
+  Hydration and preservation failures keep the last confirmed union and recover automatically in a
+  bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks; a
+  not-yet-materialized live row is expected and never resets loaded base pages. Initial/search and
   older-page failures stay beside their explicit navigation action. Foreground loading and failure
   states suppress the empty-result message until a successful empty response.
 
@@ -309,15 +309,15 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 - The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
   the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`
   state. It is keyboard-operable, off on each opening, and retained while navigating directories
-  or drive roots. The Host excludes
-  dot-prefixed names on every platform, plus Windows Hidden attributes and macOS UF_HIDDEN flags,
-  unless `showHidden=1` is explicitly requested. This is a visibility filter, not access control: a
-  typed hidden path remains usable, and readable directory links remain navigable. Native attribute
-  inspection is bounded and nonrecursive; failure is reported rather than silently showing hidden
-  entries, while explicit show-hidden browsing bypasses that inspection.
+  or drive roots. Unless `showHidden=1` is explicitly requested, the Host excludes dot-prefixed
+  names on every platform, plus Windows Hidden attributes and macOS UF_HIDDEN flags. This is a
+  visibility filter, not access control: a typed hidden path stays usable, and readable directory
+  links stay navigable. Native attribute inspection is bounded and nonrecursive; its failure is
+  reported rather than silently showing hidden entries, and explicit show-hidden browsing bypasses
+  that inspection.
 
-  Rapid visibility/navigation changes and dismissal retire old request writebacks; pending or failed
-  loads cannot confirm an earlier directory as the requested destination.
+  Rapid visibility/navigation changes and dismissal retire old request writebacks; pending or
+  failed loads cannot confirm an earlier directory as the requested destination.
 
 ## Feedback scope
 

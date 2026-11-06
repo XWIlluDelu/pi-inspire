@@ -14,7 +14,7 @@ import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { RecoveryBackoff } from "../recovery-backoff";
 import { store, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
@@ -171,24 +171,16 @@ export function ProjectFilePicker({
     setStatus("loading");
     const read = async () => {
       try {
-        while (owns()) {
-          try {
-            const result = await search(query);
-            if (!owns()) return;
-            setResults(rankProjectFiles(result.files, query));
-            setTruncated(Boolean(result.truncated));
-            setActiveIndex(0);
-            setStatus("ready");
-            return;
-          } catch (cause) {
-            if (!owns()) return;
-            if (
-              !isTransientFailure(cause) ||
-              !(await recovery.wait(request.signal))
-            )
-              throw cause;
-          }
-        }
+        const result = await recovery.read(
+          () => search(query),
+          request.signal,
+          owns,
+        );
+        if (!owns()) return;
+        setResults(rankProjectFiles(result.files, query));
+        setTruncated(Boolean(result.truncated));
+        setActiveIndex(0);
+        setStatus("ready");
       } catch {
         if (owns()) setStatus("error");
       } finally {
