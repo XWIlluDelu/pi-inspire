@@ -616,12 +616,20 @@ export class TaskNotificationController {
     }
   }
   async test(): Promise<void> {
+    const api = this.host.api();
+    const generation = this.generation;
+    const current = () =>
+      this.host.api() === api && this.generation === generation;
     this.patch({ busy: true, testResult: null, error: null });
     try {
-      const result = await this.host.api()?.testTaskAlert();
+      const result = await api?.testTaskAlert();
       // Push delivery can beat the HTTP response. Do not downgrade a worker's
       // display acceptance to the earlier "sent" stage when that response arrives.
-      if (result && this.host.state().taskAlerts.testResult === null)
+      if (
+        current() &&
+        result &&
+        this.host.state().taskAlerts.testResult === null
+      )
         this.patch({
           testResult:
             result.transport === "push"
@@ -629,12 +637,13 @@ export class TaskNotificationController {
               : "Sent to this page for display.",
         });
     } catch (error) {
-      this.patch({
-        error:
-          error instanceof Error ? error.message : "Test notification failed",
-      });
+      if (current())
+        this.patch({
+          error:
+            error instanceof Error ? error.message : "Test notification failed",
+        });
     } finally {
-      this.finishUpdate();
+      if (current()) this.finishUpdate();
     }
   }
 }

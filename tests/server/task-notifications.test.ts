@@ -339,7 +339,7 @@ describe("installation-owned notification delivery", () => {
   });
 
   it("retains known transport failures through refresh, recovers, and retires expired subscriptions", async () => {
-    const { service, send } = await fixture();
+    const { service, send, path } = await fixture();
     await service.configure(principal, "desktop", subscription);
     send.mockRejectedValueOnce(new Error("PRIVATE ENDPOINT"));
     await expect(service.test(principal)).rejects.toThrow("push service");
@@ -347,6 +347,11 @@ describe("installation-owned notification delivery", () => {
     expect((await service.settings(principal)).error).toContain("push service");
     await service.test(principal);
     expect((await service.settings(principal)).error).toBeNull();
+    await service.configure(other, "title");
+    run(service);
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(2),
+    );
     send.mockRejectedValueOnce(
       Object.assign(new Error("PRIVATE ENDPOINT"), { statusCode: 410 }),
     );
@@ -358,6 +363,9 @@ describe("installation-owned notification delivery", () => {
       endpoint: subscription.endpoint,
       error: expect.stringContaining("expired"),
     });
+    expect(JSON.parse(await readFile(path, "utf8")).pending).toEqual([
+      expect.objectContaining({ deviceId: other.id }),
+    ]);
     // A refresh must not resurrect an endpoint already rejected by the vendor.
     await expect(
       service.configure(principal, undefined, subscription),
@@ -375,6 +383,47 @@ describe("installation-owned notification delivery", () => {
       subscribed: true,
       error: null,
     });
+    const received = vi.fn(() => true);
+    service.attach(principal, received);
+    await vi.waitFor(() => expect(received).toHaveBeenCalledOnce());
+    expect(received).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "task_alert_settings" }),
+    );
+  });
+
+  it("keeps a renewed enrollment and its queued results when an old push expires late", async () => {
+    const { service, send, path } = await fixture();
+    await service.configure(principal, "desktop", subscription);
+    let rejectPush!: (error: unknown) => void;
+    send.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectPush = reject;
+        }),
+    );
+    const pendingTest = expect(service.test(principal)).rejects.toThrow(
+      "subscription expired",
+    );
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+    const renewed = {
+      ...subscription,
+      endpoint: subscription.endpoint + "-renewed",
+    };
+    await service.configure(principal, undefined, renewed);
+    run(service);
+    await vi.waitFor(async () =>
+      expect(JSON.parse(await readFile(path, "utf8")).pending).toHaveLength(1),
+    );
+    rejectPush(Object.assign(new Error("gone"), { statusCode: 410 }));
+    await pendingTest;
+    expect(await service.settings(principal)).toMatchObject({
+      subscribed: true,
+      endpoint: renewed.endpoint,
+      error: null,
+    });
+    expect(JSON.parse(await readFile(path, "utf8")).pending).toEqual([
+      expect.objectContaining({ deviceId: principal.id }),
+    ]);
   });
 
   it("synchronizes device settings without replaying old offers to existing windows", async () => {
