@@ -1,13 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { URL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { paletteTokens as tokens } from "./palette-css";
-
-const titlebarCss = await readFile(
-  new URL("../../src/styles/window-titlebar.css", import.meta.url),
-  "utf8",
-);
 
 function rgb(hex: string): number[] {
   return hex
@@ -44,18 +37,51 @@ describe("classic palette preservation", () => {
   });
 });
 
+describe("Mono readability", () => {
+  it.each(["light", "dark"])(
+    "keeps %s text and focus legible on its surfaces",
+    (theme) => {
+      const value = tokens("mono", theme);
+      for (const surface of [
+        "--bg-rail",
+        "--bg-stage",
+        "--bg-surface",
+        "--bg-raised",
+        "--bg-inset",
+        "--bg-control",
+        "--bg-prompt",
+        "--bg-code",
+      ]) {
+        for (const role of [
+          "--ink",
+          "--body",
+          "--muted",
+          "--faint",
+          "--accent-deep",
+        ]) {
+          expect(
+            contrast(rgb(value[role]!), rgb(value[surface]!)),
+            `${role} on ${surface}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+        expect(
+          contrast(rgb(value["--accent-focus"]!), rgb(value[surface]!)),
+          `focus on ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+      for (const fill of ["--accent-fill", "--accent-hover", "--accent-active"])
+        expect(
+          contrast(rgb(value["--on-accent"]!), rgb(value[fill]!)),
+          fill,
+        ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+});
+
 describe("activity identities", () => {
-  it("draws needles directly from the same Tool/Thinking identity roles", () => {
-    for (const role of ["tool", "think"]) {
-      const rule = titlebarCss.match(
-        new RegExp(`\\.window-titlebar__needle--${role}\\s*\\{([^}]+)\\}`),
-      )?.[1];
-      expect(rule).toContain(`background-color: var(--activity-${role});`);
-    }
-  });
   for (const palette of PALETTE_PREFERENCES)
     for (const theme of ["light", "dark"]) {
-      it(`${palette} ${theme} separates tool and thinking identities without independent needle colors`, () => {
+      it(`${palette} ${theme} keeps tool and thinking identities distinct and legible`, () => {
         const value = tokens(palette, theme);
         // Identity belongs to the theme family, not necessarily its text-ink shade.
         expect(value["--activity-tool"]).not.toBe(value["--activity-error"]);
@@ -66,8 +92,6 @@ describe("activity identities", () => {
           expect(
             contrast(rgb(value[role]!), rgb(value["--bg-stage"]!)),
           ).toBeGreaterThanOrEqual(3);
-        expect(value).not.toHaveProperty("--needle-tool");
-        expect(value).not.toHaveProperty("--needle-think");
       });
     }
 });

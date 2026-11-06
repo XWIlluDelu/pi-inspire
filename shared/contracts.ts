@@ -78,6 +78,7 @@ export const PALETTE_PREFERENCES = [
   "chimonanthus",
   "classic-jade",
   "classic-amber",
+  "mono",
 ] as const;
 export type PalettePreference = (typeof PALETTE_PREFERENCES)[number];
 

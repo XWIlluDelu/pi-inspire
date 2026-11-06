@@ -31,28 +31,29 @@ primary interface, and visually independent from its references.
   Hydrangea celadon green, Lycoris mineral coral, or Chimonanthus honey amber (the default),
   tuned independently in light and dark. Tinted paper surfaces extend from the sidebar
   into prompts, code and reading areas; light Composer and raised surfaces stay white.
-  Solid fills, readable accent ink and activity identity shades have distinct roles.
-  Components use the shared focus role: botanical palettes map it to their main accent,
-  while classic Jade and Amber retain their accent-ink focus. Selected sessions use a theme
-  tint without an extra frame. Classic Jade and Amber remain selectable with their
-  characteristic surfaces and accents.
-  Tool and Thinking identity use palette-aware ink, separate from success, warning, failure and
-  information status. [[design-system]] owns these roles and their usage.
-- IBM Plex Sans SC owns the interface, reading flow and uppercase `INSΠRE` wordmark, with Latin
-  and CJK in one family. Flux Mono SC owns code and machine-oriented data, including Chinese code
-  comments. Rajdhani supplies a compact mechanical voice for structural labels (Activity, resource
-  modes and Settings sections), not body text or ordinary controls. There is no reading-mode font
-  switch; [[design-system]] defines the type roles and bundled assets.
-- All palette, type, spacing, radius, elevation, and motion values remain
+  Classic Jade and Amber remain selectable with their characteristic surfaces and accents.
+  Carbon & Silicon offers neutral gray surfaces with monochrome interface emphasis while
+  semantic status colors stay distinct.
+- Solid fills, readable accent ink and activity identity shades have distinct roles. Components
+  use the shared focus role: botanical palettes map it to their main accent, while classic Jade
+  and Amber keep their accent-ink focus. Selected sessions use a theme tint without an extra
+  frame. Tool and Thinking identity use palette-aware ink, separate from success, warning,
+  failure and information status. [[design-system]] owns these roles and their usage.
+- Two type voices: IBM Plex Sans SC owns the interface, reading flow, structural labels
+  (Activity, resource modes, Settings sections and palette groups, in sentence case) and the
+  uppercase `INSΠRE` wordmark, with Latin and CJK in one family. Flux Mono SC owns code and
+  machine-oriented data, including Chinese code comments. There is no reading-mode font switch;
+  [[design-system]] defines the type roles and bundled assets.
+- All palette, type, spacing, radius, elevation, and motion values are
   centralized in `src/styles/foundation.css`, loaded through the ordered `src/styles.css`
   entrypoint. [[design-system]] defines their roles; components do not invent local palette values.
-- The `INSΠRE` wordmark and Open Reticle mark remain small, stable identifiers
-  rather than recurring decorative motifs.
+- The `INSΠRE` wordmark and Open Reticle mark are small, stable identifiers,
+  not recurring decorative motifs.
 - Motion explains state, continuity, or spatial change, stays responsive
   during streaming, and respects reduced-motion preferences.
-- The interface maintains medium information density and uses progressive
-  disclosure instead of either sparse consumer-chat minimalism or an
-  always-expanded control-panel presentation.
+- The interface keeps medium information density and uses progressive
+  disclosure, neither sparse consumer-chat minimalism nor an always-expanded
+  control-panel presentation.
 
 ## Non-goals
 

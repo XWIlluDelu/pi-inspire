@@ -47,6 +47,7 @@ describe("first-paint visual preferences", () => {
     "chimonanthus",
     "classic-jade",
     "classic-amber",
+    "mono",
   ])(
     "paints the %s palette in either luminosity before bootstrap",
     (palette) => {
