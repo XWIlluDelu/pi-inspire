@@ -835,6 +835,40 @@ describe("device-local task alerts", () => {
   });
 
   it.each(["resolves", "rejects"] as const)(
+    "keeps a newer mode choice in control when an older notification test %s",
+    async (settlement) => {
+      const { store } = await initialized();
+      const response = deferred<RouteResponse>();
+      testResponse = response.promise;
+      const pendingTest = store.testTaskNotification();
+      const local = browserSubscription();
+      const unsubscribe = deferred<boolean>();
+      local.unsubscribe.mockReturnValueOnce(unsubscribe.promise);
+      const registration = (await navigator.serviceWorker.getRegistration())!;
+      vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
+        local,
+      );
+
+      const disabling = store.setCompletionAttention("off");
+      await vi.waitFor(() => expect(local.unsubscribe).toHaveBeenCalledOnce());
+      if (settlement === "resolves")
+        response.resolve({ body: { transport: "push" } });
+      else response.reject(new Error("Old notification test failed"));
+      await pendingTest;
+
+      expect(store.getState().taskAlerts).toMatchObject({
+        mode: "off",
+        busy: true,
+        error: null,
+        testResult: null,
+      });
+      unsubscribe.resolve(true);
+      await expect(disabling).resolves.toBe(true);
+      expect(store.getState().taskAlerts.busy).toBe(false);
+    },
+  );
+
+  it.each(["resolves", "rejects"] as const)(
     "keeps another window's Off choice when pending enrollment %s",
     async (settlement) => {
       const { store, socket } = await initialized("off");

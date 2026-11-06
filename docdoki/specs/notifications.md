@@ -1,9 +1,9 @@
 ---
 purpose: Device-local task notifications that report normal completion and error-induced interruption while the user is away, including supported mobile background delivery.
 covers:
-  - server/{runtime,runtime-events,runtime-external-sessions,herdr-native-session,runtime-event-sockets,session-catalog,session-metadata,mock,browser-auth,preferences,task-notifications}.ts
+  - server/{runtime,runtime-events,runtime-external-sessions,herdr-native-session,runtime-event-sockets,session-catalog,session-metadata,browser-auth,preferences,task-notifications}.ts
   - shared/{contracts,assistant-outcome,notifications}.ts
-  - extensions/inspire-session-bridge.ts
+  - extensions/attach-control.ts
   - src/{main,browser-auth,browser-notifications,notifications}.ts*
   - src/controllers/{runtime-event,preference,connection,session-selection}-controller.ts
   - src/components/Settings.tsx
@@ -40,9 +40,9 @@ containing “abort” or “cancel”, or a Stop receipt alone, cannot classify
 of one run cannot erase a later failure; an unattributed aborted outcome cannot erase an
 independently established error.
 
-Observe directly managed and connected native Pi runs independently of browser selection.
+Observe directly managed and taken-over Pi runs independently of browser selection.
 Opening saved history or discovering a presence record does not create an outcome or start work.
-Standalone manual compaction retains its own operation identity. Terminal alerts follow
+Standalone manual compaction keeps its own operation identity. Terminal alerts follow
 [[terminal]]; they share browser permission handling but keep separate delivery intent.
 Waiting-for-input alerts are outside this design.
 
@@ -59,11 +59,11 @@ Waiting-for-input alerts are outside this design.
   identities. This installation chooses **Session** (the default) or **Project** display slots.
   A new result replaces the group's older notification. Session slots use stable session IDs;
   project slots use Host-scoped opaque cwd identities, never possibly colliding display labels.
-  Missing project metadata falls back to a separate session slot while retaining any confirmed binding.
+  Missing project metadata falls back to a separate session slot while keeping any confirmed binding.
 - Ordinary titles use `Task completed · <session name>`, `Task failed · <session name>` or
   `Task ended · <session name>`. Use the latest saved name at settlement, normalize whitespace,
   and fall back to `Unnamed session`, never the first prompt. Keep the project label in the body.
-  Renaming retains the same display slot; system layout handles wrapping and truncation.
+  Renaming keeps the same display slot; system layout handles wrapping and truncation.
   A project slot containing one notified session uses that session's name; more than one uses
   `<n> sessions`. Count distinct represented sessions, not runs or every saved session in the project.
   Outcome wording and click-through follow the latest represented result. Viewing a new result removes
@@ -72,30 +72,32 @@ Waiting-for-input alerts are outside this design.
 - A new result remains eligible to alert; duplicate delivery and delayed older results do not
   re-alert. Devices and OS policy still control banners and sounds. Test notifications keep a
   separate identity and cannot replace task results.
-- Pending sends retain only the newest result per device/session, expire and use bounded retries.
-  Project aggregation happens in the worker, which knows what is still visible: push payloads do not
-  carry an ever-growing member list or let Host backlog counts resurrect dismissed sessions.
+- Pending sends keep only the newest result per device/session, expire and use bounded retries.
+  Project aggregation happens in the worker, which knows what is still visible. Push payloads carry
+  no ever-growing member list, and Host backlog counts cannot resurrect dismissed sessions.
 
 The service worker owns display through `ServiceWorkerRegistration.showNotification()` and handles
-clicks. This supports mobile installations where the `Notification` constructor is unavailable.
+clicks, which supports mobile installations where the `Notification` constructor is unavailable.
 The Host first offers an outcome over the authenticated event connection. The worker checks all
 same-installation windows and acknowledges viewing or display. Without acknowledgement, the Host
-uses encrypted Web Push.
+uses encrypted Web Push; a foreground acknowledgement prevents push dispatch. Once sent, a push must
+display even if the user returns, because WebKit requires received pushes to produce a visible
+notification.
 
-A foreground acknowledgement prevents push dispatch. Once sent, a push must display even if the
-user returns: WebKit requires received pushes to produce a visible notification. Retain the latest
-handled result per session/project across worker restarts, including results consumed by foreground viewing.
-Visible project notifications retain their represented sessions across worker restarts. A stale unseen
-member can update the count silently without replacing newer result content; mandatory push repaints
-after dismissal do not count already-handled sessions as fresh members.
-Order results by Host settlement time, distinguishing settlements within one clock tick. A delayed
-local offer is acknowledged without display; a delayed or duplicate push silently redraws the latest
-known result rather than restoring older content. Stable tags and handled outcome identities keep
-display replacement separate from delivery deduplication. Retire that session's legacy per-run slots
-only after its replacement displays successfully. Grouping policy is Host/installation-owned and
-revisioned: late pushes cannot revert a newer choice, and a newly paired Host can restore its own
-defaults. Changing grouping clears existing task notifications without replaying old results or
-clearing test notifications. Report transport acceptance and display acceptance separately from human receipt.
+- Across worker restarts, retain the latest handled result per session/project, including results
+  consumed by foreground viewing, and the represented sessions of visible project notifications.
+  A stale unseen member can update the count silently without replacing newer result content;
+  mandatory push repaints after dismissal do not count already-handled sessions as fresh members.
+- Order results by Host settlement time, distinguishing settlements within one clock tick. A
+  delayed local offer is acknowledged without display; a delayed or duplicate push silently redraws
+  the latest known result instead of restoring older content.
+- Stable tags and handled outcome identities keep display replacement separate from delivery
+  deduplication. Retire a session's legacy per-run slots only after its replacement displays
+  successfully.
+- Grouping policy is Host/installation-owned and revisioned: late pushes cannot revert a newer
+  choice, and a newly paired Host can restore its own defaults. Changing grouping clears existing
+  task notifications without replaying old results or clearing test notifications.
+- Report transport acceptance and display acceptance separately from human receipt.
 
 ## Settings and activation
 
@@ -111,19 +113,19 @@ status beneath the control:
 | Page delivery works but push setup failed | **While Inspire is open**, with the error and Retry |
 | Subscription registered | **Background notifications enabled** |
 | iOS installation required | **Add to Home Screen**, then enable from that app |
-| Required capability unavailable | Explain it; retain Off/Mark tab |
+| Required capability unavailable | Explain it; keep Off/Mark tab |
 | Host delivery failed | Show the actionable error |
 
 A neighboring **Notification grouping** field offers **Session / Project**, with this-device scope
 and a warning that changing it clears existing task notifications. Its field-owned save, busy/error
 feedback and retry are independent of alert mode, permission and enrollment. Reset restores Session
-on this installation. Existing installations without a choice retain Session.
+on this installation. Existing installations without a choice keep Session.
 
 Only a user gesture requests permission or creates a subscription. Selecting System notification
-starts enrollment from that gesture; Enable supports migrated or interrupted enrollment. Explain that push
-uses the browser's service without requiring another account. Permission is observed from the
+starts enrollment from that gesture; Enable supports migrated or interrupted enrollment. Explain that
+push uses the browser's service without requiring another account. Permission is observed from the
 browser, independently of saved intent; OS notification policy is outside that observation. Do not
-repeatedly prompt after denial.
+prompt again after denial.
 
 **Send test notification** uses the active delivery transport and worker display path, bypasses
 foreground suppression, and reports the actual accepted stage or error. An enrolled installation
@@ -131,36 +133,36 @@ tests Host-to-push delivery.
 
 ### Installation state
 
-Persist the choice per Host and origin/browser installation. All its windows share current intent
-and delivery health. The initial event connection supplies device settings before notification offers;
-apply that intent synchronously while subscription recovery and worker synchronization run independently
-of the core connection and session catalog. Recheck on opening Settings and app resume. Reconcile an
+Persist the choice per Host and origin/browser installation; all its windows share current intent
+and delivery health. The initial event connection supplies device settings before notification
+offers. Apply that intent synchronously; subscription recovery and worker synchronization run
+independently of the core connection and session catalog. Recheck on opening Settings and app resume. Reconcile an
 existing subscription whose Host registration failed without requesting permission again; healthy
 refreshes need not rewrite enrollment. An endpoint rejected as expired stays retired until explicit
 Enable replaces the browser subscription.
 
 Async permission, subscription and display results belong to the current choice and API owner.
-Save the gesture's mode choice independently of waiting for browser permission. Later permission and
-subscription results fill in delivery capability without rewriting that choice. Late completion cannot
-re-enable alerts, overwrite another window's choice or restore stale errors.
+Save the gesture's mode choice without waiting for browser permission. Later permission and
+subscription results fill in delivery capability without rewriting that choice. Late completion
+cannot re-enable alerts, overwrite another window's choice or restore stale errors.
 Disabling alerts cancels pending sends; re-enabling does not revive them. Reset affects this device
 only. New installations default to Off. Migration preserves the old choice and any usable page
 delivery while showing enrollment as a separate step.
 
 ## Host and native-session integration
 
-The Host's outcome coordinator follows authoritative runtime reduction and retains each observed
+The Host's outcome coordinator follows authoritative runtime reduction and keeps each observed
 run or manual-compaction result independently of page interests. Snapshots reconcile known runs;
 they do not create historical outcomes. Direct workers supply settlement, assistant outcomes and
 unexpected-exit evidence. Maintenance and idle eviction are not task failures.
 
 The optional native activity reporter uses public Pi events with process/receiver-bound run and
-outcome identities. Retain settled outcomes long enough to observe short runs or a subsequent run
-starting between polls, and check receiver identity across reload, replacement and rebind. An
+outcome identities. It keeps settled outcomes long enough to observe short runs or a subsequent run
+starting between polls, and checks receiver identity across reload, replacement and rebind. An
 activity-only reporter can establish **Task ended**; classifying success or cancellation requires
-outcome evidence. Poll failures or missing presence records establish neither death nor release.
-Independently confirmed process exit during an observed run is failure evidence; ownership follows
-[[herdr-enhancement]].
+outcome evidence. Poll failures or missing presence records do not establish process exit.
+Independently confirmed process exit during an observed run is failure evidence; attachment follows
+[[session-persistence]].
 
 Bound and persist subscriptions and short-lived pending sends per Host with stable VAPID keys and
 standard Web Push. Restart preserves still-current queued sends without generating new historical outcomes.
@@ -175,11 +177,12 @@ Disabling a subscription or retiring its authority cancels its pending sends.
   and project documents. Validate subscription shape and endpoints; reject local-network targets,
   embedded credentials and redirect substitution.
 - Push contains outcome wording, the saved session name, a cwd-derived project label, opaque
-  event/session/project IDs, current grouping policy and a same-origin navigation target. Session names may appear on the lock screen.
-  Exclude message text, error details, terminal output, full filesystem paths and credentials. The
-  worker can display it without fetching from the Host. Short-lived worker state retains handled
-  outcome identities and the latest result per session/project for 24 hours, separately from shell caches.
-  Grouping policy persists independently; visible notification member data lasts with its system slot.
+  event/session/project IDs, current grouping policy and a same-origin navigation target. Session
+  names may appear on the lock screen. Exclude message text, error details, terminal output, full
+  filesystem paths and credentials. The worker can display a push without fetching from the Host.
+  Short-lived worker state keeps handled outcome identities and the latest result per
+  session/project for 24 hours, separately from shell caches. Grouping policy persists
+  independently; visible notification member data lasts as long as its system slot.
 - Clicking focuses an existing window or opens the installed-app scope, authenticates normally and
   selects the target conversation. Preserve the opaque target through pairing or Host downtime;
   a newer click supersedes an older target. A deleted target shows the selection error. Navigation

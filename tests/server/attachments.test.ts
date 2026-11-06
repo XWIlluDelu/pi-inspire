@@ -4,14 +4,18 @@ import {
   mkdir,
   mkdtemp,
   realpath,
+  readdir,
+  readFile,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Request } from "express";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AttachmentStore,
   addAttachmentContext,
@@ -41,7 +45,7 @@ function upload(
   } as Express.Multer.File;
 }
 
-describe("attachment consumption lifecycle", () => {
+describe("attachments", () => {
   let root: string;
   let store: AttachmentStore;
 
@@ -54,6 +58,92 @@ describe("attachment consumption lifecycle", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  describe("multipart upload lifetime", () => {
+    it.each(["error", "close", "already-closed"])(
+      "settles an upload cancelled during directory setup (%s) without creating a partial file",
+      async (mode) => {
+        const directory = await store.uploadDirectory();
+        const before = await readdir(directory);
+        let release!: (path: string) => void;
+        vi.spyOn(store, "uploadDirectory").mockReturnValue(
+          new Promise<string>((resolve) => {
+            release = resolve;
+          }),
+        );
+        const stream = new PassThrough();
+        // Multer also observes source errors; storage must still settle its own callback.
+        stream.on("error", () => {});
+        const closed = new Promise<void>((resolve) =>
+          stream.once("close", resolve),
+        );
+        if (mode === "already-closed") stream.destroy();
+        const done = vi.fn();
+        store
+          .multerStorage()
+          ._handleFile(
+            {} as Request,
+            { ...upload("notes.txt", "text/plain"), stream },
+            done,
+          );
+        const error = new Error("client disconnected");
+        if (mode === "error") stream.destroy(error);
+        else if (mode === "close") stream.destroy();
+        await closed;
+        release(directory);
+        await vi.waitFor(() => expect(done).toHaveBeenCalledTimes(1));
+        expect(done.mock.calls[0]?.[0]).toBeInstanceOf(Error);
+        if (mode === "error") expect(done.mock.calls[0]?.[0]).toBe(error);
+        expect(await readdir(directory)).toEqual(before);
+        expect(done).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("closes and removes a partial upload before reporting stream failure", async () => {
+      const directory = await store.uploadDirectory();
+      const before = await readdir(directory);
+      const stream = new PassThrough();
+      const error = new Error("client disconnected");
+      const result = new Promise<Error | null>((resolve) =>
+        store
+          .multerStorage()
+          ._handleFile(
+            {} as Request,
+            { ...upload("notes.txt", "text/plain"), stream },
+            (reason) => resolve(reason ?? null),
+          ),
+      );
+      stream.write("partial upload");
+      await vi.waitFor(async () =>
+        expect(
+          (await readdir(directory)).some((name) =>
+            name.startsWith(".upload-"),
+          ),
+        ).toBe(true),
+      );
+      stream.destroy(error);
+      expect(await result).toBe(error);
+      expect(await readdir(directory)).toEqual(before);
+    });
+
+    it("completes an ordinary streamed upload with its exact bytes and size", async () => {
+      const stream = new PassThrough();
+      const result = new Promise<Partial<Express.Multer.File>>(
+        (resolve, reject) =>
+          store
+            .multerStorage()
+            ._handleFile(
+              {} as Request,
+              { ...upload("notes.txt", "text/plain"), stream },
+              (error, info) => (error ? reject(error) : resolve(info!)),
+            ),
+      );
+      stream.end("complete upload");
+      const file = await result;
+      expect(file.size).toBe(Buffer.byteLength("complete upload"));
+      expect(await readFile(file.path!, "utf8")).toBe("complete upload");
+    });
   });
 
   it("validates a saved-image batch before staging any copies", async () => {

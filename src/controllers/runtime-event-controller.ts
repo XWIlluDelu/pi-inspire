@@ -1,5 +1,6 @@
 import {
   type ActiveSnapshot,
+  isBusyRunState,
   isSessionRuntimeStatus,
   type ProjectionConflict,
   type ProjectionHealth,
@@ -90,15 +91,9 @@ export class RuntimeEventController {
   reconcileObservedRuns(
     sessionStatuses: Readonly<Record<string, SessionRuntimeStatus>>,
   ): void {
-    const liveAgentStates = new Set([
-      "running",
-      "retrying",
-      "queued",
-      "compacting",
-    ]);
     for (const sessionId of this.observedRuns) {
       const runState = sessionStatuses[sessionId]?.runState;
-      if (!runState || !liveAgentStates.has(runState))
+      if (!runState || !isBusyRunState(runState))
         this.observedRuns.delete(sessionId);
     }
   }

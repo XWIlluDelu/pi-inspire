@@ -6,16 +6,30 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      native_only:
-        description: "Focused platform regressions and daily browser flows; default runs all checks"
-        type: boolean
-        default: false
+      scope:
+        description: "Checks, one platform (core skips browsers), or full acceptance"
+        type: choice
+        default: checks
+        options:
+          - checks
+          - windows-core
+          - macos-core
+          - windows
+          - macos
+          - full
+
+# Replace obsolete development/PR runs only within the same verification scope.
+# Main and other refs use unique groups so their running and pending evidence survives.
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.scope || 'full' }}-${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/auto-dev') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/auto-dev' }}
 
 permissions:
   contents: read
 
 jobs:
   quality:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'checks' || inputs.scope == 'full' }}
     runs-on: ubuntu-latest
     # Build, native/core checks and all three browser engines run serially.
     # Bound their aggregate without cancelling a still-progressing browser tail.
@@ -27,10 +41,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - if: ${{ !inputs.native_only }}
+      - if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' }}
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Quality checks
-        run: ${{ inputs.native_only && 'npm run check' || 'npm run ci' }}
+        run: ${{ github.event_name == 'workflow_dispatch' && inputs.scope == 'checks' && 'npm run check' || 'npm run ci' }}
       - if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -41,11 +55,12 @@ jobs:
           if-no-files-found: ignore
 
   platform:
-    name: ${{ matrix.os }} core and Chromium
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope != 'checks' }}
+    name: ${{ matrix.os }} ${{ endsWith(inputs.scope, '-core') && 'core' || 'core and Chromium' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: ${{ fromJSON(startsWith(inputs.scope, 'windows') && '["windows-latest"]' || startsWith(inputs.scope, 'macos') && '["macos-latest"]' || '["macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     # Native/core and the full browser suite run serially. macOS Chromium alone
     # takes about 27 minutes, followed by native WebKit; leave room for that tail
@@ -58,7 +73,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Format, lint, types and unused-code checks run once in quality.
+      # Stable acceptance runs format, lint, types and unused-code checks in quality.
+      # A targeted platform dispatch relies on the preceding local/checks validation.
       # Keep OS-dependent build and behavior checks here, collecting every
       # runnable phase even after a test failure without ignoring that failure.
       - name: Build browser app
@@ -69,7 +85,7 @@ jobs:
         run: npm run test:portable
       - name: Unit and integration tests
         if: ${{ !cancelled() && steps.web.outcome == 'success' }}
-        run: ${{ inputs.native_only && 'npm run test:platform' || 'npm test' }}
+        run: npm test
       - name: Native session Trash and recovery
         if: ${{ !cancelled() && steps.web.outcome == 'success' }}
         env:
@@ -80,14 +96,14 @@ jobs:
         run: npm run test:launcher
       - name: Install Chromium
         id: chromium
-        if: ${{ !cancelled() && steps.web.outcome == 'success' }}
+        if: ${{ !cancelled() && !endsWith(inputs.scope, '-core') && steps.web.outcome == 'success' }}
         run: npx playwright install chromium
       - name: Browser behavior tests
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
-        run: ${{ inputs.native_only && 'npx playwright test --project=chromium --grep "@cross-browser|@platform-ui"' || 'npm run test:browser:chromium' }}
+        run: npm run test:browser:chromium
       - name: Install native macOS WebKit
         id: webkit
-        if: ${{ !cancelled() && matrix.os == 'macos-latest' && steps.web.outcome == 'success' }}
+        if: ${{ !cancelled() && !endsWith(inputs.scope, '-core') && matrix.os == 'macos-latest' && steps.web.outcome == 'success' }}
         run: npx playwright install webkit
       - name: Safari-engine daily workflows
         if: ${{ !cancelled() && steps.webkit.outcome == 'success' }}
@@ -105,6 +121,7 @@ jobs:
           if-no-files-found: ignore
 
   size-report:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'full' }}
     # Measurement remains visible when it breaks but must not mask the required
     # correctness gates above.
     continue-on-error: true
@@ -129,9 +146,9 @@ jobs:
           if-no-files-found: ignore
 
   release-verify:
-    # Run after main lands and on explicit verification of another ref, without
+    # Run after main lands and on explicit full acceptance of another ref, without
     # repeating the full packaged-host smoke for every PR edit.
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.scope == 'full')
     strategy:
       fail-fast: false
       matrix:

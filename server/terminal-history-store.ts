@@ -1,9 +1,9 @@
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, readdir, rm, stat } from "node:fs/promises";
+import { lstat, open, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { TerminalHistoryBackend } from "./terminal-session-manager.js";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
-const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
 // Leave append headroom after compaction instead of rewriting the retained
@@ -17,19 +17,6 @@ function historyFile(directory: string, terminalId: string): string {
   if (!TERMINAL_ID_PATTERN.test(terminalId))
     throw new Error("Terminal history identifier is invalid");
   return join(directory, `${terminalId}.log`);
-}
-
-async function ensurePrivateDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  const info = await lstat(path);
-  if (!info.isDirectory() || info.isSymbolicLink())
-    throw new Error(`The terminal history directory is invalid: ${path}`);
-  if (typeof process.getuid === "function" && info.uid !== process.getuid())
-    throw new Error(
-      `The terminal history directory is owned by another user: ${path}`,
-    );
-  if (process.platform !== "win32" && (info.mode & 0o077) !== 0)
-    await chmod(path, PRIVATE_DIRECTORY_MODE);
 }
 
 export class TerminalHistoryStore implements TerminalHistoryBackend {
@@ -195,7 +182,13 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
     this.pendingSizes.clear();
     const writing = this.tail
       .then(async () => {
-        await ensurePrivateDirectory(this.directory);
+        await ensurePrivateDirectory(
+          this.directory,
+          "terminal history directory",
+          {
+            loose: "repair",
+          },
+        );
         for (const [terminalId, data] of batches)
           await this.appendBatch(terminalId, data);
       })

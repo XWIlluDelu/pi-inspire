@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { z } from "zod";
 import { acquireFileLock } from "./file-lock.mjs";
+import { replacePrivateStateFile } from "./private-state-file.js";
 
 const directoriesSchema = z.array(z.string().min(1).refine(isAbsolute));
 
@@ -30,21 +30,18 @@ export class ProjectDirectoryStore {
     const lease = await acquireFileLock(`${this.path}.flock`, {
       label: "known project directories",
     });
-    const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
     try {
       await lease.assertOwned();
       // Re-read under the shared file lock so concurrent Hosts retain both sets.
       const current = await this.read();
       const merged = [...new Set([...current, ...additions])];
       if (merged.length === current.length) return;
-      await writeFile(temporary, `${JSON.stringify(merged, null, 2)}\n`, {
-        mode: 0o600,
-        flag: "wx",
-      });
-      await lease.assertOwned();
-      await rename(temporary, this.path);
+      await replacePrivateStateFile(
+        this.path,
+        `${JSON.stringify(merged, null, 2)}\n`,
+        lease.assertOwned,
+      );
     } finally {
-      await rm(temporary, { force: true }).catch(() => undefined);
       await lease.release();
     }
   }

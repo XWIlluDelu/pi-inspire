@@ -106,7 +106,14 @@ an exact persisted-JSON prefix of that contiguous worker chain.
 A worker may be ahead of the observed disk prefix. Accept its suffix only after later reconciliation
 observes and proves it. Claims arriving during witness lookup are consumed only through the observed
 prefix; later claims remain queued. Retire matched claims by identity, because an earlier claim may
-be cancelled while a later receipt is pending.
+be cancelled while a later receipt is pending. Within a fully witnessed prefix, interleaved metadata
+must not block matching ordinary message claims and binding their live IDs. Retain witnessed
+ordinary messages whose completion events have not arrived so those events adopt the existing
+durable entries rather than create duplicate overlays or future claims. Legitimately repeated
+messages retain their distinct entry identities.
+The verified entry identity must also reach a completion event whose presentation is queued behind
+earlier reconciliation; consuming its persistence claim must not lose that association before the
+live overlay exists.
 
 Explicit reconciliation, filesystem/poll hints and watch-health observations share one FIFO through
 reading, asynchronous ownership verification and baseline commit. Coalesce hints while a consumer

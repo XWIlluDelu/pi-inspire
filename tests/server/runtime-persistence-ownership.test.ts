@@ -22,6 +22,205 @@ import {
 afterEach(disposeProjectionFixture);
 
 describe("writer persistence ownership", () => {
+  it("retains different live input when its timestamp matches saved input", async () => {
+    const { runtime } = await setup();
+    try {
+      await waitForReady(runtime, "session-a");
+      const internal = runtime as unknown as {
+        persistenceOwnership: RuntimePersistenceOwnershipController;
+        slots: Map<string, RuntimeSlot>;
+      };
+      const slot = internal.slots.get("session-a")!;
+      const saved = slot.projection!.messages[0] as Record<string, unknown>;
+      internal.persistenceOwnership.updateOverlay(
+        slot,
+        {
+          role: "user",
+          content: "Distinct live input",
+          timestamp: saved.timestamp,
+        },
+        "start",
+      );
+      internal.persistenceOwnership.reconcileOverlay(slot);
+      expect(slot.overlay).toHaveLength(1);
+      expect(
+        (await runtime.snapshot("session-a")).active?.transcriptPage.messages,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ content: "Distinct live input" }),
+        ]),
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it.each(
+    (["user", "assistant", "toolResult"] as const).flatMap((role) =>
+      (["before", "after"] as const).map((completion) => ({
+        role,
+        completion,
+      })),
+    ),
+  )(
+    "reconciles $role completion $completion a worker-witnessed mixed append",
+    async ({ role, completion }) => {
+      const { runtime, workers, path } = await setup();
+      try {
+        await waitForReady(runtime, "session-a");
+        const worker = workers[0]!;
+        const internals = runtime as unknown as {
+          slots: Map<string, RuntimeSlot>;
+          reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+        };
+        const slot = internals.slots.get("session-a")!;
+        const message = {
+          role,
+          content: [{ type: "text", text: "A verified message" }],
+          timestamp: 2,
+          ...(role === "assistant" ? { stopReason: "stop" } : {}),
+          ...(role === "toolResult"
+            ? { toolCallId: "read-1", toolName: "read", isError: false }
+            : {}),
+        };
+        const metadata = {
+          type: "custom",
+          id: "interleaved-metadata",
+          parentId: "u1",
+          timestamp: "2026-08-01T00:00:02.000Z",
+          customType: "tool-discovery",
+          data: { loaded: true },
+        };
+        const entry = {
+          type: "message",
+          id: "verified-message",
+          parentId: metadata.id,
+          timestamp: "2026-08-01T00:00:03.000Z",
+          message,
+        };
+        worker.emit("event", { type: "agent_start" });
+        worker.emit("event", { type: "message_start", message });
+        if (completion === "before")
+          worker.emit("event", { type: "message_end", message });
+
+        // The watcher sees an unclaimed metadata entry before the ordinary
+        // message. An exact get_entries witness must reconcile both event orders.
+        worker.startupEntries = [metadata, entry];
+        worker.startupLeafId = entry.id;
+        await appendFile(
+          path,
+          `${JSON.stringify(metadata)}\n${JSON.stringify(entry)}\n`,
+        );
+        await internals.reconcileSlot(slot, true);
+        if (completion === "after")
+          worker.emit("event", { type: "message_end", message });
+
+        await vi.waitFor(() => expect(slot.overlay).toEqual([]));
+        expect(slot.persistenceExpectations).toEqual([]);
+        const first = await runtime.snapshot("session-a");
+        const messages = first.active!.transcriptPage.messages as Array<
+          Record<string, unknown>
+        >;
+        expect(messages.filter((item) => item.timestamp === 2)).toEqual([
+          expect.objectContaining({
+            role,
+            __inspireEntryId: entry.id,
+            __inspireMessageId: `${entry.id}:0`,
+          }),
+        ]);
+
+        const later = {
+          type: "message",
+          id: "later-input",
+          parentId: entry.id,
+          timestamp: "2026-08-01T00:00:04.000Z",
+          message: { role: "user", content: "Next input", timestamp: 4 },
+        };
+        worker.startupEntries = [later];
+        worker.startupLeafId = later.id;
+        worker.emit("event", {
+          type: "message_start",
+          message: later.message,
+        });
+        worker.emit("event", {
+          type: "message_end",
+          message: later.message,
+        });
+        await appendFile(path, `${JSON.stringify(later)}\n`);
+        await internals.reconcileSlot(slot, true);
+
+        const next = await runtime.snapshot("session-a");
+        expect(next.active!.transcriptPage.messages.at(-1)).toMatchObject({
+          ...later.message,
+          __inspireEntryId: later.id,
+        });
+        expect(slot.overlay).toEqual([]);
+        expect(slot.persistenceExpectations).toEqual([]);
+        expect(slot.conflict).toBeNull();
+        expect(worker.stops).toBe(0);
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it.each(["before", "after"] as const)(
+    "binds completion persisted %s presentation delayed by lifecycle reconciliation",
+    async (persisted) => {
+      const { runtime, workers, path } = await setup();
+      const gate = deferredSignal();
+      try {
+        await waitForReady(runtime, "session-a");
+        const worker = workers[0]!;
+        const internal = runtime as unknown as {
+          slots: Map<string, RuntimeSlot>;
+          reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+        };
+        const slot = internal.slots.get("session-a")!;
+        slot.eventTail = gate.promise;
+        worker.emit("event", { type: "compaction_end", reason: "auto" });
+        const entry = {
+          type: "message",
+          id: "after-compaction",
+          parentId: "u1",
+          timestamp: "2026-08-01T00:00:03.000Z",
+          message: {
+            role: "user",
+            content: "Continue after compaction",
+            timestamp: 3,
+          },
+        };
+        worker.startupEntries = [entry];
+        worker.startupLeafId = entry.id;
+        worker.emit("event", { type: "message_start", message: entry.message });
+        worker.emit("event", { type: "message_end", message: entry.message });
+        if (persisted === "before")
+          await appendFile(path, `${JSON.stringify(entry)}\n`);
+        gate.resolve();
+        await slot.eventTail;
+        if (persisted === "after") {
+          await appendFile(path, `${JSON.stringify(entry)}\n`);
+          await internal.reconcileSlot(slot, true);
+        }
+        const messages = (await runtime.snapshot("session-a")).active!
+          .transcriptPage.messages;
+        expect(
+          messages.filter(
+            (message) =>
+              (message as { content?: unknown }).content ===
+              entry.message.content,
+          ),
+        ).toEqual([expect.objectContaining({ __inspireEntryId: entry.id })]);
+        expect(slot.overlay).toEqual([]);
+        expect(slot.persistenceExpectations).toEqual([]);
+        expect(slot.conflict).toBeNull();
+      } finally {
+        gate.resolve();
+        await runtime.close();
+      }
+    },
+  );
+
   it("waits for the stale writer's confirmed retirement before starting its sole replacement", async () => {
     const { runtime, workers, path } = await setup();
     const retirement = deferredSignal();
@@ -159,6 +358,7 @@ describe("writer persistence ownership", () => {
   it("conflicts rather than answering a stale extension-blocked writer", async () => {
     const { runtime, workers, path } = await setup();
     try {
+      await waitForReady(runtime, "session-a");
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "question",
@@ -865,6 +1065,7 @@ describe("writer persistence ownership", () => {
   it("hard-stops and recovers a conflicted extension-blocked worker through abort", async () => {
     const { runtime, workers, path } = await setup();
     try {
+      await waitForReady(runtime, "session-a");
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "blocked",
@@ -903,6 +1104,7 @@ describe("writer persistence ownership", () => {
   it("serializes concurrent extension responses and sends only the winning response", async () => {
     const { runtime, workers } = await setup();
     try {
+      await waitForReady(runtime, "session-a");
       workers[0]!.emit("event", {
         type: "extension_ui_request",
         id: "once",

@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
@@ -16,6 +15,7 @@ import {
 import { adapterIdSchema } from "../shared/tool-presentation-config.js";
 import { acquireFileLock } from "./file-lock.mjs";
 import { inspireConfigDirectory } from "./platform-paths.mjs";
+import { replacePrivateStateFile } from "./private-state-file.js";
 import { ProjectDirectoryStore } from "./project-directories.js";
 import { requestError } from "./request-error.js";
 
@@ -220,17 +220,11 @@ export class PreferencesStore {
     assertOwned: () => Promise<void>,
   ): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
-        mode: 0o600,
-        flag: "wx",
-      });
-      await assertOwned();
-      await rename(temporary, this.path);
-    } finally {
-      await rm(temporary, { force: true }).catch(() => undefined);
-    }
+    await replacePrivateStateFile(
+      this.path,
+      `${JSON.stringify(preferences, null, 2)}\n`,
+      assertOwned,
+    );
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

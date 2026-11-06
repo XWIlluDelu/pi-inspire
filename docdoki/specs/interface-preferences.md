@@ -113,7 +113,7 @@ a fresh resource scan and package update results cannot establish current-worker
 - Changes patch only their own fields through a serialized write path. Concurrent preference,
   session-pin, folder-pin, and hide changes preserve one another.
 - A refused write warns and rolls its fields back to the last Host-confirmed values. A newer local
-  change retains ownership of its fields, including across a sequence of refused writes.
+  change keeps ownership of its fields, including across a sequence of refused writes.
 - Full snapshots returned by other operations apply only to fields whose local owner has not
   advanced since that operation began; deletion cleanup therefore preserves newer settings.
 - Palette identifiers and their legacy migration follow [[design-system]]. Theme and palette changes
@@ -123,8 +123,8 @@ a fresh resource scan and package update results cannot establish current-worker
   preserve unedited invalid values and unknown fields, and a valid edit repairs its addressed field.
   Known migrations canonicalize valid saved values on the next write. Unknown patch fields still
   reject. Recent models store only provider/ID, accepting extra discovery metadata without retaining it.
-- Malformed JSON or a non-object root uses the full default projection and blocks writes to avoid
-  discarding unreadable settings. The warning names the file to repair or remove; reads never rewrite it.
+- Malformed JSON or a non-object root uses the full default projection and blocks writes, so
+  unreadable settings are never discarded. The warning names the file to repair or remove; reads never rewrite it.
 - The retired `assistantRoundDisplay` field is ignored on read and omitted on the next successful
   write; no Details/Divider preference or palette action remains.
 

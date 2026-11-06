@@ -13,39 +13,80 @@ command auto-discovery in a cold user environment. macOS/POSIX shell regressions
 shells, not forced additional historical binaries. Requirements and restricted-shell npm shim
 commands are in [Host operations](../../docs/host.md).
 
+## Browser verification priorities
+
+[[northstar]] sets desktop Chromium first, common Firefox workflows next, and bounded mobile/Safari
+adaptation. Use Chromium for ordinary interaction and visual acceptance; check Firefox for affected
+common flows. Add mobile or WebKit checks when the changed behavior warrants them rather than
+expanding every local fix into an all-engine/device matrix. Existing portable checks remain useful.
+
+Prefer shared standards-based implementations. A demonstrated browser-specific issue can justify
+a local workaround; assess its effect on core use and maintenance cost. Preserve data safety and
+core operations across supported browsers, while accepting noncritical platform differences.
+
+iPhone WebKit can zoom the viewport when a small-font input receives focus. Window width alone
+does not identify that behavior. Inputs retain their owner typography across widths, and Composer
+respects all content-size presets without a 16px floor. Narrow controls keep their touch geometry.
+The sidebar's iOS-local editing exception remains; additional workarounds require an observed
+usability problem. `tests/browser/responsive-inputs.spec.ts` exercises real Chromium/Firefox path,
+search and picker surfaces plus all three saved content-size choices.
+
 ## Verified native baseline
 
-Recorded cross-platform release evidence includes [CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523)
-at `f67d6ee` (v0.6.0): all seven jobs pass, including Linux/macOS/Windows and three installed-package
-checks. [[follow-release-0-6-0-2026-10-21]] owns that release record;
-[[follow-project-quality-2026-10-21]] records subsequent integration checks.
+The annotated source tag [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0), created on
+2026-10-21, resolves to `f67d6eef659ca4500bf39167c8460813d5d2a85d`.
+[CI run 39574685523](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39574685523) passed all
+seven jobs for that source, including Linux/macOS/Windows installed-package checks. Its release-time
+production dependency audit reported zero advisories. The eight README screenshots for that release
+came from one isolated production build with synthetic content; the mobile capture used a
+touch/coarse-pointer context at 390×844 CSS pixels.
+
 [[follow-runtime-quality-2026-10-25]] records local Linux production-install verification for 0.6.5.
+Its later `auto-dev` review fixes pass all seven jobs in
+[run 40481436169](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169)
+at `2fe2dc73`; this does not change the original v0.6.5 tag's failed result.
 
 Package checks exercise a real default daemon, PTY I/O, terminal maintenance, Host restart preserving
 terminals, authenticated readiness/pairing and native session recovery. Native filesystem/shell checks
 and simulated Win32 contracts provide separate evidence. Browser-generated IME events establish event
 handling, while physical keyboard/IME behavior still requires device testing.
 
-The earlier [full matrix at `681f694`](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39275088788)
-includes failures and retries. The [focused fixture correction](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39282788430)
-passes 26 branch and three Chromium cases on Windows/macOS, plus two macOS WebKit shortcut cases,
-without retries. Its reusable lessons are to preserve Host-normalized document separators while
-asserting raw paths separately, and to block Service Workers in mock-routing suites. It does not
-change the original full run's result.
+## CI verification scope
 
-## Windows full-suite completion
+Ordinary `auto-dev` pushes do not trigger [CI](../../.github/workflows/ci.yml). Use targeted local
+checks during development and a full matrix for a stable acceptance revision. Main pushes run the
+complete matrix; PR runs keep their existing quality, platform/browser and size checks, without
+installed-package verification.
 
-The [integrated run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39293720205) passes Linux,
-macOS and package checks but leaves two Windows integration failures and an interrupted browser phase.
-On `6500af1` with fixture corrections, the [Windows completion](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39359339465)
-passes Chromium (340 cases, one skip, zero retries), portable, native Trash/recovery and launcher
-checks. After isolating a native-attribute fixture, [full unit completion](https://github.com/XWIlluDelu/pi-inspire/actions/runs/39362531329)
-passes 3,385 cases with 152 conditional skips; the completed browser suite is not repeated.
+Manual dispatch selects one explicit `scope`:
 
-These corrections retain real files, corrupt-index and native-attribute coverage. Native Pi fixtures
-start only their own worker and use its existing integration deadline; branch fixtures wait for
-confirmation rather than a one-second poll. Focus-visible geometry uses real Tab navigation.
+- `checks` (default): Ubuntu `npm run check`, without browsers, package verification or size reporting.
+- `windows-core` or `macos-core`: only that OS's browser-app build, portable checks, full unit/integration
+  suite, native Trash/recovery and launcher checks, without browser execution.
+- `windows` or `macos`: the corresponding complete core checks and Chromium; macOS also runs WebKit.
+- `full`: the original complete seven-job matrix, including all three installed-package checks and
+  the size report.
+
+All four OS-specific scopes omit package verification and size reporting.
+
+For a Windows core check:
+
+```sh
+gh workflow run ci.yml --ref auto-dev -f scope=windows-core
+```
+
+Full acceptance requires an explicit `-f scope=full`.
+
+Concurrency replaces an older run only for the same workflow, scope and `auto-dev` ref or PR.
+A new `checks` run therefore does not cancel `full`. Other refs, including `main`, use a unique
+run identity so neither running nor pending evidence is replaced.
+
 The sequential Windows CI job has a 60-minute aggregate budget so all phases can complete.
+
+Portable fixtures preserve Host-normalized document separators while asserting raw paths separately.
+HTTP route-interception suites block Service Workers so requests reach the intended handlers.
+Native Pi fixtures start only their own worker; branch fixtures await confirmed outcomes, and
+native file-attribute fixtures use isolated files. Focus-visible geometry uses real Tab navigation.
 
 ## Git, resource and input semantics
 
@@ -146,6 +187,8 @@ live directory identity only for plausible spelling/Unicode aliases. Similarity 
 candidate; the same directory object must prove authority. Files, preview capabilities, project
 references/configuration and installed package entries share this boundary while retaining their
 file-handle and version rechecks. These live dev/inode comparisons are not cross-restart volume IDs.
+Case-insensitivity is a native filesystem property, not a blanket Windows rule. Redirected Windows
+platform-directory exports keep case-insensitive lookup after copying into a plain object.
 
 Windows terminal logs use a read/write descriptor positioned at EOF. Append-only handles can refuse
 truncate-to-tail even when ordinary appends succeed. Restored headless terminals use the same
@@ -153,7 +196,7 @@ options as live ones; otherwise old logs can accumulate during restoration.
 
 Configuration edit locks distinguish a regular file's native target from a final symlink's separate
 lexical and target authorities. Locking differently cased aliases of the same regular file twice can
-self-conflict on a case-insensitive volume. `server/configuration-edit-locks.ts` takes only its target
+self-conflict on a case-insensitive volume. `server/configuration-file.ts` takes only its target
 lock while preserving both for symlinks and creation; it neither merges hardlinks by inode nor
 lowercases paths. Both editors still recheck target/revision before publishing. Native case-alias
 saves run only when the actual test volume supports them. See [[mcp]] and [[model-settings]].
@@ -174,11 +217,6 @@ nonce/instance-bound replies. The Host signs its own current publication, and th
 these HTTP paths. [[host-lifecycle]] owns the protocol bounds and pairing/token-output rules.
 Evidence lives in `tests/server/instance-control.test.ts`, the portable lifecycle test and the
 installed-package impostor regression.
-
-Case-insensitivity is a native filesystem property, not a blanket Windows rule. Root spelling
-aliases require the same live directory identity when canonical strings differ; this does not
-persist dev/inode numbers as cross-restart volume identity. Redirected Windows platform-directory
-exports also retain case-insensitive lookup after copying into a plain object.
 
 ## Local Host shutdown authority
 
@@ -350,8 +388,9 @@ paths rather than renaming historical references. See [[composer]].
 
 Portable daily workflows stay in their semantic browser suites and opt into all engines with
 `@cross-browser`. OS-sensitive font, clipboard, scrolling and window-control fixtures use
-`@platform-ui` for the focused native Chromium matrix. Mock-routing suites block Service Workers so interception is deterministic;
-real PTY, upload and native download suites still exercise their actual transports. Native clipboard
+`@platform-ui` for the focused native Chromium matrix. Mock-routing suites block Service Workers
+(see [CI verification scope](#ci-verification-scope)); real PTY, upload and native download suites
+still exercise their actual transports. Native clipboard
 write observation waits for the original browser call to succeed rather than replacing it with a
 fake implementation. Browser engine coverage is separate from native Windows/macOS filesystem and
 shell verification.
@@ -381,8 +420,8 @@ User startup can replace/lock PROMPT_COMMAND; marker loss then means ordinary PT
 permission to override user initialization. Non-login shells keep native bashrc semantics.
 
 Command labels use the accepted history entry: fc-based relative lookup can select the previous
-line during command substitution. Bash 4.4+ provides `PS0`. Older Bash uses a top-level DEBUG event composed with existing traps;
-standalone subshell-only lists may provide no such event and therefore no copyable output range.
+line during command substitution. Bash 4.4+ provides `PS0`. Older Bash uses a top-level DEBUG event
+composed with existing traps; standalone subshell-only lists may provide no such event and therefore no copyable output range.
 Bash 5.1+ supports array-valued `PROMPT_COMMAND`; earlier versions need newline-separated shell
 commands while retaining the original exit status.
 
