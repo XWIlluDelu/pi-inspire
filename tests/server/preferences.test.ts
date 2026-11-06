@@ -96,6 +96,7 @@ describe("PreferencesStore validation", () => {
     "chimonanthus",
     "classic-jade",
     "classic-amber",
+    "mono",
   ])("persists the %s palette independently of luminosity", async (palette) => {
     const { path, store } = await fixture();
     await store.patch({ theme: "system" });

@@ -147,17 +147,19 @@ both this glow and wordmark color transitions.
   **Hydrangea** (`hydrangea`) celadon green, **Lycoris** (`lycoris`) mineral coral,
   and **Chimonanthus** (`chimonanthus`) honey amber. **Jade** (`classic-jade`) and
   **Amber** (`classic-amber`) retain their classic teal and warm-orange identities
-  and light/dark surface ladders. Chimonanthus remains the default.
-  Light, Dark, and System select luminosity independently of the palette.
-  Display presents six named color swatches; the selected choice has a border and pressed state,
-  not color alone. The picker uses two columns and keeps complete names reachable on narrow screens.
+  and light/dark surface ladders. **Carbon & Silicon** (`mono`) adds neutral gray surfaces
+  and monochrome interface emphasis, inspired by VS Code Light Modern / Dark Modern.
+  Chimonanthus is the default. Light, Dark, and System select luminosity independently of the
+  palette.
+- Display presents seven named color swatches in two columns, keeping complete names reachable on
+  narrow screens. The botanical palettes come first, then Jade and Amber; Carbon & Silicon is last
+  and spans the full picker row. The selected choice has a border and pressed state, not color alone.
 - Saved `amber` migrates to `chimonanthus`; saved `teal` (formerly Jade) migrates to
-  `hydrangea`. The Host accepts these legacy identifiers on read and API patches without
-  treating them as invalid. Reads remain observational; the next successful preference write
-  saves canonical identifiers. A browser-local visual cache applies the same migration before
-  React starts, but Host preferences remain authoritative after bootstrap. The restored Jade
-  and Amber choices use distinct canonical IDs, so selecting them persists independently without
-  changing the interpretation of legacy saved `teal` or `amber` values.
+  `hydrangea`. The Host accepts these legacy identifiers on read and in API patches. Reads remain
+  observational; the next successful preference write saves canonical identifiers. A browser-local
+  visual cache applies the same migration before React starts; Host preferences are authoritative
+  after bootstrap. Jade and Amber have distinct canonical IDs, so selecting them never changes how
+  legacy saved `teal` or `amber` values are interpreted.
 - Semantic role mappings stay consistent across palettes while botanical and classic families
   retain their distinct character. Roles may share a color value.
 - Decorative accents and readable ink are separate roles:
@@ -170,6 +172,7 @@ both this glow and wordmark color transitions.
   | Chimonanthus | `#B36010` | `#8A4605` | `#EAA03E` | `#F2B25C` |
   | Jade | `#007D78` | `#005E5A` | `#52D2C9` | `#52D2C9` |
   | Amber | `#D95A00` | `#A23E00` | `#FF781F` | `#FF781F` |
+  | Carbon & Silicon | `#4B4B4B` | `#3B3B3B` | `#C8C8C8` | `#D7D7D7` |
 
   | Role | Use |
   | --- | --- |
@@ -200,29 +203,34 @@ enabled state; disabled styling takes precedence over local action styles.
   Composer remain white. User prompts use the tinted rail family, not white cards.
   Dark stages use purple charcoal, green charcoal, warm red charcoal and warm amber
   charcoal respectively, with lighter surfaces and darker code/inset areas.
-  Component structure stays independent of palette. Classic Jade and Amber retain their own
-  accents and surface ladders.
-  Resting navigation search uses `--bg-control`; the topbar blends 88% `--bg-stage` with
+  Component structure stays independent of palette. Resting navigation search uses `--bg-control`; the topbar blends 88% `--bg-stage` with
   `--bg-rail`. Components use shared roles rather than local palette values.
 - File inspection is the deliberate exception: its host-owned Preview, Source,
   and Changes canvases use the luminosity-aware `--bg-file-*` neutral ladder,
-  which is identical across all supported palettes. Product chrome remains
-  palette-aware, rendered artifacts retain their authored backgrounds, and
-  source syntax or Diff additions/deletions retain semantic color. Syntax and Git
+  which is identical across all supported palettes. Product chrome stays
+  palette-aware, rendered artifacts keep their authored backgrounds, and
+  source syntax and Diff additions/deletions keep semantic color. Syntax and Git
   text use luminosity-aware colors with AA contrast on their neutral or tinted
   reading surfaces.
+- Carbon & Silicon uses a continuous neutral frame around the existing workbench, with lighter
+  content in Light and a slightly lighter reading stage than the frame in Dark.
+  Error, warning, success and Git state colors remain semantic. Carbon & Silicon's code
+  containers keep the Chimonanthus syntax colors through scoped token values; the highlighter,
+  token mapping and other palettes are unchanged, and there is no separate selectable code theme. Upstream attribution and the MIT license ship in
+  `public/licenses/vscode-themes-MIT.txt` (and the built `licenses/` directory).
 - Small status text uses `--success-ink`, `--warning-ink`, `--info-ink` or `--error-ink` on neutral
-  and tinted surfaces. The shared `--error-ink` mixes 70% palette error with 30% primary ink in
-  every palette and luminosity, deepening light-mode text and lifting dark-mode text without
-  changing semantic marks or fills. Outlined, quiet and menu danger actions and activity-fold
-  loading failures retain `--error-ink` through hover, press and focus; danger borders/tints use `--error`.
-  Successful command badges use `--activity-success-ink`. Status icons, borders and tints keep their semantic color. Text contrast,
-  including faint text, holds on its actual surface in every interaction state.
-- Tool and Thinking have distinct theme identities and matching tints; failure never recolors
-  those identities. Context-event/extension glyphs and ongoing compaction use `--activity-event`,
-  an alias of `--activity-tool`; compact progress text uses `--activity-event-ink` on its tint.
-  Context and extension glyphs keep the unmixed identity color. Their attribution, surfaces and
-  disclosures remain distinct from tool executions. Ordinary notices and command outcomes use
+  and tinted surfaces. By default, `--error-ink` mixes 70% palette error with 30% primary ink.
+  Carbon & Silicon Dark mixes in more primary ink to keep danger menu text legible on hover
+  while keeping its original red marks and fills. Outlined, quiet and menu danger actions and
+  activity-fold loading failures keep `--error-ink` through hover, press and focus. Danger borders
+  and tints use `--error`. Successful command badges use `--activity-success-ink`. Status icons,
+  borders and tints keep their semantic color. Text contrast, including faint text, holds on its
+  actual surface in every interaction state.
+- Tool and Thinking have distinct icon identities on neutral, unframed reading surfaces; failure
+  never recolors those identities. Context-event/extension glyphs and ongoing compaction use
+  `--activity-event`, an alias of `--activity-tool`; context and extension glyphs keep this unmixed
+  identity color, and compact progress text uses `--activity-event-ink` on its tint. Their
+  attribution, surfaces and disclosures stay distinct from tool executions. Ordinary notices and command outcomes use
   information/success/warning/error roles, independent of activity identity.
 - Error/Stop uses raspberry-red, distinct from Lycoris's decorative red. Light semantic ink is
   deeper than accent fills; dark semantic ink is lifted. Navigation combines color, positioned
@@ -809,8 +817,8 @@ follows [Content copying](#content-copying), independently of presentation type.
 
 ## Non-goals
 
-- The system does not reproduce a reference application's palette, typography,
-  artwork, or component identity.
+- Carbon & Silicon may reference the Modern themes' neutral surface colors; the system does
+  not reproduce a reference application's layout, typography, artwork, or component identity.
 - It does not mix botanical surface ladders, use a legacy
   mixed-case lockup, large decorative brand motifs, idle-state breathing,
   recurring completion celebration, or a second responsive component structure.
