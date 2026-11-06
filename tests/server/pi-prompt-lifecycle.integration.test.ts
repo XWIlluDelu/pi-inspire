@@ -7,6 +7,7 @@ import type {
   SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
 import {
   disposeOperationFixture,
@@ -18,6 +19,108 @@ import {
 afterEach(disposeOperationFixture);
 
 describe("native prompt admission and extension dialogs", () => {
+  it("adopts delayed native message completions without duplicating history or hiding later turns", async () => {
+    const f = await fixture(false);
+    const worker = f.workers[0]!;
+    const emit = worker.emit.bind(worker);
+    const delayed: Array<Record<string, unknown>> = [];
+    let holding = true;
+    let delayedTail = false;
+    const observer = vi
+      .spyOn(worker, "emit")
+      .mockImplementation((type, ...args) => {
+        const event = args[0] as Record<string, unknown> | undefined;
+        const role = (event?.message as { role?: string } | undefined)?.role;
+        if (
+          holding &&
+          type === "event" &&
+          event &&
+          (delayedTail || (event.type === "message_end" && role === "user"))
+        ) {
+          // Delay the whole event tail, not individual completions: native
+          // lifecycle order remains intact while get_entries can answer.
+          delayedTail = true;
+          delayed.push(event);
+          return true;
+        }
+        return emit(type, ...args);
+      });
+    const release = () => {
+      holding = false;
+      for (const event of delayed.splice(0)) emit("event", event);
+    };
+    try {
+      const prompt = "Retain this repeated native input.";
+      await f.api.prompt(f.delivery(prompt));
+      await vi.waitFor(() =>
+        expect(delayed.some((event) => event.type === "agent_settled")).toBe(
+          true,
+        ),
+      );
+      expect(
+        delayed
+          .filter((event) => event.type === "message_end")
+          .map((event) => (event.message as { role: string }).role),
+      ).toEqual(["user", "assistant"]);
+
+      // Only observation timing is gated: the real Pi already wrote these
+      // messages and attests them through the ordinary get_entries protocol.
+      const internals = f.runtime as unknown as {
+        slots: Map<string, RuntimeSlot>;
+        reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+      };
+      const slot = internals.slots.get(f.sessionId)!;
+      await internals.reconcileSlot(slot, true);
+      release();
+      await settled(f, 1);
+      await vi.waitFor(() => {
+        expect(slot.overlay).toEqual([]);
+        expect(slot.persistenceExpectations).toEqual([]);
+      });
+      const checkHistory = async (turns: number) => {
+        const snapshot = await f.runtime.snapshot();
+        const written = (await readFile(f.sessionFile, "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)) as SessionEntry[];
+        const messages = snapshot.active!.transcriptPage.messages as Array<
+          Record<string, unknown>
+        >;
+        for (const entry of written) {
+          if (
+            entry.type !== "message" ||
+            !["user", "assistant"].includes(entry.message.role)
+          )
+            continue;
+          expect(
+            messages.filter((message) => message.__inspireEntryId === entry.id),
+          ).toHaveLength(1);
+        }
+        expect(
+          messages.filter((message) =>
+            JSON.stringify(message.content).includes(prompt),
+          ),
+        ).toHaveLength(turns);
+        expect(messages.at(-1)).toMatchObject({
+          role: "assistant",
+          content: [{ type: "text", text: `Synthetic reply ${turns}.` }],
+        });
+        expect(messages.some((message) => message.__inspireLiveId)).toBe(false);
+      };
+      await checkHistory(1);
+
+      // A deliberately repeated input is a new turn, not a duplicate to hide.
+      await f.api.prompt(f.delivery(prompt));
+      await settled(f, 2);
+      await checkHistory(2);
+      expect(worker.stop).not.toHaveBeenCalled();
+      expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
+    } finally {
+      release();
+      observer.mockRestore();
+    }
+  }, 20_000);
+
   it("settles handled input without agent events and preserves its delivered file", async () => {
     const f = await fixture(false);
     const file = await f.attachments.add({

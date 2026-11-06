@@ -43,7 +43,10 @@ import {
   exactPendingInput,
   pendingQueuesFromTexts,
 } from "./runtime-pending.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import type {
+  PersistenceMessageIdentity,
+  RuntimeSlot,
+} from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
 
@@ -81,7 +84,7 @@ interface RuntimeEventControllerHost {
   recordPersistenceEvent(
     slot: RuntimeSlot,
     event: Record<string, unknown>,
-  ): string | undefined;
+  ): PersistenceMessageIdentity | undefined;
   activeAssistantOverlayMessage(slot: RuntimeSlot): unknown;
   updateOverlay(
     slot: RuntimeSlot,
@@ -258,6 +261,7 @@ export class RuntimeEventController {
     event: unknown,
     rpc: PiRpcProcess,
     pendingContentChanged = false,
+    persistence?: PersistenceMessageIdentity,
   ): void {
     if (pendingContentChanged) {
       this.host.refreshPendingQueues(slot);
@@ -270,6 +274,17 @@ export class RuntimeEventController {
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
         : {};
+    const entryId = persistence?.entryId;
+    if (entryId && record.message && typeof record.message === "object") {
+      event = record = {
+        ...record,
+        message: {
+          ...record.message,
+          __inspireEntryId: entryId,
+          __inspireMessageId: `${entryId}:0`,
+        },
+      };
+    }
     if (
       record.type === "agent_settled" ||
       ((record.type === "message_start" || record.type === "message_end") &&
@@ -382,6 +397,14 @@ export class RuntimeEventController {
             ? { previous: previousMessage, event: record.assistantMessageEvent }
             : undefined,
         );
+        // Presentation may follow reconciliation. Share the same identity so
+        // either side can bind the exact entry without requiring an overlay
+        // to exist when persistence is witnessed.
+        if (record.type === "message_end" && persistence) {
+          const liveId = (projectedMessage as Record<string, unknown> | null)
+            ?.__inspireLiveId;
+          if (typeof liveId === "string") persistence.overlayId = liveId;
+        }
         if (
           record.type === "message_start" &&
           projectedMessage &&
@@ -797,17 +820,7 @@ export class RuntimeEventController {
       slot.manualCompaction?.worker === rpc
     )
       slot.manualCompaction.aborted = record.aborted === true;
-    const entryId = this.host.recordPersistenceEvent(slot, record);
-    if (entryId && record.message && typeof record.message === "object") {
-      event = {
-        ...record,
-        message: {
-          ...record.message,
-          __inspireEntryId: entryId,
-          __inspireMessageId: `${entryId}:0`,
-        },
-      };
-    }
+    const persistence = this.host.recordPersistenceEvent(slot, record);
     // `entry_appended` is host provenance, not transcript content. Its raw
     // extension payload must never cross the browser boundary.
     if (record.type === "entry_appended") return;
@@ -847,7 +860,13 @@ export class RuntimeEventController {
           }
           if (slot.process !== rpc && (slot.process !== null || !slot.conflict))
             return;
-          this.handleEvent(slot, event, rpc, pendingContentChanged);
+          this.handleEvent(
+            slot,
+            event,
+            rpc,
+            pendingContentChanged,
+            persistence,
+          );
           // A terminal lifecycle event may settle the agent, but it cannot
           // repair a reconciliation conflict. Keep the worker stopped and leave
           // the explicit abort/recovery boundary as the sole conflict clearer.
@@ -860,12 +879,18 @@ export class RuntimeEventController {
         slot,
         () => {
           if (slot.process === rpc)
-            this.handleEvent(slot, event, rpc, pendingContentChanged);
+            this.handleEvent(
+              slot,
+              event,
+              rpc,
+              pendingContentChanged,
+              persistence,
+            );
         },
         "ordered_event_failed",
       );
     } else {
-      this.handleEvent(slot, event, rpc, pendingContentChanged);
+      this.handleEvent(slot, event, rpc, pendingContentChanged, persistence);
     }
   }
 
