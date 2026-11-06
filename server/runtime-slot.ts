@@ -23,10 +23,14 @@ type CompletionAttention = "completed" | "failed";
 
 export type PersistenceMatcher = (entry: SessionEntry) => boolean;
 
-export interface PersistenceExpectation {
-  readonly token: symbol;
-  /** Live message whose complete native payload established this claim. */
+/** Shared by the exact claim and its possibly delayed message presentation. */
+export interface PersistenceMessageIdentity {
   overlayId?: string;
+  entryId?: string;
+}
+
+export interface PersistenceExpectation extends PersistenceMessageIdentity {
+  readonly token: symbol;
   matcher: PersistenceMatcher | null;
   readonly exactEntry: SessionEntry | null;
   readonly ready: Promise<void>;

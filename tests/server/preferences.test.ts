@@ -351,6 +351,8 @@ describe("PreferencesStore validation", () => {
 
   it("fails closed when the lock path is replaced", async () => {
     const { path, store } = await fixture();
+    await store.patch({ theme: "light" });
+    const previous = await readFile(path, "utf8");
     const lock = `${path}.flock`;
     const replacement = "replacement lock inode\n";
     const mutable = store as unknown as {
@@ -369,9 +371,7 @@ describe("PreferencesStore validation", () => {
     await expect(store.patch({ theme: "dark" })).rejects.toMatchObject({
       status: 503,
     });
-    await expect(readFile(path, "utf8")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(readFile(path, "utf8")).resolves.toBe(previous);
     await expect(readFile(lock, "utf8")).resolves.toBe(replacement);
   });
 });

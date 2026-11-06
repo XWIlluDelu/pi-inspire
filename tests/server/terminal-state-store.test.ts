@@ -50,7 +50,9 @@ describe("terminal state persistence", () => {
         writer.schedule();
         await writer.flush();
         expect(failed).toHaveBeenCalledOnce();
-        expect(failed.mock.calls[0]?.[0].message).toContain("not private");
+        expect(failed.mock.calls[0]?.[0].message).toContain(
+          "must not be accessible by other users",
+        );
         expect((await lstat(directory)).mode & 0o777).toBe(0o755);
         expect(await readdir(directory)).toEqual([]);
       } finally {

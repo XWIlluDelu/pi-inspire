@@ -1,28 +1,15 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { lstat, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TerminalPersistedState } from "./terminal-session-manager.js";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
 const PRIVATE_FILE_MODE = 0o600;
-const PRIVATE_DIRECTORY_MODE = 0o700;
 const MAX_STATE_BYTES = 2 * 1024 * 1024;
 const WRITE_DELAY_MS = 200;
 
-async function ensurePrivateDirectory(path: string): Promise<void> {
-  await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  const info = await lstat(path);
-  if (!info.isDirectory() || info.isSymbolicLink())
-    throw new Error(`The terminal state directory is invalid: ${path}`);
-  if (typeof process.getuid === "function" && info.uid !== process.getuid())
-    throw new Error(
-      `The terminal state directory is owned by another user: ${path}`,
-    );
-  if (process.platform !== "win32" && (info.mode & 0o077) !== 0)
-    throw new Error(`The terminal state directory is not private: ${path}`);
-}
-
 export function prepareTerminalStateDirectory(path: string): Promise<void> {
-  return ensurePrivateDirectory(dirname(path));
+  return ensurePrivateDirectory(dirname(path), "terminal state directory");
 }
 
 export async function readTerminalState(path: string): Promise<unknown | null> {
@@ -68,7 +55,7 @@ async function writeTerminalState(
   path: string,
   state: TerminalPersistedState,
 ): Promise<void> {
-  await ensurePrivateDirectory(dirname(path));
+  await ensurePrivateDirectory(dirname(path), "terminal state directory");
   const serialized = `${JSON.stringify(state)}\n`;
   if (Buffer.byteLength(serialized) > MAX_STATE_BYTES)
     throw new Error("Terminal state exceeds its size limit");

@@ -1,13 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import type { HerdrWorkerPane } from "./herdr-client.js";
@@ -16,6 +8,7 @@ import {
   type HerdrProcessGroup,
   type HerdrProcessIdentity,
 } from "./herdr-process-group.js";
+import { replacePrivateStateFile } from "./private-state-file.js";
 
 const processIdentitySchema = z
   .object({
@@ -124,16 +117,7 @@ export class HerdrWorkerRegistry {
   private async write(lease: HerdrWorkerLease): Promise<void> {
     leaseSchema.parse(lease);
     const target = join(this.directory, `${lease.id}.json`);
-    const temporary = `${target}.${randomUUID()}.tmp`;
-    try {
-      await writeFile(temporary, `${JSON.stringify(lease)}\n`, {
-        flag: "wx",
-        mode: 0o600,
-      });
-      await rename(temporary, target);
-    } finally {
-      await rm(temporary, { force: true });
-    }
+    await replacePrivateStateFile(target, `${JSON.stringify(lease)}\n`);
   }
 
   async list(): Promise<HerdrWorkerLease[]> {

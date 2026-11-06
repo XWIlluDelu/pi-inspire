@@ -21,6 +21,7 @@ import {
 import type {
   OwnershipDecision,
   PersistenceExpectation,
+  PersistenceMessageIdentity,
   RuntimeSlot,
 } from "./runtime-slot.js";
 import {
@@ -443,12 +444,15 @@ export class RuntimePersistenceOwnershipController {
     return true;
   }
 
-  private bindOverlayEntry(
+  private bindPersistenceEntry(
     slot: RuntimeSlot,
-    liveId: string | undefined,
+    expectation: PersistenceExpectation,
     entry: SessionEntry,
   ): void {
-    if (!liveId || entry.type !== "message") return;
+    if (entry.type !== "message") return;
+    expectation.entryId = entry.id;
+    const liveId = expectation.overlayId;
+    if (!liveId) return;
     const index = slot.overlay.findIndex(
       (item) => this.overlayIdentity(item) === liveId,
     );
@@ -469,7 +473,7 @@ export class RuntimePersistenceOwnershipController {
     let matchedEntries = 0;
     let consumed = previouslyMatched.length;
     for (const { expectation, entry } of previouslyMatched) {
-      this.bindOverlayEntry(slot, expectation.overlayId, entry);
+      this.bindPersistenceEntry(slot, expectation, entry);
       matchedEntries = appendedEntries.indexOf(entry, matchedEntries) + 1;
       const index = slot.persistenceExpectations.indexOf(expectation);
       if (index >= 0) slot.persistenceExpectations.splice(index, 1);
@@ -481,7 +485,7 @@ export class RuntimePersistenceOwnershipController {
       if (!expectation || !entry || expectation.matcher?.(entry) !== true)
         break;
       slot.persistenceExpectations.shift();
-      this.bindOverlayEntry(slot, expectation.overlayId, entry);
+      this.bindPersistenceEntry(slot, expectation, entry);
       matchedEntries += 1;
       consumed += 1;
     }
@@ -543,18 +547,35 @@ export class RuntimePersistenceOwnershipController {
           };
         }
       }
-      const expectationsConsumed = this.consumeExpectationPrefix(
+      const matchedPrefix = this.consumeExpectationPrefix(
         slot,
         appendedEntries,
         matchedExpectations,
       );
-      for (const entry of appendedEntries.slice(expectationsConsumed)) {
+      let expectationsConsumed = matchedPrefix;
+      for (const entry of appendedEntries.slice(matchedPrefix)) {
+        // The worker has attested the entire observed prefix. An unclaimed
+        // metadata entry must not prevent later exact message claims from
+        // binding their live overlays to the durable entries in that prefix.
+        const index = slot.persistenceExpectations.findIndex(
+          (expectation) => expectation.matcher?.(entry) === true,
+        );
+        if (index >= 0) {
+          const [expectation] = slot.persistenceExpectations.splice(index, 1);
+          this.bindPersistenceEntry(slot, expectation!, entry);
+          expectationsConsumed += 1;
+          continue;
+        }
         if (
+          (entry.type === "message" &&
+            messageExpectation(entry.message) !== null) ||
           entry.type === "custom" ||
           entry.type === "custom_message" ||
           entry.type === "branch_summary" ||
           entry.type === "label"
         )
+          // A late message_end must adopt this same entry rather than create
+          // another persistence expectation and leave an orphan live overlay.
           this.rememberAbsorbedPersistenceEntry(slot, entry);
       }
       if (slot.navigationLease) slot.navigationLease = null;
@@ -716,7 +737,7 @@ export class RuntimePersistenceOwnershipController {
   recordPersistenceEvent(
     slot: RuntimeSlot,
     event: Record<string, unknown>,
-  ): string | undefined {
+  ): PersistenceMessageIdentity | undefined {
     if (event.type === "entry_appended") {
       const entry = eventSessionEntry(event.entry);
       if (!entry) {
@@ -748,20 +769,11 @@ export class RuntimePersistenceOwnershipController {
     }
     if (event.type === "message_end") {
       const message = event.message;
-      const correlation = messageFallbackCorrelation(message);
-      const role =
-        message && typeof message === "object"
-          ? (message as Record<string, unknown>).role
-          : null;
-      const liveId =
-        role === "user" || role === "assistant" || role === "toolResult"
-          ? this.liveOverlayId(slot, correlation)
-          : correlation
-            ? slot.activeOverlayIds.get(correlation)
-            : undefined;
       const absorbed = this.consumeAbsorbedPersistenceEvent(slot, message);
       if (absorbed)
-        return absorbed.type === "message" ? absorbed.id : undefined;
+        return absorbed.type === "message"
+          ? { entryId: absorbed.id }
+          : undefined;
       if (
         message &&
         typeof message === "object" &&
@@ -784,8 +796,8 @@ export class RuntimePersistenceOwnershipController {
       }
       const expectation = messageExpectation(message);
       if (expectation) {
-        expectation.overlayId = liveId;
         slot.persistenceExpectations.push(expectation);
+        return expectation;
       }
       return;
     }

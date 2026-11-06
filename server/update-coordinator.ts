@@ -1,6 +1,5 @@
-import { requestError } from "./request-error.js";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import {
@@ -13,11 +12,12 @@ import {
 import type { DiagnosticLogger } from "./diagnostics.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import { inspireStateDirectory } from "./platform-paths.mjs";
+import { replacePrivateStateFile } from "./private-state-file.js";
+import { requestError } from "./request-error.js";
 import type { UpdateCheckerLike } from "./update-checker.js";
 
 const AUTOMATIC_UPDATE_CHECK_HOUR = 8;
 const PRIVATE_DIRECTORY_MODE = 0o700;
-const PRIVATE_FILE_MODE = 0o600;
 
 const updateIdentityEntriesSchema = z.array(
   z.union([
@@ -502,20 +502,7 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
       recursive: true,
       mode: PRIVATE_DIRECTORY_MODE,
     });
-    const temporary = join(
-      dirname(path),
-      `.${String(process.pid)}-${randomUUID()}.tmp`,
-    );
-    try {
-      await writeFile(temporary, `${JSON.stringify(this.persisted)}\n`, {
-        encoding: "utf8",
-        mode: PRIVATE_FILE_MODE,
-        flag: "wx",
-      });
-      await rename(temporary, path);
-    } finally {
-      await rm(temporary, { force: true }).catch(() => undefined);
-    }
+    await replacePrivateStateFile(path, `${JSON.stringify(this.persisted)}\n`);
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {

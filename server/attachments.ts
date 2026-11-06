@@ -21,6 +21,7 @@ import {
   join,
   resolve,
 } from "node:path";
+import { pipeline } from "node:stream";
 import type { Request } from "express";
 import type { StorageEngine } from "multer";
 import {
@@ -430,8 +431,30 @@ export class AttachmentStore {
     const requestBytes = new WeakMap<Request, number>();
     return {
       _handleFile: (request, file, done) => {
-        void this.uploadDirectory().then(
-          (directory) => {
+        // Multer may destroy the file while first-use directory setup is pending.
+        // Observe that lifetime before awaiting anything or allocating an output.
+        let settled = false;
+        const stopObserving = () => {
+          file.stream.off("error", fail);
+          file.stream.off("close", closed);
+        };
+        const fail = (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          stopObserving();
+          done(error instanceof Error ? error : new Error(String(error)));
+        };
+        const closed = () =>
+          fail(new Error("Attachment upload was interrupted"));
+        file.stream.once("error", fail);
+        file.stream.once("close", closed);
+        if (file.stream.destroyed) {
+          closed();
+          return;
+        }
+        void this.uploadDirectory()
+          .then((directory) => {
+            if (settled) return;
             const filename = this.temporaryUploadName();
             const path = join(directory, filename);
             const output = createWriteStream(path, {
@@ -439,40 +462,32 @@ export class AttachmentStore {
               mode: 0o600,
             });
             let size = 0;
-            let settled = false;
-            const finish = (error?: Error) => {
-              if (settled) return;
-              settled = true;
-              file.stream.unpipe(output);
-              if (error) {
-                output.destroy();
-                file.stream.resume();
-                void rm(path, { force: true });
-                done(error);
-                return;
-              }
-              done(null, { destination: directory, filename, path, size });
-            };
-            file.stream.on("data", (chunk: Buffer) => {
+            const countBytes = (chunk: Buffer) => {
               size += chunk.length;
               const total = (requestBytes.get(request) ?? 0) + chunk.length;
               requestBytes.set(request, total);
-              if (total > MAX_ATTACHMENT_UPLOAD_BYTES) {
-                finish(
+              if (total > MAX_ATTACHMENT_UPLOAD_BYTES)
+                output.destroy(
                   payloadTooLarge(
                     `Attachments per message must total at most ${MAX_ATTACHMENT_UPLOAD_BYTES} bytes`,
                   ),
                 );
+            };
+            file.stream.on("data", countBytes);
+            pipeline(file.stream, output, (error) => {
+              settled = true;
+              file.stream.off("data", countBytes);
+              if (error) {
+                // pipeline waits for the writer to close before removing its file.
+                void rm(path, { force: true }).then(() => done(error), done);
+              } else {
+                done(null, { destination: directory, filename, path, size });
               }
             });
-            file.stream.once("error", finish);
-            output.once("error", finish);
-            output.once("finish", () => finish());
-            file.stream.pipe(output);
-          },
-          (error) =>
-            done(error instanceof Error ? error : new Error(String(error))),
-        );
+            // pipeline now owns errors, premature close and writer completion.
+            stopObserving();
+          })
+          .catch(fail);
       },
       _removeFile: (_request, file, done) => {
         const stored = file as Partial<Express.Multer.File>;
