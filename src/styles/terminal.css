@@ -55,6 +55,12 @@
   --terminal-search-active-bg: #8a431d;
 }
 
+/* Terminal ANSI colors remain unchanged; its canvas joins Mono's neutral UI. */
+:root[data-palette="mono"] {
+  --terminal-bg: var(--bg-stage);
+  --terminal-fg: var(--body);
+}
+
 .terminal-pane {
   position: relative;
   isolation: isolate;

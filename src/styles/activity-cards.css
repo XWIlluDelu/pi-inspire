@@ -1691,6 +1691,18 @@ span.card__file-arg {
   line-height: var(--leading-mono);
 }
 
+/* Mono changes interface accents only. Keep the existing default syntax colors
+   inside code leaves; their toolbar, gutter and controls retain Mono's UI roles. */
+:root[data-palette="mono"] :is(.hljs, .source-diff__line code) {
+  --accent-deep: #8A4605;
+  --muted: #635E56;
+}
+
+:root[data-theme="dark"][data-palette="mono"] :is(.hljs, .source-diff__line code) {
+  --accent-deep: #F2B25C;
+  --muted: #968E83;
+}
+
 /* Retain the palette's syntax roles using text-strength semantic colors. */
 .hljs-keyword,
 .hljs-literal,
