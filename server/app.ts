@@ -2031,6 +2031,19 @@ export function createInspireServer(deps: AppDependencies): {
     );
     response.send(image.data);
   });
+  app.get("/api/branches/leaves", async (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: sessionIdField })
+      .parse(request.query);
+    response.setHeader("Cache-Control", "no-store");
+    response.json(await deps.runtime.branchLeaves(sessionId));
+  });
+  app.post("/api/branches/select", async (request, response) => {
+    const { sessionId, leafId } = z
+      .object({ sessionId: sessionIdField, leafId: z.string().min(1).max(200) })
+      .parse(request.body);
+    response.json(await deps.runtime.selectBranch(sessionId, leafId));
+  });
   app.post("/api/branches/clone", async (request, response) => {
     response.json(
       await deps.runtime.cloneBranch(branchCloneSchema.parse(request.body)),

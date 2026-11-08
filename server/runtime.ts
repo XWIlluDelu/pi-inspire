@@ -31,6 +31,7 @@ import {
   type BranchEntryResponse,
   type BranchForkRequest,
   type BranchForkResponse,
+  type BranchLeavesResponse,
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type BranchTreeQuery,
@@ -306,6 +307,9 @@ export interface RuntimeLike {
   openSession(id: string): Promise<ActiveSnapshot>;
   /** Attach to the live external Pi continuing the viewed branch. */
   takeOverSession(sessionId: string): Promise<ActiveSnapshot>;
+  branchLeaves(sessionId: string): Promise<BranchLeavesResponse>;
+  /** View another branch end, applying the read-only/takeover rule to it. */
+  selectBranch(sessionId: string, leafId: string): Promise<ActiveSnapshot>;
   deselectSession(): Promise<ActiveSnapshot>;
   newSession(
     cwdInput: string,
@@ -2539,6 +2543,86 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       );
     await this.assertExternalWriterAvailable(slot);
     return false;
+  }
+
+  async branchLeaves(sessionId: string): Promise<BranchLeavesResponse> {
+    this.assertMaintenanceAvailable();
+    const slot = this.requireSlot(sessionId);
+    return this.useSlot(slot, async () => {
+      await this.reconcileSlot(slot, false);
+      if (!slot.projection)
+        throw requestError("Session projection is not available", 503);
+      return slot.projection.branchLeaves(this.effectiveLeaf(slot), 30);
+    });
+  }
+
+  async selectBranch(
+    sessionId: string,
+    leafId: string,
+  ): Promise<ActiveSnapshot> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = this.requireSlot(sessionId);
+      const started = await this.mutateSlot(slot, async () => {
+        const projection = slot.projection;
+        if (!projection?.entry(leafId))
+          throw requestError("That branch no longer exists", 404);
+        if (leafId === this.effectiveLeaf(slot)) return false;
+        const continues = (leaf: string | null) =>
+          projection.onSameLine(leafId, leaf);
+        // Leaving an attached Pi's branch ends that attachment.
+        if (this.externalSessions?.has(slot)) {
+          const reported = this.externalSessions.reportedLeaf(slot);
+          if (reported !== undefined && reported === leafId) return false;
+          this.externalSessions.detach(slot);
+        }
+        const leaves =
+          slot.sessionPath && this.externalLeaves
+            ? await this.externalLeaves(slot.id, slot.sessionPath).catch(
+                () => [],
+              )
+            : [];
+        if (leaves.some(continues)) {
+          // A live Pi is running the chosen branch: watch it, as on entry.
+          this.requireIdleBranchSlot(slot, slot.branchRevision);
+          if (slot.process) await this.stopWriter(slot);
+          this.workingSessions.delete(slot.id);
+          slot.navigationLease = null;
+          this.moveView(slot, leafId);
+          this.markExternalActive(slot);
+          return false;
+        }
+        if (slot.readOnlyReason === "external-active")
+          slot.readOnlyReason = null;
+        this.workingSessions.add(slot.id);
+        if (slot.process && slot.ready) {
+          const target = projection.entry(leafId)!;
+          await this.navigateInsideGate(slot, {
+            sessionId,
+            targetId: leafId,
+            mode: isBranchEditTarget(target) ? "edit" : "switch",
+            revision: slot.branchRevision,
+          });
+          return false;
+        }
+        // Inspire's own worker starts at this branch when it is next needed.
+        this.moveView(slot, leafId);
+        this.emitSlotEvent(slot, { type: "runtime_ready" });
+        return slot.readOnlyReason === null;
+      });
+      if (started) void this.ensureProcess(slot).catch(() => undefined);
+      return this.snapshotSlot(slot);
+    });
+  }
+
+  private moveView(slot: RuntimeSlot, leafId: string | null): void {
+    slot.viewLeafId = leafId;
+    slot.branchRevision += 1;
+    this.renewView(slot);
+    this.emitSlotEvent(slot, {
+      type: "branch_changed",
+      revision: slot.branchRevision,
+      effectiveLeafId: this.effectiveLeaf(slot),
+    });
   }
 
   /** Attach to the preferred live Pi continuing this view's branch. With

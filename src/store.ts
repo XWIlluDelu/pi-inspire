@@ -3,6 +3,7 @@ import { parseCommandInvocation, parseNativeCommand } from "../shared/commands";
 import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
+  type BranchLeavesResponse,
   type BranchNavigateRequest,
   type BranchTreeQuery,
   type CompletionAttentionPreference,
@@ -2618,6 +2619,38 @@ export class AppStore {
       this.selectionGeneration === generation
     )
       this.applySnapshot(snapshot);
+  };
+
+  branchLeaves = async (sessionId: string): Promise<BranchLeavesResponse> => {
+    const api = this.api;
+    if (!api) throw new Error("The Host is not connected");
+    return api.branchLeaves(sessionId);
+  };
+
+  /** Shows another branch end; a live Pi running it keeps the view read-only. */
+  selectBranch = async (
+    sessionId: string,
+    leafId: string,
+  ): Promise<boolean> => {
+    const api = this.api;
+    const generation = this.selectionGeneration;
+    if (!api) return false;
+    try {
+      const snapshot = await api.selectBranch(sessionId, leafId);
+      if (
+        this.api === api &&
+        this.state.sessionId === sessionId &&
+        this.selectionGeneration === generation
+      )
+        this.applySnapshot(snapshot);
+      return true;
+    } catch (error) {
+      this.notify(
+        "warning",
+        error instanceof Error ? error.message : "Could not switch branch",
+      );
+      return false;
+    }
   };
 
   /** Copies a command that resumes this session in a terminal Pi. */
