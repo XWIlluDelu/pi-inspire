@@ -18,6 +18,7 @@ import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type BranchEntryResponse,
   type BranchTreeQuery,
+  type BranchLeavesResponse,
   type BranchTreeResponse,
   type ComposerHistoryPage,
   MAX_SESSION_ID_CHARS,
@@ -179,6 +180,11 @@ export interface SessionProjectionView {
   onSameLine(leafId: string | null, other: string | null): boolean;
   /** The most recently saved entry continuing `leafId`, or `leafId`. */
   latestContinuation(leafId: string | null): string | null;
+  /** Branch ends, most recently saved first. */
+  branchLeaves(
+    currentLeafId: string | null,
+    limit: number,
+  ): BranchLeavesResponse;
   readonly tailEntryId: string | null;
   /** Stable only while the projection still addresses the same filesystem object. */
   readonly sourceIdentity: string | null;
@@ -1194,6 +1200,40 @@ export class SessionProjection
   }
   get uncommittedFingerprint(): string | null {
     return this.currentUncommittedFingerprint;
+  }
+
+  branchLeaves(
+    currentLeafId: string | null,
+    limit: number,
+  ): BranchLeavesResponse {
+    const entries = this.currentEntries;
+    const parents = new Set(entries.map((entry) => entry.parentId));
+    const ends = entries.filter((entry) => !parents.has(entry.id)).reverse();
+    const excerpt = (leaf: SessionEntry): string => {
+      const seen = new Set<string>();
+      let id: string | null = leaf.id;
+      while (id !== null && !seen.has(id)) {
+        seen.add(id);
+        const entry = this.currentEntriesById.get(id);
+        if (!entry) break;
+        if (entry.type === "message" && entry.message.role === "user") {
+          const text = branchEntryText(entry).replace(/\s+/gu, " ").trim();
+          return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+        }
+        id = entry.parentId;
+      }
+      return "";
+    };
+    return {
+      total: ends.length,
+      leaves: ends.slice(0, limit).map((leaf) => ({
+        id: leaf.id,
+        excerpt: excerpt(leaf),
+        updatedAt: leaf.timestamp,
+        isDefault: leaf.id === this.currentLeafId,
+        isCurrent: leaf.id === currentLeafId,
+      })),
+    };
   }
 
   latestContinuation(leafId: string | null): string | null {
