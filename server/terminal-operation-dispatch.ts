@@ -10,7 +10,10 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function stringParam(record: Record<string, unknown>, key: string): string {
+export function stringParam(
+  record: Record<string, unknown>,
+  key: string,
+): string {
   const value = record[key];
   if (typeof value !== "string") throw new Error(`${key} must be a string`);
   return value;
