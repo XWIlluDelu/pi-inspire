@@ -194,6 +194,11 @@ continuations of the branch it entered on, never jumping to another branch that 
 default. A manually selected leaf is viewed the same way. Leaving and re-entering read-only viewing
 selects the then-current default again.
 
+The title menu's branch choice and History's **Switch to this branch** (offered for branch ends
+while read-only) use one selection. A live Pi running the chosen branch keeps or makes the view
+read-only, stopping Inspire's idle worker; otherwise the view becomes editable there, navigating the
+worker or starting it at that leaf. An attached Pi is released when another branch is chosen.
+
 ### Live instances
 
 Admission reads live [attach-control](../../docs/extensions.md#share-sessions-with-terminal-pi)

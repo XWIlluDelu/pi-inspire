@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  openSettings,
+} from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
@@ -157,7 +161,7 @@ for (const touch of [false, true]) {
             sessionActionOrder: [
               "rename",
               "copy-id",
-              "terminal",
+              "resume-command",
               "clone",
               "export",
             ],
@@ -178,7 +182,7 @@ for (const touch of [false, true]) {
         // Dragging expands the compact menu so a visible action can cross into overflow.
         await down(
           page.getByRole("menuitem", {
-            name: "Reorder Use in terminal…",
+            name: "Reorder Copy resume command",
             exact: true,
           }),
         );
@@ -198,21 +202,16 @@ for (const touch of [false, true]) {
           "Copy session ID",
           "Clone current branch",
           "Export session…",
-          "Use in terminal…",
+          "Copy resume command",
         ]);
         expect(writes).toHaveLength(0);
         await up();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "clone", "export", "terminal"]);
+          .toEqual(["rename", "copy-id", "clone", "export", "resume-command"]);
         expect(writes).toHaveLength(1);
-        await expect(
-          page.getByRole("dialog", { name: "Use in terminal", exact: true }),
-        ).toHaveCount(0);
         await page.keyboard.press("Escape");
-        await page
-          .getByRole("button", { name: "Settings", exact: true })
-          .click();
+        await openSettings(page);
         await page
           .getByRole("button", { name: "Behavior", exact: true })
           .click();
@@ -227,7 +226,7 @@ for (const touch of [false, true]) {
           "Copy session ID",
           "Clone current branch",
           "Export session…",
-          "Use in terminal…",
+          "Copy resume command",
         ]);
         const copyHandle = page.getByRole("button", {
           name: "Reorder Copy session ID",
@@ -270,13 +269,13 @@ for (const touch of [false, true]) {
           .click();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "export", "clone", "terminal"]);
+          .toEqual(["rename", "copy-id", "export", "clone", "resume-command"]);
         await expect(settingsLabels).toHaveText([
           "Rename session",
           "Copy session ID",
           "Export session…",
           "Clone current branch",
-          "Use in terminal…",
+          "Copy resume command",
         ]);
 
         // Starting a drag dismisses an already-open move menu.
@@ -294,13 +293,13 @@ for (const touch of [false, true]) {
         await up();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "clone", "export", "terminal"]);
+          .toEqual(["rename", "copy-id", "clone", "export", "resume-command"]);
         await expect(settingsLabels).toHaveText([
           "Rename session",
           "Copy session ID",
           "Clone current branch",
           "Export session…",
-          "Use in terminal…",
+          "Copy resume command",
         ]);
 
         // A click-menu move is also reflected in the title menu after reload.
@@ -313,7 +312,7 @@ for (const touch of [false, true]) {
           .click();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "export", "clone", "terminal"]);
+          .toEqual(["rename", "copy-id", "export", "clone", "resume-command"]);
         await page.reload();
         await title.click();
         await expect(actions).toHaveText([
@@ -340,12 +339,12 @@ for (const touch of [false, true]) {
           "Copy session ID",
           "Export session…",
           "Clone current branch",
-          "Use in terminal…",
+          "Copy resume command",
         ]);
         expect(writes).toHaveLength(writeCount);
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "export", "clone", "terminal"]);
+          .toEqual(["rename", "copy-id", "export", "clone", "resume-command"]);
         await expect(composer).toHaveValue("Keep the unfinished comparison");
       } finally {
         await touchClient?.detach();
@@ -355,48 +354,6 @@ for (const touch of [false, true]) {
       }
     });
 
-    test("terminal handoff keeps the browser draft and requires explicit continuation", async ({
-      page,
-    }, testInfo) => {
-      const { title, composer } = await namedSession(page, true);
-      await title.click();
-      await page
-        .getByRole("menuitem", { name: "More actions", exact: true })
-        .click();
-      await page
-        .getByRole("menuitem", { name: "Use in terminal…", exact: true })
-        .click();
-      const dialog = page.getByRole("dialog", {
-        name: "Use in terminal",
-        exact: true,
-      });
-      await expect(dialog).toBeVisible();
-      await expect(dialog).toContainText("Other sessions keep running");
-      await page.screenshot({
-        path: testInfo.outputPath("terminal-handoff-before.png"),
-      });
-      await dialog
-        .getByRole("button", { name: "Use in terminal", exact: true })
-        .click();
-      await expect(dialog).toContainText("pi --session");
-      await expect(
-        dialog.getByRole("button", { name: "Copy command", exact: true }),
-      ).toBeEnabled();
-      await expect(page.locator("html")).toHaveJSProperty(
-        "scrollWidth",
-        touch ? 320 : 1280,
-      );
-      await page.screenshot({
-        path: testInfo.outputPath("terminal-handoff-after.png"),
-      });
-      await dialog.getByRole("button", { name: "Close", exact: true }).click();
-      await expect(
-        page.getByRole("button", { name: "Continue in Inspire" }),
-      ).toBeVisible();
-      await page.reload();
-      await page.getByRole("button", { name: "Continue in Inspire" }).click();
-      await expect(composer).toHaveValue("Keep the unfinished comparison");
-    });
     test("composition Escape preserves title and workspace edits without consuming IME keys", async ({
       page,
     }) => {
@@ -604,7 +561,7 @@ test("a delayed blur save cannot replace a newer name still being edited", async
   await expect(title).toContainText("Newer name still being edited");
   await expect(composer).toHaveValue("Keep the unfinished comparison");
 });
-test("export failure keeps long diagnostics readable and the selected format retryable", async ({
+test("export failure keeps long diagnostics readable and every action reachable", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -617,20 +574,17 @@ test("export failure keeps long diagnostics readable and the selected format ret
   ]!;
   const message =
     "Cannot read /workspace/archive/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.jsonl: EACCES (permission denied).";
-  let fail = true;
   let releaseExport!: () => void;
   const exportReady = new Promise<void>((resolve) => {
     releaseExport = resolve;
   });
   await page.route("**/api/sessions/export", async (route) => {
     await exportReady;
-    return fail
-      ? route.fulfill({
-          status: 409,
-          headers: { "X-Inspire-Authority": authority },
-          json: { error: message },
-        })
-      : route.fallback();
+    return route.fulfill({
+      status: 409,
+      headers: { "X-Inspire-Authority": authority },
+      json: { error: message },
+    });
   });
   await page.getByRole("button", { name: /^Session actions:/ }).click();
   await page.getByRole("menuitem", { name: "More actions" }).click();
@@ -696,25 +650,9 @@ test("export failure keeps long diagnostics readable and the selected format ret
     await error.scrollIntoViewIfNeeded();
     await expect(error).toBeInViewport({ ratio: 1 });
   }
-  const html = dialog.getByRole("radio", { name: "HTML Whole session" });
-  await html.check();
-  await expect(html).toBeChecked();
-  await format.check();
+  // Format retention across close/reopen and the retried download belong to
+  // the ExportDialog component test and the download test below.
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect(draft).toHaveValue("Keep the unfinished comparison");
-  await page.getByRole("button", { name: /^Session actions:/ }).click();
-  await page.getByRole("menuitem", { name: "More actions" }).click();
-  await page
-    .getByRole("menuitem", { name: "Export session…", exact: true })
-    .click();
-  await format.check();
-  fail = false;
-  const downloaded = page.waitForEvent("download");
-  await dialog.getByRole("button", { name: "Download", exact: true }).click();
-  const file = await downloaded;
-  expect(file.suggestedFilename()).toMatch(/\.jsonl$/);
-  expect(await file.failure()).toBeNull();
   await expect(dialog).toHaveCount(0);
   await expect(draft).toHaveValue("Keep the unfinished comparison");
 });

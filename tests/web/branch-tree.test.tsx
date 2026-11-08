@@ -18,6 +18,10 @@ import { EarlierBranchBanner } from "../../src/components/EarlierBranchBanner";
 import { Notices } from "../../src/components/Notices";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
+import {
+  readHistoryReading,
+  workbenchSessionKey,
+} from "../../src/workbench-session";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
@@ -172,6 +176,11 @@ beforeEach(async () => {
         }
         const query = new URL(url, "http://fixture").searchParams;
         const id = query.get("targetId")!;
+        if (!full.has(id))
+          return Response.json(
+            { error: "History entry no longer exists" },
+            { status: 404 },
+          );
         const text = fixture.detailText ?? full.get(id)!;
         const offset = Number(query.get("offset") ?? 0);
         const end = Math.min(text.length, offset + 32000);
@@ -646,6 +655,229 @@ describe("read-only History inspection", () => {
     expect(
       requests.filter((request) => request.url.includes("before=a2")),
     ).toHaveLength(1);
+  });
+});
+
+describe("History reading restoration", () => {
+  const readingKey = (sessionId = "s1") =>
+    workbenchSessionKey(sessionId, "/history-fixture");
+
+  it("loads missing History after bootstrap before restoring the selected entry", async () => {
+    // The shared fixture preloads History; a fresh browser has no observations.
+    (store as unknown as { set(value: unknown): void }).set({
+      branchTree: null,
+      branchTreeLoading: false,
+      branchTreeStale: false,
+      branchTreeError: null,
+    });
+    await store.init("token");
+    expect(store.getState().branchTree).toBeNull();
+    requests.length = 0;
+    const reading = readHistoryReading(readingKey());
+    reading.selectedEntryId = "u1";
+
+    render(<BranchTree readingState={reading} />);
+
+    await screen.findByRole("button", { name: "Edit in this session" });
+    expect(history().querySelector(".history-detail__body")).toHaveTextContent(
+      "Root question",
+    );
+    expect(store.getState().branchTree?.sessionId).toBe("s1");
+    expect(
+      requests.filter(({ url }) => url.startsWith("/api/branches/tree")),
+    ).toHaveLength(1);
+    expect(
+      requests.filter(
+        ({ url }) =>
+          url.startsWith("/api/branches/entry") &&
+          new URL(url, "http://fixture").searchParams.get("targetId") === "u1",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("restores query, expanded turns and selected entry after remount while rereading content", async () => {
+    const key = readingKey();
+    const reading = readHistoryReading(key);
+    fixture.detailText = "First observed history content";
+    const mounted = render(<BranchTree readingState={reading} />);
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Replies and activity" })[0]!,
+    );
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Find in history" }),
+      { target: { value: "old keyword" } },
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Response Earlier answer" }),
+    );
+    await screen.findByText("First observed history content");
+    mounted.unmount();
+
+    fixture.detailText = "Fresh history content after reopening";
+    render(<BranchTree readingState={readHistoryReading(key)} />);
+    await screen.findByText("Fresh history content after reopening");
+    expect(screen.queryByText("First observed history content")).toBeNull();
+    expect(
+      requests.filter(({ url }) => url.startsWith("/api/branches/entry")),
+    ).toHaveLength(2);
+    expect(JSON.stringify(sessionStorage)).not.toContain(
+      "First observed history content",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
+    expect(
+      screen.getByRole("searchbox", { name: "Find in history" }),
+    ).toHaveValue("old keyword");
+    await screen.findByRole("button", { name: "Response Earlier answer" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear history search" }),
+    );
+    await screen.findByRole("button", { name: "Root question" });
+    expect(
+      screen.getAllByRole("button", { name: "Replies and activity" })[0],
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(requests.some(({ url }) => url === "/api/branches/navigate")).toBe(
+      false,
+    );
+  });
+
+  it("ends restoration of a missing entry with Retry and Back instead of permanent loading", async () => {
+    const reading = readHistoryReading(readingKey());
+    reading.query = "Root";
+    reading.selectedEntryId = "removed-entry";
+    render(<BranchTree readingState={reading} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "History entry no longer exists",
+    );
+    await waitFor(() =>
+      expect(history()).not.toHaveAttribute("aria-busy", "true"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
+    await waitFor(() =>
+      expect(
+        requests.filter(({ url }) => url.includes("targetId=removed-entry")),
+      ).toHaveLength(2),
+    );
+    await waitFor(() =>
+      expect(history()).not.toHaveAttribute("aria-busy", "true"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
+    expect(
+      screen.getByRole("searchbox", { name: "Find in history" }),
+    ).toHaveValue("Root");
+    expect(
+      await screen.findByRole("button", { name: "Your input Root question" }),
+    ).toBeVisible();
+    expect(reading.selectedEntryId).toBeNull();
+  });
+
+  it("does not carry selection or query across distinct reading-state owners", async () => {
+    const first = readHistoryReading(readingKey());
+    first.query = "Root";
+    first.selectedEntryId = "u1";
+    const second = readHistoryReading(readingKey("s2"));
+    second.query = "Revised";
+    const mounted = render(<BranchTree readingState={first} />);
+    await screen.findByRole("button", { name: "Edit in this session" });
+
+    mounted.rerender(<BranchTree readingState={second} />);
+    expect(
+      await screen.findByRole("searchbox", { name: "Find in history" }),
+    ).toHaveValue("Revised");
+    expect(
+      screen.queryByRole("button", { name: "Back to history" }),
+    ).toBeNull();
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Your input Revised question",
+      }),
+    );
+    await screen.findByRole("button", { name: "Edit in this session" });
+    expect(second.selectedEntryId).toBe("u2");
+    expect(first.selectedEntryId).toBe("u1");
+
+    mounted.rerender(<BranchTree readingState={first} />);
+    await waitFor(() =>
+      expect(
+        history().querySelector(".history-detail__body"),
+      ).toHaveTextContent("Root question"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
+    expect(
+      screen.getByRole("searchbox", { name: "Find in history" }),
+    ).toHaveValue("Root");
+    expect(second.query).toBe("Revised");
+    expect(second.selectedEntryId).toBe("u2");
+  });
+
+  it("rereads a saved alternate route after remount without continuing that conversation", async () => {
+    const key = readingKey();
+    const reading = readHistoryReading(key);
+    reading.routeLeafId = "a1";
+    reading.save?.();
+    let label = "First alternate route observation";
+    const read = vi
+      .spyOn(store, "readBranchTree")
+      .mockImplementation(async (query) => ({
+        ...tree(),
+        routeLeafId: query.leafId ?? "a2",
+        nodes: [{ ...nodes[0]!, snippet: label }, nodes[1]!],
+      }));
+    const mounted = render(<BranchTree readingState={reading} />);
+    await screen.findByRole("button", {
+      name: /First alternate route observation/,
+    });
+    mounted.unmount();
+    label = "Fresh alternate route observation";
+    render(<BranchTree readingState={readHistoryReading(key)} />);
+    await screen.findByRole("button", {
+      name: /Fresh alternate route observation/,
+    });
+    expect(screen.queryByText("First alternate route observation")).toBeNull();
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith(
+      { leafId: "a1" },
+      expect.any(AbortSignal),
+    );
+    expect(screen.getByText("Inspecting another route")).toBeVisible();
+    expect(store.getState().transcriptEffectiveLeafId).toBe("a2");
+    expect(JSON.stringify(sessionStorage)).not.toContain(
+      "alternate route observation",
+    );
+  });
+
+  it("restores both detail and outline reading offsets from a fresh saved state", async () => {
+    const key = readingKey();
+    const reading = readHistoryReading(key);
+    const mounted = render(<BranchTree readingState={reading} />);
+    const rows = history().querySelector<HTMLElement>(".branch-tree__rows")!;
+    rows.scrollTop = 137;
+    rows.scrollLeft = 11;
+    fireEvent.scroll(rows);
+    await previewAnswer();
+    const detail = history().querySelector<HTMLElement>(
+      ".history-detail__body",
+    )!;
+    detail.scrollTop = 217;
+    detail.scrollLeft = 7;
+    fireEvent.scroll(detail);
+    mounted.unmount();
+
+    const saved = readHistoryReading(key);
+    expect(saved.outline).toEqual({ top: 137, left: 11 });
+    expect(saved.detail).toEqual({ top: 217, left: 7 });
+    render(<BranchTree readingState={saved} />);
+    await screen.findByRole("button", { name: "Read more content" });
+    const restoredDetail = history().querySelector<HTMLElement>(
+      ".history-detail__body",
+    )!;
+    expect(restoredDetail.scrollTop).toBe(217);
+    expect(restoredDetail.scrollLeft).toBe(7);
+    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
+    const restoredRows =
+      history().querySelector<HTMLElement>(".branch-tree__rows")!;
+    expect(restoredRows.scrollTop).toBe(137);
+    expect(restoredRows.scrollLeft).toBe(11);
   });
 });
 

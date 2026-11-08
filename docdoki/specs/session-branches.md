@@ -34,17 +34,23 @@ admission; [[session-transport]] owns browser continuity and observation lifetim
 ### Tree, search and content
 
 Read bounded projections of Pi entry identities while keeping older and alternate points reachable
-and searchable. Route pages retain their containing user prompt when tool/event detail crosses a
-page boundary, without skipping activity. Read-only inspection never creates a navigation lease.
+and searchable. Route pages keep their containing user prompt when tool/event detail crosses a page
+boundary, without skipping activity. Read-only inspection never creates a navigation lease.
+
+Query, expanded nodes, selected preview, explicit route and outline/detail positions survive tool
+switches and F5 as browser-tab-local metadata scoped by session and workspace. Tree and entry content are read again under current
+authority; saved navigation never includes content, loading flags or continuation authorization.
 
 Ordinary user-input snippets use the shared user-content projection: readable file names replace
 transport trailers, image-dimension notes are omitted, and image cues remain. Search snippets and
 detailed reads expose retained source so path matching, Copy and editing remain possible.
 History search matches the whole trimmed query as a case-insensitive literal phrase; Files instead
 uses whitespace-separated terms. Match emphasis preserves text and accessible role labels. Activity
-disclosures retain complete accessible names and expanded state, without counts or ordinals inferred
-from a bounded page. Keep route marks/current-route metadata aligned with their entry and use shared
-pane states for empty results without repeating the query in the state title.
+disclosures keep complete accessible names and expanded state, without counts or ordinals inferred
+from a bounded page. Keep route marks/current-route metadata aligned with their entry. Empty results
+use shared pane states without repeating the query in the state title. On coarse pointers,
+selectable History rows, disclosures and preview actions keep a minimum 44px height at every
+viewport width. Narrow detail padding remains a separate width-based layout choice.
 
 Read complete retained entries in bounded chunks. Ordinary assistant/tool content stays rich;
 native shell records show command, output, status and context inclusion as Shell activity rather
@@ -77,7 +83,7 @@ progress, without letting an old completion clear newer progress.
 
 Route/search pages, selected entries and images retry transient failures with bounded backoff inside
 the original read promise. New queries, entries, session/view/selection or transport owners cancel
-recovery. Persistent/definitive failures retain local Retry, selected entries, loaded pages and the
+recovery. Persistent/definitive failures keep local Retry, selected entries, loaded pages and the
 Back anchor. Errors wrap paths inside their content area without obscuring the preview header.
 Recovery never repeats navigation, Fork, Clone or clipboard copying.
 
@@ -126,7 +132,7 @@ without deadlocking the mutation lane, and each accepted response is delivered o
 A deliberate same-session continuation may carry Pi's summary of the branch being left, with optional
 custom instructions. Group actions into This session and New session; user entries offer both Fork
 and Clone. Carry branch summary defaults off, reveals instructions when enabled, and precedes the
-same-session actions in visual/keyboard order. It applies only to those actions, not Fork/Clone.
+same-session actions in visual/keyboard order; it applies only to those actions, not Fork/Clone.
 Keep the action dock bounded and independently scrollable, and identify the conversation being left.
 Honor Pi's skip-summary-prompt preference; searching and previewing never generate summaries.
 
@@ -146,8 +152,8 @@ Require materialized current-format JSONL, a conflict-free reading projection an
 inherited project folder. Validate view and target after reconciliation. Normal tail appends do not
 invalidate them; no matching branch revision or preparatory History refresh is required.
 Source activity, writer ownership, Pending queues, dialogs and the Host's global selection do not
-block copying because no source command or replacement occurs. External-owner and terminal-handoff
-read-only sessions may be copied.
+block copying because no source command or replacement occurs. Sessions another Pi is running may
+be copied.
 
 Pi determines ancestry, labels, metadata and the generated identity:
 
@@ -156,8 +162,8 @@ Pi determines ancestry, labels, metadata and the generated identity:
   independent private attachments; original upload handles and file paths are unnecessary. Return
   handles/metadata rather than Base64. Use ordinary Composer thumbnails, preview, removal and
   explicit send, including image-only input. Message-wide limits apply at send time so users can
-  trim oversized drafts; invalid, unsupported or individually oversized images reject Fork without
-  silently dropping content. Failed publication/attachment and retired browser responses withdraw
+  trim oversized drafts. Invalid, unsupported or individually oversized images reject Fork instead
+  of silently dropping content. Failed publication/attachment and retired browser responses withdraw
   their unclaimed staged copies.
 - Clone includes its endpoint, or produces native header-only JSONL for an empty path, and opens an
   empty destination Composer.
@@ -202,7 +208,7 @@ reconnects renew it automatically; transient failures retry with bounded backoff
 rows. Position-changing actions require a current validated tree. Only persistent/definitive read
 failures expose local error/Refresh controls. Recovery never replays navigation or copy gestures.
 Current-branch Clone failures use the visible notification stack even when History is closed;
-node-specific actions retain their local error/retry surface.
+node-specific actions keep their local error/retry surface.
 
 ## Export content and publication
 
@@ -221,7 +227,7 @@ Typed `/export` retains Pi's one-path parsing, including quoted spaces and `~/`.
 selects branch JSONL; other destinations use native HTML. Refuse the canonical source and its
 symlink/hardlink aliases. HTML and Reload require writer admission; saved JSONL requires only a
 healthy conflict-free reading projection. Read-only menus keep Export available with JSONL and
-disable Rename. Fork/Clone retain independent-copy admission across the title menu, palette and
+disable Rename. Fork/Clone keep independent-copy admission across the title menu, palette and
 current-branch action.
 
 Graphical Export captures a private managed download and removes temporary native source files on
@@ -240,5 +246,5 @@ after the resulting snapshot owns the durable leaf.
 
 Fit the notice to the reading stage, including narrow centers between side panes. Keep its branch
 mark aligned with the first title line when diagnostics wrap. Initial reading space and native
-scroll-target insets retain their minimum spacing and expand with the measured notice so diagnostics
-remain clear of content and targets stay aligned.
+scroll-target insets keep their minimum spacing and expand with the measured notice, so diagnostics
+stay clear of content and targets stay aligned.

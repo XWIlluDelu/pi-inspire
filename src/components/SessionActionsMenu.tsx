@@ -1,8 +1,11 @@
 import {
+  Check,
   ChevronDown,
+  ChevronLeft,
   ChevronUp,
   Download,
   GitBranch,
+  GitFork,
   GripVertical,
   Pencil,
   SquareTerminal,
@@ -16,7 +19,11 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import type { SessionActionId } from "../../shared/contracts";
+import type {
+  BranchLeavesResponse,
+  SessionActionId,
+} from "../../shared/contracts";
+import { relativeTime } from "../format";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import {
   SESSION_ACTION_LABELS,
@@ -78,6 +85,34 @@ export function SessionActionsMenu({
   const overflowRef = useRef<HTMLButtonElement | null>(null);
   const focusRevealed = useRef(false);
   const [expanded, setExpanded] = useState(false);
+  // Quick branch switching; History keeps the full tree.
+  const [branches, setBranches] = useState<BranchLeavesResponse | null>(null);
+  const [choosingBranch, setChoosingBranch] = useState(false);
+  useEffect(() => {
+    let current = true;
+    void store.branchLeaves(sessionId).then(
+      (result) => current && setBranches(result),
+      () => current && setBranches({ leaves: [], total: 0 }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [sessionId]);
+  const branchViewChanged = useRef(false);
+  useLayoutEffect(() => {
+    // Opening keeps the menu's own focus; only switching views moves it.
+    if (!branchViewChanged.current) {
+      branchViewChanged.current = true;
+      return;
+    }
+    menuRef.current
+      ?.querySelector<HTMLButtonElement>(
+        choosingBranch
+          ? ".session-actions-menu__branch"
+          : ".session-actions-menu__switch",
+      )
+      ?.focus({ preventScroll: true });
+  }, [choosingBranch]);
   const { copied, copying, copy } = useCopied({
     scope: sessionId,
     onError: onCopyError,
@@ -222,59 +257,120 @@ export function SessionActionsMenu({
         }
       }}
     >
-      {visibleActions.map((id, index) => {
-        const Icon = id === "copy-id" ? null : ACTION_ICONS[id];
-        return (
-          <div
-            key={id}
-            role="none"
-            className="session-actions-menu__row"
-            data-session-action-id={id}
-            data-dragging={reorder.draggingId === id || undefined}
+      {choosingBranch && branches ? (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            className="session-actions-menu__overflow"
+            onClick={() => setChoosingBranch(false)}
           >
+            <ChevronLeft size={14} aria-hidden />
+            <span>Back to actions</span>
+          </button>
+          {branches.leaves.map((leaf) => (
             <button
+              key={leaf.id}
               type="button"
-              role="menuitem"
-              data-session-action
-              data-copied={id === "copy-id" && copied ? "true" : undefined}
-              data-overflow-action={
-                index >= SESSION_ACTION_VISIBLE_COUNT || undefined
-              }
-              disabled={actions[id].disabled}
-              aria-disabled={id === "copy-id" ? copying : undefined}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              onClick={actions[id].run}
+              role="menuitemradio"
+              aria-checked={leaf.isCurrent}
+              className="session-actions-menu__branch"
+              onClick={() => {
+                if (leaf.isCurrent) return onClose();
+                void store.selectBranch(sessionId, leaf.id).then((done) => {
+                  if (done) onClose();
+                });
+              }}
             >
-              {id === "copy-id" ? (
-                <CopyFeedback copied={copied} copying={copying} size={14} />
-              ) : Icon ? (
-                <Icon size={14} aria-hidden />
-              ) : null}
-              <ButtonLabel
-                reserve={
-                  id === "copy-id" && copied ? SESSION_ACTION_LABELS[id] : []
+              <span className="session-actions-menu__branch-mark">
+                {leaf.isCurrent ? <Check size={14} aria-hidden /> : null}
+              </span>
+              <span className="session-actions-menu__branch-text">
+                <span>{leaf.excerpt || "No message"}</span>
+                <span className="session-actions-menu__branch-meta">
+                  {relativeTime(leaf.updatedAt)}
+                  {leaf.isDefault ? " · Default" : ""}
+                </span>
+              </span>
+            </button>
+          ))}
+          {branches.total > branches.leaves.length ? (
+            <p className="session-actions-menu__note">
+              History shows all {branches.total} branches.
+            </p>
+          ) : null}
+        </>
+      ) : (
+        <button
+          type="button"
+          role="menuitem"
+          className="session-actions-menu__overflow session-actions-menu__switch"
+          disabled={!branches || branches.total < 2}
+          title={
+            branches && branches.total < 2
+              ? "This session has no other branch"
+              : undefined
+          }
+          onClick={() => setChoosingBranch(true)}
+        >
+          <GitFork size={14} aria-hidden />
+          <span>Switch branch…</span>
+        </button>
+      )}
+      {!choosingBranch &&
+        visibleActions.map((id, index) => {
+          const Icon = id === "copy-id" ? null : ACTION_ICONS[id];
+          return (
+            <div
+              key={id}
+              role="none"
+              className="session-actions-menu__row"
+              data-session-action-id={id}
+              data-dragging={reorder.draggingId === id || undefined}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                data-session-action
+                data-copied={id === "copy-id" && copied ? "true" : undefined}
+                data-overflow-action={
+                  index >= SESSION_ACTION_VISIBLE_COUNT || undefined
                 }
+                disabled={actions[id].disabled}
+                aria-disabled={id === "copy-id" ? copying : undefined}
+                aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                onClick={actions[id].run}
               >
-                {id === "copy-id" && copied
-                  ? "ID copied"
-                  : SESSION_ACTION_LABELS[id]}
-              </ButtonLabel>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="session-actions-menu__handle"
-              aria-label={`Reorder ${SESSION_ACTION_LABELS[id]}`}
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              title="Drag to reorder · Alt+↑/↓ to move"
-              onPointerDown={(event) => reorder.startDrag(event, id)}
-            >
-              <GripVertical size={14} aria-hidden />
-            </button>
-          </div>
-        );
-      })}
-      {actionOrder.length > SESSION_ACTION_VISIBLE_COUNT ? (
+                {id === "copy-id" ? (
+                  <CopyFeedback copied={copied} copying={copying} size={14} />
+                ) : Icon ? (
+                  <Icon size={14} aria-hidden />
+                ) : null}
+                <ButtonLabel
+                  reserve={
+                    id === "copy-id" && copied ? SESSION_ACTION_LABELS[id] : []
+                  }
+                >
+                  {id === "copy-id" && copied
+                    ? "ID copied"
+                    : SESSION_ACTION_LABELS[id]}
+                </ButtonLabel>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="session-actions-menu__handle"
+                aria-label={`Reorder ${SESSION_ACTION_LABELS[id]}`}
+                aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                title="Drag to reorder · Alt+↑/↓ to move"
+                onPointerDown={(event) => reorder.startDrag(event, id)}
+              >
+                <GripVertical size={14} aria-hidden />
+              </button>
+            </div>
+          );
+        })}
+      {!choosingBranch && actionOrder.length > SESSION_ACTION_VISIBLE_COUNT ? (
         <>
           <button
             key="overflow"

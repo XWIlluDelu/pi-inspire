@@ -1370,6 +1370,57 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
+  it("follows the viewed branch while another Pi runs it and switches by the same admission rule", async () => {
+    const { runtime, path } = await setup(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    const release = runtime.retainSessionView(SESSION_ID);
+    try {
+      // A live Pi runs the a2 branch; someone else starts another branch.
+      runtime.setExternalSessionPresence(async () => ["a2"]);
+      await appendFile(
+        path,
+        `${JSON.stringify(entry("alt", "a1", "user", "alternative", 5))}\n${JSON.stringify(entry("alt-a", "alt", "assistant", "alternative answer", 6))}\n`,
+      );
+      const listed = await runtime.branchLeaves(SESSION_ID);
+      expect(listed.total).toBe(2);
+      expect(listed.leaves).toEqual([
+        expect.objectContaining({
+          id: "alt-a",
+          excerpt: "alternative",
+          isDefault: true,
+          isCurrent: false,
+        }),
+        expect.objectContaining({
+          id: "a2",
+          isDefault: false,
+          isCurrent: true,
+        }),
+      ]);
+
+      // No Pi runs the other branch: it opens editable here.
+      const editable = await runtime.selectBranch(SESSION_ID, "alt-a");
+      expect(editable.active?.readOnlyReason).toBeUndefined();
+      expect(JSON.stringify(editable.active?.transcriptPage)).toContain(
+        "alternative answer",
+      );
+
+      // Back to the branch the live Pi runs: read-only again.
+      const watched = await runtime.selectBranch(SESSION_ID, "a2");
+      expect(watched.active?.readOnlyReason).toBe("external-active");
+      expect(JSON.stringify(watched.active?.transcriptPage)).toContain(
+        "second answer",
+      );
+    } finally {
+      release();
+      await runtime.close();
+    }
+  });
+
   it("keeps a default-branch worker on its own context across repeated foreign appends", async () => {
     const { runtime, worker, path } = await setup();
     try {

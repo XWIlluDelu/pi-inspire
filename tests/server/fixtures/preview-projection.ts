@@ -230,6 +230,10 @@ export class PreviewProjection
     return leafId;
   }
 
+  branchLeaves() {
+    return { leaves: [], total: 0 };
+  }
+
   entriesAfter(_tailEntryId: string | null): readonly SessionEntry[] {
     return [];
   }

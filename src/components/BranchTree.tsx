@@ -720,7 +720,20 @@ export function BranchTree({
           >
             <GitBranch size={13} aria-hidden />
             <span>{node.snippet || pointKind(node)}</span>
-            {node.active ? <small>Current route</small> : null}
+            {node.active ||
+            (node.routeLeafId ?? node.id) === tree?.durableLeafId ? (
+              // Same markers as the title menu's branch list.
+              <small>
+                {[
+                  node.active ? "Current route" : null,
+                  (node.routeLeafId ?? node.id) === tree?.durableLeafId
+                    ? "Default"
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </small>
+            ) : null}
           </button>
         ))}
         {routes.page.nextBefore ? (
@@ -1239,7 +1252,31 @@ export function BranchTree({
                         ? "Edit in this session"
                         : "Continue here"}
                     </button>
-                    {sameSessionBlocked ? (
+                    {state.readOnlyReason === "external-active" &&
+                    selected.childCount === 0 &&
+                    !selected.leaf ? (
+                      // Another Pi runs the viewed branch; any other branch
+                      // end can be viewed, and continued if no Pi runs it.
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={Boolean(blocked) || !detail}
+                        onClick={() => {
+                          const sessionId = store.getState().sessionId;
+                          if (!sessionId) return;
+                          void store
+                            .selectBranch(sessionId, selected.id)
+                            .then((ok) => {
+                              if (!ok) return;
+                              setSelected(null);
+                              setDetail(null);
+                              onContextChange?.();
+                            });
+                        }}
+                      >
+                        Switch to this branch
+                      </button>
+                    ) : sameSessionBlocked ? (
                       <p className="history-detail__blocked">
                         {sameSessionBlocked}
                       </p>

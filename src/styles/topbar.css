@@ -370,6 +370,44 @@
   color: var(--muted);
 }
 .session-actions-menu__overflow > svg { flex: 0 0 auto; }
+.session-actions-menu > .session-actions-menu__switch {
+  color: var(--ink);
+}
+
+/* Branch ends: excerpt above its age and Default marker, check for current. */
+.session-actions-menu > .session-actions-menu__branch {
+  flex-shrink: 0;
+  align-items: flex-start;
+  min-height: 40px;
+  max-width: 320px;
+  padding: var(--space-1) var(--space-2);
+}
+.session-actions-menu__branch-mark {
+  display: inline-flex;
+  flex: 0 0 14px;
+  height: 1lh;
+  align-items: center;
+  color: var(--accent-deep);
+}
+.session-actions-menu__branch-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.session-actions-menu__branch-text > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-actions-menu__branch-meta {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.session-actions-menu__note {
+  margin: var(--space-1) var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
 
 .session-actions-menu button:disabled {
   color: var(--faint);

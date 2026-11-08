@@ -68,7 +68,12 @@ position. **Current conversation** returns to the active conversation's outline,
   draft. **Clone current branch** in the title's action menu, `/clone`, and the palette share this action;
   the earlier-conversation notice offers **Clone from here**.
 
-Click the session title for Rename, Clone and Export.
+Click the session title for Rename, Clone and Export. **Switch branch…** in the same menu lists
+the session's branch ends with their latest message and age, marking the default (what a newly
+opened Pi would show) and the one you are viewing; it is disabled when there is only one. History
+shows the full tree. Continuing in the same session requires an
+idle session with no pending input or dialogs. Fork and Clone can copy recorded history while the
+source runs, leaving its task, Pending input and draft intact; neither sends a prompt.
 
 ## Models and thinking
 

@@ -18,6 +18,7 @@ import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import { sessionHeading } from "../../src/components/AppTopbar";
 import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
 import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
+import { store } from "../../src/store";
 
 function Harness({
   onCopyError = vi.fn(),
@@ -124,6 +125,61 @@ describe("Session actions", () => {
     expect(screen.getByRole("menu", { name: "Session actions" })).toBeVisible();
   });
 
+  it("switches branches from the title menu and disables the choice with one branch", async () => {
+    const leaves = vi.spyOn(store, "branchLeaves").mockResolvedValue({
+      total: 2,
+      leaves: [
+        {
+          id: "newer",
+          excerpt: "Try the other approach",
+          updatedAt: new Date().toISOString(),
+          isDefault: true,
+          isCurrent: false,
+        },
+        {
+          id: "viewed",
+          excerpt: "Original question",
+          updatedAt: new Date().toISOString(),
+          isDefault: false,
+          isCurrent: true,
+        },
+      ],
+    });
+    const select = vi.spyOn(store, "selectBranch").mockResolvedValue(true);
+    try {
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByRole("button", { name: "Session title" }));
+      const open = screen.getByRole("menuitem", { name: "Switch branch…" });
+      await waitFor(() => expect(open).toBeEnabled());
+      await user.click(open);
+      const current = screen.getByRole("menuitemradio", {
+        name: /Original question/,
+      });
+      expect(current).toHaveAttribute("aria-checked", "true");
+      const other = screen.getByRole("menuitemradio", {
+        name: /Try the other approach.*Default/,
+      });
+      expect(other).toHaveFocus();
+      await user.click(other);
+      expect(select).toHaveBeenCalledWith(
+        "01a163f4-8e43-71df-9bd6-71efa60bd123",
+        "newer",
+      );
+      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+      leaves.mockResolvedValue({ total: 1, leaves: [] });
+      await user.click(screen.getByRole("button", { name: "Session title" }));
+      await waitFor(() => expect(leaves).toHaveBeenCalledTimes(2));
+      expect(
+        screen.getByRole("menuitem", { name: "Switch branch…" }),
+      ).toBeDisabled();
+    } finally {
+      leaves.mockRestore();
+      select.mockRestore();
+    }
+  });
+
   it("reveals overflow for keyboard use and resets it on reopening", async () => {
     const user = userEvent.setup();
     const onExport = vi.fn();
@@ -219,7 +275,9 @@ describe("Session actions", () => {
       screen.queryByRole("menuitem", { name: "Copy resume command" }),
     ).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-    const terminal = screen.getByRole("menuitem", { name: "Copy resume command" });
+    const terminal = screen.getByRole("menuitem", {
+      name: "Copy resume command",
+    });
     expect(terminal).toBeEnabled();
     fireEvent.keyDown(terminal, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
