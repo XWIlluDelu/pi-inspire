@@ -96,6 +96,19 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * `INSPIRE_HERDR_ENV_EXCLUDE` lists comma-separated environment prefixes kept
+ * out of the shared Herdr server. `INSPIRE_` is always excluded.
+ */
+export function herdrExcludedEnvironmentPrefixes(
+  environment: NodeJS.ProcessEnv,
+): string[] {
+  return (environment.INSPIRE_HERDR_ENV_EXCLUDE ?? "")
+    .split(",")
+    .map((prefix) => prefix.trim())
+    .filter((prefix) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix));
+}
+
 /** Addressed Herdr control; only explicitly allocated worker panes are owned. */
 export class HerdrClient {
   private readonly binary: string;
@@ -131,8 +144,14 @@ export class HerdrClient {
       delete this.environment[key];
     // Shared Herdr must not inherit Host/worker capabilities. Each actual Pi
     // gets its own Inspire fields later over the private launch channel.
+    // Extension-owned per-process identities are a configurable list rather
+    // than core knowledge of any one extension.
+    const excluded = [
+      "INSPIRE_",
+      ...herdrExcludedEnvironmentPrefixes(this.environment),
+    ];
     for (const key of Object.keys(this.environment))
-      if (key.startsWith("INSPIRE_") || key.startsWith("PI_INTERCOM_"))
+      if (excluded.some((prefix) => key.startsWith(prefix)))
         delete this.environment[key];
     this.prefix = options.session ? ["--session", options.session] : [];
   }
