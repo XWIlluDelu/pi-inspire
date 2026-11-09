@@ -29,6 +29,7 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
 import { ExtensionStatus } from "./ExtensionDisplays";
+import { NavigationToggle } from "./NavigationToggle";
 import { PiLoader } from "./PiLoader";
 import { SessionActionsMenu } from "./SessionActionsMenu";
 
@@ -61,17 +62,15 @@ function StatusChip({
   children,
   className,
   label,
-  title = label,
   role,
 }: {
   children?: React.ReactNode;
   className: string;
   label: string;
-  title?: string;
   role?: "status";
 }) {
   return (
-    <span className={className} title={title} role={role}>
+    <span className={className} title={label} role={role}>
       {children}
       <span className="chip__label chip__label--responsive">{label}</span>
     </span>
@@ -280,6 +279,7 @@ const SessionIdent = memo(function SessionIdent({
         }}
       >
         <input
+          className="inline-rename-input"
           ref={inputRef}
           style={{ width: renameWidth }}
           value={value}
@@ -459,8 +459,7 @@ export const AppTopbar = memo(function AppTopbar({
   return (
     <header className="topbar">
       {narrowViewport ? (
-        <button
-          type="button"
+        <NavigationToggle
           className="icon-button"
           onClick={onToggleNavigation}
           aria-label="Toggle navigation"
@@ -468,7 +467,7 @@ export const AppTopbar = memo(function AppTopbar({
           title="Toggle navigation (Ctrl+B)"
         >
           <PanelLeft size={15} aria-hidden />
-        </button>
+        </NavigationToggle>
       ) : null}
       <SessionIdent
         key={state.sessionId}
@@ -528,15 +527,19 @@ export const AppTopbar = memo(function AppTopbar({
         >
           <Command size={15} aria-hidden />
         </button>
-        <button
-          type="button"
-          className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
-          onClick={onToggleSettings}
-          aria-label="Settings"
-          title="Settings"
-        >
-          <SettingsIcon size={15} aria-hidden />
-        </button>
+        {narrowViewport ? null : (
+          // Narrow layouts reach Settings from the navigation drawer and the
+          // command palette, leaving header width to the session identity.
+          <button
+            type="button"
+            className={`icon-button ${settingsOpen ? "icon-button--active" : ""}`}
+            onClick={onToggleSettings}
+            aria-label="Settings"
+            title="Settings"
+          >
+            <SettingsIcon size={15} aria-hidden />
+          </button>
+        )}
         <button
           type="button"
           className={`icon-button ${state.resourcesOpen ? "icon-button--active" : ""}`}

@@ -183,10 +183,18 @@ for (const touch of [false, true]) {
             parseFloat(marker.left) +
             parseFloat(marker.width);
           const icon = element.querySelector("svg")!.getBoundingClientRect();
-          return { gap: icon.left - markerRight, width: icon.width };
+          const label = element
+            .querySelector(".nav__group-name")!
+            .getBoundingClientRect();
+          return {
+            gap: icon.left - markerRight,
+            labelGap: label.left - icon.right,
+          };
         });
-        expect(clearance.gap).toBeGreaterThanOrEqual(3);
-        expect(clearance.width).toBeCloseTo(16, 2);
+        // The desktop glyph is inset inside its 16px slot; test clearance and
+        // the shared text gap, rather than assuming a full-slot painted icon.
+        expect(clearance.gap).toBeGreaterThanOrEqual(1);
+        expect(clearance.labelGap).toBeCloseTo(8, 2);
         await toggle.press("Enter");
         await expect(group.locator(".nav__group-title")).not.toHaveClass(
           /--active/,

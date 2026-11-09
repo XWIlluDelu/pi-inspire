@@ -124,119 +124,145 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ## Canonical project and session navigation
 
-- Project and session navigation remains visible at the left by default and gives every session one
-  canonical position: individually pinned sessions occupy one global top section, then pinned
-  project folders and remaining folders grouped by working directory with newest activity first,
-  while a Hidden group contains individually hidden sessions and complete hidden folders last.
-  Runtime state appears only on each canonical row's dot: working is yellow, unseen completion
-  green, unseen failure red, and recovery warning-ringed. This preserves location memory without
-  duplicating a session into a second runtime-derived group; Hidden rows retain the same dots when
-  expanded. The conversation stays dominant in the center, and the right contextual region opens
-  only when requested. Its Changes selector shows the same authoritative total as the topbar,
-  capped visually at `99+` and omitted when the header is too narrow; the tooltip retains the exact
-  count. On narrow screens it uses the full-width modal drawer specified in [[workspace-layout]].
+- Project and session navigation is visible at the left by default and gives every session one
+  canonical position, in this order: individually pinned sessions in one global top section; pinned
+  project folders, then remaining folders, grouped by working directory with newest activity first;
+  and last a Hidden group containing individually hidden sessions and complete hidden folders.
+  Each canonical row's dot carries runtime state: working is yellow, unseen completion green,
+  unseen failure red, and recovery warning-ringed; the age on the row's second line takes
+  the same state colour; no status word is added. Narrow layouts and the collapsed desktop rail
+  summarize other sessions' outcomes as a count on the navigation toggle, owned by [[workspace-layout]]. A session is never duplicated into a second
+  runtime-derived group, which preserves location memory; Hidden rows keep the same dots when
+  expanded.
+
+  The conversation stays dominant in the center, and the right contextual region opens only when
+  requested. Its Changes selector shows the same authoritative total as the topbar, capped visually
+  at `99+` and omitted when the header is too narrow; the tooltip keeps the exact count. On narrow
+  screens the contextual region uses the full-width modal drawer specified in [[workspace-layout]].
 
 - Navigation owns New session, search and its collapse/expand controls. [[design-system]] defines
   their shared alignment and the installed-window header variant. The desktop rail's leading
-  control expands navigation and its separate plus button starts a session; the conversation
-  header does not duplicate that toggle. Keyboard collapse/expand from within navigation restores
-  focus to the corresponding sidebar toggle, while the same shortcut from the editor preserves
-  editor focus. On narrow screens there is no rail: the topbar opens the full modal drawer, whose
-  header closes it. Closing or changing viewport does not overwrite the desktop collapse state.
+  control expands navigation and its separate plus button starts a session. Keyboard
+  collapse/expand from within navigation restores focus to the corresponding sidebar toggle; the
+  same shortcut from the editor keeps editor focus. On narrow screens there is no rail: the topbar
+  opens the full modal drawer, whose header closes it. [[workspace-layout]] owns toggle placement
+  and the drawer's interaction with the desktop collapse state.
 
-- Pinning and hiding are reversible navigation metadata that never touch Pi's session storage, and
-  they are mutually exclusive: hiding a session drops its pin, restoring it returns it to its
-  folder, and each change travels as a single preference patch so the two identity lists cannot
+- Pinning and hiding are reversible navigation metadata that never touch Pi's session storage.
+  They are mutually exclusive: hiding a session drops its pin, and restoring it returns it to its
+  folder. Each change travels as a single preference patch so the two identity lists cannot
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- An ordinary session row is one dense line carrying a single number: its title at the left, and at
-  the right a compact activity age in a fixed column, preceded by the owning project only where a
-  section crosses folders. Folder headers use the next legibility tier for their label and
-  persistent pin state, while putting their smaller session count in that same right-hand column, so
-  the panel reads down one rule. The exact timestamp and the message count stay in tooltips rather
-  than becoming a second number. The pin and hide actions take over that column on hover or focus
-  without moving anything. On phone-width layouts or without hover they remain visible beside the
-  age. Pin and Hide are frequent actions and stay directly accessible, not behind an overflow menu.
+- Session rows use two compact lines at every width. On the first line the activity mark precedes
+  the title, right-aligned inside the same 16px icon slot and 8px label gap as folder rows. The
+  status mark renders at 10px, scaled about its painted right edge and vertical centre without
+  moving the slot, text axis or selection marker. The text axis stays reserved when no status is
+  present. Age aligns with the title on the quieter second line, followed by cross-project metadata.
+  Hidden keeps enough leading gutter to separate status from its selection marker.
+
+  Desktop Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus,
+  without hiding metadata or taking width from the title. Ordinary pointer rows are 44px high;
+  coarse desktop rows keep visible 36px actions. On phone-width layouts or without hover the
+  actions stay visible; phone-width or touch drawers keep their persistent 36px actions in a
+  separate column beside both text lines. Pin and Hide stay directly accessible, not behind an
+  overflow menu. The exact timestamp and message count stay in tooltips.
+
+  Fine-pointer desktop project groups have a 14px surface gap (12px margin plus the list's 2px
+  gap); Pinned/category boundaries keep their distinct spacing. The title/age line boxes stay at
+  18/16px with a 1px gap; density changes do not squeeze individual two-line rows. Folder headers
+  keep their label tier, persistent pin state and trailing session count. Desktop New/Search,
+  folder headers and session-row surfaces share the same outer inset; their internal icon/text axes
+  stay stable.
+
+  Hidden's full-width dock header stays distinct from its inset contents; its root folders and row
+  surfaces use the normal project axes without an extra section-wide indent. Independent hidden
+  sessions stay at that root text axis; grouped sessions keep the compact desktop layout rather
+  than adding another 20px indent. Hidden lists independent sessions before folders and their
+  children, preserving each category's existing order, and keyboard search navigation follows that
+  visual order. A folder following independent sessions uses the existing 8px folder-section margin
+  rather than another indent.
 
 - Project groups expose native expand/collapse controls across the header's main button. A single
-  open/closed folder icon conveys the displayed state without a separate disclosure arrow, leaving
-  more width for the folder name. The button retains its name and `aria-expanded` state for keyboard
-  and assistive-technology use. A collapsed group containing the visible
-  session carries the active highlight on its header, and active search results remain visible
-  regardless of saved collapse state. Hidden is a bottom curation drawer outside the session list's
-  scroll area. Its neutral 44px header leaves space around the label and aligned icons, with the
-  count at the trailing edge before the disclosure indicator. The header precedes its content; Hidden's
-  independently scrolling body is bounded to leave room for ordinary navigation. Both scrollports
-  retain enough height for complete rows in short windows, including safe-area insets. When those
-  minimums cannot fit alongside New/Search and the drawer header, navigation itself scrolls rather
-  than compressing a list into a sliver. Opening Hidden reveals its body without transferring focus;
-  normal-height navigation retains independent list scrolling and its existing spacing. Project identity
-  remains on cross-project Hidden rows as quiet text rather than a filled badge. On phone-width or
-  non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age beneath
-  the title so persistent actions do not
-  crowd it. Selection and search highlights cover the whole row, including its action area.
-  The drawer opens on demand, starts closed
-  again, and search reveals matching hidden sessions inside it instead of returning them to their
-  folders. Ordinary session-entry surfaces, including Welcome recents and the command palette's
-  recents/search, share the hidden-session/project filter. Hidden sessions remain available through
-  the explicit Hidden drawer rather than reappearing as ordinary recommendations.
-  With no hidden results the drawer is absent. Ordinary rows keep Pin and Hide; Hidden rows
-  reuse those same two action slots for Restore and Delete, making individual deletion a deliberate
-  second-stage action rather than a third always-present icon. Every hidden session, including a
-  child of a hidden folder, has both Restore and Delete in those fixed columns. Restoring a child
-  resolves the complete folder through the catalog, restores only that session and keeps all siblings
-  individually hidden. A failed lookup or newer Hidden edits leave the prior curation intact. Folder
-  headers have the same Restore/Delete columns. Folder Delete confirms the count and full path,
-  and clears only that complete hidden folder; other hidden sessions and folders are unchanged.
+  open/closed folder icon conveys the state with no separate disclosure arrow, leaving more width
+  for the folder name. The button keeps its name and `aria-expanded` state. A collapsed group
+  containing the visible session carries the active highlight on its header, and active search
+  results stay visible regardless of saved collapse state.
 
-  Clear Hidden is a persistent header icon action, between the count and disclosure, with its own
-  accessible name and click target. The count and controls retain their positions when the drawer
-  opens or closes. Independent hidden session titles start farther left than folder contents, so
-  a row following a folder does not appear to be its child. Complete hidden folders retain their
-  own nested indentation. Clear does not consume a content row. It clears the entire drawer
-  through one count-bearing confirmation: it includes both individually hidden sessions and every
-  session in complete hidden folders, never only one child folder. It is unavailable while search or curation hydration can
-  show only a partial selection, and while any target is opening, working in Inspire, or conflicted.
-  Viewing an idle target or observing it in an external Pi terminal does not block deletion;
-  [[session-deletion]] owns idle-worker retirement and the contextual terminal consequence.
-  A folder-level deletion applies the same conditions to that folder, not to unrelated targets elsewhere in Hidden.
-  Session deletion leaves project files and project folders unchanged.
+  Hidden is a bottom curation drawer outside the session list's scroll area. Its neutral 44px
+  header leaves space around the label and aligned icons, with the count at the trailing edge
+  before the disclosure indicator. The header precedes its content; Hidden's independently
+  scrolling body is bounded to leave room for ordinary navigation. Both scrollports keep enough
+  height for complete rows in short windows, including safe-area insets. When those minimums cannot
+  fit alongside New/Search and the drawer header, navigation itself scrolls rather than compressing
+  a list into a sliver. Normal-height navigation keeps independent list scrolling and its existing
+  spacing. Opening Hidden reveals its body without transferring focus.
+
+  Project identity on cross-project Hidden rows is quiet text, not a filled badge. On phone-width
+  or non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age
+  beneath the title so persistent actions do not crowd it. Selection and search highlights cover
+  the whole row, including its action area.
+
+  The drawer opens on demand and starts closed again; with no hidden results it is absent. Search
+  reveals matching hidden sessions inside it instead of returning them to their folders. Ordinary
+  session-entry surfaces, including Welcome recents and the command palette's recents/search, share
+  the hidden-session/project filter; hidden sessions stay in the Hidden drawer instead of
+  reappearing as ordinary recommendations.
+
+  Ordinary rows keep Pin and Hide; Hidden rows reuse those two action slots for Restore and Delete,
+  so deletion is a second-stage action rather than a third always-present icon. Every hidden
+  session, including a child of a hidden folder, has both Restore and Delete in those fixed columns.
+  Restoring a child resolves the complete folder through the catalog, restores only that session
+  and keeps all siblings individually hidden. A failed lookup or newer Hidden edits leave the prior
+  curation intact. Folder headers have the same Restore/Delete columns. Folder Delete confirms the
+  count and full path and clears only that complete hidden folder.
+
+  Clear Hidden is a persistent header icon action between the count and disclosure, with its own
+  accessible name and click target; it does not consume a content row. The count and controls keep
+  their positions when the drawer opens or closes. Independent hidden session titles start farther
+  left than folder contents, so a row following a folder does not look like its child; complete
+  hidden folders keep their own nested indentation. Clear empties the entire drawer through one
+  count-bearing confirmation covering both individually hidden sessions and every session in
+  complete hidden folders. It is unavailable while search or curation hydration can show only a
+  partial selection, and while any target is opening, working in Inspire, or conflicted. A
+  folder-level deletion applies the same conditions to that folder only. Viewing an idle target or
+  observing it in an external Pi terminal does not block deletion; [[session-deletion]] owns
+  idle-worker retirement and the contextual terminal consequence. Session deletion leaves project
+  files and project folders unchanged.
 
 ### Search and pagination
 
 - Sidebar search reaches session name, cwd, ID and complete retained user/assistant text through
-  the Host catalog. [[session-continuity]] owns query syntax, matching and source authority;
-  [[design-system]] owns visible match emphasis. Search uses the existing sidebar without another
-  panel or filter toolbar.
+  the Host catalog, in the existing sidebar without another panel or filter toolbar.
+  [[session-continuity]] owns query syntax, matching and source authority; [[design-system]] owns
+  visible match emphasis.
 
   Search reveals the immediate parent beside a project group when that parent has a visible
   token/phrase match but the project basename does not. Existing context for colliding basenames
   remains. Both contexts use `project @parent`; the `@` marker uses secondary text styling and is
-  excluded from match emphasis. Cross-project session locations have no `@` prefix: they normally
-  show the project basename, expanding to `parent/project` only when the parent matches and neither
-  title nor basename does. That expansion temporarily replaces age metadata; ordinary browsing
-  restores basename and age. Regex results have no match emphasis. Row layout and quiet location
-  styling follow the navigation rules above.
+  excluded from match emphasis. Cross-project session locations have no `@` prefix: they show the
+  project basename, expanding to `parent/project` only when the parent matches and neither title
+  nor basename does. That expansion temporarily replaces age metadata; ordinary browsing restores
+  basename and age. Regex results have no match emphasis.
 
   Focusing an empty search input does not highlight or open a session. Unmodified Up/Down starts
-  deliberate result navigation, including with an empty query; a non-empty query defaults to its first
-  result. Clearing the query or leaving and refocusing an empty input resets that transient highlight.
-  While the search input owns focus, Up/Down follows the same project/Pin/Hidden order as navigation;
-  Enter opens only the highlighted identity. Focus stays in the
-  input, the highlighted row scrolls into view, and a live status names the choice for assistive
-  technology. Highlighting is distinct from the opened session. The same identity survives page
-  append, same-query refresh, and curation reordering; a changed query cannot open an old result
-  while its response is pending. Modifier-based text editing and IME composition keep their keys,
-  including composition-confirming Enter and Escape. Keyboard movement never loads another page
-  implicitly, and searching/clearing leaves both active-session and start drafts intact.
+  deliberate result navigation, even with an empty query; a non-empty query defaults to its first
+  result. Clearing the query or leaving and refocusing an empty input resets that transient
+  highlight. While the search input owns focus, Up/Down follows the same project/Pin/Hidden order
+  as navigation and Enter opens only the highlighted identity. Focus stays in the input, the
+  highlighted row scrolls into view, and a live status names the choice for assistive technology.
+  Highlighting is distinct from the opened session. The same identity survives page append,
+  same-query refresh, and curation reordering; a changed query cannot open an old result while its
+  response is pending. Modifier-based text editing and IME composition keep their keys, including
+  composition-confirming Enter and Escape. Keyboard movement never loads another page implicitly,
+  and searching/clearing leaves both active-session and start drafts intact.
 
 - Older chronological history is reached with an explicit `Load older sessions` control, never
   implicit scrolling. It reports the number of server rows consumed out of the query total, exposes
   loading/retry/end states to keyboard and assistive technology, and sits below the chronological
-  groups before Hidden. Search and explicit refresh restart at offset zero; loading older appends in
-  server order. Curated, selected, and live-session hydration is deduplicated and chunked within the
-  host route bounds; it can add visible rows but never advances the chronological cursor.
+  groups before Hidden. Search and explicit refresh restart at offset zero; loading older appends
+  in server order. Curated, selected, and live-session hydration is deduplicated and chunked within
+  the host route bounds; it can add visible rows but never advances the chronological cursor.
 
   Hydration and preservation failures keep the last confirmed union and recover automatically in a
   bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks; a
@@ -321,7 +347,12 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ## Feedback scope
 
-- Recover internal read state automatically while retaining confirmed content. Catalog backfill,
+- Session selection keeps its pending-navigation and send/deletion safety guards without
+  displaying the agent's working animation. Fast opens stay quiet; after 800ms, the target row's
+  age is temporarily replaced by `Opening…`. Completion or failure clears that feedback, while
+  genuine agent activity keeps its existing status glyph. Pending navigation keeps normal label
+  opacity instead of briefly dimming the row.
+- Recover internal read state automatically while keeping confirmed content. Catalog backfill,
   History revalidation, snapshot refresh and file probes use bounded, ownership-checked retry;
   branch commands and prompts with uncertain acceptance are never automatically replayed.
 - Top banners describe a condition that affects the workspace: persistent loss of synchronization,

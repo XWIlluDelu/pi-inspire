@@ -26,6 +26,7 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import { useImageUrl } from "../use-image-url";
 import {
   type HistoryReadingState,
   readHistoryReading,
@@ -106,33 +107,12 @@ function HistoryImage({
   targetId: string;
   index: number;
 }) {
-  const [url, setUrl] = useState<string>();
-  const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setUrl(undefined);
-    setError(false);
-    let objectUrl: string | undefined;
-    void store
-      .readBranchImage(targetId, index, controller.signal)
-      .then((blob) => {
-        if (controller.signal.aborted) return;
-        if (!blob) {
-          setError(true);
-          return;
-        }
-        objectUrl = URL.createObjectURL(blob);
-        setUrl(objectUrl);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setError(true);
-      });
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [targetId, index, attempt]);
+  const loadImage = useCallback(
+    (signal: AbortSignal) => store.readBranchImage(targetId, index, signal),
+    [targetId, index, attempt],
+  );
+  const { src: url, error } = useImageUrl(loadImage);
   return error ? (
     <div className="history-image-error">
       <span>Image unavailable</span>

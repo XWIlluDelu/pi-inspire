@@ -67,20 +67,6 @@ import {
 } from "./transcript-cards";
 import { TranscriptSearchReveal } from "./transcript-search";
 
-export function relativeTime(timestamp: number | string): string {
-  const time =
-    typeof timestamp === "string" ? Date.parse(timestamp) : timestamp;
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1_000));
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(time).toLocaleDateString();
-}
-
 // --- Turns and activity ---
 
 function MessageActions({

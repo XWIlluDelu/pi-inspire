@@ -7,7 +7,7 @@ import {
   PinOff,
   Trash2,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   isBusyRunState,
   projectNameFromCwd,
@@ -29,10 +29,9 @@ function searchParentContext(cwd: string, query: string): string {
     : "";
 }
 
-/** One dense session line: the title at the left and one number at the right —
- * the activity age, in a fixed column the curation actions take over on hover
- * or focus. The message count is a tooltip fact, not a second number fighting
- * for the same edge. Cross-project path searches replace age with directory
+/** Identity/status sits above age/project metadata at every width. Touch drawers
+ * give persistent actions a separate column. The message count remains a tooltip
+ * fact. Cross-project path searches replace age with directory
  * context so the title keeps its space. */
 export const SessionRow = memo(function SessionRow({
   session,
@@ -75,6 +74,13 @@ export const SessionRow = memo(function SessionRow({
   );
   const selected = session.id === selectedSessionId;
   const opening = openingSessionId === session.id;
+  const [openingSlow, setOpeningSlow] = useState(false);
+  useEffect(() => {
+    setOpeningSlow(false);
+    if (!opening) return;
+    const timer = window.setTimeout(() => setOpeningSlow(true), 800);
+    return () => window.clearTimeout(timer);
+  }, [opening]);
   const hidden = individuallyHidden || projectHidden;
   const {
     conflicted,
@@ -121,6 +127,7 @@ export const SessionRow = memo(function SessionRow({
     : projectName;
   return (
     <div
+      data-session-id={session.id}
       className={`nav__row ${showProject ? "nav__row--cross-project" : ""} ${selected ? "nav__row--active" : ""} ${session.id === highlightedSessionId ? "nav__row--highlighted" : ""}`}
     >
       <button
@@ -133,16 +140,7 @@ export const SessionRow = memo(function SessionRow({
         title={`${title} · ${session.messageCount} messages${externalLabel ? ` · ${externalLabel}` : ""}`}
       >
         <span className="nav__row-title">
-          {opening ? (
-            <span
-              className="nav__row-state"
-              role="img"
-              aria-label="Opening session"
-              title="Opening session"
-            >
-              <PiLoader size={12} aria-hidden />
-            </span>
-          ) : attention ? (
+          {attention ? (
             <span
               className={
                 attention === "attention"
@@ -177,9 +175,13 @@ export const SessionRow = memo(function SessionRow({
               />
             </span>
           ) : null}
-          {!parentContext ? (
+          {opening && openingSlow ? (
+            <span className="nav__row-age" role="status">
+              Opening…
+            </span>
+          ) : !parentContext ? (
             <span
-              className="nav__row-age"
+              className={`nav__row-age${attention ? ` nav__row-age--${attention}` : ""}`}
               title={new Date(session.modified).toLocaleString()}
             >
               {compactAge(session.modified)}
