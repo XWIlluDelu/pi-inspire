@@ -2818,7 +2818,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private rememberProjectCwd(cwd: string): void {
     // The catalog retains this hint in memory immediately. Its optional disk
     // index is not a prerequisite for starting or using a native session.
-    void this.catalog.rememberProjectCwds?.([cwd]).catch((error) => {
+    void this.catalog.rememberProjectCwd?.(cwd).catch((error) => {
       this.diagnostics.record("warning", "project_discovery_not_saved", {
         cwd,
         errorName: error instanceof Error ? error.name : typeof error,
