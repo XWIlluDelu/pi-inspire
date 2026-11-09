@@ -138,25 +138,27 @@ it("refreshes commands and extension UI on native reload without replacing eithe
   const runtime = new RuntimeController(
     catalog,
     new AttachmentStore(join(root, "uploads")),
-    (options) => {
-      const rpc = new PiRpcProcess({
-        ...options,
-        cliPath: piInstallation.cliPath,
-        env: isolatedTestEnvironment(root, {
-          ...environment,
-          ...options.env,
-        }),
-        args: [
-          ...(options.args ?? []),
-          "--no-skills",
-          "--no-context-files",
-          "--no-themes",
-          "--no-tools",
-        ],
-      });
-      workers.push(rpc);
-      rpc.on("event", (event) => events.push(event));
-      return rpc;
+    {
+      createProcess: (options) => {
+        const rpc = new PiRpcProcess({
+          ...options,
+          cliPath: piInstallation.cliPath,
+          env: isolatedTestEnvironment(root, {
+            ...environment,
+            ...options.env,
+          }),
+          args: [
+            ...(options.args ?? []),
+            "--no-skills",
+            "--no-context-files",
+            "--no-themes",
+            "--no-tools",
+          ],
+        });
+        workers.push(rpc);
+        rpc.on("event", (event) => events.push(event));
+        return rpc;
+      },
     },
   );
   const browserEvents: Record<string, unknown>[] = [];

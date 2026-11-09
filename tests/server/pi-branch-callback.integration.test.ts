@@ -74,14 +74,16 @@ it.each(["custom", "custom_message"])(
     const runtime = new RuntimeController(
       new SessionCatalog(f.cwd),
       attachments,
-      (options) => {
-        const worker = new PiRpcProcess({
-          ...options,
-          env: { ...f.env, ...options.env },
-          args: ["--no-extensions", ...(options.args ?? []), "-e", extension],
-        });
-        workers.push(worker);
-        return worker;
+      {
+        createProcess: (options) => {
+          const worker = new PiRpcProcess({
+            ...options,
+            env: { ...f.env, ...options.env },
+            args: ["--no-extensions", ...(options.args ?? []), "-e", extension],
+          });
+          workers.push(worker);
+          return worker;
+        },
       },
     );
     const answers: Promise<void>[] = [];

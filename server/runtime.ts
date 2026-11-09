@@ -38,7 +38,6 @@ import {
   type BranchTreeResponse,
   type ComposerHistoryEntry,
   type ComposerHistoryPage,
-  emptyPendingQueues,
   type HiddenClearResponse,
   type HostNativeCommandRequest,
   type HostNativeCommandResponse,
@@ -428,6 +427,28 @@ interface ForkReservation {
   release(): void;
 }
 
+type OpenProjection = (
+  session: SessionRecord,
+) => Promise<SessionProjectionView>;
+
+/** Replaceable collaborators; each defaults to the real implementation. */
+export interface RuntimeControllerOptions {
+  /** Starts one Pi worker (default: a direct Pi RPC process). */
+  createProcess?: (
+    options: PiRpcOptions,
+  ) => PiRpcProcess | Promise<PiRpcProcess>;
+  /** Opens the projection of a viewed session. */
+  openSessionProjection?: OpenProjection;
+  /** Opens the projection of a fork destination. */
+  openForkProjection?: OpenProjection;
+  /** Bound on a branch-bridge exchange; null waits for Pi. */
+  branchBridgeTimeoutMs?: number | null;
+  deleteSessionRecord?: DeleteSessionRecord;
+  diagnostics?: DiagnosticLogger;
+  validateSessionRecord?: ValidateSessionRecord;
+  stageFork?: StageSessionFork;
+}
+
 export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly slots = new Map<string, RuntimeSlot>();
   private readonly sessionViewObservers = new Map<string, number>();
@@ -590,42 +611,48 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private closing = false;
   private closePromise: Promise<void> | null = null;
 
+  private readonly createProcess: (
+    options: PiRpcOptions,
+  ) => PiRpcProcess | Promise<PiRpcProcess>;
+  private readonly openSessionProjection: OpenProjection;
+  private readonly openForkProjection: OpenProjection;
+  private readonly branchBridgeTimeoutMs: number | null;
+  private readonly deleteSessionRecord: DeleteSessionRecord;
+  private readonly diagnostics: DiagnosticLogger;
+  private readonly validateSessionRecord: ValidateSessionRecord;
+  private readonly stageFork: StageSessionFork;
+
   constructor(
     private readonly catalog: SessionCatalogLike,
     private readonly attachments: AttachmentStore,
-    private readonly createProcess: (
-      options: PiRpcOptions,
-    ) => PiRpcProcess | Promise<PiRpcProcess> = (options) =>
-      new PiRpcProcess(options),
-    private readonly openSessionProjection: (
-      session: SessionRecord,
-    ) => Promise<SessionProjectionView> = (session) =>
-      SessionProjection.open(session, undefined, (path) =>
-        attachments.promptFileName(path),
-      ),
-    private readonly branchBridgeTimeoutMs: number | null = null,
-    private readonly openForkProjection: (
-      session: SessionRecord,
-    ) => Promise<SessionProjectionView> = (session) =>
-      SessionProjection.open(session, undefined, (path) =>
-        attachments.promptFileName(path),
-      ),
-    private readonly deleteSessionRecord: DeleteSessionRecord = (
-      session,
-      version,
-    ) => deleteSessionFile(session, undefined, undefined, version),
-    private readonly diagnostics: DiagnosticLogger = nullDiagnosticLogger(),
-    private readonly validateSessionRecord: ValidateSessionRecord = validateSessionFile,
-    private readonly stageFork: StageSessionFork = stageSessionFork,
+    options: RuntimeControllerOptions = {},
   ) {
     super();
+    const openProjection: OpenProjection = (session) =>
+      SessionProjection.open(session, undefined, (path) =>
+        attachments.promptFileName(path),
+      );
+    this.createProcess =
+      options.createProcess ?? ((spawn) => new PiRpcProcess(spawn));
+    this.openSessionProjection =
+      options.openSessionProjection ?? openProjection;
+    this.openForkProjection = options.openForkProjection ?? openProjection;
+    this.branchBridgeTimeoutMs = options.branchBridgeTimeoutMs ?? null;
+    this.deleteSessionRecord =
+      options.deleteSessionRecord ??
+      ((session, version) =>
+        deleteSessionFile(session, undefined, undefined, version));
+    this.diagnostics = options.diagnostics ?? nullDiagnosticLogger();
+    this.validateSessionRecord =
+      options.validateSessionRecord ?? validateSessionFile;
+    this.stageFork = options.stageFork ?? stageSessionFork;
     this.persistenceOwnership = new RuntimePersistenceOwnershipController(
       {
         promptFileName: (path) => this.attachments.promptFileName(path),
         readNewSessionEntries: (slot, rpc) =>
           this.readNewSessionEntries(slot, rpc),
       },
-      diagnostics,
+      this.diagnostics,
     );
     this.deletions = new RuntimeSessionDeletionController({
       assertNotClosing: () => this.assertNotClosing(),
@@ -790,7 +817,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         logRuntimeError: (sessionId, error, event) =>
           this.logRuntimeError(sessionId, error, event),
       },
-      diagnostics,
+      this.diagnostics,
     );
     this.startupAttestor = new RuntimeStartupAttestor({
       reconcile: (slot, force, startupAttestation) =>
@@ -819,7 +846,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         logRuntimeError: (sessionId, error, event) =>
           this.logRuntimeError(sessionId, error, event),
       },
-      diagnostics,
+      this.diagnostics,
       {
         startupAttestor: this.startupAttestor,
         processRegistry: this.processRegistry,
@@ -1932,10 +1959,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.runState = "failed";
       slot.attention = this.selectedSessionId === slot.id ? null : "failed";
     }
-    slot.piPendingQueues = emptyPendingQueues();
-    slot.piPendingInput = { steering: [], followUp: [] };
-    void slot.pendingImages?.dispose();
-    slot.pendingImages = null;
+    void this.workerLifecycle.releaseWorkerView(slot, "stopped");
     this.refreshPendingQueues(slot);
     this.logRuntimeError(slot.id, error, "worker_exit");
     this.emitSlotEvent(slot, {
@@ -2392,24 +2416,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current.runState = retainedConflict ? "conflict" : retainedRunState;
         current.compactionReturnState = null;
         current.summarizationRetry = null;
-        this.extensionUi.clear(current, "replaced");
-        current.piPendingQueues = emptyPendingQueues();
-        current.piPendingInput = { steering: [], followUp: [] };
-        await current.pendingImages?.dispose();
-        current.pendingImages = null;
-        current.pendingQueues = {
-          ...emptyPendingQueues(),
-          revision: current.pendingQueues.revision + 1,
-        };
-        current.extensionDisplays = [];
-        current.extensionStatuses = {};
-        current.toolActivity = {};
+        await this.workerLifecycle.releaseWorkerView(current, "replaced");
         this.projectionCoordinator.clearWriterBaseline(current);
-        current.overlay = [];
-        current.overlayItemBytes = [];
-        current.overlayBytes = 2;
-        current.activeAssistantCorrelation = null;
-        current.activeOverlayIds.clear();
+        this.persistenceOwnership.clearOverlay(current);
         current.conflict = retainedConflict;
         current.branchRevision = projection.revision;
         this.renewView(current);
@@ -4512,13 +4521,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           // a hard stop, including extension-blocked workers that cannot safely
           // receive either a dialog answer or another persistence command.
           await this.stopWriter(slot);
-          this.extensionUi.clear(slot, "aborted");
-          slot.piPendingQueues = emptyPendingQueues();
-          slot.piPendingInput = { steering: [], followUp: [] };
+          await this.workerLifecycle.releaseWorkerView(slot, "aborted");
           this.refreshPendingQueues(slot);
-          slot.extensionDisplays = [];
-          slot.extensionStatuses = {};
-          slot.toolActivity = {};
           for (const expectation of slot.persistenceExpectations)
             expectation.settle(null);
           slot.persistenceExpectations = [];

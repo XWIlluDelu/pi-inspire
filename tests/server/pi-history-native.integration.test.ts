@@ -166,28 +166,30 @@ it("executes native root/custom navigation, summary append and cancellation, and
   };
   const attachments = new AttachmentStore(join(directory, "uploads"));
   const workers: PiRpcProcess[] = [];
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new PiRpcProcess({
-      ...options,
-      args: [
-        "--no-extensions",
-        "--session-dir",
-        sessionDir,
-        ...(options.args ?? []),
-        "--extension",
-        hookPath,
-        "--model",
-        "offline-tree/offline",
-      ],
-      env: {
-        ...options.env,
-        PI_CODING_AGENT_DIR: configDir,
-        PI_CODING_AGENT_SESSION_DIR: sessionDir,
-        PI_OFFLINE: "1",
-      },
-    });
-    workers.push(worker);
-    return worker;
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--session-dir",
+          sessionDir,
+          ...(options.args ?? []),
+          "--extension",
+          hookPath,
+          "--model",
+          "offline-tree/offline",
+        ],
+        env: {
+          ...options.env,
+          PI_CODING_AGENT_DIR: configDir,
+          PI_CODING_AGENT_SESSION_DIR: sessionDir,
+          PI_OFFLINE: "1",
+        },
+      });
+      workers.push(worker);
+      return worker;
+    },
   });
   const navigate = async (
     targetId: string,

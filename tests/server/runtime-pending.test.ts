@@ -31,10 +31,8 @@ async function queuedImageFixture() {
   const store = trackedAttachmentStore();
   const queue = { steering: [] as string[], followUp: [] as string[] };
   let worker!: FakeRpc;
-  const runtime = new RuntimeController(
-    catalog([record("a", "/tmp")]),
-    store,
-    (options) => {
+  const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, {
+    createProcess: (options) => {
       worker = new FakeRpc(options);
       queue.steering = [];
       queue.followUp = [];
@@ -64,8 +62,8 @@ async function queuedImageFixture() {
       });
       return worker as unknown as PiRpcProcess;
     },
-    preview,
-  );
+    openSessionProjection: preview,
+  });
   await runtime.openSession("a");
   await waitForReady(runtime);
   worker.emit("event", { type: "agent_start" });
@@ -142,26 +140,28 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       attachments,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        const snapshot = await previewSnapshot(session);
-        snapshot.transcriptPage.messages = [
-          {
-            role: "user",
-            timestamp: 1,
-            content: [
-              {
-                type: "image",
-                mimeType: "image/png",
-                data: Buffer.from("saved pixels").toString("base64"),
-              },
-            ],
-          },
-        ];
-        return new PreviewProjection(session.id, snapshot);
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          const snapshot = await previewSnapshot(session);
+          snapshot.transcriptPage.messages = [
+            {
+              role: "user",
+              timestamp: 1,
+              content: [
+                {
+                  type: "image",
+                  mimeType: "image/png",
+                  data: Buffer.from("saved pixels").toString("base64"),
+                },
+              ],
+            },
+          ];
+          return new PreviewProjection(session.id, snapshot);
+        },
       },
     );
     try {
@@ -381,25 +381,27 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        const value = await previewSnapshot(session);
-        return new PreviewProjection(session.id, {
-          ...value,
-          transcriptPage: {
-            ...value.transcriptPage,
-            messages: [
-              {
-                role: "user",
-                content: [{ type: "image", ...saved }],
-                timestamp: 1,
-              },
-            ],
-          },
-        });
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          const value = await previewSnapshot(session);
+          return new PreviewProjection(session.id, {
+            ...value,
+            transcriptPage: {
+              ...value.transcriptPage,
+              messages: [
+                {
+                  role: "user",
+                  content: [{ type: "image", ...saved }],
+                  timestamp: 1,
+                },
+              ],
+            },
+          });
+        },
       },
     );
     try {
@@ -562,11 +564,13 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");
@@ -629,14 +633,16 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        worker.responseOverrides.set("get_commands", () => ({
-          commands: [{ name: "slow", source: "extension" }],
-        }));
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          worker.responseOverrides.set("get_commands", () => ({
+            commands: [{ name: "slow", source: "extension" }],
+          }));
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");
@@ -720,11 +726,13 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");
@@ -854,11 +862,13 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     let sending: Promise<unknown> | undefined;
     try {
@@ -1283,11 +1293,13 @@ describe("RuntimeController Pending input and recovery", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");

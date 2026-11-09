@@ -66,11 +66,9 @@ describe("runtime source admission", () => {
         (options: PiRpcOptions) =>
           new FakeRpc(options) as unknown as PiRpcProcess,
       );
-      const runtime = new RuntimeController(
-        source,
-        trackedAttachmentStore(),
+      const runtime = new RuntimeController(source, trackedAttachmentStore(), {
         createProcess,
-      );
+      });
       try {
         if (change === "removed") {
           await expect(runtime.snapshot("a")).rejects.toMatchObject({
@@ -113,11 +111,9 @@ describe("runtime source admission", () => {
       (options: PiRpcOptions) =>
         new FakeRpc(options) as unknown as PiRpcProcess,
     );
-    const runtime = new RuntimeController(
-      source,
-      trackedAttachmentStore(),
+    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
       createProcess,
-    );
+    });
     try {
       await expect(runtime.openSession("a")).rejects.toMatchObject({
         code: "SESSION_CATALOG_STALE",
@@ -151,7 +147,7 @@ describe("runtime source admission", () => {
       const runtime = new RuntimeController(
         catalog([session]),
         trackedAttachmentStore(),
-        createProcess,
+        { createProcess },
       );
       runtime.setModelMetadataCatalog(new ModelMetadataCatalog(queryModels));
       try {
@@ -219,7 +215,7 @@ describe("runtime source admission", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      createProcess,
+      { createProcess },
     );
     try {
       // A cold reconnect can also project history without selecting or warming.
@@ -252,8 +248,11 @@ describe("runtime source admission", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      openProjection,
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: openProjection,
+      },
     );
     try {
       const snapshot = await runtime.openSession("a");
@@ -279,11 +278,13 @@ describe("runtime source admission", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async () => projection,
       },
-      async () => projection,
     );
     try {
       await runtime.openSession("a");
@@ -327,14 +328,12 @@ describe("runtime source admission", () => {
       );
       const store = trackedAttachmentStore();
       let worker: FakeRpc | undefined;
-      const runtime = new RuntimeController(
-        catalog([session]),
-        store,
-        (options) => {
+      const runtime = new RuntimeController(catalog([session]), store, {
+        createProcess: (options) => {
           worker = new FakeRpc(options);
           return worker as unknown as PiRpcProcess;
         },
-      );
+      });
       try {
         const initial = await runtime.openSession("a");
         const physical = await realpath(alias);

@@ -82,32 +82,34 @@ it("runs the portable UI example through native Pi and preserves Host request/di
   );
   const attachments = new AttachmentStore(join(root, "uploads"));
   const workers: PiRpcProcess[] = [];
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new PiRpcProcess({
-      ...options,
-      args: [
-        "--no-extensions",
-        "--no-skills",
-        "--no-prompt-templates",
-        "--session-dir",
-        sessions,
-        ...(options.args ?? []),
-        "--extension",
-        resolve("docs/examples/native-ui.ts"),
-        "--extension",
-        backgroundExtension,
-      ],
-      env: {
-        ...options.env,
-        HOME: root,
-        USERPROFILE: root,
-        PI_CODING_AGENT_DIR: config,
-        PI_CODING_AGENT_SESSION_DIR: sessions,
-        PI_OFFLINE: "1",
-      },
-    });
-    workers.push(worker);
-    return worker;
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--session-dir",
+          sessions,
+          ...(options.args ?? []),
+          "--extension",
+          resolve("docs/examples/native-ui.ts"),
+          "--extension",
+          backgroundExtension,
+        ],
+        env: {
+          ...options.env,
+          HOME: root,
+          USERPROFILE: root,
+          PI_CODING_AGENT_DIR: config,
+          PI_CODING_AGENT_SESSION_DIR: sessions,
+          PI_OFFLINE: "1",
+        },
+      });
+      workers.push(worker);
+      return worker;
+    },
   });
   const events: Array<Record<string, unknown>> = [];
   runtime.on("event", (event: Record<string, unknown>) => events.push(event));

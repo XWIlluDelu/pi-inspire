@@ -108,22 +108,24 @@ describe("native commands and worker-local catalogs", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        worker.responseOverrides.set("get_commands", {
-          commands:
-            workers.length === 0
-              ? [{ name: "old-command", source: "extension" }]
-              : [],
-        });
-        worker.responseOverrides.set("export_html", () => {
-          started.resolve();
-          return gate.promise.then(() => ({ path: "/tmp/export.html" }));
-        });
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          worker.responseOverrides.set("get_commands", {
+            commands:
+              workers.length === 0
+                ? [{ name: "old-command", source: "extension" }]
+                : [],
+          });
+          worker.responseOverrides.set("export_html", () => {
+            started.resolve();
+            return gate.promise.then(() => ({ path: "/tmp/export.html" }));
+          });
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");
@@ -166,25 +168,27 @@ describe("native commands and worker-local catalogs", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        const generation = workers.length + 1;
-        worker.responseOverrides.set("export_html", {
-          path: resolve(`/tmp/session-${generation}.html`),
-        });
-        worker.responseOverrides.set("get_commands", {
-          commands: [
-            {
-              name: `generation-${generation}`,
-              description: "Resource generation",
-              source: "extension",
-            },
-          ],
-        });
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          const generation = workers.length + 1;
+          worker.responseOverrides.set("export_html", {
+            path: resolve(`/tmp/session-${generation}.html`),
+          });
+          worker.responseOverrides.set("get_commands", {
+            commands: [
+              {
+                name: `generation-${generation}`,
+                description: "Resource generation",
+                source: "extension",
+              },
+            ],
+          });
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
 
     await runtime.openSession("a");

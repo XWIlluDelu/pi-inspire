@@ -238,11 +238,13 @@ describe("extension displays and dialog ownership", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     runtime.on("event", (event) =>
       emitted.push(event as Record<string, unknown>),
@@ -387,32 +389,34 @@ describe("extension displays and dialog ownership", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/tmp")]),
         store,
-        (options) => {
-          worker = new FakeRpc(options);
-          const send = worker.sendExtensionUiResponse.bind(worker);
-          worker.sendExtensionUiResponse = (response) => {
-            send(response);
-            responseWritten = true;
-          };
-          const request = worker.request.bind(worker);
-          worker.request = async <T>(command: Record<string, unknown>) => {
-            if (responseWritten && command.type === "get_state") {
-              responseWritten = false;
-              // PiRpcProcess rejects read-only waits with ordinary errors, even
-              // when its exit event has already retired the originating worker.
-              const error = new Error(
-                failure === "exit"
-                  ? "Pi RPC stdout closed unexpectedly"
-                  : "Pi command get_state response timed out",
-              );
-              if (failure === "exit") worker.emit("exit", error);
-              throw error;
-            }
-            return request<T>(command);
-          };
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            worker = new FakeRpc(options);
+            const send = worker.sendExtensionUiResponse.bind(worker);
+            worker.sendExtensionUiResponse = (response) => {
+              send(response);
+              responseWritten = true;
+            };
+            const request = worker.request.bind(worker);
+            worker.request = async <T>(command: Record<string, unknown>) => {
+              if (responseWritten && command.type === "get_state") {
+                responseWritten = false;
+                // PiRpcProcess rejects read-only waits with ordinary errors, even
+                // when its exit event has already retired the originating worker.
+                const error = new Error(
+                  failure === "exit"
+                    ? "Pi RPC stdout closed unexpectedly"
+                    : "Pi command get_state response timed out",
+                );
+                if (failure === "exit") worker.emit("exit", error);
+                throw error;
+              }
+              return request<T>(command);
+            };
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       try {
         await runtime.openSession("a");
@@ -493,12 +497,14 @@ describe("extension displays and dialog ownership", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
 
     await runtime.openSession("a");

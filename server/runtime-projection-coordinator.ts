@@ -6,7 +6,11 @@ import {
 import type { DiagnosticLogger } from "./diagnostics.js";
 import { requestError } from "./request-error.js";
 import { describeSessionEntry } from "./runtime-entry-descriptor.js";
-import type { OwnershipDecision, RuntimeSlot } from "./runtime-slot.js";
+import {
+  emptyWriterBaseline,
+  type OwnershipDecision,
+  type RuntimeSlot,
+} from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
@@ -109,47 +113,48 @@ export class RuntimeProjectionCoordinator {
   }
 
   captureWriterBaseline(slot: RuntimeSlot): void {
-    slot.workerProjectionRevision = slot.projection?.revision ?? null;
-    slot.workerProjectionFingerprint = slot.projection?.fingerprint ?? null;
-    slot.workerProjectionSourceIdentity =
-      slot.projection?.sourceIdentity ?? null;
-    slot.workerProjectionSourceVersion = slot.projection?.sourceVersion ?? null;
-    slot.workerProjectionObservedBytes = slot.projection
-      ? slot.projection.committedBytes + slot.projection.uncommittedBytes
-      : null;
+    const projection = slot.projection;
+    slot.writerBaseline = projection
+      ? {
+          revision: projection.revision,
+          fingerprint: projection.fingerprint,
+          sourceIdentity: projection.sourceIdentity,
+          sourceVersion: projection.sourceVersion,
+          observedBytes:
+            projection.committedBytes + projection.uncommittedBytes,
+        }
+      : emptyWriterBaseline();
   }
 
   captureWriterResult(
     slot: RuntimeSlot,
     result: ProjectionReconcileResult,
   ): void {
-    slot.workerProjectionRevision = result.revision;
-    slot.workerProjectionFingerprint = result.fingerprint;
-    slot.workerProjectionSourceIdentity =
-      slot.workerProjectionSourceIdentity ?? result.sourceIdentity;
-    slot.workerProjectionSourceVersion = result.sourceVersion;
-    slot.workerProjectionObservedBytes =
-      result.committedBytes + result.uncommittedBytes;
+    slot.writerBaseline = {
+      revision: result.revision,
+      fingerprint: result.fingerprint,
+      sourceIdentity:
+        slot.writerBaseline.sourceIdentity ?? result.sourceIdentity,
+      sourceVersion: result.sourceVersion,
+      observedBytes: result.committedBytes + result.uncommittedBytes,
+    };
   }
 
   clearWriterBaseline(slot: RuntimeSlot): void {
-    slot.workerProjectionRevision = null;
-    slot.workerProjectionFingerprint = null;
-    slot.workerProjectionSourceIdentity = null;
-    slot.workerProjectionSourceVersion = null;
-    slot.workerProjectionObservedBytes = null;
+    slot.writerBaseline = emptyWriterBaseline();
     slot.absorbedPersistenceEntries.clear();
   }
 
   writerBaselineMatches(slot: RuntimeSlot): boolean {
     const projection = slot.projection;
+    const baseline = slot.writerBaseline;
     if (!projection) return false;
     return (
-      slot.workerProjectionRevision === projection.revision &&
-      slot.workerProjectionFingerprint === projection.fingerprint &&
-      slot.workerProjectionSourceIdentity === projection.sourceIdentity &&
-      slot.workerProjectionSourceVersion === projection.sourceVersion &&
-      slot.workerProjectionObservedBytes ===
+      baseline.revision === projection.revision &&
+      baseline.fingerprint === projection.fingerprint &&
+      baseline.sourceIdentity === projection.sourceIdentity &&
+      baseline.sourceVersion === projection.sourceVersion &&
+      baseline.observedBytes ===
         projection.committedBytes + projection.uncommittedBytes
     );
   }
@@ -233,9 +238,9 @@ export class RuntimeProjectionCoordinator {
     const previousConflict = slot.conflict;
     const priorPartial = slot.pendingPartialPersistence;
     const expectedSourceVersion =
-      priorPartial?.sourceVersion ?? slot.workerProjectionSourceVersion;
+      priorPartial?.sourceVersion ?? slot.writerBaseline.sourceVersion;
     const expectedObservedBytes =
-      priorPartial?.observedBytes ?? slot.workerProjectionObservedBytes;
+      priorPartial?.observedBytes ?? slot.writerBaseline.observedBytes;
     const observedBytes = result.committedBytes + result.uncommittedBytes;
     const initialMaterialization = result.initialMaterialization;
     const strictPhysicalProgress =
@@ -244,7 +249,7 @@ export class RuntimeProjectionCoordinator {
       (initialMaterialization ||
         result.sourceIdentity ===
           (priorPartial?.sourceIdentity ??
-            slot.workerProjectionSourceIdentity)) &&
+            slot.writerBaseline.sourceIdentity)) &&
       result.previousTailVerified &&
       observedBytes > expectedObservedBytes;
     let lastOwnership: OwnershipDecision | null = null;
@@ -290,14 +295,14 @@ export class RuntimeProjectionCoordinator {
       result.health.status !== "error" &&
       !result.changed &&
       result.sourceChanged &&
-      result.previousRevision === slot.workerProjectionRevision &&
-      result.revision === slot.workerProjectionRevision &&
-      result.previousFingerprint === slot.workerProjectionFingerprint &&
-      result.fingerprint === slot.workerProjectionFingerprint &&
-      result.previousSourceVersion === slot.workerProjectionSourceVersion &&
-      result.sourceIdentity === slot.workerProjectionSourceIdentity &&
+      result.previousRevision === slot.writerBaseline.revision &&
+      result.revision === slot.writerBaseline.revision &&
+      result.previousFingerprint === slot.writerBaseline.fingerprint &&
+      result.fingerprint === slot.writerBaseline.fingerprint &&
+      result.previousSourceVersion === slot.writerBaseline.sourceVersion &&
+      result.sourceIdentity === slot.writerBaseline.sourceIdentity &&
       result.committedBytes + result.uncommittedBytes ===
-        slot.workerProjectionObservedBytes &&
+        slot.writerBaseline.observedBytes &&
       result.previousTailVerified;
     const completeMetadataContinuation =
       metadataContinuation &&
@@ -386,7 +391,7 @@ export class RuntimeProjectionCoordinator {
       result.health.status === "error" &&
       slot.process &&
       (this.writerOwnershipActive(slot) ||
-        slot.workerProjectionSourceIdentity === null)
+        slot.writerBaseline.sourceIdentity === null)
     ) {
       this.host.setProjectionConflict(
         slot,

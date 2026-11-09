@@ -164,10 +164,8 @@ describe("new-session materialization", () => {
     const attachments = new AttachmentStore(join(directory, "uploads"));
     stores.push(attachments);
     const workers: NewSessionRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog([]),
-      attachments,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), attachments, {
+      createProcess: (options) => {
         const index = workers.length + 1;
         const worker = new NewSessionRpc(
           options,
@@ -177,7 +175,7 @@ describe("new-session materialization", () => {
         workers.push(worker);
         return worker as unknown as PiRpcProcess;
       },
-    );
+    });
 
     try {
       for (let index = 0; index < MAX_IDLE_WORKERS + 2; index += 1)

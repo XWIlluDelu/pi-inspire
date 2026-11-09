@@ -181,16 +181,10 @@ const attachControl: AttachControlRegistry = new AttachControlRegistry(
   (record): boolean =>
     record.tag !== undefined && runtime.ownWorkerTags().has(record.tag),
 );
-const runtime: RuntimeController = new RuntimeController(
-  catalog,
-  attachments,
-  (options) => herdr.createProcess(options),
-  undefined,
-  undefined,
-  undefined,
-  undefined,
+const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
+  createProcess: (options) => herdr.createProcess(options),
   diagnostics,
-)
+})
   .setModelMetadataCatalog(modelMetadata)
   .setExternalSessionConnector(async (sessionId, sessionFile, accepts) => {
     const instance = preferredInstance(

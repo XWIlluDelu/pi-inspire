@@ -21,6 +21,13 @@ import {
 
 afterEach(disposeProjectionFixture);
 
+/** Another program replaces the session file instead of appending to it. */
+async function replaceWith(path: string, extra: string): Promise<void> {
+  const next = `${path}.replacement`;
+  await writeFile(next, (await readFile(path, "utf8")) + extra);
+  await rename(next, path);
+}
+
 describe("writer persistence ownership", () => {
   it("retains different live input when its timestamp matches saved input", async () => {
     const { runtime } = await setup();
@@ -239,7 +246,7 @@ describe("writer persistence ownership", () => {
         timestamp: "2026-08-01T00:00:02.000Z",
         message: { role: "assistant", content: "terminal", timestamp: 2 },
       };
-      await appendFile(path, `${JSON.stringify(external)}\n`);
+      await replaceWith(path, `${JSON.stringify(external)}\n`);
       const prompting = runtime.prompt({
         sessionId: "session-a",
         message: "continue",
@@ -278,7 +285,7 @@ describe("writer persistence ownership", () => {
   it("serializes concurrent persistence operations through one freshness replacement", async () => {
     const { runtime, workers, path } = await setup();
     try {
-      await appendFile(
+      await replaceWith(
         path,
         `${JSON.stringify({
           type: "message",
@@ -312,7 +319,7 @@ describe("writer persistence ownership", () => {
   it("refreshes stale writers for model and compact control families", async () => {
     const { runtime, workers, path } = await setup();
     try {
-      await appendFile(
+      await replaceWith(
         path,
         `${JSON.stringify({
           type: "model_change",
@@ -332,7 +339,7 @@ describe("writer persistence ownership", () => {
         workers[1]!.commands.some((command) => command.type === "set_model"),
       ).toBe(true);
 
-      await appendFile(
+      await replaceWith(
         path,
         `${JSON.stringify({
           type: "thinking_level_change",
@@ -365,7 +372,7 @@ describe("writer persistence ownership", () => {
         method: "confirm",
         title: "Proceed?",
       });
-      await appendFile(
+      await replaceWith(
         path,
         `${JSON.stringify({
           type: "message",
@@ -381,7 +388,7 @@ describe("writer persistence ownership", () => {
           id: "question",
           confirmed: true,
         }),
-      ).rejects.toThrow(/could not verify ownership/);
+      ).rejects.toThrow(/could not verify/);
       expect(
         workers[0]!.commands.some(
           (command) => command.type === "extension_ui_response",
@@ -392,7 +399,7 @@ describe("writer persistence ownership", () => {
     }
   });
 
-  it("verifies an owned compaction revision before rejecting the external revision queued behind it", async () => {
+  it("verifies an owned compaction revision before accepting another Pi's revision queued behind it", async () => {
     const { runtime, workers, path } = await setup();
     const gate = deferredSignal();
     const started = deferredSignal();
@@ -477,14 +484,15 @@ describe("writer persistence ownership", () => {
       await expect(
         Promise.all(checks.mock.results.map((result) => result.value)),
       ).resolves.toMatchObject([{ owned: true }, { owned: false }]);
-      expect((await runtime.snapshot()).runState).toBe("conflict");
+      // The later entry is another Pi continuing the session: valid.
+      expect((await runtime.snapshot()).runState).not.toBe("conflict");
     } finally {
       gate.resolve();
       await runtime.close();
     }
   });
 
-  it("rejects same-type and mixed appends unless every entry exactly matches the owned operation order", async () => {
+  it("accepts another Pi's entries appended alongside an owned operation", async () => {
     const first = await setup();
     try {
       const worker = first.workers[0]!;
@@ -511,10 +519,8 @@ describe("writer persistence ownership", () => {
         }
         return result;
       };
-      await expect(first.runtime.rename("session-a", "owned")).rejects.toThrow(
-        /could not verify ownership/,
-      );
-      expect((await first.runtime.snapshot()).runState).toBe("conflict");
+      await first.runtime.rename("session-a", "owned");
+      expect((await first.runtime.snapshot()).runState).not.toBe("conflict");
     } finally {
       await first.runtime.close();
     }
@@ -545,10 +551,8 @@ describe("writer persistence ownership", () => {
         }
         return result;
       };
-      await expect(
-        second.runtime.setThinkingLevel("session-a", "high"),
-      ).rejects.toThrow(/could not verify ownership/);
-      expect((await second.runtime.snapshot()).runState).toBe("conflict");
+      await second.runtime.setThinkingLevel("session-a", "high");
+      expect((await second.runtime.snapshot()).runState).not.toBe("conflict");
     } finally {
       await second.runtime.close();
     }
@@ -908,7 +912,7 @@ describe("writer persistence ownership", () => {
     }
   });
 
-  it("rejects a worker witness whose observed prefix differs in persisted content", async () => {
+  it("treats a saved entry the worker does not witness as another Pi's growth", async () => {
     const { runtime, workers, path } = await setup();
     try {
       const worker = workers[0]!;
@@ -929,19 +933,17 @@ describe("writer persistence ownership", () => {
       worker.emit("event", { type: "agent_start" });
       await appendFile(path, `${JSON.stringify(diskEntry)}\n`);
 
-      await expect(
-        runtime.rename("session-a", "must reject mismatched prefix"),
-      ).rejects.toThrow(/could not verify ownership/);
-      expect((await runtime.snapshot()).active?.projectionConflict?.kind).toBe(
-        "external-change",
-      );
-      expect(worker.stops).toBe(1);
+      await runtime.rename("session-a", "continues alongside");
+      expect(
+        (await runtime.snapshot()).active?.projectionConflict ?? null,
+      ).toBeNull();
+      expect(worker.stops).toBe(0);
     } finally {
       await runtime.close();
     }
   });
 
-  it("still rejects a custom entry that the active worker cannot attest", async () => {
+  it("records an unattested custom entry from another Pi without stopping the busy worker", async () => {
     const records: Array<{
       level: string;
       event: string;
@@ -976,12 +978,10 @@ describe("writer persistence ownership", () => {
         })}\n`,
       );
 
-      await expect(
-        runtime.rename("session-a", "must not write"),
-      ).rejects.toThrow(/could not verify ownership/);
-      const conflict = (await runtime.snapshot()).active?.projectionConflict;
-      expect(conflict).toMatchObject({ kind: "external-change" });
-      expect(conflict?.incidentId).toMatch(/^inc_[A-Za-z0-9_-]+$/);
+      await runtime.rename("session-a", "still writes");
+      expect(
+        (await runtime.snapshot()).active?.projectionConflict ?? null,
+      ).toBeNull();
       const decision = records.find(
         (record) =>
           record.event === "persistence_ownership_decision" &&
@@ -997,24 +997,11 @@ describe("writer persistence ownership", () => {
           workerLeafId: "u1",
         },
       });
-      const incident = records.find(
-        (record) => record.event === "projection_conflict",
-      );
-      expect(incident?.fields).toMatchObject({
-        incidentId: conflict?.incidentId,
-        sessionId: "session-a",
-        conflictKind: "external-change",
-        ownershipRejection: "worker-entry-mismatch",
-        workerWitness: {
-          observedEntries: 1,
-          workerEntries: 0,
-          aheadBy: 0,
-          observedLeafId: "external-custom",
-          workerLeafId: "u1",
-        },
-      });
+      expect(
+        records.some((record) => record.event === "projection_conflict"),
+      ).toBe(false);
       expect(JSON.stringify(records)).not.toContain('"external":true');
-      expect(worker.stops).toBe(1);
+      expect(worker.stops).toBe(0);
     } finally {
       await runtime.close();
     }
@@ -1024,7 +1011,7 @@ describe("writer persistence ownership", () => {
     const { runtime, workers, path } = await setup();
     try {
       workers[0]!.emit("event", { type: "agent_start" });
-      await appendFile(
+      await replaceWith(
         path,
         `${JSON.stringify({
           type: "message",
@@ -1040,7 +1027,7 @@ describe("writer persistence ownership", () => {
       );
       await expect(
         runtime.rename("session-a", "must not write"),
-      ).rejects.toThrow(/could not verify ownership/);
+      ).rejects.toThrow(/could not verify/);
       expect(
         workers[0]!.commands.some(
           (command) => command.type === "set_session_name",
@@ -1049,7 +1036,7 @@ describe("writer persistence ownership", () => {
       const snapshot = await runtime.snapshot();
       expect(snapshot.runState).toBe("conflict");
       expect(snapshot.active?.projectionConflict?.message).toMatch(
-        /could not verify ownership/,
+        /could not verify/,
       );
       expect(snapshot.active?.projectionConflict?.kind).toBe("external-change");
       await runtime.abort("session-a");
@@ -1072,7 +1059,7 @@ describe("writer persistence ownership", () => {
         method: "confirm",
         title: "Blocked",
       });
-      await appendFile(
+      await replaceWith(
         path,
         `${JSON.stringify({
           type: "message",
@@ -1088,7 +1075,7 @@ describe("writer persistence ownership", () => {
           id: "blocked",
           confirmed: true,
         }),
-      ).rejects.toThrow(/could not verify ownership/);
+      ).rejects.toThrow(/could not verify/);
       expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
       await runtime.abort("session-a");
       const recovered = await runtime.snapshot();
@@ -1250,7 +1237,7 @@ describe("writer persistence ownership", () => {
     }
   });
 
-  it("stops an idle active writer on an unknown partial append and refuses a later prompt", async () => {
+  it("refuses to write after another Pi's incomplete line", async () => {
     const { runtime, workers, path } = await setup();
     try {
       await runtime.snapshot();
@@ -1268,14 +1255,19 @@ describe("writer persistence ownership", () => {
           -2,
         ),
       );
-      await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
+      // Another Pi may still be writing: no conflict yet, but nothing may be
+      // appended after an incomplete line.
       await expect(
         runtime.prompt({
           sessionId: "session-a",
           message: "must not concatenate",
         }),
       ).rejects.toThrow(/incomplete|unowned|changed/i);
-      expect((await runtime.snapshot()).runState).toBe("conflict");
+      expect(
+        workers
+          .flatMap((worker) => worker.commands)
+          .some((command) => command.type === "prompt"),
+      ).toBe(false);
     } finally {
       await runtime.close();
     }
@@ -1450,7 +1442,7 @@ describe("writer persistence ownership", () => {
         await appendFile(path, line.slice(firstCut, secondCut));
         await internals.reconcileSlot(slot, true);
         expect(slot.pendingPartialPersistence?.bytes).toBe(secondCut);
-        expect(slot.workerProjectionSourceVersion).toBe(
+        expect(slot.writerBaseline.sourceVersion).toBe(
           slot.projection!.sourceVersion,
         );
         expect(worker.stops).toBe(0);
@@ -1467,15 +1459,15 @@ describe("writer persistence ownership", () => {
           expect(slot.process).toBe(worker);
           expect(slot.conflict).toBeNull();
           expect(slot.runState).toBe("idle");
-          expect(slot.workerProjectionRevision).toBe(slot.projection!.revision);
+          expect(slot.writerBaseline.revision).toBe(slot.projection!.revision);
           expect(slot.projection!.messages.at(-1)).toMatchObject(entry.message);
           expect(worker.stops).toBe(0);
         } else {
-          expect(slot.conflict?.kind).toBe("incomplete-persistence");
-          expect(slot.runState).toBe("conflict");
-          expect(slot.process).toBeNull();
-          expect(slot.ready).toBe(false);
-          expect(worker.stops).toBe(1);
+          // Completed growth the worker does not witness is another Pi's
+          // entry: valid, and the worker keeps running.
+          expect(slot.conflict).toBeNull();
+          expect(slot.process).toBe(worker);
+          expect(worker.stops).toBe(0);
         }
       } finally {
         completeWrite.resolve();

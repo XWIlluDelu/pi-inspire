@@ -212,7 +212,7 @@ describe("runtime projection reconciliation ownership", () => {
         expect(f.host.stopWriter).not.toHaveBeenCalled();
         expect(f.slot.conflict).toBeNull();
         expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
-        expect(f.slot.workerProjectionRevision).toBe(3);
+        expect(f.slot.writerBaseline.revision).toBe(3);
         expect(
           f.host.appendedEntriesOwnership.mock.calls.map(
             ([, result]) => result.previousRevision,
@@ -298,7 +298,7 @@ describe("runtime projection reconciliation ownership", () => {
     f.coordinator.clearWriterBaseline(f.slot);
     gate.resolve();
     await rejected;
-    expect(f.slot.workerProjectionRevision).toBeNull();
+    expect(f.slot.writerBaseline.revision).toBeNull();
     expect(f.slot.conflict).toBeNull();
     expect(f.host.stopWriter).not.toHaveBeenCalled();
     expect(f.host.emitSlotEvent).not.toHaveBeenCalled();
@@ -315,7 +315,7 @@ describe("runtime projection reconciliation ownership", () => {
     f.coordinator.clearWriterBaseline(f.slot);
     gate.resolve();
     await reading;
-    expect(f.slot.workerProjectionRevision).toBeNull();
+    expect(f.slot.writerBaseline.revision).toBeNull();
     expect(f.slot.conflict).toBeNull();
     expect(f.host.stopWriter).not.toHaveBeenCalled();
   });
@@ -374,7 +374,7 @@ describe("runtime projection reconciliation ownership", () => {
     async (runState) => {
       const f = await fixture();
       f.slot.runState = runState;
-      const version = f.slot.workerProjectionSourceVersion;
+      const version = f.slot.writerBaseline.sourceVersion;
       const claim = exactEntryExpectation(entry("future", "base"));
       f.slot.persistenceExpectations.push(claim);
       const details = await stat(f.path);
@@ -385,7 +385,7 @@ describe("runtime projection reconciliation ownership", () => {
         sourceChanged: true,
         verifiedUnchangedContent: true,
       });
-      expect(f.slot.workerProjectionSourceVersion).not.toBe(version);
+      expect(f.slot.writerBaseline.sourceVersion).not.toBe(version);
       expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
       expect(f.slot.process).toBe(f.worker);
       expect(f.slot.conflict).toBeNull();
@@ -463,12 +463,12 @@ describe("runtime projection reconciliation ownership", () => {
   it("leaves source-version movement for the startup attestor instead of refreshing its baseline", async () => {
     const f = await fixture();
     await f.projection.suspendReconciliation();
-    const version = f.slot.workerProjectionSourceVersion;
+    const version = f.slot.writerBaseline.sourceVersion;
     const details = await stat(f.path);
     await utimes(f.path, details.atime, new Date(details.mtimeMs + 5000));
     const result = await f.coordinator.reconcile(f.slot, true, true);
     expect(result.sourceChanged).toBe(true);
-    expect(f.slot.workerProjectionSourceVersion).toBe(version);
+    expect(f.slot.writerBaseline.sourceVersion).toBe(version);
     expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(false);
     expect(
       f.record.mock.calls.some(
@@ -479,7 +479,7 @@ describe("runtime projection reconciliation ownership", () => {
 
   it("does not refresh a stale writer baseline just because bytes are unchanged", async () => {
     const f = await fixture();
-    f.slot.workerProjectionFingerprint = "stale";
+    f.slot.writerBaseline.fingerprint = "stale";
     const details = await stat(f.path);
     await utimes(f.path, details.atime, new Date(details.mtimeMs + 5000));
     await f.coordinator.reconcile(f.slot, true);

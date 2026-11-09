@@ -113,26 +113,28 @@ export default function (pi) {
     };
     const attachments = new AttachmentStore(join(directory, "uploads"));
     const workers: PiRpcProcess[] = [];
-    const runtime = new RuntimeController(catalog, attachments, (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        args: [
-          "--no-extensions",
-          "--session-dir",
-          sessionDir,
-          "--extension",
-          startupExtension,
-          ...(options.args ?? []),
-        ],
-        env: {
-          ...options.env,
-          PI_CODING_AGENT_DIR: configDir,
-          PI_CODING_AGENT_SESSION_DIR: sessionDir,
-          PI_OFFLINE: "1",
-        },
-      });
-      workers.push(worker);
-      return worker;
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          args: [
+            "--no-extensions",
+            "--session-dir",
+            sessionDir,
+            "--extension",
+            startupExtension,
+            ...(options.args ?? []),
+          ],
+          env: {
+            ...options.env,
+            PI_CODING_AGENT_DIR: configDir,
+            PI_CODING_AGENT_SESSION_DIR: sessionDir,
+            PI_OFFLINE: "1",
+          },
+        });
+        workers.push(worker);
+        return worker;
+      },
     });
     try {
       const started = Date.now();
@@ -221,26 +223,28 @@ export default function (pi) {
     };
     const attachments = new AttachmentStore(join(directory, "uploads"));
     const workers: PiRpcProcess[] = [];
-    const runtime = new RuntimeController(catalog, attachments, (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        args: [
-          "--no-extensions",
-          "--session-dir",
-          sessionDir,
-          ...(options.args ?? []),
-          "--extension",
-          hookExtension,
-        ],
-        env: {
-          ...options.env,
-          PI_CODING_AGENT_DIR: join(directory, "config"),
-          PI_CODING_AGENT_SESSION_DIR: sessionDir,
-          PI_OFFLINE: "1",
-        },
-      });
-      workers.push(worker);
-      return worker;
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          args: [
+            "--no-extensions",
+            "--session-dir",
+            sessionDir,
+            ...(options.args ?? []),
+            "--extension",
+            hookExtension,
+          ],
+          env: {
+            ...options.env,
+            PI_CODING_AGENT_DIR: join(directory, "config"),
+            PI_CODING_AGENT_SESSION_DIR: sessionDir,
+            PI_OFFLINE: "1",
+          },
+        });
+        workers.push(worker);
+        return worker;
+      },
     });
     const dialogs: Array<Record<string, unknown>> = [];
     const responses: Promise<void>[] = [];
@@ -418,10 +422,8 @@ export default function (pi) {
       invalidate() {},
     };
     const attachments = new AttachmentStore(join(directory, "uploads"));
-    const runtime = new RuntimeController(
-      catalog,
-      attachments,
-      (options) =>
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: (options) =>
         new PiRpcProcess({
           ...options,
           args: [
@@ -437,7 +439,7 @@ export default function (pi) {
             PI_OFFLINE: "1",
           },
         }),
-    );
+    });
     try {
       await runtime.openSession(SESSION_ID);
       await vi.waitFor(
@@ -589,25 +591,27 @@ export default function (pi) {
     };
     const attachments = new AttachmentStore(join(directory, "uploads"));
     const workers: PiRpcProcess[] = [];
-    const runtime = new RuntimeController(catalog, attachments, (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        args: [
-          "--no-extensions",
-          "--session-dir",
-          sessionDir,
-          ...(options.args ?? []),
-          "--model",
-          "offline-active/offline-model",
-        ],
-        env: {
-          ...options.env,
-          PI_CODING_AGENT_DIR: configDir,
-          PI_CODING_AGENT_SESSION_DIR: sessionDir,
-        },
-      });
-      workers.push(worker);
-      return worker;
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          args: [
+            "--no-extensions",
+            "--session-dir",
+            sessionDir,
+            ...(options.args ?? []),
+            "--model",
+            "offline-active/offline-model",
+          ],
+          env: {
+            ...options.env,
+            PI_CODING_AGENT_DIR: configDir,
+            PI_CODING_AGENT_SESSION_DIR: sessionDir,
+          },
+        });
+        workers.push(worker);
+        return worker;
+      },
     });
     const events: Array<Record<string, unknown>> = [];
     runtime.on("event", (event) =>
