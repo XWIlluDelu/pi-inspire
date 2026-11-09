@@ -98,7 +98,7 @@ for (const viewport of [
       await expect(dialog).not.toBeVisible();
       await expect(
         page.viewportSize()!.width <= 900
-          ? page.locator(".topbar__nav-toggle")
+          ? page.getByRole("button", { name: "Toggle navigation", exact: true })
           : page.getByRole("button", { name: "Settings", exact: true }),
       ).toBeFocused();
     } finally {

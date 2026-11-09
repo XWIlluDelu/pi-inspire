@@ -540,6 +540,7 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
   useEffect(() => saveNavCollapsed(navCollapsed), [navCollapsed]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -627,7 +628,7 @@ export function App() {
     // The drawer closes, so Settings returns focus to the toggle that reopens
     // it. Commit the close first: the header is inert while the drawer is open.
     flushSync(() => setMobileNavOpen(false));
-    document.querySelector<HTMLElement>(".topbar__nav-toggle")?.focus();
+    mobileNavToggleRef.current?.focus();
     openSettings("display");
   }, [openSettings]);
   const closeResources = useCallback(() => {
@@ -1004,6 +1005,7 @@ export function App() {
         <AppTopbar
           narrowViewport={narrowViewport}
           mobileNavOpen={mobileNavOpen}
+          mobileNavToggleRef={mobileNavToggleRef}
           settingsOpen={settingsOpen}
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
