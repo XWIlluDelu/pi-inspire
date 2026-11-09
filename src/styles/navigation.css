@@ -63,6 +63,11 @@
     display: block;
   }
 
+  .nav__header--rail {
+    /* Match the topbar's inset from the desktop conversation pane border. */
+    margin-block-start: 1px;
+  }
+
   .nav__top .nav__close {
     grid-area: 1 / 2;
     align-self: center;
