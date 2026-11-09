@@ -9,12 +9,19 @@ test("navigation attention counts clear the glyph in the rail and drawer", async
   await page.emulateMedia({ reducedMotion: "reduce" });
   let detailSessionId: string | undefined;
   const transport = await routeSnapshots(page, {
+    snapshot(snapshot) {
+      snapshot.sessionStatuses = {};
+    },
     event(event) {
       if (event.type === "snapshot") detailSessionId = event.detailSessionId;
     },
   });
   await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(
+    page,
+    /Review extension event lifecycle/,
+    "fixture-history",
+  );
   await expect.poll(() => detailSessionId).toBe("fixture-history");
 
   const report = (id: string, completed: boolean) =>
@@ -105,7 +112,11 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
     },
   });
   await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
+  await openFixtureSession(
+    page,
+    /Review extension event lifecycle/,
+    "fixture-history",
+  );
   await expect.poll(() => detailSessionId).toBe("fixture-history");
   const fixtures = [
     {
@@ -240,7 +251,11 @@ for (const touch of [false, true]) {
         },
       });
       await pairedPage(page);
-      await openFixtureSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(
+        page,
+        /Review extension event lifecycle/,
+        "fixture-history",
+      );
       await expect.poll(() => connected).toBe(true);
       const fixtures = [
         {
