@@ -31,11 +31,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it.each([
-  "workspace-unavailable",
-  "external-unavailable",
-  "external-active",
-] as const)(
+it.each(["workspace-unavailable", "external-active"] as const)(
   "keeps %s history readable and preserves the current view when writing becomes available",
   async (reason) => {
     let folderAvailable = false;
@@ -107,7 +103,7 @@ it.each([
       reason === "workspace-unavailable"
         ? "Project folder unavailable. This session is read-only."
         : reason === "external-active"
-          ? "Open in another Pi. Writing will resume automatically when it releases the session."
+          ? "Running in another Pi. Its progress shows here."
           : "Pi connection unavailable. History remains readable while Inspire checks for recovery.";
     expect(screen.getByText(notice)).toBeInTheDocument();
     const settings = within(screen.getByLabelText("Session settings"));
@@ -242,11 +238,11 @@ it.each([
   },
 );
 
-it("retains session settings through terminal handoff until explicit continuation", async () => {
-  let terminal = true;
+it("keeps session settings readable while another Pi runs it, until Take over", async () => {
+  let external = true;
   const snapshot = () =>
     activeSnapshot({
-      readOnlyReason: terminal ? "terminal" : undefined,
+      readOnlyReason: external ? "external-active" : undefined,
       model: { provider: "example", id: "terminal-model", reasoning: true },
       thinkingLevel: "high",
     });
@@ -254,9 +250,9 @@ it("retains session settings through terminal handoff until explicit continuatio
   const fetch = installFetch((url) => {
     if (url.startsWith("/api/bootstrap"))
       return { body: bootstrapPayload({ snapshot: snapshot() }) };
-    if (url.startsWith("/api/sessions/execution")) {
-      terminal = false;
-      return { body: { snapshot: snapshot(), command: "" } };
+    if (url.startsWith("/api/sessions/takeover")) {
+      external = false;
+      return { body: snapshot() };
     }
     if (url.startsWith("/api/sessions"))
       return { body: sessionPage([sessionSummary()], 1) };
@@ -271,9 +267,9 @@ it("retains session settings through terminal handoff until explicit continuatio
   expect(settings.getByText("High")).toBeVisible();
   expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
   expect(
-    fetch.mock.calls.some(([url]) => url === "/api/sessions/execution"),
+    fetch.mock.calls.some(([url]) => url === "/api/sessions/takeover"),
   ).toBe(false);
-  fireEvent.click(screen.getByRole("button", { name: "Continue in Inspire" }));
+  fireEvent.click(screen.getByRole("button", { name: "Take over" }));
   expect(await screen.findByRole("textbox", { name: "Message" })).toBeVisible();
   expect(screen.queryByLabelText("Session settings")).toBeNull();
   expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(

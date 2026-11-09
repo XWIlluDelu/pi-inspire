@@ -20,7 +20,6 @@ const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
 describe("hidden deletion eligibility", () => {
   const idle = (): Parameters<typeof hiddenDeletionBlockReason>[1] => ({
     openingSessionId: null,
-    sessionStatuses: {},
     sessionQuery: "",
     sessionListLoading: false,
     sessionListLoadingOlder: false,
@@ -33,15 +32,6 @@ describe("hidden deletion eligibility", () => {
 
   it.each([
     ["opening", { openingSessionId: "target" }, /opening/],
-    [
-      "running",
-      {
-        sessionStatuses: {
-          target: { runState: "running", indicator: "running" },
-        },
-      },
-      /working/,
-    ],
     ["partial catalog", { sessionListHydrating: true }, /loading/],
     ["search", { sessionQuery: "term" }, /searching/],
     ["another deletion", { deletingSessionId: "elsewhere" }, /deletion/],
@@ -63,15 +53,8 @@ describe("hidden deletion eligibility", () => {
     ).toMatch(/unavailable session sources/);
   });
 
-  it("ignores active work outside the target folder", () => {
-    expect(
-      hiddenDeletionBlockReason(targets, {
-        ...idle(),
-        sessionStatuses: {
-          elsewhere: { runState: "running", indicator: "running" },
-        },
-      }),
-    ).toBeNull();
+  it("allows deletion of a complete settled selection", () => {
+    expect(hiddenDeletionBlockReason(targets, idle())).toBeNull();
   });
 });
 

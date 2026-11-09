@@ -125,6 +125,33 @@ describe("Host task outcome ownership", () => {
     expect(tracker.observe(event)?.outcome).toBe("failed");
     expect(tracker.observe(event)).toBeNull();
   });
+
+  it.each([
+    ["exited", true, "ended"],
+    ["exited", false, null],
+    ["left-session", true, null],
+    ["left-branch", true, null],
+    ["unreachable", true, null],
+  ] as const)(
+    "reports a released attachment that %s (during work: %s) as %s, never as failed",
+    (reason, duringWork, outcome) => {
+      const tracker = new TaskOutcomeTracker();
+      tracker.observe({ type: "agent_start", sessionId: "s" });
+      expect(
+        tracker.observe({
+          type: "external_attachment_ended",
+          sessionId: "s",
+          reason,
+          duringWork,
+          sessionStatus: { runState: "idle" },
+        })?.outcome ?? null,
+      ).toBe(outcome);
+      // The run is closed either way; a later settlement is not attributed to it.
+      expect(
+        tracker.observe({ type: "agent_settled", sessionId: "s" }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("installation-owned notification delivery", () => {

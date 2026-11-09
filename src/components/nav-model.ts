@@ -1,6 +1,5 @@
 import {
   type InspirePreferences,
-  isBusyRunState,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -9,7 +8,6 @@ import type { AppState } from "../app-state";
 type HiddenDeletionState = Pick<
   AppState,
   | "openingSessionId"
-  | "sessionStatuses"
   | "sessionQuery"
   | "sessionListLoading"
   | "sessionListLoadingOlder"
@@ -20,8 +18,8 @@ type HiddenDeletionState = Pick<
 > &
   Partial<Pick<AppState, "sessionListIssues">>;
 
-/** The drawer and each complete folder apply the same rules to their own set.
- * Activity in a different folder must not block an otherwise idle selection. */
+/** The drawer and each complete folder require a complete, settled selection.
+ * Confirmed deletion ends active Pi instances; work does not disable it. */
 export function hiddenDeletionBlockReason(
   sessions: readonly SessionSummary[],
   state: HiddenDeletionState,
@@ -44,17 +42,6 @@ export function hiddenDeletionBlockReason(
     return "Restore unavailable session sources and refresh before clearing Hidden";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
-  if (
-    sessions.some((session) => {
-      const status = state.sessionStatuses[session.id];
-      return (
-        status &&
-        ((!status.external && isBusyRunState(status.runState)) ||
-          status.runState === "conflict")
-      );
-    })
-  )
-    return "Wait for these sessions to finish working or resolve conflicts";
   return null;
 }
 

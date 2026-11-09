@@ -81,9 +81,6 @@ const preferenceFields = {
     .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
     .max(500),
   navCollapsedGroups: z.array(z.string().min(1).max(4_096)).max(500),
-  terminalSessionIds: z
-    .array(z.string().min(1).max(MAX_SESSION_ID_CHARS))
-    .max(500),
 };
 
 const preferencesSchema = z.object(preferenceFields).strict();
@@ -116,8 +113,13 @@ function projectPreferences(value: unknown): DiskPreferences {
   }
 
   const source = { ...(value as Record<string, unknown>) };
-  // Retired preference; unlike unknown fields, this has a known migration.
+  // Retired preferences; unlike unknown fields, these have known migrations.
   delete source.assistantRoundDisplay;
+  delete source.terminalSessionIds;
+  if (Array.isArray(source.sessionActionOrder))
+    source.sessionActionOrder = source.sessionActionOrder.map((id) =>
+      id === "terminal" ? "resume-command" : id,
+    );
   const normalized = structuredClone(defaultPreferences) as unknown as Record<
     string,
     unknown
@@ -266,17 +268,6 @@ export class PreferencesStore {
     );
   }
 
-  async setTerminalSession(
-    sessionId: string,
-    terminal: boolean,
-  ): Promise<void> {
-    await this.mutate((current) => ({
-      terminalSessionIds: terminal
-        ? [...new Set([...current.terminalSessionIds, sessionId])]
-        : current.terminalSessionIds.filter((id) => id !== sessionId),
-    }));
-  }
-
   async patch(value: unknown): Promise<InspirePreferences> {
     const patch = preferencesPatchSchema.parse(value);
     return this.mutate((current) => ({
@@ -303,9 +294,6 @@ export class PreferencesStore {
     const clearedHidden = new Set(clearedHiddenSessionIds);
     const clearedProjects = new Set(clearedProjectCwds);
     return this.mutate((current) => ({
-      terminalSessionIds: current.terminalSessionIds.filter(
-        (id) => !deleted.has(id),
-      ),
       pinnedSessionIds: current.pinnedSessionIds.filter(
         (id) => !deleted.has(id),
       ),

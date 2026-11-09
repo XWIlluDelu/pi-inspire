@@ -222,6 +222,14 @@ export class PreviewProjection
     return null;
   }
 
+  onSameLine(leafId: string | null, other: string | null): boolean {
+    return leafId === other;
+  }
+
+  latestContinuation(leafId: string | null): string | null {
+    return leafId;
+  }
+
   entriesAfter(_tailEntryId: string | null): readonly SessionEntry[] {
     return [];
   }

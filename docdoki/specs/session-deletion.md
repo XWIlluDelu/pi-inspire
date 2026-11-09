@@ -1,5 +1,5 @@
 ---
-purpose: "Session deletion is a deliberate second-tier Hidden action whose entire target set passes pinned-object and ownership preflight before destructive I/O."
+purpose: "Confirmed Hidden deletion validates the complete target set and ends its Pi instances before moving session files to Trash."
 covers:
   - server/{runtime-session-deletion,session-delete,desktop-trash,linux-trash,session-recovery,session-recovery-entry,preferences}.ts
   - inspire.mjs
@@ -14,27 +14,36 @@ covers:
 
 ## Goal
 
-Delete only explicitly confirmed Pi session files while preserving active work, unrelated project
+Delete only explicitly confirmed Pi session files while preserving other sessions, unrelated project
 files, and newer browser preferences. Navigation curation remains in [[session-continuity]] and
 [[workbench]].
 
-## Confirmation and ownership
+## Confirmation and instance shutdown
+
+The confirmation's session-name text and explanatory lines share the inset body column. Its
+badge/title header keeps a separate hierarchy; Plex title ink uses the shared optical offset to
+centre against the badge and close glyphs. Footer actions keep their existing label/icon centring
+and behavior rather than moving all layers onto one text origin.
 
 Deletion is a second-tier action inside Hidden. Confirmation names the exact targets and explains
-Trash, the permanent-delete fallback, and the exclusion of project files and separately stored forks.
+Trash, closing the sessions' Pi instances and stopping their work, the permanent-delete fallback,
+and the exclusion of project files and separately stored forks.
 The browser submits bounded session identities; the Host resolves and validates their files.
 
-Viewing an idle session does not block deletion. The Host awaits any owned-worker warmup, retires
-its idle worker, and suspends projection reads in the session's deletion lane. Selection-reserved,
-running, queued, compacting, retrying, dialog-blocked, persistence-unknown, branch-leased, forking,
-and conflicted ownership blocks deletion.
+Confirmed deletion ends the Host's workers and every attach-control-discovered Pi using the exact
+session, across all branches, before moving its file. Running, queued and input-blocked work does
+not disable deletion. The existing confirmation authorizes stopping that work; no second takeover
+or Stop action is required. Instances using other sessions remain running.
 
-External Pi activity does not block deletion, including working or input-blocked terminals connected
-through Herdr. If a target has an observed or connected terminal, confirmation explains that Pi may
-write again, including when its optional activity reporter is absent. Unobserved terminals add no
-generic warning. Deletion neither adds another confirmation nor stops external Pi. In-flight Host
-submissions, commands and interruptions retain their barriers, as do conflicts and file-identity
-checks. Continuing a session still follows the one-writer rule in [[session-persistence]].
+The Host reserves the targets against new local operations, awaits any owned-worker warmup, and
+ends Pi before draining commands that may be waiting on it. It then suspends projection reads in
+the deletion lane. Selection, creation and fork operations must finish before admission. Local
+reservation never prevents an independent Pi from opening a session.
+
+An external shutdown request rechecks the instance's current session. Wait for that process
+incarnation to exit; a reply or vanished presence record alone is insufficient. If it cannot be
+ended or another discoverable instance appears during deletion, retain the file and report the
+failure. A Pi without attach-control remains outside discovery, as described in [[pi-integration]].
 
 ## Target validation
 
@@ -42,7 +51,7 @@ checks. Continuing a session still follows the one-writer rule in [[session-pers
 
 The normal path uses the last known catalog projection rather than a catalog-wide scan. Its target
 must be a non-symlink `.jsonl` regular file beginning with the matching Pi session header. The catalog
-pins device/inode; after worker retirement, inspection pins the current size, mtime and ctime.
+pins device/inode; after instance shutdown, inspection pins the current size, mtime and ctime.
 Normal conversation appends therefore do not require a browser refresh, but the inspected object
 and version must remain unchanged through validation.
 
@@ -55,11 +64,12 @@ curation hydration cannot authorize clearing.
 At admission, the Host reads current curation, takes a fresh complete catalog snapshot, and
 reconstructs that union. Unavailable sources or changed membership reject the batch before any move;
 confirmation cannot silently expand or omit off-page targets. The Host reserves every identity and
-checks the ownership restrictions above for every target before destructive I/O. Each target keeps
-the exact catalog version authorized by this preflight.
+validates every target's file identity before stopping Pi or moving a file. Ordinary conversation
+appends, including shutdown-hook appends, are allowed; each file's final version is pinned after its
+instances exit and is checked at the destructive commit boundary.
 
 A later filesystem failure reports the exact committed subset. Full success removes the reviewed
-session and folder curation; partial success removes only committed session identities and retains
+session and folder curation; partial success removes only committed session identities and keeps
 folder curation for the remaining sessions.
 
 ## File commit and outcomes
@@ -99,7 +109,7 @@ Refresh the catalog and authoritative curation while preserving newer field-owne
 and the consumed chronological extent. Offer review of the refreshed Hidden targets before another
 target-naming confirmation. An already absent session disappears without claiming a Trash or
 permanent-delete outcome. Recovery never repeats DELETE or Clear automatically; ordinary ownership
-refusals retain their protections.
+refusals leave the retained files available for review.
 
 ## Native Trash and original-path recovery
 

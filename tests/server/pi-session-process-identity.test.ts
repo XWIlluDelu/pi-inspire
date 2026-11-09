@@ -17,7 +17,7 @@ vi.mock("node:fs", async (original) => {
         : fs.statSync(path),
   };
 });
-import { piActivityProcessIdentity } from "../../extensions/inspire-session-bridge.js";
+import { processIdentity as piActivityProcessIdentity } from "../../extensions/attach-control.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();

@@ -769,7 +769,7 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
   });
 
-  it("clears one hidden folder without deleting other folders or independent hidden sessions", async () => {
+  it("clears only the chosen hidden folder, including the selected session, and keeps other Hidden entries", async () => {
     const other = sessionSummary({
       id: "gamma",
       title: "Other folder",
@@ -791,62 +791,35 @@ describe("session navigation controls", () => {
     );
     await store.refreshSessions();
     await screen.findByText("Independent");
-    fireEvent.click(list().getByRole("button", { name: "Hide folder beta" }));
+    fireEvent.click(list().getByRole("button", { name: "Hide folder alpha" }));
     fireEvent.click(list().getByRole("button", { name: "Hide folder gamma" }));
     fireEvent.click(list().getByRole("button", { name: 'Hide "Independent"' }));
     fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    fireEvent.click(
+    const selected = screen.getByRole("button", {
+      name: "Delete all sessions in folder alpha",
+    });
+    await waitFor(() => expect(selected).toBeEnabled());
+    // A filtered view must not become a destructive subset of a folder.
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    const folderDelete = () =>
       screen.getByRole("button", {
-        name: "Delete all sessions in folder beta",
-      }),
-    );
+        name: "Delete all sessions in folder alpha",
+      });
+    fireEvent.change(search, { target: { value: "Alpha" } });
+    await waitFor(() => expect(folderDelete()).toBeDisabled());
+    fireEvent.change(search, { target: { value: "" } });
+    await waitFor(() => expect(folderDelete()).toBeEnabled());
+
+    fireEvent.click(folderDelete());
     const dialog = screen.getByRole("alertdialog", {
       name: "Clear hidden folder?",
     });
-    expect(within(dialog).getByText("beta · 1 session")).toBeTruthy();
+    expect(within(dialog).getByText("alpha · 1 session")).toBeTruthy();
     expect(
       within(dialog).getByText(
         /Other hidden sessions and folders are unchanged/,
       ),
     ).toBeTruthy();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Delete 1 session" }),
-    );
-    await waitFor(() => expect(deletedSessions).toEqual(new Set([beta.id])));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual([other.cwd]);
-    expect(store.getState().prefs.hiddenSessionIds).toEqual([standalone.id]);
-    expect(store.getState().sessionId).toBe(alpha.id);
-  });
-
-  it("clears the selected idle folder directly and leaves unrelated Hidden folders intact", async () => {
-    render(
-      <Nav
-        collapsed={false}
-        onToggleNavigation={vi.fn()}
-        onNewSession={vi.fn()}
-        onSelectSession={vi.fn()}
-      />,
-    );
-    fireEvent.click(list().getByRole("button", { name: "Hide folder alpha" }));
-    fireEvent.click(list().getByRole("button", { name: "Hide folder beta" }));
-    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Clear Hidden" }),
-      ).toBeEnabled(),
-    );
-    const selected = screen.getByRole("button", {
-      name: "Delete all sessions in folder alpha",
-    });
-    expect(selected).toBeEnabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Delete all sessions in folder beta",
-      }),
-    ).toBeEnabled();
-    fireEvent.click(selected);
-    const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).queryByText(/Pi terminal|Pi process/)).toBeNull();
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Delete 1 session" }),
@@ -854,7 +827,8 @@ describe("session navigation controls", () => {
     await waitFor(() => expect(deletedSessions).toEqual(new Set([alpha.id])));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(store.getState().sessionId).toBeNull();
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual([beta.cwd]);
+    expect(store.getState().prefs.hiddenProjectCwds).toEqual([other.cwd]);
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([standalone.id]);
   });
 
   it("deletes only through Hidden after an explicit confirmation", async () => {
@@ -895,6 +869,7 @@ describe("session navigation controls", () => {
       Array.from(description!.children).map((line) => line.textContent),
     ).toEqual([
       "This session will be moved to Trash.",
+      "Pi instances using this session will be closed first.",
       "If Trash is unavailable, it will be permanently deleted.",
       "Forked sessions remain; project files are unchanged.",
     ]);

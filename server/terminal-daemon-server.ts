@@ -31,7 +31,10 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
-import { dispatchTerminalMutation } from "./terminal-operation-dispatch.js";
+import {
+  dispatchTerminalMutation,
+  stringParam,
+} from "./terminal-operation-dispatch.js";
 import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
 import type {
   TerminalAttachment,
@@ -51,12 +54,6 @@ function asRecord(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     throw new Error("Terminal IPC message must be an object");
   return value as Record<string, unknown>;
-}
-
-function stringParam(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  if (typeof value !== "string") throw new Error(`${key} must be a string`);
-  return value;
 }
 
 async function prepareUnixSocket(address: string): Promise<void> {

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import type { InspirePreferences } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { routeSnapshots } from "./support/host-events";
@@ -10,17 +10,16 @@ test.use({
   serviceWorkers: "block",
 });
 
-test("deletes the visible idle session through one confirmation and returns to New session", async ({
-  page,
-}) => {
+/** A disposable Hidden session cloned from a fixture, with the navigation
+ * drawer and Hidden open. Destructive tests own their persisted session; the
+ * shared fixtures must remain available to later tests and retries. */
+async function hiddenClone(
+  page: Page,
+  fixture: RegExp,
+  fixtureId?: string,
+): Promise<{ id: string; name: string }> {
   await pairedPage(page);
-  await openFixtureSession(
-    page,
-    /Calibration history fixture/,
-    "fixture-calibration-history",
-  );
-  // Destructive tests own their persisted session; the shared History fixture
-  // must remain available to subsequent browser tests and retries.
+  await openFixtureSession(page, fixture, fixtureId);
   const source = (await (await hostRequest(page).get("/api/snapshot")).json())
     .active;
   const created = await hostRequest(page).post("/api/branches/clone", {
@@ -32,8 +31,7 @@ test("deletes the visible idle session through one confirmation and returns to N
   });
   expect(created.ok()).toBe(true);
   const clone = await created.json();
-  const id = clone.sessionId;
-  const name = clone.snapshot.active.sessionName;
+  const id: string = clone.sessionId;
   expect(
     (
       await hostRequest(page).patch("/api/preferences", {
@@ -54,6 +52,17 @@ test("deletes the visible idle session through one confirmation and returns to N
   const hidden = page.getByRole("button", { name: "Hidden", exact: true });
   if ((await hidden.getAttribute("aria-expanded")) !== "true")
     await hidden.click();
+  return { id, name: clone.snapshot.active.sessionName };
+}
+
+test("deletes the visible idle session through one confirmation and returns to New session", async ({
+  page,
+}) => {
+  const { name } = await hiddenClone(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
   // API cloning does not replace this browser's selected session.
   await page
     .locator(".nav__group--hidden .nav__row-main")
@@ -92,38 +101,10 @@ test("failed deletion wraps a literal path inside the confirmation", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 900 });
-  await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  const source = (await (await hostRequest(page).get("/api/snapshot")).json())
-    .active;
-  const created = await hostRequest(page).post("/api/branches/clone", {
-    data: {
-      sessionId: source.sessionId,
-      viewId: source.transcriptPage.viewId,
-      targetId: source.transcriptPage.effectiveLeafId,
-    },
-  });
-  expect(created.ok()).toBe(true);
-  const clone = await created.json();
-  const id = clone.sessionId;
-  const name = clone.snapshot.active.sessionName;
-  expect(
-    (
-      await hostRequest(page).patch("/api/preferences", {
-        data: { hiddenSessionIds: [id], hiddenProjectCwds: [] },
-      })
-    ).ok(),
-  ).toBe(true);
-  await page.reload();
-  const navigation = page.getByRole("button", {
-    name: /^(Toggle|Expand|Collapse) navigation$/,
-    exact: true,
-  });
-  if ((await navigation.getAttribute("aria-expanded")) === "false")
-    await navigation.click();
-  const hidden = page.getByRole("button", { name: "Hidden", exact: true });
-  if ((await hidden.getAttribute("aria-expanded")) !== "true")
-    await hidden.click();
+  const { id, name } = await hiddenClone(
+    page,
+    /Review extension event lifecycle/,
+  );
   const diagnostic =
     "Cannot delete /workspace/calibration/reference_measurement_comparison_for_multichannel_calibration_and_residual_validation_2026_10_17_results.json because the project is locked.";
   let attempted = 0;
@@ -190,7 +171,7 @@ for (const touch of [false, true]) {
     touch ? "touch Hidden hierarchy" : "pointer Hidden hierarchy",
     () => {
       test.use({ hasTouch: touch });
-      test("independent rows stay distinct and folder deletion is scoped", async ({
+      test("folder, child and independent rows share one alignment and reveal actions per row", async ({
         page,
       }) => {
         await pairedPage(page);
@@ -211,7 +192,7 @@ for (const touch of [false, true]) {
           second = "hidden-target-two",
           independent = "hidden-independent";
         const other = initial.snapshot.active.sessionId as string;
-        let rows = [
+        const rows = [
           { ...template, id: first, title: "Target one", cwd: targetCwd },
           { ...template, id: second, title: "Target two", cwd: targetCwd },
           {
@@ -237,8 +218,8 @@ for (const touch of [false, true]) {
           navCollapsedGroups: [otherCwd],
         };
         let preferences: Partial<InspirePreferences> = {};
-        // Browser projection owns hierarchy and the submitted scope. Real catalog
-        // completeness, reservations and filesystem deletion are server regressions.
+        // Layout and per-row action reveal only; deletion scope and eligibility
+        // are covered by the Nav component and nav-model rules.
         let connected = false;
         const transport = await routeSnapshots(page, {
           event: (event) => {
@@ -282,19 +263,6 @@ for (const touch of [false, true]) {
                 total: matches.length,
                 offset: 0,
                 limit: 40,
-              },
-            });
-          }
-          if (url.pathname === "/api/sessions/clear-hidden") {
-            rows = rows.filter((row) => row.cwd !== targetCwd);
-            curation.hiddenProjectCwds = [otherCwd];
-            return route.fulfill({
-              json: {
-                deleted: [first, second].map((sessionId) => ({
-                  sessionId,
-                  disposition: "trashed",
-                })),
-                preferences: { ...preferences, ...curation },
               },
             });
           }
@@ -503,66 +471,6 @@ for (const touch of [false, true]) {
               .getByRole("button", { name: "Close navigation", exact: true })
               .click();
         }
-        await page.setViewportSize({ width: 390, height: 1000 });
-        await page
-          .getByRole("button", { name: "Toggle navigation", exact: true })
-          .click();
-        await revealRows();
-        // A filtered view must not become a destructive subset of a folder.
-        const search = page.getByRole("searchbox", { name: "Search sessions" });
-        await search.fill("Target one");
-        await expect(trash).toBeDisabled();
-        await search.clear();
-        transport.send({
-          type: "external_session_activity",
-          activities: { [first]: "working", [second]: "idle" },
-        });
-        await expect(target.getByRole("img", { name: /Pi/ })).toBeVisible();
-        await expect(trash).toBeEnabled();
-        await trash.focus();
-        await trash.press("Enter");
-        const dialog = page.getByRole("alertdialog", {
-          name: "Clear hidden folder?",
-        });
-        await expect(dialog).toContainText("target · 2 sessions");
-        await expect(dialog).toContainText(targetCwd);
-        await expect(dialog).toContainText(
-          "Open Pi terminals may write these sessions again.",
-        );
-        await dialog
-          .getByRole("button", { name: "Cancel", exact: true })
-          .click();
-        await expect(
-          target.getByText("Target one", { exact: true }),
-        ).toBeVisible();
-        await trash.click();
-        const response = page.waitForResponse(
-          (response) =>
-            response.url().endsWith("/api/sessions/clear-hidden") &&
-            response.request().method() === "POST",
-        );
-        await dialog
-          .getByRole("button", { name: "Delete 2 sessions", exact: true })
-          .click();
-        const receipt = await response;
-        expect(receipt.ok()).toBe(true);
-        expect(receipt.request().postDataJSON()).toEqual({
-          sessionIds: expect.arrayContaining([first, second]),
-          projectCwd: targetCwd,
-        });
-        expect(
-          (await receipt.json()).deleted
-            .map((result: { sessionId: string }) => result.sessionId)
-            .sort(),
-        ).toEqual([first, second].sort());
-        await expect(dialog).toBeHidden();
-        await expect(target).toHaveCount(0);
-        await expect(standalone).toBeVisible();
-
-        expect(curation.hiddenProjectCwds).toEqual([otherCwd]);
-        expect(rows.map((row) => row.id).sort()).toEqual(
-          [independent, other].sort(),
-        );
       });
     },
   );

@@ -123,7 +123,7 @@ it("keeps reload unavailable while the selected session owns a running operation
 
 it("keeps MCP file editing available for an external owner and directs reload to its terminal", async () => {
   fixture.state.sessionStatuses = {
-    one: { runState: "running", external: true, nativeModelControls: true },
+    one: { runState: "running", external: true },
   };
   fixture.state.runState = "running";
   await savedPanel();

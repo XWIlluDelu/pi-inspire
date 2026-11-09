@@ -2,11 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
-import {
-  HerdrApiError,
-  HerdrControl,
-  HerdrServerChangedError,
-} from "./herdr-control.js";
+import { HerdrApiError, HerdrControl } from "./herdr-control.js";
 import { systemdEnvironmentArguments } from "./user-environment.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -38,35 +34,6 @@ export interface HerdrWorkerPane {
 
 export type HerdrWorkerState = "idle" | "working" | "blocked";
 
-export interface HerdrSessionReference {
-  source: string;
-  agent: string;
-  kind: "id" | "path";
-  value: string;
-}
-
-export interface HerdrObservedPane {
-  paneId: string;
-  agent: string | null;
-  session: HerdrSessionReference | null;
-  inspireSessionId: string | null;
-}
-
-export interface HerdrObservedSessions {
-  serverId: string;
-  panes: HerdrObservedPane[];
-}
-
-export interface HerdrPaneProcessInfo {
-  paneId: string;
-  foregroundProcessGroupId: number | null;
-  foregroundProcesses: Array<{
-    pid: number;
-    name: string;
-    argv: string[] | null;
-  }>;
-}
-
 /** Herdr's own custom-agent namespace; unlike `pi`, this does not describe a
  * native Pi TUI or advertise a resumable TUI process to Herdr. */
 const WORKER_SOURCE = "inspire:rpc";
@@ -94,6 +61,19 @@ type ServerProbe = HerdrProbe & { socket?: string; protocol?: number };
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `INSPIRE_HERDR_ENV_EXCLUDE` lists comma-separated environment prefixes kept
+ * out of the shared Herdr server. `INSPIRE_` is always excluded.
+ */
+export function herdrExcludedEnvironmentPrefixes(
+  environment: NodeJS.ProcessEnv,
+): string[] {
+  return (environment.INSPIRE_HERDR_ENV_EXCLUDE ?? "")
+    .split(",")
+    .map((prefix) => prefix.trim())
+    .filter((prefix) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(prefix));
 }
 
 /** Addressed Herdr control; only explicitly allocated worker panes are owned. */
@@ -131,8 +111,14 @@ export class HerdrClient {
       delete this.environment[key];
     // Shared Herdr must not inherit Host/worker capabilities. Each actual Pi
     // gets its own Inspire fields later over the private launch channel.
+    // Extension-owned per-process identities are a configurable list rather
+    // than core knowledge of any one extension.
+    const excluded = [
+      "INSPIRE_",
+      ...herdrExcludedEnvironmentPrefixes(this.environment),
+    ];
     for (const key of Object.keys(this.environment))
-      if (key.startsWith("INSPIRE_") || key.startsWith("PI_INTERCOM_"))
+      if (excluded.some((prefix) => key.startsWith(prefix)))
         delete this.environment[key];
     this.prefix = options.session ? ["--session", options.session] : [];
   }
@@ -509,133 +495,6 @@ export class HerdrClient {
       applies_to_source: WORKER_SOURCE,
       seq: report.seq,
       tokens: { [WORKER_SESSION_TOKEN]: report.sessionId ?? null },
-    });
-  }
-
-  /** Read Herdr's live pane/session projection without creating a server or
-   * adopting a pane. Snapshot references alone never prove a live Pi writer. */
-  async inspectSessions(): Promise<HerdrObservedSessions | null> {
-    const status = await this.readServerStatus();
-    if (status.issue) throw new Error(status.issue);
-    if (!status.running) return null;
-    if (!status.compatible)
-      throw new Error("Running Herdr server is incompatible");
-    const control = await this.connection();
-    const result = await control.request("session.snapshot", {});
-    if (result.type !== "session_snapshot")
-      throw new Error("Herdr returned an unexpected session snapshot");
-    const snapshot = object(result.snapshot);
-    if (!Array.isArray(snapshot.panes))
-      throw new Error("Herdr snapshot omitted its panes");
-    const panes: HerdrObservedPane[] = snapshot.panes.map((value) => {
-      const pane = object(value);
-      const paneId = id(pane.pane_id, "pane ID");
-      const agent =
-        pane.agent === null || pane.agent === undefined
-          ? null
-          : id(pane.agent, "agent identity");
-      const tokens = pane.tokens ? object(pane.tokens) : {};
-      const token = tokens[WORKER_SESSION_TOKEN];
-      if (token !== null && token !== undefined && typeof token !== "string")
-        throw new Error("Herdr returned an invalid Inspire session token");
-      let session: HerdrSessionReference | null = null;
-      if (pane.agent_session) {
-        const reference = object(pane.agent_session);
-        if (
-          typeof reference.source !== "string" ||
-          typeof reference.agent !== "string" ||
-          (reference.kind !== "id" && reference.kind !== "path") ||
-          typeof reference.value !== "string"
-        )
-          throw new Error("Herdr returned an invalid agent session reference");
-        session = {
-          source: reference.source,
-          agent: reference.agent,
-          kind: reference.kind,
-          value: reference.value,
-        };
-      }
-      return {
-        paneId,
-        agent,
-        session,
-        inspireSessionId: typeof token === "string" ? token : null,
-      };
-    });
-    return { serverId: control.identity, panes };
-  }
-
-  /** Never inspect a reused pane ID on a successor daemon. */
-  async inspectPaneProcess(
-    serverId: string,
-    paneId: string,
-  ): Promise<HerdrPaneProcessInfo> {
-    const control = await this.connection();
-    if (control.identity !== serverId) throw new HerdrServerChangedError();
-    const result = await control.request("pane.process_info", {
-      pane_id: paneId,
-    });
-    if (result.type !== "pane_process_info")
-      throw new Error("Herdr returned unexpected pane process information");
-    const info = object(result.process_info);
-    if (info.pane_id !== paneId)
-      throw new Error("Herdr pane process identity mismatch");
-    const group = info.foreground_process_group_id;
-    if (
-      group !== null &&
-      group !== undefined &&
-      (!Number.isSafeInteger(group) || Number(group) < 1)
-    )
-      throw new Error("Herdr returned an invalid foreground process group");
-    if (
-      !Array.isArray(info.foreground_processes) &&
-      info.foreground_processes !== undefined
-    )
-      throw new Error("Herdr returned invalid foreground processes");
-    const processes = (info.foreground_processes ?? []) as unknown[];
-    return {
-      paneId,
-      foregroundProcessGroupId: typeof group === "number" ? group : null,
-      foregroundProcesses: processes.map((value) => {
-        const process = object(value);
-        if (
-          !Number.isSafeInteger(process.pid) ||
-          Number(process.pid) < 2 ||
-          typeof process.name !== "string" ||
-          (process.argv !== null &&
-            process.argv !== undefined &&
-            (!Array.isArray(process.argv) ||
-              !process.argv.every((arg) => typeof arg === "string")))
-        )
-          throw new Error("Herdr returned invalid foreground process details");
-        return {
-          pid: process.pid as number,
-          name: process.name as string,
-          argv: Array.isArray(process.argv) ? (process.argv as string[]) : null,
-        };
-      }),
-    };
-  }
-
-  /** Native-agent control never adds the pane to the owned-pane registry. */
-  async nativeAgentRequest(
-    serverId: string,
-    paneId: string,
-    method:
-      | "agent.get"
-      | "agent.read"
-      | "agent.prompt"
-      | "agent.send_keys"
-      | "pane.send_text",
-    params: Record<string, unknown> = {},
-  ): Promise<Record<string, unknown>> {
-    const control = await this.connection();
-    if (control.identity !== serverId) throw new HerdrServerChangedError();
-    return control.request(method, {
-      ...params,
-      ...(method === "pane.send_text"
-        ? { pane_id: paneId }
-        : { target: paneId }),
     });
   }
 

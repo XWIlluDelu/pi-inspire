@@ -34,6 +34,12 @@ interface RuntimeProjectionCoordinatorHost {
     diagnosticFields?: Record<string, unknown>,
   ): ProjectionConflict;
   stopWriter(slot: RuntimeSlot): Promise<void>;
+  /** After each change; `external` when another Pi appended meanwhile. */
+  projectionSettled(
+    slot: RuntimeSlot,
+    external: boolean,
+    previousLeafId: string | null | undefined,
+  ): Promise<void>;
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   logRuntimeError(sessionId: string, error: unknown, event?: string): void;
@@ -223,6 +229,7 @@ export class RuntimeProjectionCoordinator {
       !this.host.isClosing();
     if (result.changed) slot.branchRevision += 1;
     if (result.messageChange === "replace") this.host.renewView(slot);
+    let external = false;
     const previousConflict = slot.conflict;
     const priorPartial = slot.pendingPartialPersistence;
     const expectedSourceVersion =
@@ -338,16 +345,19 @@ export class RuntimeProjectionCoordinator {
         owned = await acceptOwnedAppend();
       }
       if (owned === null) return;
-      if (!owned) {
+      if (owned) {
+        this.trackPartialPersistence(slot, result);
+      } else if (!initiallyOwned && strictPhysicalProgress) {
+        // Another Pi is mid-write; its complete entry arrives later.
+        this.clearPartialPersistence(slot);
+      } else {
         await this.failPartialPersistence(
           slot,
-          "Session changed with an unowned or overwritten incomplete JSONL entry; the worker was stopped",
+          "Session changed with an overwritten incomplete JSONL entry; the worker was stopped",
           false,
           "incomplete-persistence",
           { initiallyOwned, exactPrior, ...ownershipFields() },
         );
-      } else {
-        this.trackPartialPersistence(slot, result);
       }
     } else if (priorPartial) {
       const exactPrior =
@@ -359,7 +369,12 @@ export class RuntimeProjectionCoordinator {
       if (!exactPrior)
         lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
       if (exactCompletion) this.clearPartialPersistence(slot);
-      else
+      else if (strictPhysicalProgress && result.kind === "append") {
+        // Another Pi's entries completed the growth: valid, not ours.
+        this.clearPartialPersistence(slot);
+        this.captureWriterResult(slot, result);
+        external = true;
+      } else
         await this.failPartialPersistence(
           slot,
           "Incomplete session persistence did not complete with its exact owned provenance; the worker was stopped",
@@ -384,6 +399,9 @@ export class RuntimeProjectionCoordinator {
       (result.sourceChanged || result.changed) &&
       !this.writerBaselineMatches(slot)
     ) {
+      // Growth of the same file is another Pi appending, which is valid
+      // session use. Rewrites and replacements remain concrete failures.
+      const growth = strictPhysicalProgress && result.kind === "append";
       if (initialMaterialization || this.writerOwnershipActive(slot)) {
         lastOwnership = result.changed
           ? await this.host.appendedEntriesOwnership(slot, result)
@@ -392,22 +410,29 @@ export class RuntimeProjectionCoordinator {
         this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
         if (lastOwnership.owned) {
           this.captureWriterResult(slot, result);
+        } else if (growth && !initialMaterialization) {
+          this.captureWriterResult(slot, result);
+          external = true;
         } else {
           this.host.setProjectionConflict(
             slot,
             "external-change",
-            "INSΠRE could not verify ownership of a session change. Recover before writing again",
+            "INSΠRE could not verify a session change. Recover before writing again",
             ownershipFields(),
           );
           await this.host.stopWriter(slot);
         }
+      } else if (growth) {
+        // The idle worker keeps its own branch alongside the other Pi.
+        this.captureWriterResult(slot, result);
+        external = true;
       } else {
-        // Even unchanged content may now belong to a different file version.
-        // An idle child is disposable: stop it now so the next write starts
-        // from a freshly attested source rather than silently adopting it.
+        // A rewritten or replaced file: the next write starts fresh from it.
         await this.host.stopWriter(slot);
       }
     }
+    if (slot.projection !== projection || this.host.isClosing()) return;
+    await this.host.projectionSettled(slot, external, result.previousLeafId);
     if (slot.projection !== projection || this.host.isClosing()) return;
     this.host.reconcileOverlay(slot, result.appendedEntries);
     if (!previousConflict && slot.conflict) {

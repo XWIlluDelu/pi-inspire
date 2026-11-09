@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import type { ActiveSnapshot, BootstrapPayload } from "../../shared/contracts";
+import { routeSnapshots } from "./support/host-events";
 import {
   openCommandPalette,
   openFixtureSession,
@@ -10,43 +10,17 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   page,
 }) => {
   let available = false;
-  const availability = (snapshot: ActiveSnapshot) => {
-    if (snapshot.active) {
-      snapshot.active.readOnlyReason = available
-        ? undefined
-        : "workspace-unavailable";
-      if (!available) snapshot.active.stats = undefined;
-    }
-    return snapshot;
-  };
   // UI projection only: source-admission tests cover the real missing directory,
   // unchanged JSONL, and absence of any Pi/model-discovery process.
-  await page.route("**/api/bootstrap**", async (route) => {
-    const response = await route.fetch();
-    if (!response.ok()) return route.fulfill({ response });
-    const payload = (await response.json()) as BootstrapPayload;
-    payload.snapshot = availability(payload.snapshot);
-    await route.fulfill({ response, json: payload });
-  });
-  for (const url of ["**/api/snapshot**", "**/api/sessions/open"]) {
-    await page.route(url, async (route) => {
-      const response = await route.fetch();
-      if (!response.ok()) return route.fulfill({ response });
-      await route.fulfill({
-        response,
-        json: availability(await response.json()),
-      });
-    });
-  }
-
-  await page.routeWebSocket("**/events**", (client) => {
-    const upstream = client.connectToServer();
-    upstream.onMessage((message) => {
-      const event = JSON.parse(String(message));
-      if (event.type === "snapshot" && event.data)
-        event.data = availability(event.data);
-      client.send(JSON.stringify(event));
-    });
+  await routeSnapshots(page, {
+    snapshot: (snapshot) => {
+      if (snapshot.active) {
+        snapshot.active.readOnlyReason = available
+          ? undefined
+          : "workspace-unavailable";
+        if (!available) snapshot.active.stats = undefined;
+      }
+    },
   });
 
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -65,9 +39,10 @@ test("unavailable-project history keeps its reading surface at desktop and phone
       page.getByRole("menuitem", { name, exact: true }),
     ).toBeDisabled();
   await page.getByRole("menuitem", { name: "More actions" }).click();
+  // Copying the resume command changes nothing, so it stays available.
   await expect(
-    page.getByRole("menuitem", { name: "Use in terminal…", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("menuitem", { name: "Copy resume command", exact: true }),
+  ).toBeEnabled();
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();

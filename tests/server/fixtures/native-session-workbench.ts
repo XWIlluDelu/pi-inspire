@@ -196,12 +196,6 @@ export async function nativeSessionWorkbench(
   const attachments = new AttachmentStore(join(directory, "uploads"));
   const workers: PiRpcProcess[] = [];
   const preferences = new PreferencesStore(join(directory, "prefs.json"));
-  const terminalStore = {
-    has: async (id: string) =>
-      (await preferences.read()).terminalSessionIds.includes(id),
-    set: (id: string, value: boolean) =>
-      preferences.setTerminalSession(id, value),
-  };
   const runtime = new RuntimeController(catalog, attachments, (options) => {
     const worker = new PiRpcProcess({
       ...options,
@@ -230,7 +224,6 @@ export async function nativeSessionWorkbench(
     workers.push(worker);
     return worker;
   });
-  runtime.setTerminalSessionStore(terminalStore);
   const application = createInspireServer({
     token: "export-test-token",
     runtime,
@@ -272,7 +265,6 @@ export async function nativeSessionWorkbench(
     url,
     headers,
     catalog,
-    terminalStore,
     environment,
   };
 }

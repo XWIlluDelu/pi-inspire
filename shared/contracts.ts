@@ -204,8 +204,6 @@ export interface SessionRuntimeStatus {
   needsInput?: boolean;
   /** Connected to an independently owned native Pi, not an Inspire worker. */
   external?: boolean;
-  /** The identified external Pi advertises its model/thinking action channel. */
-  nativeModelControls?: boolean;
 }
 
 /** Socket-local transcript interest. Changing it establishes a fresh snapshot
@@ -228,9 +226,7 @@ export function isSessionRuntimeStatus(
     (status.indicator === undefined || isSessionIndicator(status.indicator)) &&
     (status.needsInput === undefined ||
       typeof status.needsInput === "boolean") &&
-    (status.external === undefined || typeof status.external === "boolean") &&
-    (status.nativeModelControls === undefined ||
-      typeof status.nativeModelControls === "boolean")
+    (status.external === undefined || typeof status.external === "boolean")
   );
 }
 
@@ -238,7 +234,7 @@ export const SESSION_ACTION_IDS = [
   "rename",
   "copy-id",
   "clone",
-  "terminal",
+  "resume-command",
   "export",
 ] as const;
 export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];
@@ -284,7 +280,6 @@ export interface InspirePreferences {
   hiddenSessionIds: string[];
   navCollapsedGroups: string[];
   /** Explicit terminal handoffs; ordinary selection must not reacquire these writers. */
-  terminalSessionIds: string[];
 }
 
 /** The complete user-facing Settings surface. Navigation curation and MRU
@@ -330,7 +325,6 @@ export const defaultPreferences: InspirePreferences = {
   hiddenProjectCwds: [],
   hiddenSessionIds: [],
   navCollapsedGroups: [],
-  terminalSessionIds: [],
 };
 
 export function projectNameFromCwd(cwd: string): string {
@@ -1236,9 +1230,7 @@ export function parseRetryInfo(value: unknown): RetryInfo | null {
 
 export type SessionReadOnlyReason =
   | "workspace-unavailable"
-  | "external-unavailable"
-  | "external-active"
-  | "terminal";
+  | "external-active";
 
 export interface ActiveSnapshot {
   active: null | {

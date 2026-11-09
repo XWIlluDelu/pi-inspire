@@ -17,7 +17,6 @@ import type {
   PiRpcProcess,
   PiRpcResponseFence,
 } from "../../server/pi-rpc.js";
-import { requestError } from "../../server/request-error.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import type {
@@ -80,6 +79,7 @@ class BranchRpc extends EventEmitter {
   autoRetryGate: Promise<void> | null = null;
   extensionResponses: Array<Record<string, unknown>> = [];
   private stopped = false;
+  private readonly knownEntries: Set<string>;
   private readonly dialogResolvers = new Map<string, () => void>();
 
   get available(): boolean {
@@ -97,6 +97,9 @@ class BranchRpc extends EventEmitter {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    this.knownEntries = new Set(
+      persisted.slice(1).map((item) => String(item.id)),
+    );
     this.sessionId = String(persisted[0]?.id ?? "");
     const last = [...persisted]
       .reverse()
@@ -233,9 +236,14 @@ class BranchRpc extends EventEmitter {
           { name: "visible", source: "extension" },
         ],
       };
-    else if (command.type === "get_entries")
+    else if (command.type === "get_entries") {
+      if (
+        command.since !== undefined &&
+        !this.knownEntries.has(String(command.since))
+      )
+        throw new Error(`Entry not found: ${command.since}`);
       value = { entries: [], leafId: this.leafId };
-    else if (command.type === "prompt") {
+    } else if (command.type === "prompt") {
       const text = String(command.message ?? "");
       if (text.startsWith(`/${this.bridgeCommand} `))
         await this.emitBridge(text);
@@ -243,6 +251,7 @@ class BranchRpc extends EventEmitter {
         const persisted = entry("next-user", this.leafId, "user", text, 50);
         await appendFile(this.path, `${JSON.stringify(persisted)}\n`);
         this.leafId = persisted.id;
+        this.knownEntries.add(persisted.id);
         this.emit("event", { type: "message_end", message: persisted.message });
       }
     }
@@ -369,12 +378,10 @@ async function setup(
     stageFork ?? fakeStageFork(directory),
   );
   if (externallyOwned)
-    runtime.setExternalSessionGuard(async (id) => {
-      if (id === SESSION_ID)
-        throw requestError("Source is owned by another Pi", 409, {
-          code: "EXTERNAL_PI_WRITER_ACTIVE",
-        });
-    });
+    // A live Pi at the session root continues every branch of it.
+    runtime.setExternalSessionPresence(async (id) =>
+      id === SESSION_ID ? [null] : [],
+    );
   await runtime.openSession(SESSION_ID);
   if (externallyOwned) {
     await vi.waitFor(async () =>
@@ -1013,13 +1020,11 @@ describe("stock RPC branch bridge", () => {
         path,
         `${JSON.stringify(entry("external", "a2", "assistant", "external divergence", 60))}\n`,
       );
-      await expect(
-        runtime.forkBranch({
-          ...request,
-          viewId,
-          targetId: "u1",
-        }),
-      ).rejects.toThrow(/could not verify ownership/);
+      // Another Pi's append is valid: the worker keeps its own branch.
+      await runtime.branchTree(SESSION_ID);
+      expect((await runtime.snapshot(SESSION_ID)).runState).not.toBe(
+        "conflict",
+      );
       expect(stageFork).toHaveBeenCalledTimes(1);
       expect(
         await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
@@ -1365,7 +1370,30 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it("conflicts on external divergence while a navigation lease owns the worker", async () => {
+  it("keeps a default-branch worker on its own context across repeated foreign appends", async () => {
+    const { runtime, worker, path } = await setup();
+    try {
+      for (const id of ["foreign-one", "foreign-two"]) {
+        await appendFile(
+          path,
+          `${JSON.stringify(entry(id, "a1", "assistant", id, 60))}\n`,
+        );
+        const tree = await runtime.branchTree(SESSION_ID);
+        expect(tree.durableLeafId).toBe(id);
+        expect(tree.effectiveLeafId).toBe("a2");
+        expect(worker.leafId).toBe("a2");
+        expect(
+          worker.commands
+            .filter((command) => command.type === "get_entries")
+            .at(-1),
+        ).toMatchObject({ since: "a2" });
+      }
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps the worker's branch when another Pi appends elsewhere in the tree", async () => {
     const { runtime, path } = await setup();
     try {
       const tree = await runtime.branchTree(SESSION_ID);
@@ -1379,10 +1407,14 @@ describe("stock RPC branch bridge", () => {
         path,
         `${JSON.stringify(entry("external", "a2", "assistant", "terminal divergence", 60))}\n`,
       );
-      await expect(runtime.branchTree(SESSION_ID)).rejects.toThrow(
-        /could not verify ownership/,
+      const after = await runtime.branchTree(SESSION_ID);
+      expect(after.durableLeafId).toBe("external");
+      expect(after.effectiveLeafId).toBe("a1");
+      const snapshot = await runtime.snapshot(SESSION_ID);
+      expect(snapshot.runState).not.toBe("conflict");
+      expect(JSON.stringify(snapshot.active?.transcriptPage)).not.toContain(
+        "terminal divergence",
       );
-      expect((await runtime.snapshot()).runState).toBe("conflict");
     } finally {
       await runtime.close();
     }

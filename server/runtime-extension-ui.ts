@@ -1,4 +1,5 @@
 import { requestError } from "./request-error.js";
+import type { ExternalSessionConnection } from "./external-session.js";
 import {
   type ExtensionUiRequest,
   parsePendingExtensionUiRequest,
@@ -23,6 +24,7 @@ interface RuntimeExtensionUiHost {
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   throwIfConflicted(slot: RuntimeSlot): void;
   processOwner(process: PiRpcProcess): RuntimeSlot | undefined;
+  externalOwner(slot: RuntimeSlot): ExternalSessionConnection | undefined;
   failUnknown(
     slot: RuntimeSlot,
     error: PiRpcOutcomeUnknownError,
@@ -43,7 +45,7 @@ export class RuntimeExtensionUiController {
   add(
     slot: RuntimeSlot,
     value: unknown,
-    process: PiRpcProcess,
+    process: PiRpcProcess | ExternalSessionConnection,
   ): ExtensionUiRequest | null {
     const request = parsePendingExtensionUiRequest(value);
     if (!request) return null;
@@ -51,6 +53,37 @@ export class RuntimeExtensionUiController {
     slot.pendingExtensionUiOwners.set(request.id, process);
     this.scheduleExpiry(slot, request);
     return request;
+  }
+
+  /** Reconcile a retained RPC dialog snapshot without changing its deadlines.
+   * Answers remain bound to the exact attached instance, not just its session. */
+  synchronize(
+    slot: RuntimeSlot,
+    requests: Record<string, unknown>[],
+    owner: ExternalSessionConnection,
+  ): void {
+    const pending = new Set<string>();
+    for (const value of requests) {
+      const request = parsePendingExtensionUiRequest({
+        ...value,
+        sessionId: slot.id,
+      });
+      if (
+        !request ||
+        (request.expiresAt !== undefined && request.expiresAt <= Date.now())
+      )
+        continue;
+      pending.add(request.id);
+      if (slot.pendingExtensionUiOwners.get(request.id) === owner) continue;
+      this.add(slot, request, owner);
+      this.host.emitSlotEvent(slot, {
+        ...request,
+        type: "extension_ui_request",
+      });
+    }
+    for (const [id, current] of slot.pendingExtensionUiOwners)
+      if (current === owner && !pending.has(id))
+        this.remove(slot, id, "cleared");
   }
 
   clear(slot: RuntimeSlot, reason: ExtensionUiClearReason): void {
@@ -167,11 +200,14 @@ export class RuntimeExtensionUiController {
       const process = slot.pendingExtensionUiOwners.get(requestId);
       if (!request || !process)
         throw requestError("The extension request is no longer pending", 409);
+      const rpc = "sendExtensionUiResponse" in process ? process : null;
       if (
         request.sessionId !== sessionId ||
-        slot.process !== process ||
-        !slot.ready ||
-        this.host.processOwner(process) !== slot
+        (rpc
+          ? slot.process !== rpc ||
+            !slot.ready ||
+            this.host.processOwner(rpc) !== slot
+          : this.host.externalOwner(slot) !== process)
       ) {
         throw requestError(
           "The extension request no longer belongs to this worker",
@@ -186,11 +222,16 @@ export class RuntimeExtensionUiController {
           409,
         );
       }
+      if (!rpc) {
+        await (process as ExternalSessionConnection).answerUi(wireResponse);
+        this.remove(slot, requestId, "answered");
+        return;
+      }
       try {
-        await process.sendExtensionUiResponse(wireResponse);
+        await rpc.sendExtensionUiResponse(wireResponse);
         this.remove(slot, requestId, "answered");
         // stdin order makes the correlated read a consumption fence.
-        await process.request({ type: "get_state" });
+        await rpc.request({ type: "get_state" });
       } catch (error) {
         const unknown = new PiRpcOutcomeUnknownError(
           "extension_ui_response",

@@ -803,6 +803,38 @@ export function reduceEvent(
       changed = true;
       break;
     }
+    case "external_attachment_ended": {
+      // The attached Pi's task outcome is unknown here; claim none.
+      slice.streaming = false;
+      slice.activeAssistantMessageKey = null;
+      slice.tools = {};
+      slice.retry = null;
+      if (slice.runState !== "failed" && slice.runState !== "conflict")
+        slice.runState = "idle";
+      const reason = String(event.reason);
+      const what =
+        reason === "exited"
+          ? "The attached Pi exited"
+          : reason === "left-session"
+            ? "The attached Pi opened another session"
+            : reason === "left-branch"
+              ? "The attached Pi moved to another branch"
+              : "The attached Pi stopped responding";
+      pushNotice(
+        slice,
+        "info",
+        `${what}; this session continues in Inspire.${
+          event.duringWork === true
+            ? reason === "exited"
+              ? " The outcome of its last task is unknown."
+              : " Its work may continue there."
+            : ""
+        }`,
+      );
+      changed = true;
+      resync = true;
+      break;
+    }
     case "runtime_error": {
       slice.pendingRetryError = null;
       slice.runState = "failed";

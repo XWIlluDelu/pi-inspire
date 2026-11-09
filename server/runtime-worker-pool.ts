@@ -14,6 +14,7 @@ interface RuntimeWorkerPoolHost {
   isClosing(): boolean;
   selectedSessionId(): string | null;
   isObserved(sessionId: string): boolean;
+  isExternal(slot: RuntimeSlot): boolean;
   slots(): Iterable<RuntimeSlot>;
   isOpening(sessionId: string): boolean;
   isLoading(sessionId: string): boolean;
@@ -96,6 +97,8 @@ export class RuntimeWorkerPool {
     return (
       slot.id !== this.host.selectedSessionId() &&
       !this.host.isObserved(slot.id) &&
+      // Attached instances are working connections, not owned-worker cache.
+      !this.host.isExternal(slot) &&
       !slot.process &&
       !slot.stopping &&
       slot.activeOperations === 0 &&

@@ -266,6 +266,7 @@ export function createRuntimeEventSockets({
     "agent_settled",
     "runtime_error",
     "runtime_ready",
+    "external_attachment_ended",
   ]);
   const compactStatus = (
     record: Record<string, unknown>,

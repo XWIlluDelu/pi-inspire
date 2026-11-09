@@ -922,6 +922,43 @@ describe("extension_ui_request mapping", () => {
     });
   });
 
+  it.each([
+    [
+      "exited",
+      "The attached Pi exited; this session continues in Inspire. The outcome of its last task is unknown.",
+    ],
+    [
+      "left-session",
+      "The attached Pi opened another session; this session continues in Inspire. Its work may continue there.",
+    ],
+    [
+      "left-branch",
+      "The attached Pi moved to another branch; this session continues in Inspire. Its work may continue there.",
+    ],
+    [
+      "unreachable",
+      "The attached Pi stopped responding; this session continues in Inspire. Its work may continue there.",
+    ],
+  ])(
+    "settles a released busy attachment (%s) without a failure",
+    (reason, notice) => {
+      const result = reduce(
+        { ...emptyEventSlice(), runState: "running", streaming: true },
+        new Set(),
+        { type: "external_attachment_ended", reason, duringWork: true },
+      );
+      expect(result.resync).toBe(true);
+      expect(result.slice).toMatchObject({
+        runState: "idle",
+        streaming: false,
+      });
+      expect(result.slice.notices.at(-1)).toMatchObject({
+        kind: "info",
+        text: notice,
+      });
+    },
+  );
+
   it("resyncs when a controlled worker stop retires the branch view", () => {
     expect(
       reduce(emptyEventSlice(), new Set(), {

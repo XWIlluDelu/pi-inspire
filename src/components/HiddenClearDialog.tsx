@@ -1,5 +1,5 @@
 import { AlertTriangle, Trash2, X } from "lucide-react";
-import { projectNameFromCwd } from "../../shared/contracts";
+import { isBusyRunState, projectNameFromCwd } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
@@ -22,6 +22,7 @@ export function HiddenClearDialog({
       openInPi: sessionIds.some(
         (id) =>
           state.sessionStatuses[id]?.external === true ||
+          isBusyRunState(state.sessionStatuses[id]?.runState ?? "idle") ||
           state.externalSessionActivities[id] !== undefined,
       ),
     }),
@@ -87,6 +88,7 @@ export function HiddenClearDialog({
               ? "Every session currently in Hidden will be moved to Trash, including individually hidden sessions and every session inside hidden folders."
               : `All ${sessionsLabel} in ${projectCwd} will be moved to Trash. Other hidden sessions and folders are unchanged.`}
           </span>
+          <span>Pi instances using these sessions will be closed first.</span>
           <span>
             If Trash is unavailable, they will be permanently deleted.
           </span>
@@ -95,7 +97,7 @@ export function HiddenClearDialog({
         {openInPi ? (
           <p className="session-delete__warning" id="hidden-clear-warning">
             <AlertTriangle size={14} aria-hidden />
-            Open Pi terminals may write these sessions again.
+            Any work running in these sessions will stop.
           </p>
         ) : null}
         {error ? (

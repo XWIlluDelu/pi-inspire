@@ -320,6 +320,8 @@ try {
     "docs/ssh-reverse.md",
     "docs/examples/native-ui.ts",
     "docs/examples/session-activity.ts",
+    "extensions/attach-control.ts",
+    "build/extensions/attach-control.js",
     "extensions/inspire-session-bridge.ts",
     "build/extensions/inspire-session-bridge.js",
     "dist/index.html",
@@ -347,6 +349,7 @@ try {
       (/\.(?:[cm]?ts|tsx)$/u.test(path) &&
         path !== "docs/examples/native-ui.ts" &&
         path !== "docs/examples/session-activity.ts" &&
+        path !== "extensions/attach-control.ts" &&
         path !== "extensions/inspire-session-bridge.ts"),
   );
   if (forbidden.length > 0)

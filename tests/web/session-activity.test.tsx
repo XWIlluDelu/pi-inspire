@@ -102,7 +102,7 @@ describe("session activity presentation", () => {
   });
 
   it.each(["idle", "working", "blocked"] as const)(
-    "allows deletion of an external %s session with a contextual consequence, not a close requirement",
+    "confirms that deletion closes an external %s Pi and stops its work",
     (activity) => {
       state.prefs.hiddenSessionIds = [external.id];
       state.externalSessionActivities = { [external.id]: activity };
@@ -123,12 +123,24 @@ describe("session activity presentation", () => {
       expect(
         screen.getByRole("button", { name: "Delete session" }),
       ).toBeEnabled();
-      expect(screen.getByText(/Pi may write this session again/)).toBeVisible();
+      expect(
+        screen.getByText(
+          /Pi instances using this session will be closed first/,
+        ),
+      ).toBeVisible();
+      expect(
+        screen.getByText(/Any work running in this session will stop/),
+      ).toBeVisible();
       view.rerender(
         <HiddenClearDialog sessionIds={[external.id]} onClose={vi.fn()} />,
       );
       expect(
-        screen.getByText(/Open Pi terminals may write these sessions again/),
+        screen.getByText(
+          /Pi instances using these sessions will be closed first/,
+        ),
+      ).toBeVisible();
+      expect(
+        screen.getByText(/Any work running in these sessions will stop/),
       ).toBeVisible();
       expect(
         screen.getByRole("button", { name: "Delete 1 session" }),
@@ -137,12 +149,12 @@ describe("session activity presentation", () => {
       view.rerender(
         <HiddenClearDialog sessionIds={["other"]} onClose={vi.fn()} />,
       );
-      expect(screen.queryByText(/Open Pi terminals/)).toBeNull();
+      expect(screen.queryByText(/Any work running/)).toBeNull();
       state.externalSessionActivities = {};
       view.rerender(
         <SessionDeleteDialog session={external} onClose={vi.fn()} />,
       );
-      expect(screen.queryByText(/Pi may write/)).toBeNull();
+      expect(screen.queryByText(/Any work running/)).toBeNull();
       expect(screen.getByRole("alertdialog")).toHaveAttribute(
         "aria-describedby",
         "session-delete-description",
@@ -177,13 +189,15 @@ describe("session activity presentation", () => {
       expect(
         screen.getByRole("button", { name: 'Delete "External Pi"' }),
       ).toBeEnabled();
-      expect(screen.getByText(/Pi may write this session again/)).toBeVisible();
+      expect(
+        screen.getByText(/Any work running in this session will stop/),
+      ).toBeVisible();
       expect(hiddenDeletionBlockReason([external], state)).toBeNull();
       view.rerender(
         <HiddenClearDialog sessionIds={[external.id]} onClose={vi.fn()} />,
       );
       expect(
-        screen.getByText(/Open Pi terminals may write these sessions again/),
+        screen.getByText(/Any work running in these sessions will stop/),
       ).toBeVisible();
       // Ownership alone is a status change, even if the run state is unchanged.
       events.apply({
@@ -198,7 +212,7 @@ describe("session activity presentation", () => {
     },
   );
 
-  it("keeps managed input-blocked work static without enabling deletion", () => {
+  it("keeps managed input-blocked work static and allows confirmed deletion", () => {
     state.sessionStatuses = {
       external: { runState: "running", indicator: "running", needsInput: true },
     };
@@ -213,7 +227,8 @@ describe("session activity presentation", () => {
     );
     expect(
       screen.getByRole("button", { name: 'Delete "External Pi"' }),
-    ).toBeDisabled();
+    ).toBeEnabled();
+    expect(hiddenDeletionBlockReason([external], state)).toBeNull();
     expect(screen.getByRole("img", { name: "Waiting for input" })).toHaveClass(
       "nav__row-dot--attention",
     );

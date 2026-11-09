@@ -1500,29 +1500,29 @@ export function createInspireServer(deps: AppDependencies): {
     response.setHeader("Cache-Control", "no-store");
     response.json(await installedPiChangelog());
   });
-  app.post("/api/sessions/execution", async (request, response) => {
-    const { sessionId, target, interrupt } = z
-      .object({
-        sessionId: sessionIdField,
-        target: z.enum(["terminal", "inspire"]),
-        interrupt: z.boolean().optional(),
-      })
+  app.post("/api/sessions/takeover", async (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: sessionIdField })
       .parse(request.body);
-    const snapshot = await deps.runtime.setSessionExecution(
-      sessionId,
-      target,
-      interrupt,
-    );
+    response.setHeader("Cache-Control", "no-store");
+    response.json(await deps.runtime.takeOverSession(sessionId));
+  });
+  /** A command that resumes this session in a terminal Pi. Copying it changes
+   * nothing: Inspire and terminal Pi instances can share a session. */
+  app.get("/api/sessions/resume-command", async (request, response) => {
+    const { sessionId } = z
+      .object({ sessionId: sessionIdField })
+      .parse(request.query);
+    const session = await deps.catalog.get(sessionId);
+    if (!session) throw requestError("Session not found", 404);
     const quote = (value: string) =>
       "'" +
       value.replaceAll("'", process.platform === "win32" ? "''" : "'\\''") +
       "'";
-    const active = snapshot.active;
-    const command = active?.sessionFile
-      ? `${process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --"} ${quote(active.cwd)} && pi --session ${quote(active.sessionFile)}`
-      : "";
     response.setHeader("Cache-Control", "no-store");
-    response.json({ snapshot, command });
+    response.json({
+      command: `${process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --"} ${quote(session.cwd)} && pi --session ${quote(session.path)}`,
+    });
   });
   app.post("/api/sessions/export", async (request, response) => {
     const { sessionId, format } = z

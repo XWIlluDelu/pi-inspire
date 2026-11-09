@@ -145,6 +145,14 @@ export class TaskOutcomeTracker {
     }
     const run = this.runs.get(sessionId);
     if (!run) return null;
+    if (event.type === "external_attachment_ended") {
+      this.runs.delete(sessionId);
+      // A Pi that left this view or stopped answering may still be working;
+      // only an exit ends the task, and even then its outcome is unobserved.
+      return event.reason === "exited" && event.duringWork === true
+        ? this.result(sessionId, run.id, "ended", event)
+        : null;
+    }
     if (
       event.type !== "runtime_error" &&
       !(event.type === "agent_settled" && run.kind === "agent") &&

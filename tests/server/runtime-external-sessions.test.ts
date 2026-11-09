@@ -2,6 +2,7 @@ import { appendFile, readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import type {
+  ConnectExternalSession,
   ExternalSessionConnection,
   ExternalSessionState,
 } from "../../server/external-session.js";
@@ -28,8 +29,10 @@ import {
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
+type NativeRead = Awaited<ReturnType<ExternalSessionConnection["read"]>>;
+
 function nativeFixture() {
-  let state: ExternalSessionState | null = { status: "idle" };
+  let state: NativeRead = { status: "idle" };
   const native: ExternalSessionConnection = {
     read: vi.fn(async () => state),
     prompt: vi.fn(async () => {
@@ -41,35 +44,37 @@ function nativeFixture() {
     abort: vi.fn(async () => {
       state = { status: "idle" };
     }),
+    answerUi: vi.fn(async () => {}),
+    models: vi.fn(async () => ({
+      model: null,
+      thinkingLevel: "off" as const,
+      models: [],
+    })),
+    setModel: vi.fn(async () => ({
+      model: null,
+      thinkingLevel: "off" as const,
+    })),
+    setThinkingLevel: vi.fn(async () => ({
+      model: null,
+      thinkingLevel: "off" as const,
+    })),
+    reload: vi.fn(async () => {}),
     close: vi.fn(),
   };
   return {
     native,
-    setState: (next: ExternalSessionState | null) => {
+    setState: (next: NativeRead) => {
       state = next;
     },
   };
 }
 
-async function nativeModelFixture() {
-  const f = nativeFixture();
-  const selection = {
-    model: { provider: "native", id: "current" },
-    thinkingLevel: "low" as const,
-  };
-  const state: ExternalSessionState = {
-    status: "idle",
-    modelControls: true,
-    modelSelection: selection,
-    taskRuns: { receiverId: "receiver-one", activeRunId: null, settled: [] },
-  };
-  f.setState(state);
-  f.native.models = vi.fn(async () => ({
-    ...selection,
-    models: [selection.model],
-  }));
-  f.native.setModel = vi.fn(async () => selection);
-  f.native.setThinkingLevel = vi.fn(async () => selection);
+/** RuntimeExternalSessions driven directly on one idle slot "a". */
+async function directAttachment(
+  connect: ConnectExternalSession,
+  host: Partial<ConstructorParameters<typeof RuntimeExternalSessions>[1]> = {},
+  pollMs?: number,
+) {
   const slot = createRuntimeSlot({
     id: "a",
     cwd: "/tmp",
@@ -82,24 +87,156 @@ async function nativeModelFixture() {
     incarnationId: "slot-a",
     viewId: "view-a",
   });
-  const emit = vi.fn();
   const external = new RuntimeExternalSessions(
-    async () => f.native,
+    connect,
     {
       current: () => true,
-      emit,
+      emit: vi.fn(),
       assertUsable: vi.fn(),
       released: vi.fn(),
+      corresponds: () => true,
       log: vi.fn(),
       reconcile: async () => {},
+      ...host,
     },
     trackedAttachmentStore(),
+    pollMs,
+  );
+  return { slot, external };
+}
+
+async function nativeModelFixture() {
+  const f = nativeFixture();
+  const selection = {
+    model: { provider: "native", id: "current" },
+    thinkingLevel: "low" as const,
+  };
+  const state: ExternalSessionState = {
+    status: "idle",
+    modelSelection: selection,
+    taskRuns: { instanceId: "receiver-one", activeRunId: null, settled: [] },
+  };
+  f.setState(state);
+  f.native.models = vi.fn(async () => ({
+    ...selection,
+    models: [selection.model],
+  }));
+  f.native.setModel = vi.fn(async () => selection);
+  f.native.setThinkingLevel = vi.fn(async () => selection);
+  const emit = vi.fn();
+  const { slot, external } = await directAttachment(
+    async () => f.native,
+    { emit },
     10,
   );
   return { ...f, selection, state, slot, external, emit };
 }
 
+/** A runtime over session "a" where a live Pi continues the branch. Owned
+ * workers are refused unless a test supplies a factory. */
+function attachedRuntime(
+  connect: ConnectExternalSession,
+  spawn: ConstructorParameters<typeof RuntimeController>[2] = () => {
+    throw new Error("must not launch Pi");
+  },
+) {
+  return new RuntimeController(
+    catalog([record("a", "/tmp")]),
+    trackedAttachmentStore(),
+    spawn,
+    preview,
+  )
+    .setExternalSessionPresence(async () => [null])
+    .setExternalSessionConnector(connect);
+}
+
+/** Opening shows the live Pi read-only; Take over attaches to it. */
+async function openAttached(runtime: RuntimeController, id: string) {
+  await runtime.openSession(id);
+  return runtime.takeOverSession(id);
+}
+
 describe("continue an externally owned Pi", () => {
+  it("retains an idle takeover through ordinary navigation and worker-cache reclamation", async () => {
+    const f = nativeFixture();
+    const spawn = vi.fn(() => {
+      throw new Error("must keep the attached Pi");
+    });
+    const connector = vi.fn(async () => f.native);
+    const runtime = attachedRuntime(connector, spawn);
+    try {
+      await openAttached(runtime, "a");
+      await runtime.deselectSession();
+      await (
+        runtime as unknown as { workerPool: { settled(): Promise<void> } }
+      ).workerPool.settled();
+      expect(f.native.close).not.toHaveBeenCalled();
+      await runtime.openSession("a");
+      await runtime.prompt({ sessionId: "a", message: "continue here" });
+      expect(connector).toHaveBeenCalledOnce();
+      expect(f.native.prompt).toHaveBeenCalledOnce();
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("rejects a connection that moved off the displayed branch before the owner poll", async () => {
+    const f = await nativeModelFixture();
+    const accepts = (leaf: string | null) => leaf === "branch-a";
+    f.setState({ status: "idle", leafId: "branch-a" });
+    try {
+      expect(await f.external.connect(f.slot, accepts)).toBe(true);
+      f.setState({ status: "idle", leafId: "branch-b" });
+      expect(await f.external.connect(f.slot, accepts)).toBe(false);
+      expect(f.external.has(f.slot)).toBe(false);
+      expect(f.native.prompt).not.toHaveBeenCalled();
+    } finally {
+      f.external.close();
+    }
+  });
+
+  it("rechecks a merely viewed session on entry but keeps a worked-on session editable", async () => {
+    let live: (string | null)[] = [];
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp"), record("b", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    )
+      .setExternalSessionPresence(async () => live)
+      .setExternalSessionConnector(async () => null);
+    try {
+      // Both warm a worker; only "b" receives input.
+      await runtime.openSession("a");
+      await waitForReady(runtime, "a");
+      await runtime.openSession("b");
+      await waitForReady(runtime, "b");
+      await runtime.prompt({ sessionId: "b", message: "working here" });
+      live = [null];
+      await runtime.openSession("a");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+          "external-active",
+        ),
+      );
+      expect(workers[0]!.stops).toBe(1);
+      await runtime.openSession("b");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        (await runtime.snapshot("b")).active?.readOnlyReason,
+      ).toBeUndefined();
+      expect(workers[1]!.stops).toBe(0);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("observes short native run outcomes without replaying the initial report or claiming idle means success", async () => {
     const f = nativeFixture();
     const old = {
@@ -107,22 +244,15 @@ describe("continue an externally owned Pi", () => {
       outcome: "completed" as const,
       settledAt: Date.now(),
     };
-    const runs = { receiverId: "receiver", activeRunId: null, settled: [old] };
+    const runs = { instanceId: "receiver", activeRunId: null, settled: [old] };
     f.setState({ status: "idle", taskRuns: runs });
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
-      },
-      preview,
-    ).setExternalSessionConnector(async () => f.native);
+    const runtime = attachedRuntime(async () => f.native);
     const events: Record<string, unknown>[] = [];
     runtime.on("event", (event) =>
       events.push(event as Record<string, unknown>),
     );
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       expect(
         events.filter((event) => event.type === "native_task_outcome"),
       ).toEqual([]);
@@ -155,32 +285,31 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("checks external ownership for a cold settings mutation without selection warmup", async () => {
+  it("keeps a cold settings mutation read-only while another Pi continues the branch", async () => {
     const f = nativeFixture();
     const create = vi.fn(() => {
       throw new Error("must not launch Pi");
     });
     const connect = vi.fn(async () => f.native);
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      create,
-      preview,
-    ).setExternalSessionConnector(connect);
+    const runtime = attachedRuntime(connect, create);
     try {
       await runtime.snapshot("a");
+      // A live Pi continues this branch: no worker starts and nothing
+      // attaches until the user takes over.
+      await expect(
+        runtime.setModel("a", "test", "model"),
+      ).rejects.toMatchObject({
+        status: 409,
+        code: "EXTERNAL_PI_WRITER_ACTIVE",
+      });
       expect(connect).not.toHaveBeenCalled();
-      await expect(runtime.setModel("a", "test", "model")).rejects.toThrow(
-        "Inspire session bridge extension",
-      );
-      expect(connect).toHaveBeenCalledOnce();
       expect(create).not.toHaveBeenCalled();
     } finally {
       await runtime.close();
     }
   });
 
-  it("keeps an unavailable discovered owner read-only and recovers its connection without navigation", async () => {
+  it("fails a takeover whose Pi cannot be read without locking or launching, and attaches on retry", async () => {
     const f = nativeFixture();
     const create = vi.fn(() => {
       throw new Error("must not launch Pi");
@@ -188,37 +317,53 @@ describe("continue an externally owned Pi", () => {
     vi.mocked(f.native.read).mockRejectedValue(
       new Error("Control endpoint unavailable"),
     );
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      create,
-      preview,
-    ).setExternalSessionConnector(async () => f.native);
+    const runtime = attachedRuntime(async () => f.native, create);
     try {
-      await runtime.openSession("a");
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
-          "external-unavailable",
-        ),
+      await expect(openAttached(runtime, "a")).rejects.toThrow(
+        "Control endpoint unavailable",
       );
-      await expect(runtime.setThinkingLevel("a", "high")).rejects.toMatchObject(
-        { status: 409 },
+      // Still the ordinary view of a session another Pi is running.
+      expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+        "external-active",
       );
-      expect(create).not.toHaveBeenCalled();
+      expect(f.native.close).toHaveBeenCalled();
       vi.mocked(f.native.read).mockResolvedValue({ status: "idle" });
-      await vi.waitFor(
-        async () =>
-          expect(
-            (await runtime.snapshot("a")).active?.readOnlyReason,
-          ).toBeUndefined(),
-        { timeout: 2_000 },
-      );
-      await runtime.prompt({ sessionId: "a", message: "Recovered input" });
+      await runtime.takeOverSession("a");
       expect(
         (await runtime.snapshot("a")).active?.readOnlyReason,
       ).toBeUndefined();
-      expect(f.native.close).not.toHaveBeenCalled();
+      await runtime.prompt({ sessionId: "a", message: "Attached input" });
       expect(f.native.prompt).toHaveBeenCalledOnce();
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps an attachment writable through transient read failures", async () => {
+    const f = nativeFixture();
+    const create = vi.fn(() => {
+      throw new Error("must keep the attached Pi");
+    });
+    const runtime = attachedRuntime(async () => f.native, create);
+    try {
+      await openAttached(runtime, "a");
+      vi.mocked(f.native.read).mockRejectedValue(new Error("reloading"));
+      const reads = vi.mocked(f.native.read).mock.calls.length;
+      await vi.waitFor(
+        () =>
+          expect(vi.mocked(f.native.read).mock.calls.length).toBeGreaterThan(
+            reads,
+          ),
+        { timeout: 2_000 },
+      );
+      expect(
+        (await runtime.snapshot("a")).active?.readOnlyReason,
+      ).toBeUndefined();
+      vi.mocked(f.native.read).mockResolvedValue({ status: "idle" });
+      await runtime.prompt({ sessionId: "a", message: "Still attached" });
+      expect(f.native.prompt).toHaveBeenCalledOnce();
+      expect(f.native.close).not.toHaveBeenCalled();
       expect(create).not.toHaveBeenCalled();
     } finally {
       await runtime.close();
@@ -230,19 +375,15 @@ describe("continue an externally owned Pi", () => {
     const create = vi.fn(
       (options) => new FakeRpc(options) as unknown as PiRpcProcess,
     );
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      create,
-      preview,
-    ).setExternalSessionConnector(async () => f.native);
+    const runtime = attachedRuntime(async () => f.native, create);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await runtime.prompt({ sessionId: "a", message: "Continue here" });
       expect(f.native.prompt).toHaveBeenCalledWith(
         "Continue here",
         undefined,
         expect.any(Function),
+        undefined,
         undefined,
       );
       expect(create).not.toHaveBeenCalled();
@@ -273,18 +414,16 @@ describe("continue an externally owned Pi", () => {
     const worker = vi.fn(
       (options) => new FakeRpc(options) as unknown as PiRpcProcess,
     );
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
+    const runtime = attachedRuntime(
+      async () => (retired ? null : f.native),
       worker,
-      preview,
-    ).setExternalSessionConnector(async () => (retired ? null : f.native));
+    );
     const events: Array<{ type: string }> = [];
     runtime.on("event", (event) => events.push(event));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       runtime.retainSessionView("a");
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await vi.waitFor(async () =>
         expect((await runtime.snapshot("a")).sessionStatuses.a?.external).toBe(
           true,
@@ -298,7 +437,7 @@ describe("continue an externally owned Pi", () => {
       await runtime.openSession("a");
       await entered.promise;
       retired = true;
-      f.setState(null);
+      f.setState({ ended: "exited" });
       await vi.advanceTimersByTimeAsync(750);
       expect(f.native.close).toHaveBeenCalledOnce();
       expect(worker).not.toHaveBeenCalled();
@@ -321,16 +460,9 @@ describe("continue an externally owned Pi", () => {
   it("does not block Host restart for independently running Pi work", async () => {
     const f = nativeFixture();
     f.setState({ status: "working" });
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
-      },
-      preview,
-    ).setExternalSessionConnector(async () => f.native);
+    const runtime = attachedRuntime(async () => f.native);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await vi.waitFor(async () =>
         expect((await runtime.snapshot()).runState).toBe("running"),
       );
@@ -344,7 +476,7 @@ describe("continue an externally owned Pi", () => {
     expect(f.native.close).toHaveBeenCalledOnce();
   });
 
-  it("keeps simultaneous warmup and prompt on one connection and retains addressed selection", async () => {
+  it("keeps a takeover's prompt addressed to its session while another is selected", async () => {
     const f = nativeFixture();
     const gate = deferredSignal();
     const connect = vi.fn(async (id: string) => {
@@ -364,12 +496,16 @@ describe("continue an externally owned Pi", () => {
         return worker as unknown as PiRpcProcess;
       },
       preview,
-    ).setExternalSessionConnector(connect);
+    )
+      .setExternalSessionPresence(async (id) => (id === "a" ? [null] : []))
+      .setExternalSessionConnector(connect);
     try {
-      await runtime.openSession("a");
+      const taking = openAttached(runtime, "a");
+      await vi.waitFor(() => expect(connect).toHaveBeenCalled());
+      gate.resolve();
+      await taking;
       const sending = runtime.prompt({ sessionId: "a", message: "For A only" });
       await runtime.openSession("b");
-      gate.resolve();
       await sending;
       expect(connect.mock.calls.filter(([id]) => id === "a")).toHaveLength(1);
       expect(runtime.activeSessionId).toBe("b");
@@ -378,6 +514,7 @@ describe("continue an externally owned Pi", () => {
         "For A only",
         undefined,
         expect.any(Function),
+        undefined,
         undefined,
       );
     } finally {
@@ -395,9 +532,11 @@ describe("continue an externally owned Pi", () => {
       () => {
         throw new Error("must not launch Pi");
       },
-    ).setExternalSessionConnector(async () => f.native);
+    )
+      .setExternalSessionPresence(async () => [null])
+      .setExternalSessionConnector(async () => f.native);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await runtime.prompt({ sessionId: "a", message: "Continue" });
       const entries = (await readFile(session.path, "utf8"))
         .trim()
@@ -444,9 +583,11 @@ describe("continue an externally owned Pi", () => {
         throw new Error("must not launch Pi");
       },
       preview,
-    ).setExternalSessionConnector(async () => f.native);
+    )
+      .setExternalSessionPresence(async () => [null])
+      .setExternalSessionConnector(async () => f.native);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await runtime.prompt({
         sessionId: "a",
         message: "Read this",
@@ -479,7 +620,9 @@ describe("continue an externally owned Pi", () => {
         throw new Error("must not launch Pi");
       },
       preview,
-    ).setExternalSessionConnector(async () => f.native);
+    )
+      .setExternalSessionPresence(async () => [null])
+      .setExternalSessionConnector(async () => f.native);
     vi.mocked(f.native.prompt).mockImplementationOnce(
       async (_text, _behavior, _beforeSend, images) => {
         expect(images).toHaveLength(1);
@@ -488,7 +631,7 @@ describe("continue an externally owned Pi", () => {
       },
     );
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       const request = {
         sessionId: "a",
         message: "",
@@ -527,16 +670,9 @@ describe("continue an externally owned Pi", () => {
         beforeSend?.();
         delivered.push(text);
       });
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
-      },
-      preview,
-    ).setExternalSessionConnector(async () => f.native);
+    const runtime = attachedRuntime(async () => f.native);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       const sending = runtime
         .prompt({ sessionId: "a", message: "Stopped input" })
         .catch((error) => error);
@@ -553,7 +689,7 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("observes native status without rebuilding reclaimed background history or logging missing projections", async () => {
+  it("retains the attached branch while observing background work", async () => {
     const f = nativeFixture();
     f.setState({ status: "working" });
     const diagnostics = nullDiagnosticLogger();
@@ -569,18 +705,20 @@ describe("continue an externally owned Pi", () => {
       undefined,
       undefined,
       diagnostics,
-    ).setExternalSessionConnector(async (id) =>
-      id === "a" ? f.native : nativeFixture().native,
-    );
+    )
+      .setExternalSessionPresence(async () => [null])
+      .setExternalSessionConnector(async (id) =>
+        id === "a" ? f.native : nativeFixture().native,
+      );
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await vi.waitFor(async () =>
         expect((await runtime.snapshot("a")).runState).toBe("running"),
       );
       const slots = (runtime as unknown as { slots: Map<string, RuntimeSlot> })
         .slots;
-      await runtime.openSession("b");
-      await vi.waitFor(() => expect(slots.get("a")?.projection).toBeNull());
+      await openAttached(runtime, "b");
+      await vi.waitFor(() => expect(slots.get("a")?.projection).not.toBeNull());
       const reads = vi.mocked(f.native.read).mock.calls.length;
       await vi.waitFor(
         () =>
@@ -589,7 +727,7 @@ describe("continue an externally owned Pi", () => {
           ).toBeGreaterThanOrEqual(reads + 2),
         { timeout: 2_500 },
       );
-      expect(slots.get("a")?.projection).toBeNull();
+      expect(slots.get("a")?.projection).not.toBeNull();
       expect(
         log.mock.calls.filter(
           ([, event]) => event === "external_session_connection",
@@ -605,55 +743,6 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("releases an idle native observer reclaimed while its poll fails", async () => {
-    const first = nativeFixture();
-    const second = nativeFixture();
-    const poll = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp"), record("b", "/tmp")]),
-      trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
-      },
-      preview,
-    ).setExternalSessionConnector(async (id) =>
-      id === "a" ? first.native : second.native,
-    );
-    vi.useFakeTimers();
-    try {
-      await runtime.openSession("a");
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot("a")).sessionStatuses.a?.external).toBe(
-          true,
-        ),
-      );
-      const read = vi.mocked(first.native.read);
-      read.mockImplementation(async () => {
-        await poll.promise;
-        throw new Error("Control endpoint unavailable");
-      });
-      const beforePoll = read.mock.calls.length;
-      await vi.advanceTimersByTimeAsync(750);
-      expect(read).toHaveBeenCalledTimes(beforePoll + 1);
-
-      await runtime.openSession("b");
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot("b")).sessionStatuses.a).toBeUndefined(),
-      );
-      expect(first.native.close).toHaveBeenCalledOnce();
-      const retiredReads = read.mock.calls.length;
-      poll.resolve();
-      await vi.advanceTimersByTimeAsync(2_250);
-      expect(read).toHaveBeenCalledTimes(retiredReads);
-      expect(first.native.abort).not.toHaveBeenCalled();
-    } finally {
-      poll.resolve();
-      await runtime.close();
-      vi.useRealTimers();
-    }
-    expect(first.native.close).toHaveBeenCalledOnce();
-  });
-
   it("uses version-checked native polling and forced prompt admission", async () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();
@@ -663,9 +752,11 @@ describe("continue an externally owned Pi", () => {
       () => {
         throw new Error("must not launch Pi");
       },
-    ).setExternalSessionConnector(async () => f.native);
+    )
+      .setExternalSessionPresence(async () => [null])
+      .setExternalSessionConnector(async () => f.native);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await vi.waitFor(() => expect(f.native.read).toHaveBeenCalled());
       const reconcile = vi.spyOn(SessionProjection.prototype, "reconcile");
       const reads = vi.mocked(f.native.read).mock.calls.length;
@@ -689,12 +780,16 @@ describe("continue an externally owned Pi", () => {
   });
 
   it.each(["working", "blocked"] as const)(
-    "deletes connected native %s sessions singly and through Hidden without interrupting Pi",
+    "ends connected native %s instances before deleting their sessions singly and through Hidden",
     async (status) => {
       const sessions = [await persistedRecord("a"), await persistedRecord("b")];
       const connections = [nativeFixture(), nativeFixture()];
       for (const connection of connections) connection.setState({ status });
-      const remove = vi.fn(async () => "trashed" as const);
+      const stopped = new Set<string>();
+      const remove = vi.fn(async (session) => {
+        expect(stopped.has(session.id)).toBe(true);
+        return "trashed" as const;
+      });
       const runtime = new RuntimeController(
         catalog(sessions),
         trackedAttachmentStore(),
@@ -705,11 +800,16 @@ describe("continue an externally owned Pi", () => {
         15_000,
         undefined,
         remove,
-      ).setExternalSessionConnector(
-        async (id) => connections[id === "a" ? 0 : 1]!.native,
-      );
+      )
+        .setExternalSessionPresence(async () => [null])
+        .setExternalSessionConnector(
+          async (id) => connections[id === "a" ? 0 : 1]!.native,
+        )
+        .setExternalSessionTerminator(async (id) => {
+          stopped.add(id);
+        });
       try {
-        await runtime.openSession("a");
+        await openAttached(runtime, "a");
         await vi.waitFor(async () =>
           expect((await runtime.snapshot("a")).sessionStatuses.a).toMatchObject(
             { external: true, runState: "running" },
@@ -718,7 +818,7 @@ describe("continue an externally owned Pi", () => {
         await expect(runtime.deleteSession("a")).resolves.toMatchObject({
           disposition: "trashed",
         });
-        await runtime.openSession("b");
+        await openAttached(runtime, "b");
         await vi.waitFor(async () =>
           expect(
             (await runtime.snapshot("b")).sessionStatuses.b?.external,
@@ -739,11 +839,14 @@ describe("continue an externally owned Pi", () => {
   );
 
   it.each(["prompt", "rename", "abort"] as const)(
-    "retains the deletion and maintenance barriers during a Host native %s",
+    "ends an in-flight native %s before moving its session",
     async (operation) => {
       const f = nativeFixture();
       const entered = deferredSignal();
       const gate = deferredSignal();
+      const terminated = vi.fn(async () => {
+        gate.resolve();
+      });
       const hold = async () => {
         entered.resolve();
         await gate.promise;
@@ -764,9 +867,11 @@ describe("continue an externally owned Pi", () => {
         15_000,
         undefined,
         remove,
-      ).setExternalSessionConnector(async () => f.native);
+      )
+        .setExternalSessionPresence(async () => [null])
+        .setExternalSessionConnector(async () => f.native);
       try {
-        await runtime.openSession("a");
+        await openAttached(runtime, "a");
         await vi.waitFor(() => expect(f.native.read).toHaveBeenCalled());
         const sending =
           operation === "prompt"
@@ -775,15 +880,14 @@ describe("continue an externally owned Pi", () => {
               ? runtime.rename("a", "Hold")
               : runtime.abort("a");
         await entered.promise;
-        await expect(runtime.deleteSession("a")).rejects.toMatchObject({
-          status: 409,
-        });
         expect(runtime.reserveMaintenanceRestart()).toMatchObject({
           kind: "busy",
         });
-        expect(remove).not.toHaveBeenCalled();
-        gate.resolve();
+        runtime.setExternalSessionTerminator(terminated);
+        await runtime.deleteSession("a");
         await sending;
+        expect(terminated).toHaveBeenCalledOnce();
+        expect(remove).toHaveBeenCalledOnce();
       } finally {
         gate.resolve();
         await runtime.close();
@@ -803,7 +907,7 @@ describe("continue an externally owned Pi", () => {
       thinkingLevel: "low" as const,
     };
     const models = [old.model, selected.model];
-    f.setState({ status: "idle", modelControls: true, modelSelection: old });
+    f.setState({ status: "idle", modelSelection: old });
     f.native.models = vi.fn(async () => {
       await gate.promise;
       return { ...old, models };
@@ -813,30 +917,7 @@ describe("continue an externally owned Pi", () => {
       thinkingLevel: "off" as const,
     }));
     f.native.setThinkingLevel = vi.fn(async () => selected);
-    const slot = createRuntimeSlot({
-      id: "a",
-      cwd: "/tmp",
-      sessionPath: "/sessions/a.jsonl",
-      process: null,
-      preview: null,
-      projection: await preview(record("a", "/tmp")),
-      bridge: null,
-      branchRevision: 1,
-      incarnationId: "slot-a",
-      viewId: "view-a",
-    });
-    const external = new RuntimeExternalSessions(
-      async () => f.native,
-      {
-        current: () => true,
-        emit: vi.fn(),
-        assertUsable: vi.fn(),
-        released: vi.fn(),
-        log: vi.fn(),
-        reconcile: async () => {},
-      },
-      trackedAttachmentStore(),
-    );
+    const { slot, external } = await directAttachment(async () => f.native);
     try {
       await external.connect(slot);
       const reading = external.models(slot);
@@ -866,36 +947,16 @@ describe("continue an externally owned Pi", () => {
         model: { provider: "native", id: "selected" },
         thinkingLevel: "low" as const,
       };
-      f.setState({ status: "idle", modelControls: true, modelSelection: old });
+      f.setState({ status: "idle", modelSelection: old });
       f.native.models = vi.fn();
       f.native.setModel = vi.fn(async () => ({
         ...selected,
         thinkingLevel: "off" as const,
       }));
       f.native.setThinkingLevel = vi.fn(async () => selected);
-      const slot = createRuntimeSlot({
-        id: "a",
-        cwd: "/tmp",
-        sessionPath: "/sessions/a.jsonl",
-        process: null,
-        preview: null,
-        projection: await preview(record("a", "/tmp")),
-        bridge: null,
-        branchRevision: 1,
-        incarnationId: "slot-a",
-        viewId: "view-a",
-      });
-      const external = new RuntimeExternalSessions(
+      const { slot, external } = await directAttachment(
         async () => f.native,
-        {
-          current: () => true,
-          emit: vi.fn(),
-          assertUsable: vi.fn(),
-          released: vi.fn(),
-          log: vi.fn(),
-          reconcile: async () => {},
-        },
-        trackedAttachmentStore(),
+        {},
         10,
       );
       vi.useFakeTimers();
@@ -906,7 +967,6 @@ describe("continue an externally owned Pi", () => {
           // asynchronous ownership validation is still in flight.
           const state = {
             status: "working" as const,
-            modelControls: true,
             modelSelection: old,
           };
           await gate.promise;
@@ -926,7 +986,6 @@ describe("continue an externally owned Pi", () => {
         expect(slot.runState).toBe("running");
         f.setState({
           status: "idle",
-          modelControls: true,
           modelSelection: old,
         });
         await vi.advanceTimersByTimeAsync(10);
@@ -949,7 +1008,7 @@ describe("continue an externally owned Pi", () => {
         model: { provider: "native", id: "stale" },
         thinkingLevel: "off" as const,
       };
-      vi.mocked(f.native.models!).mockImplementationOnce(async () => {
+      vi.mocked(f.native.models).mockImplementationOnce(async () => {
         await gate.promise;
         return { ...old, models: [old.model, f.selection.model] };
       });
@@ -976,7 +1035,7 @@ describe("continue an externally owned Pi", () => {
     const gate = deferredSignal();
     const oldModel = { provider: "old", id: "retired" };
     const freshModel = { provider: "fresh", id: "available" };
-    vi.mocked(f.native.models!)
+    vi.mocked(f.native.models)
       .mockImplementationOnce(async () => {
         await gate.promise;
         return { ...f.selection, models: [oldModel] };
@@ -991,7 +1050,7 @@ describe("continue an externally owned Pi", () => {
       f.setState({
         ...f.state,
         taskRuns: {
-          receiverId: "receiver-two",
+          instanceId: "receiver-two",
           activeRunId: null,
           settled: [],
         },
@@ -1029,8 +1088,8 @@ describe("continue an externally owned Pi", () => {
         await gate.promise;
         return f.selection;
       };
-      vi.mocked(f.native.setModel!).mockImplementation(late);
-      vi.mocked(f.native.setThinkingLevel!).mockImplementation(late);
+      vi.mocked(f.native.setModel).mockImplementation(late);
+      vi.mocked(f.native.setThinkingLevel).mockImplementation(late);
       vi.useFakeTimers();
       try {
         await f.external.connect(f.slot);
@@ -1043,7 +1102,7 @@ describe("continue an externally owned Pi", () => {
           ...f.state,
           modelSelection: successor,
           taskRuns: {
-            receiverId: "receiver-two",
+            instanceId: "receiver-two",
             activeRunId: null,
             settled: [],
           },
@@ -1071,7 +1130,7 @@ describe("continue an externally owned Pi", () => {
       thinkingLevel: "low" as const,
     });
     for (const f of [old, fresh]) {
-      f.setState({ status: "idle", modelControls: true });
+      f.setState({ status: "idle" });
       f.native.setModel = vi.fn();
       f.native.setThinkingLevel = vi.fn();
     }
@@ -1080,30 +1139,10 @@ describe("continue an externally owned Pi", () => {
       return catalogFor("old");
     });
     fresh.native.models = vi.fn(async () => catalogFor("fresh"));
-    const slot = createRuntimeSlot({
-      id: "a",
-      cwd: "/tmp",
-      sessionPath: "/sessions/a.jsonl",
-      process: null,
-      preview: null,
-      projection: await preview(record("a", "/tmp")),
-      bridge: null,
-      branchRevision: 1,
-      incarnationId: "slot-a",
-      viewId: "view-a",
-    });
     const emit = vi.fn();
-    const external = new RuntimeExternalSessions(
+    const { slot, external } = await directAttachment(
       vi.fn().mockResolvedValueOnce(old.native).mockResolvedValue(fresh.native),
-      {
-        current: () => true,
-        emit,
-        assertUsable: vi.fn(),
-        released: vi.fn(),
-        log: vi.fn(),
-        reconcile: async () => {},
-      },
-      trackedAttachmentStore(),
+      { emit },
     );
     try {
       await external.connect(slot);
@@ -1129,33 +1168,13 @@ describe("continue an externally owned Pi", () => {
 
   it("coalesces failed native polls until one complete observation succeeds", async () => {
     const f = nativeFixture();
-    const slot = createRuntimeSlot({
-      id: "a",
-      cwd: "/tmp",
-      sessionPath: "/sessions/a.jsonl",
-      process: null,
-      preview: null,
-      projection: await preview(record("a", "/tmp")),
-      bridge: null,
-      branchRevision: 1,
-      incarnationId: "slot-a",
-      viewId: "view-a",
-    });
     const log = vi.fn();
     const reconcile = vi.fn(async (): Promise<unknown> => {
       throw new Error("Projection read failed");
     });
-    const external = new RuntimeExternalSessions(
+    const { slot, external } = await directAttachment(
       async () => f.native,
-      {
-        current: () => true,
-        emit: vi.fn(),
-        assertUsable: vi.fn(),
-        released: vi.fn(),
-        log,
-        reconcile,
-      },
-      trackedAttachmentStore(),
+      { log, reconcile },
       10,
     );
     vi.useFakeTimers();
@@ -1177,6 +1196,53 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
+  it.each([
+    ["exited", { ended: "exited" }, true],
+    ["left-session", { ended: "left-session" }, true],
+    ["unreachable", { ended: "unreachable" }, true],
+    ["left-branch", { status: "working", leafId: "elsewhere" }, false],
+  ] as const)(
+    "ends a busy attachment that %s without claiming its task failed",
+    async (reason, observed, stillOnBranch) => {
+      const f = await nativeModelFixture();
+      let onBranch = true;
+      const released = vi.fn();
+      const { slot, external } = await directAttachment(
+        async () => f.native,
+        {
+          emit: f.emit,
+          released,
+          corresponds: () => onBranch,
+        },
+        10,
+      );
+      vi.useFakeTimers();
+      try {
+        f.setState({ ...f.state, status: "working" });
+        await external.connect(slot);
+        expect(slot.runState).toBe("running");
+        f.setState(observed);
+        onBranch = stillOnBranch;
+        await vi.advanceTimersByTimeAsync(20);
+        expect(external.has(slot)).toBe(false);
+        expect(slot.runState).toBe("idle");
+        expect(f.emit).toHaveBeenCalledWith(slot, {
+          type: "external_attachment_ended",
+          reason,
+          duringWork: true,
+        });
+        expect(f.emit).not.toHaveBeenCalledWith(
+          slot,
+          expect.objectContaining({ type: "runtime_error" }),
+        );
+        expect(released).toHaveBeenCalledWith(slot);
+      } finally {
+        external.close();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("rediscovers an ended native owner on a subsequent open without repeating input", async () => {
     const first = nativeFixture();
     const next = nativeFixture();
@@ -1184,23 +1250,16 @@ describe("continue an externally owned Pi", () => {
       .fn()
       .mockResolvedValueOnce(first.native)
       .mockResolvedValue(next.native);
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
-      },
-      preview,
-    ).setExternalSessionConnector(connect);
+    const runtime = attachedRuntime(connect);
     try {
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await runtime.prompt({ sessionId: "a", message: "First" });
-      first.setState(null);
+      first.setState({ ended: "exited" });
       await vi.waitFor(
         () => expect(first.native.close).toHaveBeenCalledOnce(),
         { timeout: 1_500 },
       );
-      await runtime.openSession("a");
+      await openAttached(runtime, "a");
       await runtime.prompt({ sessionId: "a", message: "Fresh" });
       expect(connect).toHaveBeenCalledTimes(2);
       expect(first.native.prompt).toHaveBeenCalledTimes(1);
@@ -1209,30 +1268,29 @@ describe("continue an externally owned Pi", () => {
         undefined,
         expect.any(Function),
         undefined,
+        undefined,
       );
     } finally {
       await runtime.close();
     }
   });
 
-  it("closes only its connection while discovery is in flight", async () => {
+  it("closes only its connection while a takeover is in flight", async () => {
     const f = nativeFixture();
     const gate = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi after close");
-      },
-      preview,
-    ).setExternalSessionConnector(async () => {
+    const connect = vi.fn(async () => {
       await gate.promise;
       return f.native;
     });
-    await runtime.openSession("a");
+    const runtime = attachedRuntime(connect, () => {
+      throw new Error("must not launch Pi after close");
+    });
+    const taking = openAttached(runtime, "a").catch(() => undefined);
+    await vi.waitFor(() => expect(connect).toHaveBeenCalled());
     const closing = runtime.close();
     gate.resolve();
     await closing;
+    await taking;
     expect(f.native.close).toHaveBeenCalledOnce();
     expect(f.native.prompt).not.toHaveBeenCalled();
   });

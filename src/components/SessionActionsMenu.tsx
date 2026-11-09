@@ -27,6 +27,7 @@ import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
+import { store } from "../store";
 import { useSessionActionReorder } from "../use-session-action-reorder";
 import { ButtonLabel } from "./ButtonLabel";
 import { CopyFeedback } from "./CopyFeedback";
@@ -44,7 +45,7 @@ const EXPANDED_CONSTRAINTS = { ...CONSTRAINTS, maxHeight: 360 };
 const ACTION_ICONS = {
   rename: Pencil,
   clone: GitBranch,
-  terminal: SquareTerminal,
+  "resume-command": SquareTerminal,
   export: Download,
 };
 
@@ -59,8 +60,6 @@ export function SessionActionsMenu({
   onRename,
   onClone,
   onExport,
-  onTerminal,
-  terminalDisabled = false,
   onClose,
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
@@ -73,8 +72,6 @@ export function SessionActionsMenu({
   onRename: () => void;
   onClone: () => void;
   onExport: () => void;
-  onTerminal?: () => void;
-  terminalDisabled?: boolean;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -96,9 +93,14 @@ export function SessionActionsMenu({
       },
     },
     clone: { run: onClone, disabled: cloneDisabled },
-    terminal: {
-      run: () => onTerminal?.(),
-      disabled: terminalDisabled || !onTerminal,
+    // Sharing a session needs no handoff: the command only resumes it in a
+    // terminal Pi alongside Inspire.
+    "resume-command": {
+      run: () => {
+        void store.copyResumeCommand(sessionId).then((copied) => {
+          if (copied) onClose();
+        });
+      },
     },
     export: { run: onExport },
   };

@@ -784,32 +784,26 @@ describe("Pi native command dispatch", () => {
     ).toEqual(["unknown-query-test"]);
   });
 
-  it("guides unsupported external commands without launching an RPC operation, while leaving configuration accessible", async () => {
+  it("guides terminal-only external commands without an RPC operation, sends model changes to the terminal Pi and leaves configuration accessible", async () => {
     const snapshot = activeSnapshot();
     snapshot.runState = "running";
     snapshot.sessionStatuses.s1 = { runState: "running", external: true };
-    let controls = 0;
+    const controls: string[] = [];
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap"))
         return { body: bootstrapPayload({ snapshot }) };
       if (url.startsWith("/api/control/")) {
-        controls++;
-        return { status: 409, body: { error: "Do not call unsupported RPC" } };
+        controls.push(url);
+        return { status: 409, body: { error: "Pi is not reachable" } };
       }
       return baseRoutes(url, init);
     });
     const { store } = await initStore();
-    for (const command of ["/model", "/thinking high", "/reload"]) {
-      await store.sendPrompt(command);
-    }
-    expect(controls).toBe(0);
+    await store.sendPrompt("/reload");
+    expect(controls).toEqual([]);
+    await store.sendPrompt("/thinking high");
+    expect(controls).toEqual(["/api/control/thinking"]);
     const activities = store.getState().commandActivities.s1!;
-    expect(
-      activities.find((item) => item.command === "model")?.message,
-    ).toContain("Inspire session bridge extension");
-    expect(
-      activities.find((item) => item.command === "thinking")?.message,
-    ).toContain("Inspire session bridge extension");
     expect(activities.find((item) => item.command === "reload")).toMatchObject({
       status: "info",
       message: "Run /reload in the original Pi terminal.",
