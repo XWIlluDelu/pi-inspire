@@ -171,13 +171,13 @@ function boundedCommandActivities(
 function terminalCommandGuidance(command: string): string {
   switch (command) {
     case "share":
-      return "Sharing publishes conversation data and requires Pi's interactive confirmation, so it remains in the trusted terminal flow.";
+      return "Use /share in Pi's terminal to confirm publishing this conversation.";
     case "trust":
-      return "Project trust is managed by Pi. Use /trust in Pi's terminal to change a saved decision, then /reload here to start a fresh worker.";
+      return "Change trust with /trust in Pi's terminal, then run /reload here.";
     case "import":
-      return "Session import can replace the active Pi runtime. Run it in Pi's terminal flow, where the source path and replacement confirmation stay visible.";
+      return "Use /import in Pi's terminal. It can replace the current session.";
     default:
-      return "This command currently requires Pi's trusted terminal interface.";
+      return "Run this command in Pi's terminal.";
   }
 }
 
@@ -384,7 +384,7 @@ export class AppStore {
     handleAuthFailure: () => this.handleAuthFailure(),
     confirmUncertainCreation: () =>
       window.confirm(
-        "The previous session creation was not confirmed and may still complete. Inspect the session list before continuing. Create another session anyway?",
+        "Session creation may still complete. Check the session list before creating another. Continue?",
       ),
   });
   private readonly runtimeEvents = new RuntimeEventController({
@@ -1310,7 +1310,7 @@ export class AppStore {
             currentProjectionError ??
             (explicit && error instanceof Error
               ? `Failed to refresh session: ${error.message}`
-              : "The conversation could not be synchronized. Showing the last confirmed state."),
+              : "Could not refresh this conversation. Showing the last loaded version."),
           errorSeverity:
             currentProjectionError &&
             projectionConflictSeverity(this.state.projectionConflict) ===
@@ -1736,7 +1736,7 @@ export class AppStore {
           this.updateCommandActivity(sessionId, id, {
             status: "warning",
             message:
-              "INSΠRE could not confirm this command's outcome. Reconnect and inspect the session before running it again.",
+              "Could not confirm the command result. Reconnect and check the session before trying again.",
           });
           return;
         }
@@ -2282,7 +2282,7 @@ export class AppStore {
         input,
         command.name,
         "info",
-        "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
+        "Close this tab when you are done. Your sessions keep running.",
       );
       return ACCEPTED_NATIVE_COMMAND;
     }

@@ -70,7 +70,7 @@ describe("Settings restart controls", () => {
     expect(fixture.start).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Restart all" }));
     expect(screen.getByRole("alertdialog").textContent).toContain(
-      "close project terminals in the installed service",
+      "This Host's project terminals will close.",
     );
     fireEvent.click(
       screen.getAllByRole("button", { name: "Restart all" }).at(-1)!,
@@ -116,11 +116,11 @@ describe("Settings restart controls", () => {
       const label = `Stop work and restart ${scope === "all" ? "all" : "Host"}`;
       fireEvent.click(screen.getByRole("button", { name: label }));
       const dialog = screen.getByRole("alertdialog");
-      expect(dialog.textContent).toContain("stop all active Pi work");
+      expect(dialog.textContent).toContain("Stop active Pi work in Inspire");
       expect(dialog.textContent).toContain("discard Pending messages");
       expect(dialog.textContent).toContain(
         scope === "all"
-          ? "close project terminals in the installed service"
+          ? "This Host's project terminals will close."
           : "Project terminals keep running",
       );
       fireEvent.click(dialog.querySelector("button")!);
@@ -263,7 +263,7 @@ describe("Settings restart controls", () => {
     fireEvent.click(clear);
     expect(fixture.clearRecovery).toHaveBeenCalledOnce();
     expect(confirm).toHaveBeenCalledWith(
-      expect.stringContaining("does not cancel"),
+      expect.stringContaining("Any restart already requested can still run."),
     );
     expect(fixture.start).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Restart Host" })).toBeDisabled();

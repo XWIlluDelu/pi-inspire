@@ -874,11 +874,11 @@ describe("welcome flow", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "Choose files" });
     expect(
-      within(dialog).getByText(/unsupported interactive method/),
+      within(dialog).getByText(/can't handle this extension request/),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("chooseFiles")).toBeInTheDocument();
+    expect(within(dialog).getByText("chooseFiles")).not.toBeVisible();
     fireEvent.click(
-      within(dialog).getByRole("button", { name: "Close and cancel request" }),
+      within(dialog).getByRole("button", { name: "Cancel request" }),
     );
     await waitFor(() =>
       expect(store.getState().extensionUiRequests).toEqual([]),

@@ -42,10 +42,7 @@ describe("feedback reading dwell", () => {
   it.each([
     ["Copied to clipboard", 3_000],
     ["This session does not have a name yet.", 3_000],
-    [
-      "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
-      5_000,
-    ],
+    ["Close this tab when you are done. Your sessions keep running.", 5_000],
     [
       "The workspace has finished loading. Some background services are still reconnecting, so their status may take a moment to update. You can keep editing your draft and choose another session without waiting for these services.",
       8_000,

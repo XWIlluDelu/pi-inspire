@@ -1,4 +1,4 @@
-import { type ComponentPropsWithoutRef, useId } from "react";
+import { type ComponentProps, useId } from "react";
 import { shallowEqual, useAppState } from "../store";
 
 /** Navigation entrances share unread attention while their session list is hidden. */
@@ -7,7 +7,7 @@ export function NavigationToggle({
   className,
   children,
   ...props
-}: ComponentPropsWithoutRef<"button"> & {
+}: ComponentProps<"button"> & {
   selectedSessionId?: string | null;
 }) {
   const descriptionId = useId();

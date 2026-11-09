@@ -73,7 +73,7 @@ it("lets an export continue after every close gesture, and reopening observes th
       ).toBeChecked();
       expect(screen.getByRole("button", { name: "Exporting…" })).toBeDisabled();
       expect(screen.getByRole("status")).toHaveTextContent(
-        "You can close this dialog",
+        "even if you close this dialog",
       );
       if (gesture === "escape") fireEvent.keyDown(document, { key: "Escape" });
       else if (gesture === "overlay")

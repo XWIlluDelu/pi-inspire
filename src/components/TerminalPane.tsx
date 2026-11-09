@@ -968,7 +968,7 @@ export const TerminalPane = memo(function TerminalPane({
       <div className="terminal-empty">
         <SquareTerminal size={24} aria-hidden />
         <strong>No project selected</strong>
-        <span>Open a Pi session to attach project terminals.</span>
+        <span>Open a session to use project terminals.</span>
       </div>
     );
   }
@@ -1542,7 +1542,7 @@ export const TerminalPane = memo(function TerminalPane({
         <div className="terminal-empty">
           <SquareTerminal size={28} aria-hidden />
           <strong>Project terminal</strong>
-          <span>Shells stay alive when this panel or browser disconnects.</span>
+          <span>Terminals keep running after you disconnect.</span>
           <button
             type="button"
             className="button button--primary"
@@ -1638,7 +1638,7 @@ export const TerminalPane = memo(function TerminalPane({
                 </span>
                 <span>
                   {operation.confirmed
-                    ? `${operation.confirmed === "completed" ? "Completed" : "Rejected"} · browser recovery record could not be cleared`
+                    ? `${operation.confirmed === "completed" ? "Completed" : "Rejected"} · Could not clear tracking`
                     : "Outcome unknown"}
                 </span>
               </span>
@@ -1685,7 +1685,7 @@ export const TerminalPane = memo(function TerminalPane({
                   onClick={() => {
                     if (
                       !window.confirm(
-                        `Stop tracking ${operation.label}? Check the current terminals first. The operation may already have completed or still be running. This does not cancel it; your next action will be a new operation.`,
+                        `Stop tracking ${operation.label}? The operation may still be running. Check your terminals before trying again.`,
                       )
                     )
                       return;

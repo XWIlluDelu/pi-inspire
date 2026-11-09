@@ -230,7 +230,10 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
       .getByRole("button", { name: "Reload selected session…" })
       .click();
     await expect(
-      settings.getByText(/Reload restarts only the selected idle Pi worker/),
+      settings.getByRole("button", {
+        name: "Reload Pi resources",
+        exact: true,
+      }),
     ).toBeVisible();
     expect(fixture.reloads()).toBe(0);
     await settings.getByRole("button", { name: "Cancel reload" }).click();

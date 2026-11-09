@@ -227,7 +227,7 @@ function McpConfiguration({
           id="mcp"
           icon={<Server size={14} />}
           title="MCP"
-          description="Edit Pi's saved MCP configuration. Changes take effect in new or reloaded sessions."
+          description="Saved MCP settings apply in new or reloaded sessions."
           headerAction={
             <div className="models-actions">
               <button
@@ -283,14 +283,13 @@ function McpConfiguration({
                 ) : (
                   <p className="models-status">
                     {nativeReload
-                      ? "Run /reload in the original Pi terminal to apply the saved configuration."
+                      ? "Run /reload in the original Pi terminal."
                       : "New sessions use the saved configuration."}
                   </p>
                 )}
                 {canReload && reloadBlocked ? (
                   <p className="models-status">
-                    Wait for the current Pi operation to finish before
-                    reloading.
+                    Wait for Pi to finish before reloading.
                   </p>
                 ) : null}
               </div>
@@ -298,9 +297,8 @@ function McpConfiguration({
             {confirmReload ? (
               <div className="models-confirm">
                 <p>
-                  Reload restarts only the selected idle Pi worker. Other
-                  running sessions are unchanged. Unsaved extension state may be
-                  lost.
+                  Reload Pi in the selected session. Unsaved extension state may
+                  be lost.
                 </p>
                 <div className="models-actions">
                   <button
@@ -315,9 +313,7 @@ function McpConfiguration({
                         current.readOnlyReason ||
                         isBusyRunState(current.runState)
                       ) {
-                        setError(
-                          "The selected session must be available and idle before reloading.",
-                        );
+                        setError("Reload requires an available, idle session.");
                         return;
                       }
                       if (!store.runPaletteNativeCommand("/reload")) {
@@ -346,7 +342,7 @@ function McpConfiguration({
             ) : null}
             {snapshot && snapshot.cwd === null ? (
               <p className="models-status">
-                Select a project to edit project configuration.
+                Select a project to edit its MCP settings.
               </p>
             ) : null}
             {snapshot?.files.map((file) => (

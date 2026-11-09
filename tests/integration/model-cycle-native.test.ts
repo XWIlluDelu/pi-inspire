@@ -158,7 +158,7 @@ it.each([false, true])(
       if (host) await closeHostApiFixture(host);
       else await runtime.close();
       await attachments.close();
-      await rm(f.root, { recursive: true, force: true });
+      await rm(f.root, { recursive: true, force: true, maxRetries: 3 });
       vi.unstubAllEnvs();
     }
   },

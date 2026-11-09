@@ -21,7 +21,7 @@ export async function routeSnapshots(
   options: {
     snapshot?: (snapshot: ActiveSnapshot) => void;
     bootstrap?: (bootstrap: BootstrapResponse) => void;
-    event?: (event: SnapshotEvent) => void;
+    event?: (event: SnapshotEvent) => false | void;
   },
 ) {
   let socket: WebSocketRoute;
@@ -34,7 +34,7 @@ export async function routeSnapshots(
       const event = JSON.parse(String(message));
       if (event.type === "snapshot" && event.data)
         options.snapshot?.(event.data);
-      options.event?.(event);
+      if (options.event?.(event) === false) return;
       client.send(JSON.stringify(event));
     });
     client.onMessage((message) => upstream.send(message));

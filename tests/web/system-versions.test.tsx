@@ -59,7 +59,7 @@ describe("System installation and loaded-version status", () => {
     );
     expect(screen.getByText("v1.4.0")).toHaveAttribute(
       "title",
-      "Installed Pi version; Host loaded v1.3.0.",
+      "The Host is running Pi v1.3.0.",
     );
     expect(screen.getByText("Restart Host to apply")).toBeVisible();
     expect(screen.getByText("No updates")).toBeVisible();

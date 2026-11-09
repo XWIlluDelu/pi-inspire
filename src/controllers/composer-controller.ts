@@ -192,7 +192,7 @@ export class ComposerController {
     if (deliveryOutcomeUnknown)
       this.host.notify(
         "warning",
-        "Connection changed while sending. Retry keeps the same delivery identity while this Host is unchanged; after a Host restart, check the conversation first.",
+        "Connection changed while sending. If the Host restarted, check the conversation before retrying.",
       );
   }
 
@@ -583,7 +583,7 @@ export class ComposerController {
       composer.unknownDeliveries.delete(signature);
       this.host.notifyVisible(
         sessionId,
-        "The Host restarted after this message had an unknown delivery outcome. Check the conversation before sending it again.",
+        "The Host restarted before delivery was confirmed. Check the conversation before resending.",
       );
       return false;
     }
@@ -749,7 +749,7 @@ export class ComposerController {
           : this.host.notifyVisible)(
           sessionId,
           acceptanceUnknown
-            ? "INSΠRE could not confirm whether Pi accepted this message. Retry sends the same delivery safely while this Host remains running."
+            ? "Message delivery is unconfirmed. You can retry while this Host is still running."
             : error instanceof Error
               ? error.message
               : "Failed to send",

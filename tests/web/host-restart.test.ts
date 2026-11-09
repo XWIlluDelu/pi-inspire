@@ -179,7 +179,7 @@ describe("browser restart delivery", () => {
       blocked: true,
       status: { operation: { phase: "rejected", error: "Build failed" } },
     });
-    expect(client.snapshot().error).toMatch(/recovery record/);
+    expect(client.snapshot().error).toMatch(/saved restart status/);
     await client.clearRecovery();
     expect(client.snapshot().pending).not.toBeNull();
     expect(f.api.restartHost).toHaveBeenCalledOnce();

@@ -83,8 +83,8 @@ export class HostRestartClient {
         blocked: true,
         recoveryInvalid: recordRead,
         error: recordRead
-          ? "The browser's saved restart recovery record is invalid. Restart requests are disabled; Host status remains available."
-          : "Browser restart recovery storage is unavailable. Restart requests are disabled; Host status remains available.",
+          ? "Can't read the saved restart status. You can still recheck the Host."
+          : "Can't access browser storage. Recheck Host status before restarting.",
       });
       throw new Error("Restart storage unavailable");
     }
@@ -99,8 +99,7 @@ export class HostRestartClient {
       this.patch({
         blocked: true,
         recoveryInvalid: false,
-        error:
-          "The browser could not save its restart recovery record. Recheck status to retry recovery before starting another restart.",
+        error: "Couldn't update the saved restart status. Recheck the Host.",
       });
       throw new Error("Restart storage unavailable");
     }
@@ -141,10 +140,7 @@ export class HostRestartClient {
       }
     } catch {
       if (!this.state.blocked)
-        this.patch({
-          error:
-            "Host status unavailable. Recheck without sending another restart.",
-        });
+        this.patch({ error: "Host status unavailable. Recheck status." });
     }
   }
   /** Explicitly discard browser tracking, never cancel or resend a Host restart. */
@@ -156,7 +152,7 @@ export class HostRestartClient {
       this.patch({
         pending: null,
         notice:
-          "Local restart tracking cleared. This does not cancel a restart already sent.",
+          "Saved restart status cleared. Any requested restart can still run.",
       });
       await this.refresh();
     } catch {
@@ -215,7 +211,7 @@ export class HostRestartClient {
     } catch {
       if (!this.state.blocked)
         this.patch({
-          error: "Restart request not confirmed. Check its status.",
+          error: "Couldn't confirm the restart request. Recheck status.",
         });
     } finally {
       this.patch({ sending: false });

@@ -85,19 +85,16 @@ export function HiddenClearDialog({
         >
           <span>
             {folderName === null
-              ? "Every session currently in Hidden will be moved to Trash, including individually hidden sessions and every session inside hidden folders."
-              : `All ${sessionsLabel} in ${projectCwd} will be moved to Trash. Other hidden sessions and folders are unchanged.`}
+              ? "Moves all hidden sessions, including those in folders, to Trash."
+              : `Moves only sessions in ${projectCwd} to Trash.`}
           </span>
-          <span>Pi instances using these sessions will be closed first.</span>
-          <span>
-            If Trash is unavailable, they will be permanently deleted.
-          </span>
-          <span>Project files and project folders are unchanged.</span>
+          <span>If Trash is unavailable, deletion is permanent.</span>
+          <span>Project files stay.</span>
         </p>
         {openInPi ? (
           <p className="session-delete__warning" id="hidden-clear-warning">
             <AlertTriangle size={14} aria-hidden />
-            Any work running in these sessions will stop.
+            This closes the sessions and stops any work in progress.
           </p>
         ) : null}
         {error ? (

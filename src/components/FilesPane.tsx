@@ -210,11 +210,11 @@ function FileBrowser({
                   </div>
                 ) : error && recent.length === 0 ? (
                   <div className="files-browser__note" role="status">
-                    Recent files are unavailable right now.
+                    Recent files unavailable.
                   </div>
                 ) : recent.length === 0 ? (
                   <div className="files-browser__note">
-                    No files referenced in this chat yet.
+                    No files referenced yet.
                   </div>
                 ) : null}
               </div>

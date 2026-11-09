@@ -144,7 +144,7 @@ describe("Pi native command dispatch", () => {
       expect(store.getState().commandActivities.s1?.at(-1)).toMatchObject({
         command: "export",
         status: "warning",
-        message: expect.stringContaining("could not confirm"),
+        message: expect.stringMatching(/check the session before trying again/),
       }),
     );
   });
