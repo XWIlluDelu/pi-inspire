@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
+import { executablePathDirectories } from "../../../server/platform-environment.mjs";
 import { prepareWorkbenchEnvironment } from "../../fixtures/workbench-environment.js";
 
 const root = resolve(process.env.INSPIRE_BROWSER_FIXTURE_ROOT!);
@@ -31,12 +33,21 @@ const hostKeys = new Set([
 const hostEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => hostKeys.has(key)),
 );
+// The isolated Windows PATH omits Git for Windows. Keep just its executable
+// directory for both repository setup and the Host's Changes requests.
+const gitDirectory =
+  process.platform === "win32"
+    ? executablePathDirectories(process.env.PATH ?? "").find((directory) =>
+        existsSync(join(directory, "git.exe")),
+      )
+    : undefined;
 // Only the separate Host process adopts this environment.
 for (const [key, value] of Object.entries(env)) {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
 }
 Object.assign(process.env, hostEnvironment);
+if (gitDirectory) process.env.PATH += `${delimiter}${gitDirectory}`;
 // Changes acceptance inspects an actual disposable Git index and working tree.
 const git = (args: string[]) =>
   execFileSync("git", ["-C", cwd, ...args], {

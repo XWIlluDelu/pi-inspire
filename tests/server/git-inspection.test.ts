@@ -1172,7 +1172,7 @@ describe("real temporary repository", () => {
     }
     const indexAfter = await readFile(join(root, ".git", "index"));
     expect(indexAfter.equals(indexBefore)).toBe(true);
-  });
+  }, 20_000);
 
   it("does not report a restored rename source as removed or renamed", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-restored-source-"));

@@ -15,6 +15,9 @@ export default defineConfig({
     env: {
       NODE_ENV: "development",
       INSPIRE_PI_COMMAND: testPiCommand,
+      // A service launching Vitest does not own the fixture Host or Pi workers.
+      INVOCATION_ID: "",
+      SYSTEMD_EXEC_PID: "",
     },
     projects: [
       {

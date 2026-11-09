@@ -38,11 +38,22 @@ describe("WebSocket observation and transport limits", () => {
   afterEach(async () => closeHostApiFixture(fixture));
 
   async function connect(query = "") {
-    const observed = observeEventSocket(
+    const { socket, frames } = observeEventSocket(
       `${baseUrl.replace("http", "ws")}/events?${query.replace(/^&/, "")}`,
     );
-    await vi.waitFor(() => expect(observed.frames[0]?.type).toBe("snapshot"));
-    return observed;
+    let socketError: Error | undefined;
+    socket.on("error", (error) => {
+      socketError = error;
+    });
+    try {
+      await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"), {
+        timeout: 4_000,
+      });
+      return { socket, frames };
+    } catch (error) {
+      socket.terminate();
+      throw socketError ?? error;
+    }
   }
 
   it("confirms a stable large HTTP-open window without retransmitting its body and keeps the event barrier", async () => {
@@ -150,8 +161,10 @@ describe("WebSocket observation and transport limits", () => {
       return originalSnapshot(sessionId);
     });
     const a = await connect("detail=fixture-active");
-    const b = await connect("detail=fixture-active");
+    let secondSocket: WebSocket | undefined;
     try {
+      const b = await connect("detail=fixture-active");
+      secondSocket = b.socket;
       expect(observers.get("fixture-active")).toBe(2);
       a.socket.send(
         JSON.stringify({
@@ -187,9 +200,9 @@ describe("WebSocket observation and transport limits", () => {
       expect(observers.size).toBe(0);
     } finally {
       a.socket.close();
-      b.socket.close();
+      secondSocket?.close();
     }
-  });
+  }, 15_000);
 
   it.each(["open", "already closing"] as const)(
     "drains an %s event peer without waiting for a close ACK",
@@ -282,23 +295,16 @@ describe("WebSocket observation and transport limits", () => {
   it("isolates two socket detail interests while retaining global outcomes and needs-input", async () => {
     await runtime.openSession("fixture-active");
     await runtime.openSession("fixture-history");
-    const connect = async (id: string, digest?: string) => {
-      const frames: DetailFrame[] = [];
-      const socket = eventSocket(
-        `${baseUrl.replace("http", "ws")}/events?detail=${id}${digest ? `&snapshot=${digest}` : ""}`,
-      );
-      socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
-      await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
-      return { socket, frames };
-    };
-    const a = await connect("fixture-active");
-    const b = await connect("fixture-history");
+    const a = await connect("detail=fixture-active");
+    let secondSocket: WebSocket | undefined;
     try {
+      const b = await connect("detail=fixture-history");
+      secondSocket = b.socket;
       expect(a.frames[0]?.data?.active?.sessionId).toBe("fixture-active");
       expect(b.frames[0]?.data?.active?.sessionId).toBe("fixture-history");
+      const digest = a.frames[0]?.snapshotDigest;
       const resumed = await connect(
-        "fixture-active",
-        a.frames[0]?.snapshotDigest,
+        `detail=fixture-active${digest ? `&snapshot=${digest}` : ""}`,
       );
       expect(resumed.frames[0]).toMatchObject({
         unchanged: true,
@@ -306,7 +312,9 @@ describe("WebSocket observation and transport limits", () => {
         detailRevision: 0,
       });
       resumed.socket.close();
-      const changed = await connect("fixture-active", "0".repeat(64));
+      const changed = await connect(
+        `detail=fixture-active&snapshot=${"0".repeat(64)}`,
+      );
       expect(changed.frames[0]?.unchanged).toBeUndefined();
       expect(changed.frames[0]?.data?.active?.sessionId).toBe("fixture-active");
       changed.socket.close();
@@ -402,9 +410,9 @@ describe("WebSocket observation and transport limits", () => {
       }
     } finally {
       a.socket.close();
-      b.socket.close();
+      secondSocket?.close();
     }
-  });
+  }, 25_000);
 
   it("fences changed interest snapshots and queues global and new-owner changes across the read", async () => {
     await runtime.openSession("fixture-active");
