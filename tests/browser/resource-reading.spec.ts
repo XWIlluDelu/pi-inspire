@@ -4,8 +4,8 @@ import { openEventSession, routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import {
   openFixtureSession,
-  pairedPage,
   openSettings,
+  pairedPage,
 } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
@@ -452,6 +452,9 @@ test("floating file actions distinguish the reader from browser chrome across pa
       }
     }
     await settings.press("Escape");
+    const heading = pane.getByRole("heading", {
+      name: "Observation log · Station 07",
+    });
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });
       const header = pane.locator(".file-preview__actions");
@@ -464,6 +467,12 @@ test("floating file actions distinguish the reader from browser chrome across pa
         expect(
           (await header.getByRole("button").first().boundingBox())!.height,
         ).toBeGreaterThanOrEqual(32);
+        const actions = (await header.boundingBox())!;
+        const opening = (await heading.boundingBox())!.y;
+        expect(opening).toBeGreaterThan(actions.y + actions.height);
+        await header.getByRole("button", { name: "Hide file actions" }).click();
+        expect((await heading.boundingBox())!.y).toBeCloseTo(opening, 1);
+        await header.getByRole("button", { name: "Show file actions" }).click();
       }
       expect(
         await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),

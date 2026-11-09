@@ -1546,6 +1546,14 @@ button.res__more:hover {
   padding: var(--space-2);
 }
 
+@container context-pane (max-width: 420px) {
+  /* Keep the opening text clear of the floating file actions. The inset
+     scrolls with the Markdown and stays stable as the actions collapse. */
+  .res__preview-document {
+    padding-block-start: calc(var(--space-8) + var(--space-2));
+  }
+}
+
 .res__preview-document,
 .notebook-preview .rich-text {
   font-size: var(--text-reading);

@@ -147,14 +147,14 @@ function FileBrowser({
     const seen = new Set<string>();
     return rows.filter((row) => {
       const reference = row.reference ?? row.label;
-      if (state.resourceAvailability[reference]?.availability === "invalid")
-        return false;
-      const key = state.resourceWorkspacePaths[reference] ?? reference;
+      const standing = state.resourceStanding[reference];
+      if (standing?.availability === "invalid") return false;
+      const key = standing?.workspacePath ?? reference;
       if (seen.has(key) || seen.size >= 5) return false;
       seen.add(key);
       return true;
     });
-  }, [rows, state.resourceAvailability, state.resourceWorkspacePaths]);
+  }, [rows, state.resourceStanding]);
   const searching = Boolean(state.workspaceQuery.trim());
   const projectLabel = workspaceLabel(state.cwd);
   const selectedPath = selectedWorkspacePath(state);
@@ -181,7 +181,8 @@ function FileBrowser({
               <div className="recent-files">
                 {recent.map((row) => {
                   const reference = row.reference ?? row.label;
-                  const workspacePath = state.resourceWorkspacePaths[reference];
+                  const standing = state.resourceStanding[reference];
+                  const workspacePath = standing?.workspacePath;
                   return (
                     <RecentFileRow
                       key={reference}
@@ -191,7 +192,7 @@ function FileBrowser({
                       workspacePath={workspacePath}
                       selectedPath={selectedPath}
                       selectedReference={state.selectedResourceReference}
-                      availability={state.resourceAvailability[reference]}
+                      availability={standing}
                       change={
                         workspacePath
                           ? gitChangeForWorkspacePath(

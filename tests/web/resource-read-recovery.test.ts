@@ -27,8 +27,7 @@ function fixture() {
     selectedResourceWorkspacePath: null,
     resourcePreview: null,
     resourceTabs: [],
-    resourceAvailability: {},
-    resourceWorkspacePaths: {},
+    resourceStanding: {},
   };
   const api = {
     resolveResource: vi.fn().mockResolvedValue(descriptor),
@@ -75,7 +74,9 @@ describe("resource preview read recovery", () => {
       const reading = f.controller.openResource("notes.txt");
       await vi.advanceTimersByTimeAsync(0);
       expect(f.state.resourcePreview?.status).toBe("loading");
-      expect(f.state.resourceAvailability["notes.txt"]).toBeUndefined();
+      expect(f.state.resourceStanding["notes.txt"]?.availability).toBe(
+        endpoint === "resourceContent" ? "available" : undefined,
+      );
       await vi.advanceTimersByTimeAsync(1_000);
       await reading;
       expect(f.api[endpoint]).toHaveBeenCalledTimes(2);
@@ -215,8 +216,7 @@ describe("resource preview read recovery", () => {
       resourceTabs: [{ reference: "plot.png" }],
       selectedResourceReference: "plot.png",
       resourcePreview: { status: "loading", reference: "plot.png" },
-      resourceAvailability: {},
-      resourceWorkspacePaths: {},
+      resourceStanding: {},
     });
     expect(f.state.resourcePreview).not.toHaveProperty("descriptor");
     expect(f.state.resourcePreview).not.toHaveProperty("objectUrl");
