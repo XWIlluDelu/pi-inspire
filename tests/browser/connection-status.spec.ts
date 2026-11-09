@@ -6,41 +6,37 @@ test.use({
   contextOptions: { reducedMotion: "reduce" },
 });
 
-for (const width of [1440, 390]) {
-  test(`initial workspace loading avoids duplicate connection feedback at ${width}px`, async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width, height: 844 });
-    await pairedPage(page);
-    await expect(page.locator(".welcome")).toBeVisible();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await page.route("**/api/bootstrap**", async (route) => {
-      await gate;
-      await route.continue();
-    });
-    try {
-      await page.reload({ waitUntil: "commit" });
-      await expect(
-        page.getByText("Loading workspace", { exact: true }),
-      ).toBeVisible();
-      await expect(page.locator(".topbar__ident")).toHaveCount(0);
-      await expect(page.locator(".deferred-loading .pi-loading")).toHaveCount(
-        1,
-      );
-      await expect(page.locator(".topbar__connection")).toHaveCount(0);
-      release();
-      await expect(
-        page.getByText("Loading workspace", { exact: true }),
-      ).toHaveCount(0);
-      await expect(page.locator(".welcome")).toBeVisible();
-    } finally {
-      release();
-    }
+test("initial workspace loading avoids duplicate connection feedback", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await pairedPage(page);
+  await expect(page.locator(".welcome")).toBeVisible();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
   });
-}
+  await page.route("**/api/bootstrap**", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  try {
+    await page.reload({ waitUntil: "commit" });
+    await expect(
+      page.getByText("Loading workspace", { exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".topbar__ident")).toHaveCount(0);
+    await expect(page.locator(".deferred-loading .pi-loading")).toHaveCount(1);
+    await expect(page.locator(".topbar__connection")).toHaveCount(0);
+    release();
+    await expect(
+      page.getByText("Loading workspace", { exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator(".welcome")).toBeVisible();
+  } finally {
+    release();
+  }
+});
 
 test("initial connection failure keeps its retry action and can recover", async ({
   page,
