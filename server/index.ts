@@ -174,7 +174,13 @@ void herdr.initialize();
 const attachments = new AttachmentStore();
 const catalog = createHostSessionCatalog(process.cwd(), preferences);
 const modelMetadata = new ModelMetadataCatalog();
-const attachControl = new AttachControlRegistry();
+// The Host's own workers carry their worker tag; while it owns them they are
+// not other Pi instances. After a Host-only restart nobody owns those tags.
+const attachControl: AttachControlRegistry = new AttachControlRegistry(
+  undefined,
+  (record): boolean =>
+    record.tag !== undefined && runtime.ownWorkerTags().has(record.tag),
+);
 const runtime: RuntimeController = new RuntimeController(
   catalog,
   attachments,

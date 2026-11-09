@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   lstat,
@@ -16,12 +17,21 @@ import {
   AttachControlRegistry,
 } from "../../server/attach-control.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
+import { HerdrRpcTransport } from "../../server/herdr-rpc-transport.js";
+import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
+import { assertHerdrWorkerScopesAvailable } from "../../server/herdr-process-group.js";
 import { RuntimeController } from "../../server/runtime.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
 
+const herdrAvailable =
+  process.platform === "linux" &&
+  (await assertHerdrWorkerScopesAvailable(process.env).then(
+    () => true,
+    () => false,
+  ));
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
   for (const step of cleanup.splice(0).reverse()) await step();
@@ -34,6 +44,7 @@ async function livePi(
   env: NodeJS.ProcessEnv = {},
   extensions: string[] = [],
   resume?: { id: string; sessionFile: string },
+  backend: "direct" | "herdr" = "direct",
 ) {
   const root = await mkdtemp(join(tmpdir(), "attach-control-pi-"));
   cleanup.push(() =>
@@ -121,8 +132,52 @@ async function livePi(
       sessionFile,
       `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
     );
+  const leases = new HerdrWorkerRegistry(join(root, "leases"));
   const pi = new PiRpcProcess({
     cwd: root,
+    createTransport:
+      backend === "herdr"
+        ? (launch) =>
+            new HerdrRpcTransport(launch, {
+              registry: leases,
+              // The fixture pane uses the test runner environment, not Pi's isolated home.
+              assertScopesAvailable: () =>
+                assertHerdrWorkerScopesAvailable(process.env),
+              label: "dialog recovery",
+              client: {
+                async createWorkerPane(cwd, _label, argv) {
+                  const bridge = spawn(argv[0]!, argv.slice(1), {
+                    cwd,
+                    env: process.env,
+                    detached: true,
+                    stdio: "ignore",
+                  });
+                  cleanup.push(async () => {
+                    if (
+                      bridge.pid &&
+                      bridge.exitCode === null &&
+                      bridge.signalCode === null
+                    ) {
+                      try {
+                        process.kill(-bridge.pid, "SIGKILL");
+                      } catch {}
+                    }
+                  });
+                  await new Promise<void>((resolve, reject) => {
+                    bridge.once("spawn", resolve);
+                    bridge.once("error", reject);
+                  });
+                  return {
+                    serverId: "dialog-test",
+                    workspaceId: "w1",
+                    tabId: "t1",
+                    paneId: "p1",
+                  };
+                },
+                async closePane() {},
+              },
+            })
+        : undefined,
     args: [
       "--no-extensions",
       "--no-skills",
@@ -220,6 +275,192 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     );
     expect(await connection.read()).toMatchObject({ status: "idle" });
   }, 60_000);
+
+  it("keeps a detached worker running and controllable after its Host lets go", async () => {
+    const { pi, registry, id, sessionFile } = await livePi({
+      PI_ATTACH_CONTROL_TAG: "worker-one",
+    });
+    const [record] = await vi.waitFor(
+      async () => {
+        const found = await registry.forSession(id, sessionFile);
+        expect(found).toHaveLength(1);
+        return found;
+      },
+      { timeout: 15_000 },
+    );
+    expect(record!.tag).toBe("worker-one");
+    cleanup.push(async () => {
+      // A detached Pi is no longer the test's child: wait for it to exit
+      // before its temporary folder is removed.
+      const alive = () => {
+        try {
+          process.kill(record!.pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      if (alive()) process.kill(record!.pid, "SIGTERM");
+      for (let tries = 0; alive() && tries < 50; tries += 1)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+    // A Host-only restart detaches instead of stopping: Pi's input stays open.
+    await pi.detach();
+    const connection = new AttachControlConnection(registry, record!);
+    await vi.waitFor(
+      async () =>
+        expect(await connection.read()).toMatchObject({ status: "idle" }),
+      { timeout: 10_000 },
+    );
+    await connection.rename("Survived the Host");
+    await vi.waitFor(
+      async () =>
+        expect(await readFile(sessionFile, "utf8")).toContain(
+          "Survived the Host",
+        ),
+      { timeout: 5_000 },
+    );
+  }, 60_000);
+
+  for (const backend of ["direct", "herdr"] as const) {
+    it.skipIf(backend === "herdr" && !herdrAvailable)(
+      `${backend}: restores a pending RPC dialog and subsequent answers in a replacement Host`,
+      async () => {
+        const { pi, registry, id, sessionFile, root } = await livePi(
+          {},
+          ["docs/examples/native-ui.ts"],
+          undefined,
+          backend,
+        );
+        const record = await vi.waitFor(
+          async () => {
+            const [found] = await registry.forSession(id, sessionFile);
+            expect(found).toBeDefined();
+            return found!;
+          },
+          { timeout: 15_000 },
+        );
+        cleanup.push(async () => {
+          try {
+            process.kill(record.pid, "SIGTERM");
+          } catch {
+            return;
+          }
+          await vi.waitFor(
+            async () =>
+              expect(await registry.forSession(id, sessionFile)).toHaveLength(
+                0,
+              ),
+            { timeout: 10_000 },
+          );
+        });
+        const native = new AttachControlConnection(registry, record);
+        const pending = pi
+          .request({ type: "prompt", message: "/ui-demo" })
+          .catch(() => undefined);
+        const first = await vi.waitFor(
+          async () => {
+            const state = await native.read();
+            const request =
+              "ended" in state ? undefined : state.uiRequests?.[0];
+            expect(request?.method).toBe("select");
+            return request!;
+          },
+          { timeout: 10_000 },
+        );
+        await pi.detach();
+        await pending;
+        const session: SessionRecord = {
+          id,
+          path: sessionFile,
+          cwd: root,
+          source: null,
+          created: new Date(),
+          modified: new Date(),
+          messageCount: 2,
+          firstMessage: "first",
+        };
+        const attachments = new AttachmentStore(join(root, "uploads"));
+        const spawn = vi.fn(() => {
+          throw new Error("A restart must reuse the surviving Pi");
+        });
+        const runtime = new RuntimeController(
+          {
+            get: async (sessionId) => (sessionId === id ? session : undefined),
+            refresh: async () => [session],
+            list: async () => ({
+              sessions: [],
+              total: 0,
+              offset: 0,
+              limit: 40,
+            }),
+            listByIds: async () => [],
+            listByCwds: async () => [],
+            invalidate() {},
+          },
+          attachments,
+          spawn,
+        )
+          .setExternalSessionPresence(async () =>
+            (await registry.forSession(id, sessionFile)).map(
+              (item) => item.leafId,
+            ),
+          )
+          .setExternalSessionConnector(async () => native);
+        cleanup.push(() => attachments.close());
+        cleanup.push(() => runtime.close());
+        await runtime.openSession(id);
+        await runtime.takeOverSession(id);
+        expect(
+          (await runtime.snapshot(id)).pendingExtensionUiRequests?.[0]?.id,
+        ).toBe(first.id);
+        for (const [method, answer] of [
+          ["select", { value: "Code" }],
+          ["confirm", { confirmed: true }],
+          ["input", { value: "After restart" }],
+          ["editor", { value: "The original Pi continued." }],
+        ] as const) {
+          const question = await vi.waitFor(
+            async () => {
+              const value = (await runtime.snapshot(id))
+                .pendingExtensionUiRequests?.[0];
+              expect(value?.method).toBe(method);
+              return value!;
+            },
+            { timeout: 10_000 },
+          );
+          await runtime.extensionUiResponse({
+            sessionId: id,
+            id: question.id,
+            ...answer,
+          });
+        }
+        await vi.waitFor(
+          async () => {
+            expect(await readFile(sessionFile, "utf8")).toContain(
+              "The original Pi continued.",
+            );
+            expect(
+              (await runtime.snapshot(id)).pendingExtensionUiRequests,
+            ).toEqual([]);
+            expect(
+              (await runtime.snapshot(id)).active?.readOnlyReason,
+            ).toBeUndefined();
+          },
+          { timeout: 10_000 },
+        );
+        expect((await registry.forSession(id, sessionFile))[0]?.pid).toBe(
+          record.pid,
+        );
+        expect(spawn).not.toHaveBeenCalled();
+        if (backend === "herdr")
+          expect(
+            await new HerdrWorkerRegistry(join(root, "leases")).list(),
+          ).toEqual([]);
+      },
+      60_000,
+    );
+  }
 
   it("ends every branch instance before trashing an unopened session, leaving other sessions running", async () => {
     const first = await livePi({}, ["docs/examples/native-ui.ts"]);

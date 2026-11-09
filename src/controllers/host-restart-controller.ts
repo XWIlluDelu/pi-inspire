@@ -68,7 +68,7 @@ export class HostRestartClient {
           !UUID.test(value.hostId) ||
           typeof value.operationId !== "string" ||
           !UUID.test(value.operationId) ||
-          !["host", "all"].includes(value.scope) ||
+          !["host", "host-only", "all"].includes(value.scope) ||
           ("interruptWork" in value && value.interruptWork !== true)
         )
           throw new Error();

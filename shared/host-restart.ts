@@ -1,4 +1,6 @@
-export type HostRestartScope = "host" | "all";
+/** `host` also reloads the Pi processes Inspire has taken over; `host-only`
+ * leaves every Pi outside the Host as it is; `all` adds terminal services. */
+export type HostRestartScope = "host" | "host-only" | "all";
 
 export interface HostRestartOperation {
   id: string;

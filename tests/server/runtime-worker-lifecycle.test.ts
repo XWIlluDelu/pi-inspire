@@ -418,12 +418,14 @@ describe("worker startup and retirement", () => {
             : []),
           "--extension",
           expect.stringMatching(/[\\/]inspire-branch-bridge\.(ts|js)$/),
+          "--extension",
+          expect.stringMatching(/[\\/]attach-control\.(ts|js)$/),
         ]);
         expect(Object.keys(worker.options.env ?? {}).sort()).toEqual([
           "INSPIRE_BRANCH_COMMAND",
           "INSPIRE_BRANCH_STATUS_KEY",
           "INSPIRE_BRANCH_WORKER_ID",
-          "PI_ATTACH_CONTROL",
+          "PI_ATTACH_CONTROL_TAG",
         ]);
         const message = "Use my configured tools and prompts.";
         await runtime.prompt({ sessionId: worker.sessionId, message });

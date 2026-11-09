@@ -117,7 +117,8 @@ compare the same page and theme in an ordinary Chrome tab.
 | `inspire` | Start or reopen the matching instance. |
 | `inspire status` | Check the managed Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
-| `inspire restart` | Prepare the next build/runtime, then restart the Host and its owned Pi workers. Project terminals and connected external Pi sessions keep running. |
+| `inspire restart` | Prepare the next build/runtime, then restart as **Restart Host** does: the Host and its own Pi workers restart, and taken-over Pi reload their settings. Project terminals keep running. |
+| `inspire restart --host-only` | Restart as **Restart Host only**: every Pi process, including Inspire's workers, keeps running with its work. |
 | `inspire restart --all` | Restart this installation's Linux Host and terminal services, ending terminal processes. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
 | `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
@@ -170,10 +171,19 @@ that Pi; a Host-only restart does not reload it.
 
 ## Host and terminal maintenance
 
-**Settings → System → Host → Restart Host** checks for unfinished work first. If work is running,
-it offers a separately confirmed **Stop work and restart**, which interrupts Inspire-owned Pi work
-and discards Pending input; idle workers do not block a restart. After a disconnect, the browser
-keeps tracking the submitted restart without sending another.
+**Settings → System → Host** offers three restarts:
+
+| Action | Effect |
+| --- | --- |
+| **Restart Host** | Restarts Inspire and its own Pi workers, and reloads every terminal Pi it has taken over so they apply current settings. Use it after changing settings or extensions. |
+| **Restart Host only** | Restarts Inspire alone. Every Pi process, including Inspire's own workers, keeps its running work and loaded settings; afterwards Inspire finds its former workers read-only with **Take over**. Taking over also restores their pending browser questions and lets you answer them. |
+| **Restart all** | Like Restart Host, and also restarts the terminal services, ending project terminal processes (installed Linux services only). |
+
+Restart Host and Restart all check for unfinished work first. If work is running, they offer a
+separately confirmed **Stop work and restart**, which interrupts that work and discards Pending
+input; idle workers do not block a restart. Restart Host only lets running work continue. After a restart, sessions open by the ordinary rule: a session a terminal Pi
+is running opens read-only with **Take over**, and the rest continue directly. After a disconnect,
+the browser keeps tracking the submitted restart without sending another.
 
 The browser drops its tracking once it reconnects to the new Host or sees the request rejected.
 Uncertain requests keep their identity for status checks and explicit retries. **Recheck status**
@@ -195,7 +205,7 @@ the process to exit, and refuses to replace a Host whose cleanup failed or that 
 
 ### Terminal-service maintenance
 
-A Host-only restart does not upgrade the preserved terminal daemon. Manage the daemon from an
+Restart Host and Restart Host only keep the terminal daemon, so neither upgrades it. Manage the daemon from an
 **external terminal**, not from an Inspire project terminal (stopping the daemon would end the
 command; it refuses to run there, while `status` is allowed):
 

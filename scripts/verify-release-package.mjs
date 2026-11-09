@@ -294,6 +294,8 @@ try {
     "build/server/instance-state.mjs",
     "build/server/instance-control.mjs",
     "build/server/npm-command.mjs",
+    "build/server/pi-worker-keeper.mjs",
+    "build/server/pi-rpc-ui-relay.mjs",
     "build/server/pi-installation.js",
     "build/server/pi-runtime.js",
     "build/server/restart-preflight.js",

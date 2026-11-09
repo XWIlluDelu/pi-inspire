@@ -65,6 +65,7 @@ const {
   inspectInstance,
   instanceLaunchUrl,
   portAvailable,
+  prepareInstanceRestart,
   stopManagedInstance,
 } = await import(pathToFileURL(join(supportRoot, "instance-state.mjs")).href);
 const { inspireRuntimeDirectory, resolveUserPath } = await import(
@@ -761,7 +762,7 @@ async function prepareRestart() {
     );
 }
 
-async function restartHost(all = false) {
+async function restartHost(all = false, hostOnly = false) {
   // Refuse unsupported full restarts before any build or process mutation.
   const inspected = await manageHostService("status", true);
   if (all && inspected.code !== 0 && inspected.code !== 5) {
@@ -778,6 +779,15 @@ async function restartHost(all = false) {
   if (all) console.log("Full restart will end all project terminal processes.");
   console.log("Preparing restart…");
   await prepareRestart();
+  // Same scopes as the page: an ordinary restart reloads taken-over Pi so
+  // they apply current settings; --host-only keeps every Pi running.
+  const context = instanceContext();
+  await prepareInstanceRestart(
+    context.statePath,
+    expected(context),
+    hostOnly ? "host-only" : "host",
+    { processMarker: distribution ? "build/server/index.js" : "server/index.ts" },
+  );
   const service = await manageHostService(all ? "restart-all" : "restart");
   if (service.code === 0) return 0;
   if (service.code !== 3) return service.code;
@@ -882,11 +892,11 @@ async function main() {
     case "stop":
       return stopHost();
     case "restart":
-      if (args.length > 1 || (args.length === 1 && args[0] !== "--all")) {
-        console.error("Use: inspire restart [--all]");
+      if (args.length > 1 || (args.length === 1 && !["--all", "--host-only"].includes(args[0]))) {
+        console.error("Use: inspire restart [--all | --host-only]");
         return 64;
       }
-      return restartHost(args[0] === "--all");
+      return restartHost(args[0] === "--all", args[0] === "--host-only");
     case "recover-session": {
       if (args.length !== 1) {
         console.error("Use: inspire recover-session <bundle-folder>");

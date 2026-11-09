@@ -28,6 +28,7 @@ beforeEach(() => {
     pending: null,
     sending: false,
     blocked: false,
+    recoveryInvalid: false,
     error: null,
     notice: null,
   };
@@ -192,8 +193,53 @@ describe("Settings restart controls", () => {
     expect(fixture.start).toHaveBeenCalledWith("host", "fixture-host", false);
   });
 
-  it("requires confirmation to clear local tracking and keeps an active Host restart fenced", () => {
+  it.each(["preparing", "submitted", "unconfirmed"])(
+    "does not expose local-record cleanup during a %s restart",
+    (phase) => {
+      fixture.state.pending = {
+        hostId: "fixture-host",
+        operationId: "tracked-request",
+        scope: "host",
+      };
+      fixture.state.status = {
+        hostId: "fixture-host",
+        available: true,
+        allAvailable: true,
+        operation:
+          phase === "unconfirmed"
+            ? null
+            : { id: "tracked-request", scope: "host", phase },
+      };
+      render(<HostRestartSettings />);
+      expect(
+        screen.queryByRole("button", {
+          name: /Clear local|Reset restart recovery/,
+        }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Recheck status" }),
+      ).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Restart Host" }),
+      ).toBeDisabled();
+    },
+  );
+
+  it("lets transient storage failures recover without offering a reset", () => {
     fixture.state.blocked = true;
+    fixture.state.error = "Browser recovery storage is unavailable";
+    render(<HostRestartSettings />);
+    expect(
+      screen.queryByRole("button", { name: "Reset restart recovery…" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Recheck status" }),
+    ).toBeEnabled();
+  });
+
+  it("offers confirmed repair only beside an invalid-record error and keeps the Host restart fenced", () => {
+    fixture.state.blocked = true;
+    fixture.state.recoveryInvalid = true;
     fixture.state.error = "Browser restart recovery is unreadable";
     fixture.state.status = {
       hostId: "fixture-host",
@@ -208,8 +254,9 @@ describe("Settings restart controls", () => {
     vi.stubGlobal("confirm", confirm);
     render(<HostRestartSettings />);
     const clear = screen.getByRole("button", {
-      name: "Clear local restart record…",
+      name: "Reset restart recovery…",
     });
+    expect(clear.closest(".host-restart__status-copy")).not.toBeNull();
     fireEvent.click(clear);
     expect(fixture.clearRecovery).not.toHaveBeenCalled();
     fireEvent.click(clear);

@@ -297,6 +297,23 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     this.resolveHandshake();
   }
 
+  /** Leave Pi running in its pane beyond this Host. The pane is no longer
+   * Inspire's, so its lease goes too and no later recovery pass stops it. */
+  async detach(): Promise<void> {
+    if (this.stopPromise || !this.connected) return this.stop(true, () => {});
+    this.stopping = true;
+    this.connected = false;
+    const errors = this.errors;
+    await new Promise<void>((resolve) =>
+      errors ? errors.end("detach\n", () => resolve()) : resolve(),
+    );
+    for (const socket of this.sockets) socket.destroy();
+    if (this.server)
+      await new Promise<void>((resolve) => this.server!.close(() => resolve()));
+    if (this.lease)
+      await this.options.registry.remove(this.lease).catch(() => {});
+  }
+
   stop(graceful: boolean, diagnostic: PiRpcStopDiagnostic): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;

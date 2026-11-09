@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { lstat, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
+import { createPiRpcUiRelay } from "./pi-rpc-ui-relay.mjs";
 import {
   HERDR_BRIDGE_VERSION,
   herdrLaunchGrantSchema,
@@ -34,7 +35,14 @@ async function run(): Promise<void> {
   const rpc = connect(ticket.address);
   const stderr = connect(ticket.address);
   let child: ChildProcessWithoutNullStreams | null = null;
+  let ui: Awaited<ReturnType<typeof createPiRpcUiRelay>> | null = null;
   let stopping = false;
+  // After the Host asks to detach, losing it leaves Pi and its work running:
+  // Pi's input stays open and its output is drained.
+  let detached = false;
+  stderr.on("data", (chunk: Buffer) => {
+    if (chunk.toString("utf8").includes("detach")) detached = true;
+  });
   const terminate = (graceful: boolean) => {
     void stopHerdrProcessGroup(group, graceful, () => {}).catch(() => {
       process.stderr.write("Inspire worker scope could not be stopped\n");
@@ -44,6 +52,15 @@ async function run(): Promise<void> {
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    if (detached && child?.pid && child.exitCode === null) {
+      child.stdout.unpipe(rpc);
+      child.stderr.unpipe(stderr);
+      child.stdout.resume();
+      child.stderr.resume();
+      rpc.destroy();
+      stderr.destroy();
+      return;
+    }
     rpc.destroy();
     stderr.destroy();
     // The same kernel-owned tree is available here after Host loss and to the
@@ -85,6 +102,8 @@ async function run(): Promise<void> {
       if (key.startsWith("HERDR_") && key !== "HERDR_BIN")
         environment[key] = value;
 
+    ui = await createPiRpcUiRelay();
+    if (ui) environment.PI_ATTACH_CONTROL_RPC_UI = ui.environment;
     child = spawn(grant.executable, grant.args, {
       cwd: grant.cwd,
       env: environment,
@@ -92,10 +111,20 @@ async function run(): Promise<void> {
       // The verified bridge is the process-group leader. Never detach Pi.
       detached: false,
     });
-    child.once("error", stop);
+    if (ui) {
+      ui.attach(child);
+      rpc.on("data", ui.observeInput);
+    }
+    child.once("error", () => {
+      void ui?.close();
+      stop();
+    });
     // An orderly Pi exit ends the grace period immediately. A killed Pi cannot
     // run its own detached-child cleanup, so both cases still reap the scope.
-    child.once("exit", () => terminate(false));
+    child.once("exit", async () => {
+      await ui?.close();
+      terminate(false);
+    });
     for (const stream of [child.stdin, child.stdout, child.stderr])
       stream.on("error", stop);
     if (!child.pid) {
@@ -105,9 +134,10 @@ async function run(): Promise<void> {
     writeHerdrBridgeRecord(rpc, { pid: child.pid });
     child.stderr.pipe(stderr);
     child.stdout.pipe(rpc);
-    rpc.pipe(child.stdin);
+    rpc.pipe(child.stdin, { end: false });
     process.stdout.write("INSΠRE Pi worker\n");
   } catch {
+    await ui?.close();
     process.stderr.write("Inspire worker bridge could not start Pi\n");
     stop();
   }

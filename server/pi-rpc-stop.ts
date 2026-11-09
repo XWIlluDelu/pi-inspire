@@ -1,11 +1,11 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { signalProcessTree } from "./process-tree.mjs";
 
 /** A writer fence, not a kill deadline. Signals and watchdogs cannot prove exit.
  * In particular, an `error` on an already spawned child may just be a failed kill.
  */
 export async function stopPiRpcChild(
-  child: ChildProcessWithoutNullStreams,
+  child: ChildProcess,
   graceful: boolean,
   diagnostic: (event: string, fields: Record<string, unknown>) => void,
 ): Promise<void> {

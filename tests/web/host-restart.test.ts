@@ -121,10 +121,12 @@ describe("browser restart delivery", () => {
     await f.client.refresh();
     expect(f.client.snapshot().status).toEqual(f.status);
     expect(f.client.snapshot().blocked).toBe(true);
+    expect(f.client.snapshot().recoveryInvalid).toBe(true);
     expect(f.api.restartHost).not.toHaveBeenCalled();
     sessionStorage.removeItem("inspire:host-restart:v1");
     await f.client.refresh();
     expect(f.client.snapshot().blocked).toBe(false);
+    expect(f.client.snapshot().recoveryInvalid).toBe(false);
     await f.client.start("host", f.status.hostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
@@ -141,6 +143,7 @@ describe("browser restart delivery", () => {
     await f.client.clearRecovery();
     expect(f.client.snapshot()).toMatchObject({
       blocked: false,
+      recoveryInvalid: false,
       pending: null,
       status: f.status,
     });
@@ -190,6 +193,29 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
+  it("retries unavailable storage automatically without treating it as invalid data", async () => {
+    const f = fixture();
+    let unavailable = true;
+    const client = new HostRestartClient(f.api, () => {
+      if (unavailable) throw new Error("storage unavailable");
+      return sessionStorage;
+    });
+    await client.refresh();
+    expect(client.snapshot()).toMatchObject({
+      blocked: true,
+      recoveryInvalid: false,
+      status: f.status,
+    });
+    unavailable = false;
+    await client.refresh();
+    expect(client.snapshot()).toMatchObject({
+      blocked: false,
+      recoveryInvalid: false,
+      error: null,
+    });
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+  });
+
   it("blocks writes when recovery storage is malformed or unavailable", async () => {
     const f = fixture();
     sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
@@ -224,6 +250,7 @@ describe("browser restart delivery", () => {
     await client.refresh();
     await client.start("all", f.status.hostId);
     expect(client.snapshot().blocked).toBe(true);
+    expect(client.snapshot().recoveryInvalid).toBe(false);
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
 });

@@ -53,10 +53,10 @@ An existing non-private POSIX parent is rejected rather than chmodded, so a cust
 state address cannot change permissions on a shared or system directory.
 
 `inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
-restarting the Host/Pi or expanding Restart all. Stop/restart run from an external OS terminal;
-a managed-terminal environment is refused before stopping work so the command cannot kill its own
-coordinator midway through replacement. Status remains available there. An independent lifecycle-v1 envelope over the same
-authenticated TLS transport survives terminal-data protocol changes. The caller verifies root, Host,
+restarting the Host/Pi or expanding Restart all. Stop/restart run from an external OS terminal; a
+managed-terminal environment is refused before stopping work, so the command cannot kill its own
+coordinator midway through replacement. Status stays available there. An independent lifecycle-v1
+envelope over the same authenticated TLS transport survives terminal-data protocol changes. The caller verifies root, Host,
 port, configured IPC/state/token paths, process birth and daemon incarnation before requesting stop.
 Shutdown targets that incarnation; an old target cannot stop a replacement. Status never creates or
 rotates authority and reports missing listeners without claiming OS-process exit.
@@ -377,8 +377,9 @@ Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
 dependencies. The terminal user service is separate from `inspire-host.service`, so Host-only
-lifecycle operations preserve PTYs. Disabling the terminal service ends them. [[host-lifecycle]] defines CLI stop and
-Restart all, which address both installed services, and Host-only ordinary/automatic restart.
+lifecycle operations preserve PTYs; disabling the terminal service ends them. [[host-lifecycle]]
+defines CLI stop and Restart all, which address both installed services, and Host-only
+ordinary/automatic restart.
 
 ## Boundaries
 
