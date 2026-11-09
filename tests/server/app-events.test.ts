@@ -646,10 +646,17 @@ describe("WebSocket observation and transport limits", () => {
         toolName: "write",
         args: {},
       });
-      await vi.waitFor(() =>
-        expect(frames.at(-1)?.type).toBe("tool_execution_start"),
-      );
-      const batches = frames.filter(
+      const executionStart = await vi.waitFor(() => {
+        const index = frames.findIndex(
+          (frame) =>
+            frame.type === "tool_execution_start" &&
+            frame.toolCallId === "write-1",
+        );
+        expect(index).toBeGreaterThanOrEqual(0);
+        return index;
+      });
+      const beforeExecution = frames.slice(0, executionStart);
+      const batches = beforeExecution.filter(
         (frame) => frame.type === "message_update_batch",
       );
       expect(batches.length).toBeGreaterThan(1);
@@ -663,7 +670,7 @@ describe("WebSocket observation and transport limits", () => {
       ).toBe(true);
       let reconstructed: unknown;
       let previousRevision = 0;
-      for (const frame of frames.filter((frame) =>
+      for (const frame of beforeExecution.filter((frame) =>
         frame.type.startsWith("message_"),
       )) {
         if (frame.type === "message_start") reconstructed = frame.message;

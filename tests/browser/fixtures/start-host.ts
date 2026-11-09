@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { workbenchFixture } from "../../fixtures/workbench.js";
+import { prepareWorkbenchEnvironment } from "../../fixtures/workbench-environment.js";
 
 const root = resolve(process.env.INSPIRE_BROWSER_FIXTURE_ROOT!);
 const cwd = resolve(process.env.INSPIRE_BROWSER_FIXTURE_WORKSPACE!);
@@ -10,7 +10,7 @@ const image = (
     join(cwd, "tests/browser/fixtures/file-previews/training curve.png"),
   )
 ).toString("base64");
-const fixture = await workbenchFixture(root, {
+const { env } = await prepareWorkbenchEnvironment(root, {
   cwd,
   image,
   streamIntervalMs: 250,
@@ -32,15 +32,11 @@ const hostEnvironment = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => hostKeys.has(key)),
 );
 // Only the separate Host process adopts this environment.
-for (const [key, value] of Object.entries(fixture.env)) {
+for (const [key, value] of Object.entries(env)) {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
 }
 Object.assign(process.env, hostEnvironment);
-// The production entry owns these services; this preparation constructed no worker.
-await fixture.runtime.close();
-await fixture.attachments.close();
-
 // Changes acceptance inspects an actual disposable Git index and working tree.
 const git = (args: string[]) =>
   execFileSync("git", ["-C", cwd, ...args], {
