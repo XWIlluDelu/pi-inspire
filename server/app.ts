@@ -490,6 +490,8 @@ interface AppDependencies {
   websocketHeartbeatIntervalMs?: number;
 }
 
+type AuthenticatedResponse = Response<unknown, { browserId?: string }>;
+
 function bearerToken(request: Request): string | undefined {
   const value = request.get("authorization");
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
@@ -924,26 +926,31 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.use("/api", (request, response, next) => {
     const bearer = bearerToken(request);
-    if (
-      !tokenMatches(bearer, deps.token) &&
-      !browserAuth.accepts(bearer, requestOrigin(request))
-    )
+    if (tokenMatches(bearer, deps.token)) return next();
+    const access = browserAuth.verifyAccess(bearer, requestOrigin(request));
+    if (!access)
       return response.status(401).json({ error: "Authentication required" });
+    response.locals.browserId = access.browserId;
     next();
   });
-  app.post("/api/auth/socket-ticket", (request, response) => {
-    const { audience } = socketTicketSchema.parse(request.body);
-    const origin = requestOrigin(request);
-    response.json(
-      browserAuth.ticket(
-        origin,
-        audience,
-        browserAuth.installation(bearerToken(request), origin)?.id,
-      ),
-    );
-  });
+  app.post(
+    "/api/auth/socket-ticket",
+    (request, response: AuthenticatedResponse) => {
+      const { audience } = socketTicketSchema.parse(request.body);
+      response.json(
+        browserAuth.ticket(
+          requestOrigin(request),
+          audience,
+          response.locals.browserId,
+        ),
+      );
+    },
+  );
 
-  const notificationPrincipal = (request: Request): NotificationPrincipal => {
+  const notificationPrincipal = (
+    request: Request,
+    response: AuthenticatedResponse,
+  ): NotificationPrincipal => {
     const origin = requestOrigin(request);
     if (
       !downloadOriginAllowed(origin, {
@@ -953,21 +960,23 @@ export function createInspireServer(deps: AppDependencies): {
       })
     )
       throw requestError("An exact browser origin is required", 403);
-    const principal = browserAuth.installation(bearerToken(request), origin);
-    if (!principal)
+    const id = response.locals.browserId;
+    if (!id)
       throw requestError(
         "Refresh browser authentication to configure notifications",
         401,
       );
-    return principal;
+    return { id, origin };
   };
   app.get("/api/notifications", async (request, response) =>
     response.json(
-      await taskNotifications.settings(notificationPrincipal(request)),
+      await taskNotifications.settings(
+        notificationPrincipal(request, response),
+      ),
     ),
   );
   app.put("/api/notifications", async (request, response) => {
-    const principal = notificationPrincipal(request);
+    const principal = notificationPrincipal(request, response);
     const body = z
       .object({
         mode: z.enum(["off", "title", "desktop"]).optional(),
@@ -993,7 +1002,7 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
   app.post("/api/notifications/ack", async (request, response) => {
-    const principal = notificationPrincipal(request);
+    const principal = notificationPrincipal(request, response);
     const { id } = z
       .object({ id: z.string().min(1).max(256) })
       .strict()
@@ -1002,7 +1011,9 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ ok: true });
   });
   app.post("/api/notifications/test", async (request, response) =>
-    response.json(await taskNotifications.test(notificationPrincipal(request))),
+    response.json(
+      await taskNotifications.test(notificationPrincipal(request, response)),
+    ),
   );
 
   app.get("/api/health", (_request, response) => {
