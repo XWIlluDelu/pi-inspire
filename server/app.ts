@@ -878,8 +878,8 @@ export function createInspireServer(deps: AppDependencies): {
         const { scope } = z
           .object({ scope: z.enum(["host", "host-only"]) })
           .parse(grant.request.payload);
-        if (scope === "host-only") deps.runtime.preserveWorkersOnClose?.();
-        else await deps.runtime.refreshAttachedPi?.(false);
+        if (scope === "host-only") deps.runtime.preserveWorkersOnClose();
+        else await deps.runtime.refreshAttachedPi(false);
         result = { kind: "prepared", scope };
         break;
       }
@@ -1096,35 +1096,6 @@ export function createInspireServer(deps: AppDependencies): {
   app.post("/api/update/snooze", async (request, response) => {
     const { identity } = updateSnoozeSchema.parse(request.body);
     response.json(await updateCoordinator.dismiss(identity));
-  });
-
-  /** Prepare alone never authorizes restart. The unique owner must commit after
-   * service inspection, and release only when restart definitely was not issued. */
-  app.post("/api/maintenance/restart", async (_request, response) => {
-    response.json(
-      deps.maintenanceRestart
-        ? await deps.maintenanceRestart.reserve()
-        : { kind: "skipped", reason: "runtime-unsupported" },
-    );
-  });
-
-  app.post("/api/maintenance/restart/commit", (request, response) => {
-    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
-    response.json(
-      deps.maintenanceRestart?.commit(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      },
-    );
-  });
-  app.post("/api/maintenance/restart/release", (request, response) => {
-    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
-    response.json(
-      deps.maintenanceRestart?.release(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      },
-    );
   });
 
   const requestedDetail = (value: unknown): string | null | undefined =>

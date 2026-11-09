@@ -339,21 +339,16 @@ async function inspect(context) {
 }
 
 function reportUnavailableHost(state) {
-  if (state.httpControlVersion !== 1) {
-    console.error("The running Host predates authenticated readiness.");
-    if (state.shutdownControlVersion === 1 || process.platform === "linux") {
-      console.error(
-        "Use 'inspire restart' to upgrade it through safe local controls.",
-      );
-    } else {
-      console.error(
-        "Stop it through its existing service manager or inspected process controls before starting the new Host.",
-      );
-    }
-    return;
-  }
-  console.error("Cannot authenticate readiness of the managed INSΠRE Host.");
-  console.error("Use 'inspire restart' for an explicit graceful replacement.");
+  console.error(
+    state.httpControlVersion === 1
+      ? "Cannot authenticate readiness of the managed INSΠRE Host."
+      : "The running Host predates authenticated readiness.",
+  );
+  console.error(
+    state.shutdownControlVersion === 1 || process.platform === "linux"
+      ? "If it remains unavailable, use 'inspire stop' with the same Host configuration, then start it again. Stopping an installed service also ends its project terminals."
+      : "Stop it through its existing service manager or inspected process controls before starting the new Host.",
+  );
 }
 
 async function showInstanceUrl(result, open = false) {
@@ -763,6 +758,10 @@ async function prepareRestart() {
 }
 
 async function restartHost(all = false, hostOnly = false) {
+  if (all && process.env.INSPIRE_TERMINAL_ID)
+    throw new Error(
+      "Run inspire restart --all from an external OS terminal. It can close the terminal running this command before reporting the result.",
+    );
   // Refuse unsupported full restarts before any build or process mutation.
   const inspected = await manageHostService("status", true);
   if (all && inspected.code !== 0 && inspected.code !== 5) {
@@ -776,7 +775,8 @@ async function restartHost(all = false, hostOnly = false) {
     console.error(inspected.output);
     return inspected.code;
   }
-  if (all) console.log("Full restart will end all project terminal processes.");
+  if (all)
+    console.log("Full restart will close project terminals in the installed service.");
   console.log("Preparing restart…");
   await prepareRestart();
   // Same scopes as the page: an ordinary restart reloads taken-over Pi so

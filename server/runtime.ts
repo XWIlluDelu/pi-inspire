@@ -286,6 +286,18 @@ export type MaintenanceRestartTransition =
   | { kind: "released" }
   | { kind: "skipped"; reason: string };
 
+export interface RestartLeaseOwner {
+  /** Fence new work for a short restart handoff. Explicit page authority may
+   * interrupt existing runtime work. Scheduled callers remain idle-only. */
+  reserveMaintenanceRestart(
+    interruptWork?: boolean,
+    includeAttached?: boolean,
+    preserveWork?: boolean,
+  ): MaintenanceRestartDecision;
+  commitMaintenanceRestart(leaseId: string): MaintenanceRestartTransition;
+  releaseMaintenanceRestart(leaseId: string): MaintenanceRestartTransition;
+}
+
 /** Backend-neutral status of one admitted worker, separate from browser events. */
 export interface RuntimeWorkerStatus {
   sessionId: string;
@@ -293,7 +305,7 @@ export interface RuntimeWorkerStatus {
   needsInput: boolean;
 }
 
-export interface RuntimeLike {
+export interface RuntimeLike extends RestartLeaseOwner {
   /** Host default selection. Addressed operations and browser detail interests
    * retain their own session/view ownership independently of this value. */
   readonly activeSessionId: string | null;
@@ -403,19 +415,10 @@ export interface RuntimeLike {
   ): Promise<BranchNavigateResponse>;
   forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
-  /** Fence new work for a short restart handoff. Explicit page authority may
-   * interrupt existing runtime work; scheduled callers remain idle-only. */
-  reserveMaintenanceRestart?(
-    interruptWork?: boolean,
-    includeAttached?: boolean,
-    preserveWork?: boolean,
-  ): MaintenanceRestartDecision;
   /** Reload every taken-over Pi so it applies current settings. */
-  refreshAttachedPi?(interruptWork: boolean): Promise<void>;
+  refreshAttachedPi(interruptWork: boolean): Promise<void>;
   /** The coming close is a Host-only restart: keep every worker running. */
-  preserveWorkersOnClose?(): void;
-  commitMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
-  releaseMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
+  preserveWorkersOnClose(): void;
   close(): Promise<void>;
 }
 

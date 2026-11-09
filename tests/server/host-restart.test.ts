@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
-  HostRestartController,
   type HostRestartBackend,
+  HostRestartController,
 } from "../../server/host-restart.js";
-import type {
-  MaintenanceRestartDecision,
-  RuntimeLike,
-} from "../../server/runtime.js";
+import type { MaintenanceRestartDecision } from "../../server/runtime.js";
 
 function fixture(overrides: Partial<HostRestartBackend> = {}) {
   const runtime = {
@@ -19,10 +16,10 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
       expiresAt: Date.now() + 30_000,
     })),
     commitMaintenanceRestart: vi.fn(() => ({
-      kind: "committed",
+      kind: "committed" as const,
       leaseId: "lease",
     })),
-    releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" })),
+    releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" as const })),
     refreshAttachedPi: vi.fn(async (_interruptWork: boolean) => {}),
   };
   const backend: HostRestartBackend = {
@@ -33,10 +30,7 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
     ),
     ...overrides,
   };
-  const controller = new HostRestartController(
-    runtime as unknown as RuntimeLike,
-    backend,
-  );
+  const controller = new HostRestartController(runtime, backend);
   return { controller, runtime, backend };
 }
 async function intent(controller: HostRestartController) {
