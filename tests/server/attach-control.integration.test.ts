@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -46,7 +47,14 @@ async function livePi(
   resume?: { id: string; sessionFile: string },
   backend: "direct" | "herdr" = "direct",
 ) {
-  const root = await mkdtemp(join(tmpdir(), "attach-control-pi-"));
+  const macOS = process.platform === "darwin";
+  // macOS uses the fixture's home cache for attach-control sockets. Its
+  // default temporary directory is too long for the Unix socket address.
+  const root = await mkdtemp(
+    macOS
+      ? join(await realpath("/tmp"), "pi-ac-")
+      : join(tmpdir(), "attach-control-pi-"),
+  );
   cleanup.push(() =>
     rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
   );
@@ -204,7 +212,9 @@ async function livePi(
   await pi.start();
   cleanup.push(() => pi.stop());
   const registry = new AttachControlRegistry(
-    join(runtimeDir, "pi-attach-control"),
+    macOS
+      ? join(env.HOME ?? root, "Library", "Caches", "pi-attach-control")
+      : join(runtimeDir, "pi-attach-control"),
   );
   return { pi, registry, id, sessionFile, root };
 }
@@ -464,7 +474,10 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
 
   it("ends every branch instance before trashing an unopened session, leaving other sessions running", async () => {
     const first = await livePi({}, ["docs/examples/native-ui.ts"]);
-    const environment = { XDG_RUNTIME_DIR: join(first.root, "run") };
+    const environment =
+      process.platform === "darwin"
+        ? { HOME: first.root }
+        : { XDG_RUNTIME_DIR: join(first.root, "run") };
     const otherBranch = await livePi(
       { ...environment, PI_ATTACH_CONTROL_TAG: "other-branch" },
       [NAVIGATE],

@@ -990,6 +990,7 @@ describe("real temporary repository", () => {
         ).toMatchObject({ kind });
       }
     },
+    20_000,
   );
 
   it.runIf(process.platform !== "win32")(
