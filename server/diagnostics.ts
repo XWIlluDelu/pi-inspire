@@ -1,20 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  chmod,
-  type FileHandle,
-  lstat,
-  mkdir,
-  open,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { type FileHandle, lstat, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { installationKey } from "./installation-key.js";
 import {
   inspireStateDirectory,
   supportsPosixPermissions,
 } from "./platform-paths.mjs";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
 export type DiagnosticLevel = "debug" | "info" | "warning" | "error";
 
@@ -40,7 +33,6 @@ interface FileDiagnosticLoggerOptions {
   createPrivateDirectory?: boolean;
 }
 
-const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 const DEFAULT_RETAINED_FILES = 4;
@@ -95,32 +87,6 @@ function sanitize(value: unknown, depth = 0): unknown {
   }
   if (allEntries.length > entries.length) result.__bounded = true;
   return result;
-}
-
-async function verifyPrivateDirectory(
-  path: string,
-  create: boolean,
-): Promise<void> {
-  if (create)
-    await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  const info = await lstat(path);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error(
-      `The Inspire diagnostics directory is not a private directory: ${path}`,
-    );
-  }
-  if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
-    throw new Error(
-      `The Inspire diagnostics directory is not owned by the current user: ${path}`,
-    );
-  }
-  if (supportsPosixPermissions() && (info.mode & 0o077) !== 0) {
-    if (!create)
-      throw new Error(
-        `The Inspire diagnostics directory must not be accessible by other users: ${path}`,
-      );
-    await chmod(path, PRIVATE_DIRECTORY_MODE);
-  }
 }
 
 async function openPrivateAppend(path: string): Promise<FileHandle> {
@@ -184,9 +150,11 @@ class FileDiagnosticLogger implements DiagnosticLogger {
   static async open(
     options: FileDiagnosticLoggerOptions,
   ): Promise<FileDiagnosticLogger> {
-    await verifyPrivateDirectory(
+    const create = options.createPrivateDirectory ?? false;
+    await ensurePrivateDirectory(
       dirname(options.path),
-      options.createPrivateDirectory ?? false,
+      "Inspire diagnostics directory",
+      { create, loose: create ? "repair" : "reject" },
     );
     const logger = new FileDiagnosticLogger(options.path, options);
     logger.handle = await openPrivateAppend(options.path);

@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import { link, lstat, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { installationKey } from "./installation-key.js";
 import {
   inspireStateDirectory,
   supportsPosixPermissions,
 } from "./platform-paths.mjs";
+import { ensurePrivateDirectory } from "./private-directory.js";
 
 const TOKEN_LENGTH = 86;
 const TOKEN_PATTERN = new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`);
@@ -15,7 +16,6 @@ const TOKEN_PATTERN = new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`);
 const LEGACY_TOKEN_PATTERN =
   /^[A-Za-z0-9_-]{43}$|^[A-Za-z0-9_-]{64}$|^[A-Za-z0-9_-]{128}$/;
 const PRIVATE_FILE_MODE = 0o600;
-const PRIVATE_DIRECTORY_MODE = 0o700;
 
 export function defaultAccessTokenPath(
   root: string,
@@ -26,29 +26,6 @@ export function defaultAccessTokenPath(
     inspireStateDirectory(),
     `${installationKey(root, host, port)}.token`,
   );
-}
-
-async function ensurePrivateDirectory(
-  path: string,
-  create = true,
-): Promise<void> {
-  if (create)
-    await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
-  const info = await lstat(path);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new Error(
-      `The Inspire access-token directory is not a private directory: ${path}`,
-    );
-  }
-  if (typeof process.getuid === "function" && info.uid !== process.getuid()) {
-    throw new Error(
-      `The Inspire access-token directory is not owned by the current user: ${path}`,
-    );
-  }
-  if (supportsPosixPermissions() && (info.mode & 0o077) !== 0)
-    throw new Error(
-      `The Inspire access-token directory must not be accessible by other users; use a private directory: ${path}`,
-    );
 }
 
 interface StoredToken {
@@ -157,7 +134,13 @@ async function rotateLegacyToken(path: string): Promise<string> {
 
 /** Read an existing authority without creating or rotating it. */
 export async function readAccessToken(path: string): Promise<string> {
-  await ensurePrivateDirectory(dirname(path), false);
+  await ensurePrivateDirectory(
+    dirname(path),
+    "Inspire access-token directory",
+    {
+      create: false,
+    },
+  );
   const stored = await readPrivateToken(path);
   if (stored.legacy)
     throw new Error("This authority needs an explicit upgrade");
@@ -176,7 +159,7 @@ export async function resolveAccessToken(
     }
     return explicitToken;
   }
-  await ensurePrivateDirectory(dirname(path));
+  await ensurePrivateDirectory(dirname(path), "Inspire access-token directory");
   try {
     const stored = await readPrivateToken(path);
     return stored.legacy ? rotateLegacyToken(path) : stored.token;

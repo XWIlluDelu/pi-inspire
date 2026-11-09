@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import webPush from "web-push";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import type {
   TaskNotificationGrouping,
   TaskOutcome,
 } from "../shared/notifications.js";
+import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
 
 export interface NotificationPrincipal {
@@ -271,9 +272,7 @@ export class TaskNotifications {
       .catch(() => {})
       .then(async () => {
         await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-        const temporary = this.path + ".tmp";
-        await writeFile(temporary, data, { mode: 0o600 });
-        await rename(temporary, this.path);
+        await replacePrivateStateFile(this.path, data);
       });
     this.writes = operation.then(
       () => {
