@@ -44,11 +44,11 @@ installation. Unix socket addresses stay within the native byte limit, including
 temporary roots; shortening does not relax current-user ownership or private-directory checks.
 A still-listening legacy address blocks automatic replacement rather than stranding its PTYs.
 Wire/authentication compatibility gates data access; implementation version and optional lifecycle
-support do not. A failed startup connection remains recoverable through subsequent requests: one
-shared initialization at a time, no idle retry loop, no automatic daemon creation/replacement and
-no replay of dispatched controls or terminal input. Closing fences late initialization and closes
-its client without reviving the retired service.
-Only the owner that bound a socket removes it; late cleanup must not unlink a successor.
+support do not. A failed startup connection stays recoverable through subsequent requests, with one shared
+initialization at a time. There is no idle retry loop, automatic daemon creation/replacement, or
+replay of dispatched controls or terminal input. Closing fences late initialization and closes its
+client without reviving the retired service. Only the owner that bound a socket removes it; late
+cleanup must not unlink a successor.
 An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
 state address cannot change permissions on a shared or system directory.
 
@@ -119,8 +119,9 @@ tab and reports failure. Native adapters capture the root birth identity at star
 before numeric tree/group operations, including the output-drain period before `onExit`. Once the
 root exits or its identity changes, its old PID/PGID cannot authorize another tree walk or group
 signal. Only previously captured descendants with matching live birth identities remain cleanup
-authority; a different observed birth never inherits prior cleanup authority. Unverifiable or unconfirmed descendant cleanup
-keeps the exited tab and its cleanup handle for an explicit retry, including service shutdown.
+authority; a different observed birth never inherits it. Unverifiable or unconfirmed descendant
+cleanup keeps the exited tab and its cleanup handle for an explicit retry, including service
+shutdown.
 Root drain and descendant confirmation share the existing hard-stop allowance. These are live OS
 identity observations, not atomic kernel handles or a sandbox against deliberate process races.
 Windows native ConPTY instance closure is the fallback when PID identity cannot be proven, and
@@ -130,7 +131,7 @@ receives no POSIX signal argument.
 
 Browser mutations carry one immutable operation identity through Host and daemon. Same-content retries
 share the running operation or retained result; reuse with different parameters is refused. Lost
-responses, deadlines, and disconnects leave the outcome unresolved, rather than cancelling work.
+responses, deadlines, and disconnects leave the outcome unresolved; they do not cancel work.
 Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
 completion or rejection remains authoritative even if the browser cannot remove its recovery record.
 Report that local cleanup failure separately; retrying cleanup sends no terminal mutation.
@@ -150,8 +151,7 @@ users may explicitly stop tracking an unresolved result, including an expired re
 Confirmation explains that this neither cancels the old work nor establishes its outcome. It sends no
 mutation, persists retirement before releasing the local identity, and is unavailable during a check.
 A subsequent deliberate action gets a new identity; retries never silently become new work.
-Unavailable or malformed storage blocks
-untracked writes. Every control mutation requires an operation identity and receipt support; missing
+Unavailable or malformed storage blocks untracked writes. Every control mutation requires an operation identity and receipt support; missing
 identity is refused before dispatch. Valid identified requests rejected during route validation carry
 the matching operation ID and definite rejected outcome, including nested terminal routes.
 
@@ -311,8 +311,8 @@ Workbench shortcut mode retains native clipboard and terminal search. On macOS, 
 ETX with or without selected output; Command+C/V remain native copy/paste, and Control+V remains
 shell input. On Windows/Linux, selected Control+C stays native copy, unselected Control+C sends
 ETX, and Control+V stays native paste. Shell shortcut mode retains its existing Control-key ownership;
-macOS Command clipboard chords remain native. Native AltGraph, third-level characters, dead keys and composition take priority
-over workbench chords. Alt+digit selects a tab only when the layout produces that digit without other
+macOS Command clipboard chords remain native. Native AltGraph, third-level characters, dead keys and composition take priority over workbench
+chords. Alt+digit selects a tab only when the layout produces that digit without other
 modifiers; pane shortcuts do not capture search, rename, menu or ordinary text-editor input. A chord
 consumed by the pane must not also send terminal bytes. macOS Option produces native characters and
 accents by default. The Mac-only **Option as Meta** browser setting explicitly enables Escape-prefixed
@@ -326,15 +326,15 @@ Control+Shift+Escape handler or hint claims the Windows Task Manager shortcut.
 Workbench New terminal uses the physical modified Backquote key, including layouts where Shift
 produces a tilde; shell shortcut mode yields it to the PTY. Shell history remains native; the view adds neither command reruns nor a separate history interface.
 
-The non-wrapping touch bar keeps four 44px arrows fixed in a compact trailing group. Esc, Ctrl+C,
-one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width slots sized
-to fit complete buttons (two at 320px, three at 390px). Scrolling snaps to whole-key boundaries,
-including the final position. Small directional cues use the existing bottom padding only on sides
-with hidden keys; no fade covers button labels. The bar keeps its single-row height.
-Input ownership, readiness and process state
-gate every key. Touch keys preserve input focus. Navigation and direct Ctrl+C also work with the
-software keyboard closed; the header keyboard button explicitly focuses input. Ctrl/Alt are one-shot modifiers for user
-keystrokes, cleared by blur, loss of control, or paste. They do not modify pasted text or terminal replies.
+The non-wrapping, single-row touch bar keeps four 44px arrows fixed in a compact trailing group.
+Esc, Ctrl+C, one-shot Ctrl/Alt, Tab, Home/End, and Page Up/Down scroll independently in equal-width
+slots sized to fit complete buttons (two at 320px, three at 390px). Scrolling snaps to whole-key
+boundaries, including the final position. Small directional cues use the existing bottom padding
+only on sides with hidden keys; no fade covers button labels. Input ownership, readiness and process
+state gate every key. Touch keys preserve input focus. Navigation and direct Ctrl+C also work with
+the software keyboard closed; the header keyboard button explicitly focuses input. Ctrl/Alt are
+one-shot modifiers for user keystrokes, cleared by blur, loss of control, or paste; they do not
+modify pasted text or terminal replies.
 
 Pending menu paste belongs to its originating activation and control epoch. Switching views, losing
 control, or replacing the connection retires its completion/error/focus effects. A current paste returns
@@ -358,8 +358,8 @@ columns. It excludes the next prompt and joins soft wraps while preserving Unico
 Marker eviction, buffer replacement/reset, or column reflow invalidates that range; height-only changes
 preserve it. Other copy paths remain independent.
 
-Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task notifications
-describe the outcome without exposing output content. They share browser permission discovery,
+Shell completion coalesces Git refresh. Optional, user-gesture-authorized bell and long-task
+notifications describe the outcome without exposing output content. They share browser permission discovery,
 requests and permission messages with task alerts, while keeping terminal delivery and preferences
 independent. A denied, dismissed or unavailable permission leaves long-task alerts off or falls back
 to a tab-marking bell, with an explanation beside the initiating setting. A delayed permission result
