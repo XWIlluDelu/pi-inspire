@@ -5,14 +5,14 @@ covers:
   - src/use-inspection-history.ts
   - src/store.ts
   - src/controllers/{git,workspace}-controller.ts
-  - src/components/{AppTopbar,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,ContextSplitBody,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
+  - src/components/{AppTopbar,Nav,NavigationToggle,SessionActionsMenu,Composer,ExtensionDisplays,ContextPane,ContextPaneShell,FilesPane,ChangesPane,WorkspaceBrowser,BranchTree,PaneResizeHandle}.tsx
   - src/{git-presentation,source-diff,use-modal-focus,use-session-action-reorder}.ts
   - server/git-inspection.ts
   - shared/contracts.ts
   - tests/integration/git-long-prefix.test.ts
   - tests/web/source-diff.test.ts
   - src/styles/*.css
-  - tests/web/{app,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
+  - tests/web/{app,navigation-attention,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
   - tests/browser/{composer,session-actions}.spec.ts
 ---
 
@@ -48,19 +48,21 @@ independent project shells in [[terminal]].
   [[conversation]] owns interaction details.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
-  width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses
-  it, and the rail logo expands it. The desktop conversation header has no duplicate toggle or
-  reserved slot. Below 900px, desktop rail preference is preserved but navigation itself becomes an
-  independent drawer opened from the topbar. Its internal close button, Escape, and scrim dismiss
-  it without horizontal overflow. Each open narrow drawer is exposed
-  as a modal dialog, owns trapped and restorable focus through the central modal stack, and makes
-  the center workbench inert; navigation and contextual drawers are mutually exclusive even when a
-  file opens from inside navigation. The desktop surfaces retain their navigation and complementary
-  landmarks. Opening a session also closes the drawer. The context pane keeps one shell and focus
-  owner across deferred loading, content and failure; loading the module does not restart its entry
-  animation. Its narrow header and Close control keep the same geometry across loading,
-  ready and failure states. The full-width context drawer needs no scrim. Shared motion and overlay roles are in
-  [[design-system]].
+  width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses it,
+  and the rail logo expands it. The desktop conversation header has no duplicate toggle or reserved
+  slot.
+
+  Below 900px, navigation becomes an independent drawer opened from the topbar; the desktop rail
+  preference is preserved. Its internal close button, Escape, and scrim dismiss it without
+  horizontal overflow. Each open narrow drawer is a modal dialog: it owns trapped, restorable focus
+  through the central modal stack and makes the center workbench inert. Navigation and contextual
+  drawers are mutually exclusive, even when a file opens from inside navigation. Opening a session
+  also closes the navigation drawer. The full-width context drawer needs no scrim. Desktop surfaces keep their
+  navigation and complementary landmarks. Shared motion and overlay roles are in [[design-system]].
+
+  The context pane keeps one shell and focus owner across deferred loading, content and failure;
+  loading the module does not restart its entry animation. Its narrow header and Close control keep
+  the same geometry across loading, ready and failure states.
 
   Returning to desktop closes transient drawer state without overwriting the desktop collapsed
   preference. Switching the contextual pane between desktop and drawer layouts keeps its reader or
@@ -150,13 +152,14 @@ completion behavior are unchanged.
 
 ## Session identity and Git observation
 
-- The topbar owns session identity — an explicit Pi name is the rename value, while an unnamed
-  conversation presents its normalized first prompt (or `New session` before any prompt) without
-  promoting that fallback into session metadata or OS-visible titles. The heading truncates
-  responsively at its available width. Beside it, the project location appears as folder name or
-  full path per a global preference, without a redundant folder glyph; clicking copies the absolute
-  path without shifting layout.
-  A quiet clickable Git summary follows: it shows the current branch or detached/unborn identity,
+- The topbar owns session identity. An explicit Pi name is the rename value. An unnamed
+  conversation shows its normalized first prompt (or `New session` before any prompt); that
+  fallback is never promoted into session metadata or OS-visible titles. The heading truncates at
+  its available width. Beside it, the project location appears as folder name or full path per a
+  global preference, with no folder glyph; clicking copies the absolute path without shifting
+  layout.
+
+  A quiet clickable Git summary follows. It shows the current branch or detached/unborn identity,
   adds a total only when the worktree has changes, and opens the detailed Changes pane on
   activation. While the Changes pane is visible, the summary keeps the branch but omits its total,
   which Changes states beside the list. The summary is a first-class Git observation surface: it
@@ -309,15 +312,15 @@ completion behavior are unchanged.
   graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;
   reply/event detail and alternate routes are disclosed where relevant. Other starts also exposes
   branch points in a hidden metadata-only prefix, keeping first-input alternatives reachable.
-  Merely selecting a point
-  previews its complete content inside History without changing Pi's active context or the Composer.
-  Returning to the outline preserves search, loaded history, scroll and focus. Opening an alternate
-  route reveals its chosen/latest point, not its shared oldest ancestor; returning to Current
-  conversation only restores the active conversation's outline. Exact node actions explicitly distinguish
-  editing/continuing in this session from creating an independent Fork or Clone, without an action
-  toolbar on every outline row. Search reaches complete retained history across branches, and older
-  points remain reachable through progressive loading; bounded responses never define the limit of
-  accessible history. The center Transcript remains the active conversation surface.
+  Selecting a point previews its complete content inside History without changing Pi's active
+  context or the Composer. Returning to the outline preserves search, loaded history, scroll and
+  focus. Opening an alternate route reveals its chosen/latest point, not its shared oldest
+  ancestor; returning to Current conversation only restores the active conversation's outline.
+  Exact node actions distinguish editing/continuing in this session from creating an independent
+  Fork or Clone, without an action toolbar on every outline row. Search reaches complete retained
+  history across branches, and older points stay reachable through progressive loading; bounded
+  responses never limit accessible history. The center Transcript remains the active conversation
+  surface.
 
   On a narrow screen, a successful context-changing action closes the modal contextual drawer to
   reveal the resulting conversation/draft; read-only preview and Back keep it open.

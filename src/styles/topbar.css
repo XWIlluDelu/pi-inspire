@@ -17,6 +17,12 @@
   container-type: inline-size;
 }
 
+/* An idle header has no status to reserve space for. Let identity use that
+   budget while keeping actions at the trailing edge and rename independent. */
+.topbar:has(> .topbar__status:empty):not(:has(.topbar__rename)) {
+  grid-template-columns: [identity] minmax(0, 1fr) [status] 0 [actions] auto;
+}
+
 .reading-stage {
   --reading-min-height: min(144px, 28%);
   display: flex;
@@ -518,6 +524,10 @@
   gap: var(--space-2);
 }
 
+@media (min-width: 901px) and (pointer: fine) {
+  .topbar__actions { gap: var(--space-1); }
+}
+
 .topbar:has(.topbar__rename) {
   grid-template-columns: [identity] minmax(0, max-content) [status] minmax(0, 1fr) [actions] auto;
 }
@@ -532,21 +542,7 @@
 
 .topbar__rename input {
   flex: 1 1 auto;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-canvas);
-  padding: 2px var(--space-2);
   font-size: var(--text-base);
-  min-width: 0;
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard);
-}
-
-.topbar__rename input:focus-visible {
-  outline: none;
-  border-color: var(--accent-focus);
-  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 
 @container (max-width: 600px) {
@@ -568,6 +564,10 @@
 @media (max-width: 900px) {
   .topbar {
     grid-template-columns: [navigation] auto [identity] fit-content(56%) [status] minmax(auto, 1fr) [actions] auto;
+  }
+
+  .topbar:has(> .topbar__status:empty):not(:has(.topbar__rename)) {
+    grid-template-columns: [navigation] auto [identity] minmax(0, 1fr) [status] 0 [actions] auto;
   }
 
   .topbar:has(.topbar__rename) {

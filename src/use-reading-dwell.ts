@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
+import { prefersReducedMotion } from "./input-device";
 
 const RESUME_GRACE_MS = 3_000;
 // Matches the shared --dur-standard opacity exit.
@@ -64,7 +65,7 @@ export function useReadingDwell<T extends HTMLElement>(
         remaining = Math.max(remaining, RESUME_GRACE_MS);
         startedAt = Date.now();
         timer = setTimeout(() => {
-          if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          if (prefersReducedMotion()) {
             onDismiss();
           } else {
             setLeaving(true);

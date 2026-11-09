@@ -9,6 +9,7 @@ import {
   openFixtureSession,
   pairedPage,
   reloadSession,
+  openConversationSearch,
 } from "./support/navigation";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
@@ -786,7 +787,7 @@ test("navigates to a native shell card and opens its complete log on a narrow sc
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await connectCalibration(page);
-  await page.getByRole("button", { name: "Open conversation search" }).click();
+  await openConversationSearch(page);
   const search = page.getByRole("searchbox", {
     name: "Search conversation",
   });

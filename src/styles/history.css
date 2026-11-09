@@ -12,40 +12,22 @@
 }
 .history-outline[hidden] { display: none; }
 .branch-tree__search {
-  display: flex;
   flex: none;
-  align-items: center;
-  min-height: 32px;
   margin: var(--space-2) var(--space-3);
-  padding: 0 var(--space-2);
-  gap: 6px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-control);
-  color: var(--muted);
-  background: var(--bg-stage);
 }
-.branch-tree__search:focus-within { border-color: var(--accent-focus); }
-.branch-tree__search input {
-  min-width: 0;
-  flex: 1 1 auto;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  color: var(--ink);
-  background: transparent;
-  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
-}
-.branch-tree__search input::placeholder { color: var(--muted); }
 .branch-tree__rows {
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--space-3) var(--space-6);
-  scrollbar-gutter: stable;
+  /* Row highlights share the search field's edges, like the session list;
+     the right side already holds the reserved 8px scrollbar slot. */
+  padding: 0 var(--space-1) var(--space-6) var(--space-3);
 }
 .history-turn {
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--hairline);
 }
+/* Earlier/route navigation may precede the first conversation section. */
+.branch-tree__rows > .history-turn:first-of-type { padding-top: 0; }
 .history-prompt,
 .history-result,
 .history-entry,
@@ -128,7 +110,13 @@
   color: var(--muted);
 }
 .history-route small { flex: none; }
-.history-load { margin-block: var(--space-2); }
+.history-load {
+  min-height: 30px;
+  margin-block: 0 var(--space-1);
+  border: 0;
+  padding: var(--space-1) var(--space-2);
+  font: 500 var(--text-sm)/var(--leading-ui) var(--font-sans);
+}
 .history-empty { margin: var(--space-6) var(--space-2); color: var(--muted); font-size: var(--text-sm); }
 .history-route-notice,
 .history-detail__header {
@@ -295,10 +283,18 @@
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-xs);
 }
-@media (max-width: 760px) {
-  .branch-tree__search { min-height: 40px; }
-  .branch-tree__search input { font-size: 16px; }
+@media (min-width: 901px) and (pointer: fine) {
+  .history-turn { padding-block: var(--space-1); }
+  .history-prompt { padding-block: var(--space-1); }
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+  .history-load { min-height: 44px; }
+}
+
+@media (pointer: coarse), (max-width: 760px) {
   .history-disclosure,
+  .history-prompt,
   .history-entry,
   .history-route,
   .history-result { min-height: 44px; }
@@ -308,6 +304,9 @@
   .history-summary label { min-height: 36px; align-items: center; }
   .history-summary input { margin-top: 0; }
   .history-shell__footer .tool-notice__action { min-height: 44px; }
+}
+
+@media (max-width: 760px) {
   .history-detail__body { padding-inline: var(--space-3); }
   .history-detail__actions { padding-inline: var(--space-3); }
 }

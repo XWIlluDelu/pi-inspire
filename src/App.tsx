@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
 import { pairHost } from "./api";
@@ -55,6 +56,7 @@ import {
   cacheVisualPreferences,
 } from "./visual-preferences";
 import { modelCycleAction } from "./workbench-keyboard";
+import { readNavCollapsed, saveNavCollapsed } from "./workbench-session";
 
 const loadContextPane = () => import("./components/ContextPane");
 const loadSettings = () => import("./components/Settings");
@@ -512,7 +514,8 @@ export function App() {
     (connectionDelayed ||
       (state.connectionProblem !== null &&
         state.connectionProblem.kind !== "stream-interrupted"));
-  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(readNavCollapsed);
+  useEffect(() => saveNavCollapsed(navCollapsed), [navCollapsed]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
@@ -601,6 +604,13 @@ export function App() {
   const closeMobileNavigation = useCallback(() => {
     setMobileNavOpen(false);
   }, []);
+  const openNavigationSettings = useCallback(() => {
+    // The drawer closes, so Settings returns focus to the toggle that reopens
+    // it. Commit the close first: the header is inert while the drawer is open.
+    flushSync(() => setMobileNavOpen(false));
+    document.querySelector<HTMLElement>(".topbar__nav-toggle")?.focus();
+    openSettings("display");
+  }, [openSettings]);
   const closeResources = useCallback(() => {
     store.setResourcesOpen(false);
   }, []);
@@ -935,6 +945,7 @@ export function App() {
         collapsed={narrowViewport ? false : navCollapsed}
         isModal={isNavModal}
         onClose={closeMobileNavigation}
+        onOpenSettings={openNavigationSettings}
         onToggleNavigation={toggleNavigation}
         selectedSessionId={state.sessionId}
         searchInputRef={navSearchRef}

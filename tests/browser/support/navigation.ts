@@ -113,11 +113,39 @@ export async function showTerminalControls(page: Page) {
     exact: true,
   });
   if (await toggle.isVisible()) await toggle.click();
+}
 
-/** Open Settings from the workbench header. */
+/** Opens Settings from the header, or from the navigation drawer on narrow layouts. */
 export async function openSettings(page: Page) {
-  await page
-    .locator(".topbar")
-    .getByRole("button", { name: "Settings", exact: true })
-    .click();
+  // Decide from the viewport, not the header's current DOM: a resize just
+  // before this call may still be unmounting the header control.
+  if (page.viewportSize()!.width > 900) {
+    await page
+      .locator(".topbar")
+      .getByRole("button", { name: "Settings", exact: true })
+      .click();
+    return;
+  }
+  const drawer = page
+    .locator(".nav")
+    .getByRole("button", { name: "Settings", exact: true });
+  if (!(await drawer.isVisible()))
+    await page
+      .getByRole("button", { name: "Toggle navigation", exact: true })
+      .click();
+  await drawer.click();
+
+/** Use persistent desktop search or open the local narrow tool row. */
+export async function openConversationSearch(page: Page) {
+  const input = page.getByRole("searchbox", {
+    name: "Search conversation",
+    exact: true,
+  });
+  if (!(await input.isVisible()))
+    await page
+      .getByRole("button", { name: "Open conversation search", exact: true })
+      .click();
+  await expect(input).toBeVisible();
+  await input.focus();
+  return input;
 }
