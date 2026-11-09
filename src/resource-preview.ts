@@ -29,6 +29,10 @@ export interface ResourceFileTab {
   git?: { pathId: string; displayPath: string };
 }
 
+export interface FileSourceJump {
+  line: number;
+}
+
 export type ResourcePreview =
   | { status: "loading"; reference: string }
   | { status: "error"; reference: string; message: string }
@@ -44,6 +48,8 @@ export type ResourcePreview =
       status: "ready";
       reference: string;
       descriptor: ResourceDescriptor;
+      /** One navigation request, separate from the tab's retained reading position. */
+      sourceJump?: FileSourceJump;
       /** Same-authority refresh retains the last loaded content. */
       refreshing?: boolean;
       refreshError?: string;

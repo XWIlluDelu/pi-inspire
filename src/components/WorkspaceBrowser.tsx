@@ -42,7 +42,7 @@ type WorkspaceSelectionState = Pick<
   | "selectedResourceReference"
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
-  | "resourceWorkspacePaths"
+  | "resourceStanding"
 >;
 
 export function selectedWorkspacePath(state: WorkspaceSelectionState) {
@@ -55,7 +55,7 @@ export function selectedWorkspacePath(state: WorkspaceSelectionState) {
   return (
     previewPath ??
     state.selectedResourceWorkspacePath ??
-    state.resourceWorkspacePaths[selected] ??
+    state.resourceStanding[selected]?.workspacePath ??
     selected
   );
 }
@@ -192,7 +192,7 @@ export function WorkspaceTree({
       selectedResourceReference: source.selectedResourceReference,
       selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
       resourcePreview: source.resourcePreview,
-      resourceWorkspacePaths: source.resourceWorkspacePaths,
+      resourceStanding: source.resourceStanding,
       gitStatus: source.gitStatus,
     }),
     shallowEqual,
@@ -381,7 +381,7 @@ export function WorkspaceSearchResults({
       selectedResourceReference: source.selectedResourceReference,
       selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
       resourcePreview: source.resourcePreview,
-      resourceWorkspacePaths: source.resourceWorkspacePaths,
+      resourceStanding: source.resourceStanding,
       gitStatus: source.gitStatus,
     }),
     shallowEqual,

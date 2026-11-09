@@ -209,10 +209,10 @@
 
 .navigation-toggle__attention {
   position: absolute;
-  top: 4px;
-  right: 2px;
+  top: 0;
+  right: 0;
   min-width: 16px;
-  height: 16px;
+  height: 13px;
   padding: 0 4px;
   border-radius: var(--radius-pill);
   background: var(--success);
@@ -220,7 +220,7 @@
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 13px;
   text-align: center;
   pointer-events: none;
 }
@@ -229,9 +229,13 @@
   background: var(--error);
 }
 
-.nav__brand-rail .navigation-toggle__attention {
-  top: -2px;
-  right: -2px;
+@media (pointer: fine) {
+  /* The 36px rail button sits inside a larger header. Use its outer inset
+     to keep even 9+ above the reticle's top-right stroke. */
+  .nav__brand-rail .navigation-toggle__attention {
+    top: -4px;
+    right: -3px;
+  }
 }
 
 .nav__brand-icon--rail {
@@ -724,11 +728,6 @@
   padding: 0 var(--space-3) var(--space-2);
 }
 
-.nav__hidden-content > .nav__group + .nav__group,
-.nav__hidden-content > .nav__row + .nav__group {
-  margin-top: var(--space-2);
-}
-
 /* Hidden shares the desktop project axes at every width. Keep the icon's
    16px slot while clearing the inset selection marker. */
 .nav__hidden-content .nav__group-toggle {
@@ -982,15 +981,9 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   gap: 2px;
 }
 
-.nav__group + .nav__group {
-  margin-top: var(--space-4);
-}
-
-@media (min-width: 901px) and (pointer: fine) {
-  /* Keep project boundaries lighter than the Pinned/category boundary. */
-  .nav__list > .nav__group:not(.nav__group--pinned, .nav__group--pinned-folder) + .nav__group {
-    margin-top: var(--space-3);
-  }
+:is(.nav__list, .nav__hidden-content) > .nav__group + .nav__group,
+.nav__hidden-content > .nav__row + .nav__group {
+  margin-top: var(--space-2);
 }
 
 .nav__pagination {
@@ -1108,11 +1101,6 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
 }
 
 .nav__list > .nav__group--pinned + .nav__group {
-  margin-top: var(--space-5);
-}
-
-/* Pinned folders sit above ordinary ones; a step marks where they end. */
-.nav__list > .nav__group--pinned-folder + .nav__group:not(.nav__group--pinned-folder) {
   margin-top: var(--space-5);
 }
 

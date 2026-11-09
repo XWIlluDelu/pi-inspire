@@ -21,6 +21,12 @@ for (const hasTouch of [false, true]) {
       page,
     }) => {
       await page.setViewportSize({ width: 1440, height: 900 });
+      await page.route("**/api/git/status**", async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        if (body.kind === "repository") body.total = 123;
+        await route.fulfill({ response, json: body });
+      });
       await pairedPage(page);
       await openFixtureSession(
         page,
@@ -68,7 +74,17 @@ for (const hasTouch of [false, true]) {
       });
       await expect(documentTab).toHaveAttribute("aria-selected", "true");
       await expect(documentTab).toBeVisible();
+      await expect(pane.locator(".ctx__mode-count")).toHaveText("99+");
+      const desktopFile = (await documentTab.locator("..").boundingBox())!;
+      const desktopStrip = (await pane
+        .locator(".ctx__file-tabs")
+        .boundingBox())!;
+      expect(desktopFile.x + desktopFile.width).toBeLessThanOrEqual(
+        desktopStrip.x + desktopStrip.width + 0.5,
+      );
       await pane.getByRole("tab", { name: "Files", exact: true }).click();
+      await page.setViewportSize({ width: 390, height: 900 });
+      await expect(pane).toHaveAttribute("role", "dialog");
       await expect(longTab).toBeVisible();
       const more = pane.getByRole("combobox", {
         name: "More tabs",
@@ -133,6 +149,7 @@ for (const hasTouch of [false, true]) {
             (await pane.locator(".ctx__header").boundingBox())!.height,
         )
         .toBeLessThan(withTabs);
+      await page.unrouteAll({ behavior: "wait" });
     });
   });
 }

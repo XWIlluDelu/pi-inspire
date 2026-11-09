@@ -34,8 +34,7 @@ function fixture() {
       text: "![Curve](curve.png)",
     },
     resourceTabs: [],
-    resourceAvailability: {},
-    resourceWorkspacePaths: {},
+    resourceStanding: {},
   };
   const image = {
     ...descriptor,

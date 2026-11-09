@@ -371,7 +371,7 @@ describe("Files pane", () => {
                   : {
                       reference,
                       availability: "available",
-                      workspacePath: reference,
+                      workspacePath: stripResourceLocation(reference),
                     },
             ),
           });
@@ -610,7 +610,7 @@ describe("Files pane", () => {
     Element.prototype.scrollIntoView = vi.fn();
     store.setResourcesOpen(true);
     store.setContextMode("changes");
-    await store.refreshGitInspection();
+    await store.refreshGitStatus();
     const { container: pane } = render(
       <ContextPane isModal={false} onClose={vi.fn()} />,
     );
@@ -1025,7 +1025,7 @@ describe("Files pane", () => {
     });
     await within(pane).findByRole("button", { name: /notes\.md/ });
     await waitFor(() =>
-      expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+      expect(store.getState().resourceStanding["notes.md"]?.workspacePath).toBe(
         "notes.md",
       ),
     );
@@ -1059,7 +1059,7 @@ describe("Files pane", () => {
     expect(
       within(pane).getByRole("button", { name: /notes\.md/ }),
     ).toBeVisible();
-    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+    expect(store.getState().resourceStanding["notes.md"]?.workspacePath).toBe(
       "notes.md",
     );
     expect(within(pane).queryByText("Loading recent files…")).toBeNull();
@@ -1146,6 +1146,64 @@ describe("Files pane", () => {
     },
   );
 
+  it("honors a Recent line reference when it reuses an open Preview tab", async () => {
+    resourceListHead = "notes.md#L3";
+    const computedStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const style = computedStyle(element);
+      if (element.classList.contains("source-view")) style.lineHeight = "20px";
+      return style;
+    });
+    render(<App />);
+    await act(async () => {
+      await store.openResource("notes.md");
+    });
+    const pane = await screen.findByRole("complementary", {
+      name: "Context panel",
+    });
+    expect(
+      await within(pane).findByRole("heading", { name: "Previewed notes" }),
+    ).toBeVisible();
+    fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
+    fireEvent.scroll(
+      within(pane).getByRole("region", { name: "File source" }),
+      {
+        target: { scrollTop: 17 },
+      },
+    );
+    fireEvent.click(within(pane).getByRole("button", { name: "Preview" }));
+    fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
+    await waitFor(() =>
+      expect(
+        store.getState().resourceStanding["notes.md#L3"]?.workspacePath,
+      ).toBe("notes.md"),
+    );
+    fireEvent.click(within(pane).getByRole("button", { name: /^notes\.md/ }));
+    const source = await within(pane).findByRole("region", {
+      name: "File source",
+    });
+    expect(source.scrollTop).toBe(40);
+    expect(store.getState().resourceTabs).toMatchObject([
+      { reference: "notes.md" },
+    ]);
+    fireEvent.scroll(source, { target: { scrollTop: 27 } });
+    await act(async () => {
+      await store.refreshFileTab();
+    });
+    expect(
+      within(pane).getByRole("region", { name: "File source" }).scrollTop,
+    ).toBe(27);
+
+    // A conversation link may open the same file before Recent has probed it.
+    await act(async () => store.openResource("notes.md:2"));
+    expect(
+      within(pane).getByRole("region", { name: "File source" }).scrollTop,
+    ).toBe(20);
+    expect(store.getState().resourceTabs).toMatchObject([
+      { reference: "notes.md" },
+    ]);
+  });
+
   it("keeps a scrolled code preview without loading hidden Recent rows", async () => {
     render(<App />);
     await act(async () => {
@@ -1199,20 +1257,20 @@ describe("Files pane", () => {
     await act(async () => {
       await store.openResource("notes.md");
     });
-    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
+    expect(store.getState().resourceStanding["notes.md"]?.workspacePath).toBe(
       "notes.md",
     );
 
     act(() => releaseProbe?.());
     await waitFor(() =>
-      expect(store.getState().resourceWorkspacePaths["demo.html"]).toBe(
-        "demo.html",
-      ),
+      expect(
+        store.getState().resourceStanding["demo.html"]?.workspacePath,
+      ).toBe("demo.html"),
     );
-    expect(store.getState().resourceAvailability["notes.md"]).toBeUndefined();
-    expect(store.getState().resourceWorkspacePaths["notes.md"]).toBe(
-      "notes.md",
-    );
+    expect(store.getState().resourceStanding["notes.md"]).toMatchObject({
+      availability: "available",
+      workspacePath: "notes.md",
+    });
   });
 
   it("refreshes the Files sources without coupling them to Git status", async () => {
@@ -1258,7 +1316,7 @@ describe("Files pane", () => {
     async (view) => {
       store.setResourcesOpen(true);
       store.setContextMode("changes");
-      await store.refreshGitInspection();
+      await store.refreshGitStatus();
       if (view === "file") await store.openGitDiff("notes");
       render(<ContextPane />);
       await waitFor(() =>
@@ -1275,7 +1333,7 @@ describe("Files pane", () => {
       });
       let pending!: Promise<void>;
       act(() => {
-        pending = store.refreshGitInspection();
+        pending = store.refreshGitStatus();
       });
       try {
         await waitFor(() =>
@@ -1333,7 +1391,7 @@ describe("Files pane", () => {
   it("marks only an explicit refresh busy and prevents duplicate requests until it settles", async () => {
     store.setResourcesOpen(true);
     store.setContextMode("changes");
-    await store.refreshGitInspection();
+    await store.refreshGitStatus();
     render(<ContextPane />);
     await waitFor(() =>
       expect(store.getState().gitStatusRefreshing).toBe(false),
@@ -1370,7 +1428,7 @@ describe("Files pane", () => {
   it.each(["tool", "file"] as const)(
     "keeps the new %s refresh busy when a previous scope's request completes",
     async (scope) => {
-      await store.refreshGitInspection();
+      await store.refreshGitStatus();
       await store.openGitDiff("notes");
       if (scope === "tool") store.setContextMode("changes");
       render(<ContextPane />);
@@ -1453,7 +1511,7 @@ describe("Files pane", () => {
       name: "Context panel",
     });
     await waitFor(() =>
-      expect(store.getState().resourceAvailability["demo.html"]).toMatchObject({
+      expect(store.getState().resourceStanding["demo.html"]).toMatchObject({
         availability: "missing",
       }),
     );
@@ -1480,7 +1538,7 @@ describe("Files pane", () => {
       name: "Context panel",
     });
     await waitFor(() =>
-      expect(store.getState().resourceAvailability["old-1.md"]).toMatchObject({
+      expect(store.getState().resourceStanding["old-1.md"]).toMatchObject({
         availability: "invalid",
       }),
     );

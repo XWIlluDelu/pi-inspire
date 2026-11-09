@@ -138,7 +138,7 @@ describe("ordinary file tabs with Git views", () => {
       const { store } = await initStore();
       await store.openGitDiff(change.path.id);
       await store.probeResources([reference]);
-      expect(store.getState().resourceWorkspacePaths[reference]).toBe(
+      expect(store.getState().resourceStanding[reference]?.workspacePath).toBe(
         change.path.workspacePath,
       );
       await store.openResource(reference);

@@ -91,10 +91,6 @@ body.srail-dragging {
   .topbar__project {
     max-width: 240px;
   }
-
-  .topbar__git {
-    max-width: 140px;
-  }
 }
 
 @media (max-width: 900px) {

@@ -52,6 +52,8 @@ extra shadow or raised frame.
 Coarse-pointer file close areas are 32px wide. Floating file actions use 28px fine-pointer desktop
 and 32px coarse/narrow targets with 16px glyphs; the group reserves no separate header band.
 Reading a ready preview collapses the group; loading/error interactions keep its actions.
+Compact Markdown previews inset their opening text below the actions. The inset scrolls with the
+document and stays the same when the actions collapse.
 
 The Files tree uses the project basename as its heading. Opening a workspace file expands its
 ancestors and emits one reveal request; unrelated updates do not scroll it. Leaf rows reserve the
@@ -221,8 +223,9 @@ rejects, and lack of all proof never authorizes the ticket. Pending issuance is 
 selection, session, view or transport changes. Downloads do not inherit preview byte limits or
 buffer arbitrary files in JavaScript.
 
-Source uses highlighting and line numbers; `:line` and `#Lline` open Source at that position, even
-for files that normally open in Preview. Refreshing the same selected file keeps its chosen view
+Source uses highlighting and line numbers. Opening a `:line` or `#Lline` reference jumps to that
+line in Source. When the Host resolves a reference to a workspace file already open, use its tab
+and keep its place in the tab strip. Refreshing keeps the chosen view
 and Source/rendered reading offsets while replacing the content. Switching file/tool tabs,
 reopening the contextual pane, or reloading the page restores each file's selected view and
 Source/rendered scroll offsets. Browser-tab session storage keeps this navigation metadata under

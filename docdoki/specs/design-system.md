@@ -374,23 +374,24 @@ WebKit uses 16px editing text to avoid focus zoom, retaining compact resting lab
 The contextual tab/tool header is 32px on fine-pointer desktop, 36px on coarse-pointer desktop,
 and at least 37px in its narrow drawer. Its icons remain 16px; desktop tool tiles are 26px high
 while coarse/narrow controls keep at least 32px targets. Open-file tabs fill the header height,
-and the short refresh separator remains centered. A narrow drawer uses a second row when a
-selected file or terminal tab, overflow and tools cannot fit together; an empty shared strip
-does not reserve that row.
+and the short refresh separator remains centered. Narrow drawers and compact touch panes use a
+second row when a selected file or terminal tab, overflow and tools cannot fit together. An empty
+shared strip does not reserve that row.
 
 Files, Changes, History and Terminal share the contextual pane. Resource safety and change
 semantics belong to [[resource-preview]]; branch behavior belongs to [[session-branches]].
 
 The contextual header keeps file and terminal tabs in one leading strip with a shared More tabs
-menu instead of horizontal scrolling. Files, Changes and History use fixed trailing icon tabs;
+menu instead of horizontal scrolling. Files, Changes and History use trailing icon tabs;
 Terminal is a default-shell creation action. File and terminal labels use the small UI tier. The rail-colored header has one weak hairline against stage-colored
 content. Selected file/terminal tabs keep content-colored fill, accent ink, weak top/left/right edges
 and small top-only corners, with an open bottom joining the content. Fixed Files/Changes/History
 selections share that connected surface and boundary, with no additional underline, as specified in
 [[workspace-layout]]. Hover, transparent close buttons and keyboard focus keep their existing roles.
+The Changes count uses tabular digits next to its icon on the same centerline, inside the tab in
+either state. The visible count caps at `99+` and the tab title gives the exact total.
 Other segmented controls keep their own selection surfaces. Count capsules use
-`--accent-tint`/`--accent-deep`, smaller text on the label baseline and a distinct gap. When a
-complete label/count pair cannot fit, omit the count and keep the exact Changes total in its title.
+`--accent-tint`/`--accent-deep`, smaller text on the label baseline and a distinct gap.
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
@@ -410,9 +411,9 @@ hover. The row retains selection fill even when its select button is disabled. F
 use control-radius corners, a clear icon gutter beside the marker and a common text axis with their
 sessions. Folder, Workspace and Hidden keyboard outlines remain inset within clipping boundaries.
 
-Fine-pointer desktop project spacing is 12px above the 2px catalog gap (other layouts retain 16px),
-and 20px after pinned sessions or the last pinned folder; collapse preserves it. Hidden keeps its
-compact drawer spacing regardless of previous pinning, including an 8px section margin before a
+Folder groups use an 8px margin plus the 2px list gap in the catalog and Hidden. Pinning, expansion,
+and input mode keep the same spacing between folder groups. The titled Pinned sessions section
+uses a 20px margin before the first folder. In Hidden, the 8px margin also applies before the first
 folder following independent sessions.
 Runtime status stays on each session's existing row; sessions are not duplicated into separate
 status groups.
@@ -713,6 +714,7 @@ hairline border, medium radius, compact padding and entry motion.
 Action rows use the same small UI text, accent-tint interaction feedback and inset focus role.
 Each owner keeps its action/selection semantics, anchor, grouping and viewport constraints;
 searchable model lists and descriptive project groups keep their information hierarchy.
+An open dropdown follows its trigger while scrolling and closes once the trigger is fully clipped.
 Session actions size to their content within viewport bounds, with drag handles in a separate
 trailing column. [[workspace-layout]] owns compact disclosure and [[interface-preferences]] owns
 saved ordering.

@@ -281,7 +281,7 @@ export function ProjectGroup({
     : searchParentContext(group.cwd, searchQuery);
   return (
     <section
-      className={`nav__group ${pinned ? "nav__group--pinned-folder" : ""} ${hidden ? "nav__group--hidden-folder" : ""}`}
+      className={`nav__group${hidden ? " nav__group--hidden-folder" : ""}`}
       aria-labelledby={headingId}
     >
       <h2

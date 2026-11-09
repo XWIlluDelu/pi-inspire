@@ -48,12 +48,12 @@ for (const [name, width, height, theme] of [
         .click();
       await expect(
         initialSettings.getByLabel("Search providers"),
-      ).toBeVisible();
-      expect(
-        (await initialSettings
-          .locator(".models-auth__providers")
-          .boundingBox())!.height,
-      ).toBeLessThanOrEqual(180);
+      ).toBeFocused();
+      const providerList = initialSettings.locator(".models-auth__providers");
+      await expect(providerList).toBeInViewport({ ratio: 1 });
+      expect((await providerList.boundingBox())!.height).toBeLessThanOrEqual(
+        180,
+      );
 
       await initialSettings.getByLabel("Search providers").fill("copilot");
       await initialSettings

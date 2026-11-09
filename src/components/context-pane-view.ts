@@ -16,8 +16,7 @@ export type ContextPaneView = Pick<
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
   | "resourceTabs"
-  | "resourceAvailability"
-  | "resourceWorkspacePaths"
+  | "resourceStanding"
   | "workspaceQuery"
   | "workspaceLoadingDirs"
   | "workspaceSearchLoading"
@@ -45,8 +44,7 @@ export function selectContextPaneView(state: AppState): ContextPaneView {
     selectedResourceWorkspacePath: state.selectedResourceWorkspacePath,
     resourcePreview: state.resourcePreview,
     resourceTabs: state.resourceTabs,
-    resourceAvailability: state.resourceAvailability,
-    resourceWorkspacePaths: state.resourceWorkspacePaths,
+    resourceStanding: state.resourceStanding,
     workspaceQuery: state.workspaceQuery,
     workspaceLoadingDirs: state.workspaceLoadingDirs,
     workspaceSearchLoading: state.workspaceSearchLoading,

@@ -31,8 +31,7 @@ interface ResourceControllerState {
   selectedResourceWorkspacePath: string | null;
   resourcePreview: ResourcePreview | null;
   resourceTabs: ResourceFileTab[];
-  resourceAvailability: Record<string, ResourceProbeResult>;
-  resourceWorkspacePaths: Record<string, string>;
+  resourceStanding: Record<string, ResourceProbeResult>;
 }
 
 /** Resource-owned state only. AppStore retains cross-domain transactions; a
@@ -46,24 +45,7 @@ interface ResourceControllerPatch {
   selectedResourceWorkspacePath?: string | null;
   resourcePreview?: ResourcePreview | null;
   resourceTabs?: ResourceFileTab[];
-  resourceAvailability?: Record<string, ResourceProbeResult>;
-  resourceWorkspacePaths?: Record<string, string>;
-}
-
-function applyProbeResult(
-  result: ResourceProbeResult,
-  availability: Record<string, ResourceProbeResult>,
-  workspacePaths: Record<string, string>,
-): void {
-  if (result.availability === "available") {
-    delete availability[result.reference];
-    if (result.workspacePath)
-      workspacePaths[result.reference] = result.workspacePath;
-    else delete workspacePaths[result.reference];
-  } else {
-    availability[result.reference] = result;
-    delete workspacePaths[result.reference];
-  }
+  resourceStanding?: Record<string, ResourceProbeResult>;
 }
 
 interface ResourceControllerHost {
@@ -116,16 +98,8 @@ export class ResourceController {
     this.resourceProbeKey = null;
     this.resourceProbedReferences.clear();
     this.referenceGenerations.clear();
-    if (
-      clearStanding &&
-      (Object.keys(this.host.state().resourceAvailability).length > 0 ||
-        Object.keys(this.host.state().resourceWorkspacePaths).length > 0)
-    ) {
-      this.host.patch({
-        resourceAvailability: {},
-        resourceWorkspacePaths: {},
-      });
-    }
+    if (clearStanding && Object.keys(this.host.state().resourceStanding).length)
+      this.host.patch({ resourceStanding: {} });
   }
 
   /** Cancels resources without publishing an intermediate state. The caller
@@ -178,19 +152,23 @@ export class ResourceController {
     return this.referenceGenerations.get(reference) ?? 0;
   }
 
-  private advanceReferenceGeneration(reference: string): void {
+  private recordResolution(
+    result: ResourceProbeResult,
+    tabPatch?: ResourceControllerPatch,
+  ): void {
+    // A probe started before this resolve cannot overwrite its standing.
+    const reference = result.reference;
     this.referenceGenerations.set(
       reference,
       this.referenceGeneration(reference) + 1,
     );
-  }
-
-  private recordAvailability(result: ResourceProbeResult): void {
-    const state = this.host.state();
-    const resourceAvailability = { ...state.resourceAvailability };
-    const resourceWorkspacePaths = { ...state.resourceWorkspacePaths };
-    applyProbeResult(result, resourceAvailability, resourceWorkspacePaths);
-    this.host.patch({ resourceAvailability, resourceWorkspacePaths });
+    this.host.patch({
+      ...tabPatch,
+      resourceStanding: {
+        ...this.host.state().resourceStanding,
+        [reference]: result,
+      },
+    });
   }
 
   /** Load one bounded page from the reference projection for the currently
@@ -304,11 +282,7 @@ export class ResourceController {
             return;
           const expected = new Set(batch);
           const received = new Set<string>();
-          const current = this.host.state();
-          const resourceAvailability = { ...current.resourceAvailability };
-          const resourceWorkspacePaths = {
-            ...current.resourceWorkspacePaths,
-          };
+          const resourceStanding = { ...this.host.state().resourceStanding };
           for (const result of response.results) {
             if (
               !expected.has(result.reference) ||
@@ -317,11 +291,7 @@ export class ResourceController {
             )
               continue;
             received.add(result.reference);
-            applyProbeResult(
-              result,
-              resourceAvailability,
-              resourceWorkspacePaths,
-            );
+            resourceStanding[result.reference] = result;
           }
           for (const reference of batch) {
             if (!generationIsCurrent(reference)) continue;
@@ -329,15 +299,12 @@ export class ResourceController {
               this.resourceProbedReferences.add(reference);
             } else {
               retryNeeded = true;
-              if (!resourceAvailability[reference])
-                resourceAvailability[reference] =
+              if (!resourceStanding[reference])
+                resourceStanding[reference] =
                   unknownResourceAvailability(reference);
             }
           }
-          this.host.patch({
-            resourceAvailability,
-            resourceWorkspacePaths,
-          });
+          this.host.patch({ resourceStanding });
         } catch (error) {
           if (stale()) return;
           if (error instanceof ApiError && error.status === 401) {
@@ -346,20 +313,15 @@ export class ResourceController {
           }
           retryNeeded ||= isTransientFailure(error);
           // A failed observation cannot revoke the last confirmed file standing.
-          const resourceAvailability = {
-            ...this.host.state().resourceAvailability,
-          };
+          const resourceStanding = { ...this.host.state().resourceStanding };
           for (const reference of batch) {
-            if (
-              generationIsCurrent(reference) &&
-              !resourceAvailability[reference]
-            )
-              resourceAvailability[reference] = unknownResourceAvailability(
+            if (generationIsCurrent(reference) && !resourceStanding[reference])
+              resourceStanding[reference] = unknownResourceAvailability(
                 reference,
                 error,
               );
           }
-          this.host.patch({ resourceAvailability });
+          this.host.patch({ resourceStanding });
         }
       }
       if (retryNeeded)
@@ -672,19 +634,22 @@ export class ResourceController {
   /** Resolve a conversation reference through the authenticated host endpoint
    * and load its preview. Replaces any current preview and revokes its URL. */
   async openResource(
-    reference: string,
+    requestedReference: string,
     contextMode: "files" | "changes" = "files",
     knownWorkspacePath?: string,
+    sourceLine?: number,
   ): Promise<void> {
     const existing = this.host
       .state()
       .resourceTabs.find(
         (tab) =>
-          tab.reference === reference ||
+          tab.reference === requestedReference ||
           (knownWorkspacePath !== undefined &&
             tab.workspacePath === knownWorkspacePath),
       );
-    if (existing) reference = existing.reference;
+    const reference = existing?.reference ?? requestedReference;
+    let tabReference = reference;
+    const tabView = contextMode === "changes" ? "changes" : undefined;
     const api = this.host.api();
     const transportGeneration = this.host.transportGeneration();
     const {
@@ -715,14 +680,11 @@ export class ResourceController {
       selectedResourceReference: reference,
       selectedResourceWorkspacePath: knownWorkspacePath ?? null,
       resourceTabs: existing
-        ? this.host.state().resourceTabs.map((tab) =>
-            tab.reference === reference
-              ? {
-                  ...tab,
-                  view: contextMode === "changes" ? "changes" : undefined,
-                }
-              : tab,
-          )
+        ? this.host
+            .state()
+            .resourceTabs.map((tab) =>
+              tab.reference === reference ? { ...tab, view: tabView } : tab,
+            )
         : [
             ...this.host.state().resourceTabs,
             {
@@ -730,9 +692,7 @@ export class ResourceController {
               ...(knownWorkspacePath
                 ? { workspacePath: knownWorkspacePath }
                 : {}),
-              ...(contextMode === "changes"
-                ? { view: "changes" as const }
-                : {}),
+              ...(tabView ? { view: tabView } : {}),
             },
           ],
       resourcePreview: retained
@@ -746,7 +706,7 @@ export class ResourceController {
         this.resourceRequest !== request ||
         request.signal.aborted ||
         !this.ownsTransport(api, transportGeneration) ||
-        current.selectedResourceReference !== reference ||
+        current.selectedResourceReference !== tabReference ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId
       );
@@ -771,35 +731,57 @@ export class ResourceController {
       if (descriptor.sessionId !== sessionId || descriptor.viewId !== viewId) {
         throw new Error("The Host returned a resource for another selection");
       }
-      if (descriptor.workspacePath) {
-        this.host.patch({
-          resourceTabs: this.host
-            .state()
-            .resourceTabs.map((tab) =>
-              tab.reference === reference
-                ? { ...tab, workspacePath: descriptor.workspacePath }
+      descriptorResolved = true;
+      const workspacePath = descriptor.workspacePath;
+      let tabPatch: ResourceControllerPatch | undefined;
+      if (workspacePath) {
+        const { resourceTabs } = this.host.state();
+        // A direct conversation link can learn its canonical path only after
+        // the loading tab was opened. Reuse the earlier tab once confirmed.
+        const reusable = existing?.workspacePath
+          ? undefined
+          : resourceTabs.find(
+              (tab) =>
+                tab.reference !== reference &&
+                tab.workspacePath === workspacePath,
+            );
+        if (reusable) tabReference = reusable.reference;
+        tabPatch = {
+          selectedResourceReference: tabReference,
+          selectedResourceWorkspacePath: workspacePath,
+          resourceTabs: resourceTabs
+            .filter((tab) => !reusable || tab.reference !== reference)
+            .map((tab) =>
+              tab.reference === tabReference
+                ? { ...tab, workspacePath, view: tabView }
                 : tab,
             ),
-        });
+          ...(reusable
+            ? {
+                resourcePreview: { status: "loading", reference: tabReference },
+              }
+            : {}),
+        };
       }
-      // Resolution confirms or corrects preflight standing. Advance first so
-      // an older probe cannot overwrite this result when it arrives later.
-      descriptorResolved = true;
-      this.advanceReferenceGeneration(reference);
-      this.recordAvailability({
-        reference,
-        availability: "available",
-        ...(descriptor.workspacePath
-          ? { workspacePath: descriptor.workspacePath }
-          : {}),
-      });
-      if (descriptor.workspacePath && ownsWorkspaceSelection())
+      this.recordResolution(
+        {
+          reference,
+          availability: "available",
+          ...(workspacePath ? { workspacePath } : {}),
+        },
+        tabPatch,
+      );
+      if (workspacePath && ownsWorkspaceSelection())
         this.host.selectWorkspacePath(
-          descriptor.workspacePath,
-          descriptor.workspacePath !== knownWorkspacePath,
+          workspacePath,
+          workspacePath !== knownWorkspacePath,
         );
       if (descriptor.kind === "binary") {
-        this.publishPreview({ status: "ready", reference, descriptor });
+        this.publishPreview({
+          status: "ready",
+          reference: tabReference,
+          descriptor,
+        });
         return;
       }
       const textLike =
@@ -811,7 +793,7 @@ export class ResourceController {
       if (!textLike && !svg && descriptor.size > MAX_MEDIA_PREVIEW_BYTES) {
         this.publishPreview({
           status: "ready",
-          reference,
+          reference: tabReference,
           descriptor,
           contentUnavailable: "too-large",
         });
@@ -840,6 +822,14 @@ export class ResourceController {
         content.totalSize === descriptor.size
           ? descriptor
           : { ...descriptor, size: content.totalSize };
+      const ready = {
+        status: "ready" as const,
+        reference: tabReference,
+        descriptor: currentDescriptor,
+        ...(sourceLine !== undefined
+          ? { sourceJump: { line: sourceLine } }
+          : {}),
+      };
       if (textLike) {
         const text = decodeTextPreview(
           new Uint8Array(await blob.arrayBuffer()),
@@ -855,9 +845,7 @@ export class ResourceController {
               )
             : undefined;
         this.publishPreview({
-          status: "ready",
-          reference,
-          descriptor: currentDescriptor,
+          ...ready,
           text,
           // A 206 also answers full-coverage ranges; judge actual coverage.
           truncated: blob.size < content.totalSize,
@@ -879,9 +867,7 @@ export class ResourceController {
         blob.size > MAX_MEDIA_PREVIEW_BYTES
       ) {
         this.publishPreview({
-          status: "ready",
-          reference,
-          descriptor: currentDescriptor,
+          ...ready,
           ...(svgText !== undefined ? { text: svgText, truncated: true } : {}),
           contentUnavailable: "too-large",
         });
@@ -890,9 +876,7 @@ export class ResourceController {
       const objectUrl =
         descriptor.kind === "pdf" ? undefined : URL.createObjectURL(blob);
       this.publishPreview({
-        status: "ready",
-        reference,
-        descriptor: currentDescriptor,
+        ...ready,
         ...(descriptor.kind === "pdf" ? { pdfBlob: blob } : {}),
         ...(svgText !== undefined
           ? {
@@ -915,10 +899,7 @@ export class ResourceController {
       const availability = descriptorResolved
         ? null
         : classifiedResourceFailure(reference, error);
-      if (availability) {
-        this.advanceReferenceGeneration(reference);
-        this.recordAvailability(availability);
-      }
+      if (availability) this.recordResolution(availability);
       if (retained && isTransientFailure(error)) {
         this.host.patch({
           resourcePreview: {
@@ -937,7 +918,7 @@ export class ResourceController {
       ) {
         this.publishPreview({
           status: "ambiguous",
-          reference,
+          reference: tabReference,
           message: error.message,
           matches: error.matches,
         });
@@ -945,7 +926,7 @@ export class ResourceController {
       }
       this.publishPreview({
         status: "error",
-        reference,
+        reference: tabReference,
         message: error instanceof Error ? error.message : "Preview failed",
       });
     } finally {

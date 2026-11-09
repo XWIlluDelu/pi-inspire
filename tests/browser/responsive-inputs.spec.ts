@@ -13,6 +13,14 @@ test.use({
   contextOptions: { reducedMotion: "reduce" },
 });
 
+async function expectInputType(input: Locator, fontSize: string) {
+  await expect(input).toBeInViewport();
+  await expect(input).toHaveCSS("font-size", fontSize);
+  await input.focus();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveCSS("font-size", fontSize);
+}
+
 async function expectTypeAcrossWidths(
   page: Page,
   input: Locator,
@@ -20,61 +28,53 @@ async function expectTypeAcrossWidths(
 ) {
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
-    await expect(input).toBeInViewport();
-    await expect(input).toHaveCSS("font-size", fontSize);
-    await input.focus();
-    await expect(input).toBeFocused();
-    await expect(input).toHaveCSS("font-size", fontSize);
+    await expectInputType(input, fontSize);
   }
   await page.setViewportSize({ width: 1280, height: 900 });
 }
 
-test("@cross-browser path and search inputs retain their owner typography on narrow screens", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await expectTypeAcrossWidths(
+for (const width of [1280, 390]) {
+  test(`@cross-browser path and search inputs retain their owner typography at ${width}px`, async ({
     page,
-    page.getByRole("textbox", { name: "Project directory", exact: true }),
-    "12.5px",
-  );
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await pairedPage(page);
+    await expectInputType(
+      page.getByRole("textbox", { name: "Project directory", exact: true }),
+      "12.5px",
+    );
 
-  const palette = await openCommandPalette(page);
-  await expectTypeAcrossWidths(
-    page,
-    palette.getByLabel("Filter commands"),
-    "14px",
-  );
-  await page.keyboard.press("Escape");
+    const palette = await openCommandPalette(page);
+    await expectInputType(palette.getByLabel("Filter commands"), "14px");
+    await page.keyboard.press("Escape");
 
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  const conversationSearch = await openConversationSearch(page);
-  await expectTypeAcrossWidths(page, conversationSearch, "12.5px");
-  await page.keyboard.press("Escape");
+    await openFixtureSession(page, /Review extension event lifecycle/);
+    const conversationSearch = await openConversationSearch(page);
+    await expectInputType(conversationSearch, "12.5px");
+    await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "Model", exact: true }).click();
-  await expectTypeAcrossWidths(
-    page,
-    page.locator(".model-picker__menu").getByRole("combobox", {
-      name: "Search models",
-      exact: true,
-    }),
-    "12.5px",
-  );
-  await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Model", exact: true }).click();
+    await expectInputType(
+      page.locator(".model-picker__menu").getByRole("combobox", {
+        name: "Search models",
+        exact: true,
+      }),
+      "12.5px",
+    );
+    await page.keyboard.press("Escape");
 
-  await page
-    .getByRole("button", { name: "Add project files", exact: true })
-    .click();
-  await expectTypeAcrossWidths(
-    page,
-    page
-      .getByRole("dialog", { name: "Add project files", exact: true })
-      .getByRole("combobox", { name: "Search project files", exact: true }),
-    "12.5px",
-  );
-  await page.keyboard.press("Escape");
-});
+    await page
+      .getByRole("button", { name: "Add project files", exact: true })
+      .click();
+    await expectInputType(
+      page
+        .getByRole("dialog", { name: "Add project files", exact: true })
+        .getByRole("combobox", { name: "Search project files", exact: true }),
+      "12.5px",
+    );
+    await page.keyboard.press("Escape");
+  });
+}
 
 test("@cross-browser message input honors every content size across responsive layouts", async ({
   page,

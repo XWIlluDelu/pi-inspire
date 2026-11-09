@@ -48,6 +48,7 @@ import type {
 } from "../shared/model-settings";
 import type { TaskNotificationGrouping } from "../shared/notifications";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge";
+import { resourceReferenceLine } from "../shared/resource-references";
 import type { StatusControlDeclaration } from "../shared/tool-presentation-config";
 import {
   type Api,
@@ -97,7 +98,7 @@ import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import { controlState } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
-import type { ResourceFileTab } from "./resource-preview";
+import type { FileSourceJump, ResourceFileTab } from "./resource-preview";
 import { isExternalSession } from "./session-controls";
 import {
   sessionDraft,
@@ -3713,8 +3714,6 @@ export class AppStore {
 
   refreshGitStatus = (): Promise<void> => this.git.refreshStatus();
 
-  refreshGitInspection = (): Promise<void> => this.git.refreshStatus();
-
   openGitDiff = (pathId: string): Promise<void> => this.git.openChange(pathId);
 
   cancelResourceProbes = (clearStanding = false): void => {
@@ -3759,6 +3758,14 @@ export class AppStore {
       signal,
     );
 
+  consumeFileSourceJump = (jump: FileSourceJump): boolean => {
+    const preview = this.state.resourcePreview;
+    if (preview?.status !== "ready" || preview.sourceJump !== jump)
+      return false;
+    this.set({ resourcePreview: { ...preview, sourceJump: undefined } });
+    return true;
+  };
+
   openResource = (
     reference: string,
     contextMode: "files" | "changes" = "files",
@@ -3767,7 +3774,10 @@ export class AppStore {
     this.resources.openResource(
       reference,
       contextMode,
-      workspacePath ?? this.state.resourceWorkspacePaths[reference],
+      workspacePath ?? this.state.resourceStanding[reference]?.workspacePath,
+      contextMode === "files" && workspacePath !== reference
+        ? (resourceReferenceLine(reference) ?? undefined)
+        : undefined,
     );
 }
 

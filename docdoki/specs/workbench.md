@@ -167,9 +167,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   separate column beside both text lines. Pin and Hide stay directly accessible, not behind an
   overflow menu. The exact timestamp and message count stay in tooltips.
 
-  Fine-pointer desktop project groups have a 14px surface gap (12px margin plus the list's 2px
-  gap); Pinned/category boundaries keep their distinct spacing. The title/age line boxes stay at
-  18/16px with a 1px gap; density changes do not squeeze individual two-line rows. Folder headers
+  Folder groups use the same spacing in the catalog and Hidden, including the transition from a
+  pinned folder to an ordinary folder. The titled Pinned sessions section has its own spacing
+  under [[design-system]]. The title/age line boxes stay at 18/16px with a 1px gap; density changes
+  do not squeeze individual two-line rows. Folder headers
   keep their label tier, persistent pin state and trailing session count. Desktop New/Search,
   folder headers and session-row surfaces share the same outer inset; their internal icon/text axes
   stay stable.
@@ -179,8 +180,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   sessions stay at that root text axis; grouped sessions keep the compact desktop layout rather
   than adding another 20px indent. Hidden lists independent sessions before folders and their
   children, preserving each category's existing order, and keyboard search navigation follows that
-  visual order. A folder following independent sessions uses the existing 8px folder-section margin
-  rather than another indent.
+  visual order. A folder following independent sessions keeps the same root inset and spacing
+  used between folders.
 
 - Project groups expose native expand/collapse controls across the header's main button. A single
   open/closed folder icon conveys the state with no separate disclosure arrow, leaving more width

@@ -207,7 +207,7 @@ describe("Git inspection ownership and freshness", () => {
     expect(store.getState().gitStatusError).toBe("Git timed out");
   });
 
-  it("updates the selected source through status and explicit inspection refreshes", async () => {
+  it("refreshes the selected comparison along with Git status", async () => {
     let diffCalls = 0;
     installFetch((url, init) => {
       if (url.startsWith("/api/git/status")) return { body: cleanStatus };
@@ -231,13 +231,6 @@ describe("Git inspection ownership and freshness", () => {
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { lines: [{ text: "+version-2" }] },
-    });
-
-    await store.refreshGitInspection();
-    expect(diffCalls).toBe(3);
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { lines: [{ text: "+version-3" }] },
     });
   });
 

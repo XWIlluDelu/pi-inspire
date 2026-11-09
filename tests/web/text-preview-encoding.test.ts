@@ -104,8 +104,7 @@ describe("authorized Unicode resource previews", () => {
         selectedResourceWorkspacePath: null,
         resourcePreview: null,
         resourceTabs: [],
-        resourceAvailability: {},
-        resourceWorkspacePaths: {},
+        resourceStanding: {},
       };
       const createUrl = vi
         .spyOn(URL, "createObjectURL")

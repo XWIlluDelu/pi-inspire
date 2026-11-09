@@ -196,15 +196,16 @@ describe("resource previews", () => {
     expect(batches.map((batch) => batch.length)).toEqual([16, 2, 1]);
     expect(store.getState().selectedResourceReference).toBeNull();
     expect(store.getState().resourcePreview).toBeNull();
-    expect(store.getState().resourceAvailability).toMatchObject({
+    expect(store.getState().resourceStanding).toMatchObject({
+      "file-0.md": { availability: "available" },
       "missing/file.md": { availability: "missing" },
       "outside/file.md": { availability: "unavailable" },
     });
-    expect(store.getState().resourceAvailability["file-0.md"]).toBeUndefined();
   });
 
-  it("recovers unknown file standing automatically after a probe transport failure", async () => {
-    let fail = true;
+  it("keeps confirmed file standing while retrying a failed probe after a transcript append", async () => {
+    let revision = 1;
+    let fail = false;
     installFetch((url, init) => {
       if (url.startsWith("/api/resources/probe")) {
         if (fail) return { status: 503, body: { error: "probe unavailable" } };
@@ -213,26 +214,43 @@ describe("resource previews", () => {
           body: {
             sessionId: "s1",
             viewId: "view-s1",
-            revision: 1,
+            revision,
             results: body.references.map((reference) => ({
               reference,
               availability: "available",
+              workspacePath: reference,
             })),
           },
         };
       }
       return resourceRoutes()(url, init);
     });
-    const { store } = await initStore();
+    const { store, socket } = await initStore();
+    await store.probeResources(["known.md"]);
     vi.useFakeTimers();
 
-    await store.probeResources(["retry.md"]);
-    expect(store.getState().resourceAvailability["retry.md"]).toMatchObject({
-      availability: "unknown",
+    revision = 2;
+    fail = true;
+    socket.emit({
+      type: "snapshot",
+      data: activeSnapshot({
+        transcriptPage: {
+          ...activeSnapshot().active!.transcriptPage!,
+          revision,
+        },
+      }),
+    });
+    await store.probeResources(["known.md", "retry.md"]);
+    expect(store.getState().resourceStanding).toMatchObject({
+      "known.md": { availability: "available", workspacePath: "known.md" },
+      "retry.md": { availability: "unknown" },
     });
     fail = false;
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(store.getState().resourceAvailability["retry.md"]).toBeUndefined();
+    expect(store.getState().resourceStanding["retry.md"]).toMatchObject({
+      availability: "available",
+      workspacePath: "retry.md",
+    });
     vi.useRealTimers();
   });
 
@@ -269,10 +287,10 @@ describe("resource previews", () => {
 
     await store.probeResources(references);
     expect(requests.map((batch) => batch.length)).toEqual([16, 16]);
-    expect(store.getState().resourceAvailability["file-0.md"]).toMatchObject({
+    expect(store.getState().resourceStanding["file-0.md"]).toMatchObject({
       availability: "missing",
     });
-    expect(store.getState().resourceAvailability["file-16.md"]).toMatchObject({
+    expect(store.getState().resourceStanding["file-16.md"]).toMatchObject({
       availability: "unknown",
     });
 
@@ -280,10 +298,12 @@ describe("resource previews", () => {
     await store.probeResources(references);
     expect(requests.map((batch) => batch.length)).toEqual([16, 16, 16]);
     expect(requests[2]).toEqual(references.slice(16));
-    expect(store.getState().resourceAvailability["file-0.md"]).toMatchObject({
+    expect(store.getState().resourceStanding["file-0.md"]).toMatchObject({
       availability: "missing",
     });
-    expect(store.getState().resourceAvailability["file-16.md"]).toBeUndefined();
+    expect(store.getState().resourceStanding["file-16.md"]).toMatchObject({
+      availability: "available",
+    });
   });
 
   it("explicitly invalidates and re-probes same-revision filesystem standing", async () => {
@@ -310,7 +330,7 @@ describe("resource previews", () => {
     const { store } = await initStore();
 
     await store.probeResources(["changing.md"]);
-    expect(store.getState().resourceAvailability["changing.md"]).toMatchObject({
+    expect(store.getState().resourceStanding["changing.md"]).toMatchObject({
       availability: "missing",
     });
     missing = false;
@@ -318,14 +338,12 @@ describe("resource previews", () => {
     expect(probeRequests).toBe(1);
 
     store.cancelResourceProbes(true);
-    expect(
-      store.getState().resourceAvailability["changing.md"],
-    ).toBeUndefined();
+    expect(store.getState().resourceStanding["changing.md"]).toBeUndefined();
     await store.probeResources(["changing.md"]);
     expect(probeRequests).toBe(2);
-    expect(
-      store.getState().resourceAvailability["changing.md"],
-    ).toBeUndefined();
+    expect(store.getState().resourceStanding["changing.md"]).toMatchObject({
+      availability: "available",
+    });
   });
 
   it("discards probe standing from an obsolete transcript revision", async () => {
@@ -362,14 +380,14 @@ describe("resource previews", () => {
     release();
     await stale;
     expect(
-      store.getState().resourceAvailability["missing/file.md"],
+      store.getState().resourceStanding["missing/file.md"],
     ).toBeUndefined();
 
     responseRevision = 2;
     await store.probeResources(["missing/file.md"]);
-    expect(
-      store.getState().resourceAvailability["missing/file.md"],
-    ).toMatchObject({ availability: "missing" });
+    expect(store.getState().resourceStanding["missing/file.md"]).toMatchObject({
+      availability: "missing",
+    });
   });
 
   it("ignores a superseded probe 401 after a fresh pairing succeeds", async () => {
@@ -430,7 +448,7 @@ describe("resource previews", () => {
     expect(freshSocket.url).toBe(
       `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
     );
-    expect(store.getState().resourceAvailability).toEqual({});
+    expect(store.getState().resourceStanding).toEqual({});
   });
 
   it("loads a complete notebook within the bounded document-preview range", async () => {
@@ -922,9 +940,7 @@ describe("resource previews", () => {
       message: "The referenced file was not found",
     });
     // The list stops presenting an unverified mention as an ordinary file…
-    expect(
-      store.getState().resourceAvailability["missing/file.md"],
-    ).toMatchObject({
+    expect(store.getState().resourceStanding["missing/file.md"]).toMatchObject({
       reference: "missing/file.md",
       availability: "missing",
     });
@@ -933,9 +949,9 @@ describe("resource previews", () => {
     // standing: the file exists, the bytes did not arrive.
     await store.openResource("notes/result.md");
     expect(store.getState().resourcePreview).toMatchObject({ status: "error" });
-    expect(
-      store.getState().resourceAvailability["missing/file.md"],
-    ).toMatchObject({ availability: "missing" });
+    expect(store.getState().resourceStanding["notes/result.md"]).toMatchObject({
+      availability: "available",
+    });
 
     // A reference that resolves after all clears its mark.
     installFetch((url, init) => {
@@ -957,7 +973,9 @@ describe("resource previews", () => {
     });
     stubContent("# Notes body");
     await store.openResource("missing/file.md");
-    expect(store.getState().resourceAvailability).toEqual({});
+    expect(store.getState().resourceStanding["missing/file.md"]).toMatchObject({
+      availability: "available",
+    });
   });
 
   it("offers the host's candidates instead of guessing an ambiguous bare name", async () => {
@@ -983,7 +1001,7 @@ describe("resource previews", () => {
     });
     // An unanswered choice is not missing, but the row can advertise that it
     // needs a location choice before previewing.
-    expect(store.getState().resourceAvailability["notes.md"]).toMatchObject({
+    expect(store.getState().resourceStanding["notes.md"]).toMatchObject({
       availability: "ambiguous",
       matches: ["a/notes.md", "b/notes.md"],
     });
@@ -1066,8 +1084,7 @@ describe("resource previews", () => {
       fileBrowserView: "preview",
       selectedResourceReference: "notes/result.md",
       resourcePreview: { status: "loading" },
-      resourceAvailability: {},
-      resourceWorkspacePaths: {},
+      resourceStanding: {},
     });
     await waitFor(() =>
       expect(store.getState().resourcePreview?.status).toBe("ready"),
