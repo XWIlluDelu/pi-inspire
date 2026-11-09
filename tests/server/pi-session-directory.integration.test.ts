@@ -10,7 +10,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { resolvePiSessionDirectory } from "../../server/pi-session-directory.js";
+import { createPiSessionDirectoryResolver } from "../../server/pi-session-directory.js";
 import { SessionCatalog } from "../../server/session-catalog.js";
 
 const roots: string[] = [];
@@ -133,7 +133,7 @@ describe("real Pi CLI session-directory compatibility", () => {
       const expected =
         selection === "cli"
           ? cliDirectory
-          : await resolvePiSessionDirectory(cwd);
+          : await createPiSessionDirectoryResolver()(cwd);
       if (expected) expect(dirname(file)).toBe(expected);
       else expect(dirname(dirname(file))).toBe(join(agent, "sessions"));
       const persisted = await readFile(file, "utf8");

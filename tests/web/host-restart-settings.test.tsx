@@ -40,7 +40,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("Settings restart controls", () => {
-  it("keeps initial availability quiet without implying either restart has begun", () => {
+  it("shows two restart choices and keeps their initial availability quiet", () => {
     const ready = fixture.state.status;
     fixture.state.status = null;
     const { container, rerender } = render(<HostRestartSettings />);
@@ -48,6 +48,7 @@ describe("Settings restart controls", () => {
     expect(restart).toBeDisabled();
     expect(restart).not.toHaveAttribute("aria-busy", "true");
     const restartAll = screen.getByRole("button", { name: "Restart all" });
+    expect(screen.getAllByRole("button")).toEqual([restart, restartAll]);
     expect(restartAll).toBeDisabled();
     expect(restartAll).not.toHaveAttribute("aria-busy", "true");
     expect(container.querySelector(".pi-loading")).toBeNull();
@@ -69,7 +70,7 @@ describe("Settings restart controls", () => {
     expect(fixture.start).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Restart all" }));
     expect(screen.getByRole("alertdialog").textContent).toContain(
-      "end all project terminal processes",
+      "close project terminals in the installed service",
     );
     fireEvent.click(
       screen.getAllByRole("button", { name: "Restart all" }).at(-1)!,
@@ -119,7 +120,7 @@ describe("Settings restart controls", () => {
       expect(dialog.textContent).toContain("discard Pending messages");
       expect(dialog.textContent).toContain(
         scope === "all"
-          ? "end all project terminal processes"
+          ? "close project terminals in the installed service"
           : "Project terminals keep running",
       );
       fireEvent.click(dialog.querySelector("button")!);

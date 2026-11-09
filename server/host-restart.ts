@@ -5,7 +5,7 @@ import type {
   HostRestartStatus,
 } from "../shared/host-restart.js";
 import { requestError } from "./request-error.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { RestartLeaseOwner, RuntimeLike } from "./runtime.js";
 
 export interface HostRestartBackend {
   inspect(): Promise<{ host: boolean; all: boolean }>;
@@ -30,7 +30,8 @@ export class HostRestartController {
   private availability: ReturnType<HostRestartBackend["inspect"]> | null = null;
 
   constructor(
-    private readonly runtime: RuntimeLike,
+    private readonly runtime: RestartLeaseOwner &
+      Pick<RuntimeLike, "refreshAttachedPi">,
     private readonly backend: HostRestartBackend,
   ) {}
 
@@ -103,12 +104,12 @@ export class HostRestartController {
       const refreshPi = operation.scope !== "host-only";
       // Host only keeps every Pi process and its running work: Inspire's
       // workers are detached instead of stopped when this Host closes.
-      const reservation = this.runtime.reserveMaintenanceRestart?.(
+      const reservation = this.runtime.reserveMaintenanceRestart(
         operation.interruptWork === true,
         refreshPi,
         !refreshPi,
       );
-      if (reservation?.kind === "busy") {
+      if (reservation.kind === "busy") {
         operation.busyReason = reservation.reason;
         throw new Error(
           reservation.reason === "restart-pending"
@@ -116,21 +117,19 @@ export class HostRestartController {
             : "Finish Pi work and pending operations before restarting, or choose Stop work and restart.",
         );
       }
-      if (!reservation || reservation.kind !== "ready")
-        throw new Error("Restart admission is unavailable.");
       leaseId = reservation.leaseId;
       // Ordinary restarts apply current settings to every Pi Inspire is
       // working with: its own workers restart with the Host, and taken-over
       // Pi processes reload in place.
       if (refreshPi)
-        await this.runtime.refreshAttachedPi?.(
-          operation.interruptWork === true,
-        );
+        await this.runtime.refreshAttachedPi(operation.interruptWork === true);
       const result = await this.backend.request(
         operation.scope === "all",
         () => {
-          const committed = this.runtime.commitMaintenanceRestart?.(leaseId!);
-          if (committed?.kind !== "committed") return false;
+          const committed = this.runtime.commitMaintenanceRestart(
+            reservation.leaseId,
+          );
+          if (committed.kind !== "committed") return false;
           mayHaveIssued = true;
           // Publish domain state before submission can disconnect this observer.
           operation.phase = "submitted";
@@ -147,8 +146,8 @@ export class HostRestartController {
     } catch (error) {
       if (!mayHaveIssued && leaseId) {
         try {
-          const released = this.runtime.releaseMaintenanceRestart?.(leaseId);
-          if (released?.kind !== "released") mayHaveIssued = true;
+          const released = this.runtime.releaseMaintenanceRestart(leaseId);
+          if (released.kind !== "released") mayHaveIssued = true;
         } catch {
           mayHaveIssued = true;
         }

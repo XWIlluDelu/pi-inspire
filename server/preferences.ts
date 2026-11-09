@@ -254,14 +254,18 @@ export class PreferencesStore {
         );
         const source = { ...current.source, ...patch };
         const { preferences } = projectPreferences(source);
-        // Curation can introduce discovery roots, never remove them. Save both
-        // sides before replacing legacy preferences, including deletion cleanup.
-        await this.projectDirectories.remember([
-          ...current.preferences.pinnedProjectCwds,
-          ...current.preferences.hiddenProjectCwds,
-          ...preferences.pinnedProjectCwds,
-          ...preferences.hiddenProjectCwds,
-        ]);
+        if (
+          patch.pinnedProjectCwds !== undefined ||
+          patch.hiddenProjectCwds !== undefined
+        ) {
+          // Save both sides before replacing legacy folder curation.
+          await this.projectDirectories.remember([
+            ...current.preferences.pinnedProjectCwds,
+            ...current.preferences.hiddenProjectCwds,
+            ...preferences.pinnedProjectCwds,
+            ...preferences.hiddenProjectCwds,
+          ]);
+        }
         await this.persist(source, assertOwned);
         return preferences;
       }),
@@ -300,15 +304,19 @@ export class PreferencesStore {
       hiddenSessionIds: current.hiddenSessionIds.filter(
         (id) => !clearedHidden.has(id),
       ),
-      pinnedProjectCwds: current.pinnedProjectCwds.filter(
-        (cwd) => !clearedProjects.has(cwd),
-      ),
-      hiddenProjectCwds: current.hiddenProjectCwds.filter(
-        (cwd) => !clearedProjects.has(cwd),
-      ),
-      navCollapsedGroups: current.navCollapsedGroups.filter(
-        (cwd) => !clearedProjects.has(cwd),
-      ),
+      ...(clearedProjects.size > 0
+        ? {
+            pinnedProjectCwds: current.pinnedProjectCwds.filter(
+              (cwd) => !clearedProjects.has(cwd),
+            ),
+            hiddenProjectCwds: current.hiddenProjectCwds.filter(
+              (cwd) => !clearedProjects.has(cwd),
+            ),
+            navCollapsedGroups: current.navCollapsedGroups.filter(
+              (cwd) => !clearedProjects.has(cwd),
+            ),
+          }
+        : {}),
     }));
   }
 

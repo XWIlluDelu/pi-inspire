@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolvePiSessionDirectory } from "../../server/pi-session-directory.js";
+import { createPiSessionDirectoryResolver } from "../../server/pi-session-directory.js";
 import { SettingsManager } from "../../server/pi-runtime.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import {
@@ -16,6 +16,9 @@ import { SessionMetadataIndex } from "../../server/session-metadata.js";
 let root: string;
 let cwd: string;
 let agent: string;
+
+const resolveFreshDirectory = (cwd: string) =>
+  createPiSessionDirectoryResolver()(cwd);
 
 async function settings(directory: string, value: object) {
   await mkdir(directory, { recursive: true });
@@ -56,13 +59,13 @@ describe("Pi session-directory selection", () => {
     "falls through an absent/empty env (%j) to project then global settings",
     async (environment) => {
       vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", environment);
-      expect(await resolvePiSessionDirectory(cwd)).toBeUndefined();
+      expect(await resolveFreshDirectory(cwd)).toBeUndefined();
       await settings(agent, { sessionDir: "global" });
-      expect(await resolvePiSessionDirectory(cwd)).toBe(join(cwd, "global"));
+      expect(await resolveFreshDirectory(cwd)).toBe(join(cwd, "global"));
       await settings(join(cwd, ".pi"), { sessionDir: "local" });
-      expect(await resolvePiSessionDirectory(cwd)).toBe(join(cwd, "local"));
+      expect(await resolveFreshDirectory(cwd)).toBe(join(cwd, "local"));
       await settings(join(cwd, ".pi"), { sessionDir: "" });
-      expect(await resolvePiSessionDirectory(cwd)).toBeUndefined();
+      expect(await resolveFreshDirectory(cwd)).toBeUndefined();
     },
   );
 
@@ -75,7 +78,7 @@ describe("Pi session-directory selection", () => {
       const release = await lockfile.lock(path, { realpath: false });
       let released = false;
       let completed = false;
-      const pending = resolvePiSessionDirectory(cwd).finally(() => {
+      const pending = resolveFreshDirectory(cwd).finally(() => {
         completed = true;
       });
       try {
@@ -88,9 +91,7 @@ describe("Pi session-directory selection", () => {
         released = true;
         await expect(pending).resolves.toBe(join(cwd, "after"));
         await settings(directory, { sessionDir: "next-scan" });
-        expect(await resolvePiSessionDirectory(cwd)).toBe(
-          join(cwd, "next-scan"),
-        );
+        expect(await resolveFreshDirectory(cwd)).toBe(join(cwd, "next-scan"));
       } finally {
         if (!released) await release();
         await pending.catch(() => undefined);
@@ -102,12 +103,9 @@ describe("Pi session-directory selection", () => {
     await settings(agent, { sessionDir: "global" });
     await settings(join(cwd, ".pi"), { sessionDir: "local" });
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", " env sessions ");
-    expect(await resolvePiSessionDirectory(cwd)).toBe(
-      join(cwd, " env sessions "),
-    );
-    expect(await resolvePiSessionDirectory(root)).toBe(
-      join(root, " env sessions "),
-    );
+    const resolveDirectory = createPiSessionDirectoryResolver();
+    expect(await resolveDirectory(cwd)).toBe(join(cwd, " env sessions "));
+    expect(await resolveDirectory(root)).toBe(join(root, " env sessions "));
   });
 
   it("uses Pi normalization for absolute paths, tilde and file URLs", async () => {
@@ -118,17 +116,30 @@ describe("Pi session-directory selection", () => {
       pathToFileURL(directory).href,
     ]) {
       vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", value);
-      expect(await resolvePiSessionDirectory(cwd)).toBe(directory);
+      expect(await resolveFreshDirectory(cwd)).toBe(directory);
       vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", undefined);
       await settings(agent, { sessionDir: value });
-      expect(await resolvePiSessionDirectory(cwd)).toBe(directory);
+      expect(await resolveFreshDirectory(cwd)).toBe(directory);
     }
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "~");
-    expect(await resolvePiSessionDirectory(cwd)).toBe(homedir());
+    expect(await resolveFreshDirectory(cwd)).toBe(homedir());
     vi.stubEnv("PI_CODING_AGENT_SESSION_DIR", "~someone/sessions");
-    expect(await resolvePiSessionDirectory(cwd)).toBe(
+    expect(await resolveFreshDirectory(cwd)).toBe(
       join(cwd, "~someone/sessions"),
     );
+  });
+
+  it("uses one global settings observation per scan and preserves project overrides", async () => {
+    const local = join(root, "local");
+    const other = join(root, "other");
+    await settings(join(local, ".pi"), { sessionDir: "project" });
+    await settings(agent, { sessionDir: "before" });
+    const resolveDirectory = createPiSessionDirectoryResolver();
+    expect(await resolveDirectory(cwd)).toBe(join(cwd, "before"));
+    await settings(agent, { sessionDir: "after" });
+    expect(await resolveDirectory(local)).toBe(join(local, "project"));
+    expect(await resolveDirectory(other)).toBe(join(other, "before"));
+    expect(await resolveFreshDirectory(other)).toBe(join(other, "after"));
   });
 });
 

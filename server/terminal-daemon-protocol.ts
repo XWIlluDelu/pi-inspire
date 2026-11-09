@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { userInfo } from "node:os";
 import { join, posix, win32 } from "node:path";
-import type { TerminalOperationIdentity } from "../shared/terminal-contracts.js";
+import type {
+  TerminalMutationMethod,
+  TerminalOperationIdentity,
+} from "../shared/terminal-contracts.js";
 import { installationKey } from "./installation-key.js";
 import {
   inspireRuntimeDirectory,
@@ -11,29 +14,26 @@ import {
 export const TERMINAL_DAEMON_PROTOCOL_VERSION = 3;
 export const TERMINAL_DAEMON_READY_TYPE = "terminal_daemon_ready";
 
-export type TerminalDaemonRpcMethod =
+type TerminalDaemonQuery =
   | "ping"
-  | "getDaemonInfo"
-  | "shutdownDaemon"
   | "getCatalog"
   | "getGlobalCatalog"
-  | "create"
-  | "rename"
-  | "reorder"
-  | "restart"
-  | "remove"
-  | "getSettings"
-  | "updateSettings"
-  | "clearHistory";
+  | "getSettings";
 
-export interface TerminalDaemonRpcRequest {
+export type TerminalDaemonRpcMethod =
+  | TerminalDaemonQuery
+  | TerminalMutationMethod
+  | TerminalDaemonLifecycleRequest["method"];
+
+export type TerminalDaemonRpcRequest = {
   protocolVersion: number;
   mode: "rpc";
   requestId: string;
-  method: TerminalDaemonRpcMethod;
   params: unknown;
-  operation?: TerminalOperationIdentity;
-}
+} & (
+  | { method: TerminalDaemonQuery | TerminalDaemonLifecycleRequest["method"] }
+  | { method: TerminalMutationMethod; operation: TerminalOperationIdentity }
+);
 
 /** Maintenance is versioned separately from terminal data RPC/attachments. */
 export interface TerminalDaemonLifecycleRequest {

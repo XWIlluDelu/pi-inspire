@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -246,6 +246,32 @@ describe("PreferencesStore validation", () => {
     const second = await store.inspect();
     expect(second.warning).toMatch(/not valid JSON.*left unchanged/);
     expect(await readFile(path, "utf8")).toBe(raw);
+  });
+
+  it("saves appearance and session-only cleanup independently of project discovery", async () => {
+    const { path, store } = await fixture();
+    const project = join(dirname(path), "project");
+    await writeFile(
+      path,
+      JSON.stringify({
+        pinnedProjectCwds: [project],
+        pinnedSessionIds: ["old"],
+      }),
+    );
+    const invalidRegistry = "{not-json";
+    await writeFile(store.projectDirectories.path, invalidRegistry);
+
+    await store.patch({ theme: "dark" });
+    await store.removeSession("old");
+    await expect(store.patch({ pinnedProjectCwds: [] })).rejects.toThrow();
+    expect(await store.read()).toMatchObject({
+      theme: "dark",
+      pinnedSessionIds: [],
+      pinnedProjectCwds: [project],
+    });
+    expect(await readFile(store.projectDirectories.path, "utf8")).toBe(
+      invalidRegistry,
+    );
   });
 
   it("defaults Herdr off, validates the boolean, and persists a field-scoped opt-in", async () => {

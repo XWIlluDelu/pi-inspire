@@ -458,10 +458,6 @@ interface AppDependencies {
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   /** Already-known picker metadata; bootstrap never starts model discovery. */
   bootstrapModels?: () => BootstrapResponse["availableModels"];
-  availableModels?: (
-    refresh?: boolean,
-    cwd?: string,
-  ) => Promise<BootstrapResponse["availableModels"]>;
   modelMetadata?: (
     cwd: string,
     refresh?: boolean,
@@ -489,6 +485,8 @@ interface AppDependencies {
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }
+
+type AuthenticatedResponse = Response<unknown, { browserId?: string }>;
 
 function bearerToken(request: Request): string | undefined {
   const value = request.get("authorization");
@@ -878,8 +876,8 @@ export function createInspireServer(deps: AppDependencies): {
         const { scope } = z
           .object({ scope: z.enum(["host", "host-only"]) })
           .parse(grant.request.payload);
-        if (scope === "host-only") deps.runtime.preserveWorkersOnClose?.();
-        else await deps.runtime.refreshAttachedPi?.(false);
+        if (scope === "host-only") deps.runtime.preserveWorkersOnClose();
+        else await deps.runtime.refreshAttachedPi(false);
         result = { kind: "prepared", scope };
         break;
       }
@@ -924,26 +922,31 @@ export function createInspireServer(deps: AppDependencies): {
 
   app.use("/api", (request, response, next) => {
     const bearer = bearerToken(request);
-    if (
-      !tokenMatches(bearer, deps.token) &&
-      !browserAuth.accepts(bearer, requestOrigin(request))
-    )
+    if (tokenMatches(bearer, deps.token)) return next();
+    const access = browserAuth.verifyAccess(bearer, requestOrigin(request));
+    if (!access)
       return response.status(401).json({ error: "Authentication required" });
+    response.locals.browserId = access.browserId;
     next();
   });
-  app.post("/api/auth/socket-ticket", (request, response) => {
-    const { audience } = socketTicketSchema.parse(request.body);
-    const origin = requestOrigin(request);
-    response.json(
-      browserAuth.ticket(
-        origin,
-        audience,
-        browserAuth.installation(bearerToken(request), origin)?.id,
-      ),
-    );
-  });
+  app.post(
+    "/api/auth/socket-ticket",
+    (request, response: AuthenticatedResponse) => {
+      const { audience } = socketTicketSchema.parse(request.body);
+      response.json(
+        browserAuth.ticket(
+          requestOrigin(request),
+          audience,
+          response.locals.browserId,
+        ),
+      );
+    },
+  );
 
-  const notificationPrincipal = (request: Request): NotificationPrincipal => {
+  const notificationPrincipal = (
+    request: Request,
+    response: AuthenticatedResponse,
+  ): NotificationPrincipal => {
     const origin = requestOrigin(request);
     if (
       !downloadOriginAllowed(origin, {
@@ -953,21 +956,23 @@ export function createInspireServer(deps: AppDependencies): {
       })
     )
       throw requestError("An exact browser origin is required", 403);
-    const principal = browserAuth.installation(bearerToken(request), origin);
-    if (!principal)
+    const id = response.locals.browserId;
+    if (!id)
       throw requestError(
         "Refresh browser authentication to configure notifications",
         401,
       );
-    return principal;
+    return { id, origin };
   };
   app.get("/api/notifications", async (request, response) =>
     response.json(
-      await taskNotifications.settings(notificationPrincipal(request)),
+      await taskNotifications.settings(
+        notificationPrincipal(request, response),
+      ),
     ),
   );
   app.put("/api/notifications", async (request, response) => {
-    const principal = notificationPrincipal(request);
+    const principal = notificationPrincipal(request, response);
     const body = z
       .object({
         mode: z.enum(["off", "title", "desktop"]).optional(),
@@ -993,7 +998,7 @@ export function createInspireServer(deps: AppDependencies): {
     );
   });
   app.post("/api/notifications/ack", async (request, response) => {
-    const principal = notificationPrincipal(request);
+    const principal = notificationPrincipal(request, response);
     const { id } = z
       .object({ id: z.string().min(1).max(256) })
       .strict()
@@ -1002,7 +1007,9 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ ok: true });
   });
   app.post("/api/notifications/test", async (request, response) =>
-    response.json(await taskNotifications.test(notificationPrincipal(request))),
+    response.json(
+      await taskNotifications.test(notificationPrincipal(request, response)),
+    ),
   );
 
   app.get("/api/health", (_request, response) => {
@@ -1096,35 +1103,6 @@ export function createInspireServer(deps: AppDependencies): {
   app.post("/api/update/snooze", async (request, response) => {
     const { identity } = updateSnoozeSchema.parse(request.body);
     response.json(await updateCoordinator.dismiss(identity));
-  });
-
-  /** Prepare alone never authorizes restart. The unique owner must commit after
-   * service inspection, and release only when restart definitely was not issued. */
-  app.post("/api/maintenance/restart", async (_request, response) => {
-    response.json(
-      deps.maintenanceRestart
-        ? await deps.maintenanceRestart.reserve()
-        : { kind: "skipped", reason: "runtime-unsupported" },
-    );
-  });
-
-  app.post("/api/maintenance/restart/commit", (request, response) => {
-    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
-    response.json(
-      deps.maintenanceRestart?.commit(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      },
-    );
-  });
-  app.post("/api/maintenance/restart/release", (request, response) => {
-    const { leaseId } = maintenanceLeaseSchema.parse(request.body);
-    response.json(
-      deps.maintenanceRestart?.release(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      },
-    );
   });
 
   const requestedDetail = (value: unknown): string | null | undefined =>
@@ -1246,15 +1224,13 @@ export function createInspireServer(deps: AppDependencies): {
       })
       .parse(request.query);
     const cwd = sessionId
-      ? deps.runtime.sessionCwd(sessionId)
+      ? undefined
       : requestedCwd
         ? await resolveProjectDirectory(requestedCwd)
         : process.cwd();
     const result = sessionId
       ? await deps.runtime.refreshModels(sessionId, inherit === "1")
-      : deps.modelMetadata
-        ? await deps.modelMetadata(cwd!, true)
-        : { models: (await deps.availableModels?.(true, cwd!)) ?? [] };
+      : ((await deps.modelMetadata?.(cwd!, true)) ?? { models: [] });
     const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
     const commonModels =
       deps.modelSettings && catalogCwd

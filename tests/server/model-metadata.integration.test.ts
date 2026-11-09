@@ -4,7 +4,6 @@ import request from "supertest";
 import { afterEach, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
 import { AttachmentStore } from "../../server/attachments.js";
-import { hostServices } from "../fixtures/host-services.js";
 import {
   ModelMetadataCatalog,
   queryModelMetadata,
@@ -12,6 +11,7 @@ import {
 import { ModelSettingsService } from "../../server/model-settings.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { modelWorkflowFixture } from "./fixtures/model-workflow.js";
 
 const roots: string[] = [];
@@ -42,9 +42,8 @@ it("discovers native global/trusted-project registrations and resolves defaults 
   }
   const catalog = new ModelMetadataCatalog();
   const attachments = new AttachmentStore(join(f.root, "uploads"));
-  const available = vi.fn(
-    async (refresh?: boolean, cwd?: string) =>
-      (await catalog.read(cwd ?? f.untrusted, refresh)).models,
+  const readMetadata = vi.fn((cwd: string, refresh?: boolean) =>
+    catalog.read(cwd, refresh),
   );
   const app = createInspireServer({
     token: "fixture",
@@ -59,9 +58,7 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     },
     version: "fixture",
     piVersion: "1.0.0",
-    modelMetadata: (cwd, refresh) => catalog.read(cwd, refresh),
-    availableModels: available,
-
+    modelMetadata: readMetadata,
     modelSettings: new ModelSettingsService(f.agent),
     invalidateModels: () => catalog.invalidate(),
   });
@@ -228,8 +225,7 @@ it("discovers native global/trusted-project registrations and resolves defaults 
       }),
     );
     catalog.invalidate();
-    available.mockClear();
-    available.mockImplementation(() => new Promise(() => {}));
+    readMetadata.mockClear();
     const bootstrap = await endpoint
       .get("/api/bootstrap")
       .auth("fixture", { type: "bearer" })
@@ -238,7 +234,7 @@ it("discovers native global/trusted-project registrations and resolves defaults 
       availableModels: [],
       snapshot: { runState: "idle" },
     });
-    expect(available).not.toHaveBeenCalled();
+    expect(readMetadata).not.toHaveBeenCalled();
     const partial = await endpoint
       .get("/api/models")
       .query({ cwd: f.trusted })
@@ -254,10 +250,6 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     expect(partial.body.warning).toContain("Some Pi extensions could not load");
     expect(JSON.stringify(partial.body)).not.toContain(
       "PRIVATE EXTENSION DETAIL",
-    );
-    available.mockImplementation(
-      async (refresh, cwd) =>
-        (await catalog.read(cwd ?? f.untrusted, refresh)).models,
     );
     const current = await endpoint
       .get("/api/model-settings")

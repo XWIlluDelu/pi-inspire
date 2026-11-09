@@ -17,10 +17,9 @@
 - Appends from other Pi processes are accepted; a session you work on in Inspire keeps its branch,
   and a read-only view follows the branch it opened on. **Switch branch…** in the title menu, and
   History for read-only sessions, switch branches by the same rule.
-- **Restart Host** now also reloads taken-over Pi so they apply current settings; the new
-  **Restart Host only** keeps every Pi process and its running work, including Inspire's own
-  workers, which afterwards appear as live Pi with **Take over**. `inspire restart` and
-  `inspire restart --host-only` follow the same scopes.
+- **Restart Host** and `inspire restart` now also reload taken-over Pi so they apply current
+  settings. Use `inspire restart --host-only` to keep every Pi process and its running work,
+  including Inspire's own workers, which afterwards appear as live Pi with **Take over**.
 
 ### Workbench
 

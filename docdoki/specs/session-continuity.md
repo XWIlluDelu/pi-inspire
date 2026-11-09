@@ -106,14 +106,15 @@ the worker cwd for creation, snapshots and startup checks, not against the Host 
 Discovery covers the Host startup directory, saved pinned/Hidden project directories, and directories
 where the Host has created or opened sessions, including after Host reconstruction. A private,
 lock-merged, atomically replaced cwd-only index beside preferences retains these roots independently
-of curation. It stores no session identities, storage paths or history. Legacy saved folders seed it
-before their first Unpin/Unhide or deletion cleanup; removing curation does not forget a project.
+of curation. It stores no session identities, storage paths or history. Folder curation writes seed
+legacy roots before Unpin, Unhide or folder deletion cleanup, so the projects remain discoverable.
 
 Retain a resolved cwd in memory before attempting to save this hint. Save failure is logged and
 retried during later catalog refreshes, without rejecting creation, startup, input or history reads.
 Unsaved roots cannot survive Host reconstruction through this index alone.
 
-Each scan resolves storage from current environment/settings. Custom storage is flat; default
+Each scan resolves storage from the current environment and settings. It shares one global settings
+read across known projects and applies each project's own overrides. Custom storage is flat; default
 storage scans Pi's project subdirectories. Overlapping roots contribute each file once. Saving folder
 curation invalidates discovery so newly included project settings enter the next scan. Missing
 storage contributes no sessions, and deleted files disappear on refresh. Missing project roots
@@ -221,8 +222,10 @@ Only explicit recovery clears that conflict.
 
 Pins, folder pin/Hidden, session Hidden and folder-collapse state belong to Inspire preferences,
 not Pi JSONL. Hydrate curated sessions by id and folders by exact cwd so off-page pins stay reachable,
-Hidden remains reversible, and folder sections stay complete. Folder curation is independent of
-session curation, bounded, and not limited to the first chronological page.
+Hidden remains reversible, and folder sections stay complete. Folder curation works independently
+of session curation and includes folders beyond the first chronological page. A folder lookup
+returns all matching sessions in catalog order or rejects the request if the combined result
+exceeds its limit.
 
 ## Shared sessions with terminal Pi
 

@@ -113,9 +113,10 @@ describe("durable project discovery roots", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const catalog = createHostSessionCatalog(root, preferences);
     try {
-      await expect(catalog.rememberProjectCwds([project])).rejects.toThrow(
+      await expect(catalog.rememberProjectCwd(project)).rejects.toThrow(
         "Read-only hint storage",
       );
+      await catalog.rememberProjectCwd(project);
       expect(
         (await catalog.list()).sessions.map((session) => session.id),
       ).toEqual(["new-session"]);

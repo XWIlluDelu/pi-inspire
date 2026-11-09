@@ -1,8 +1,10 @@
-import type { TerminalMutationMethod } from "../shared/terminal-contracts.js";
-import {
-  type TerminalService,
-  TerminalServiceError,
-} from "./terminal-service.js";
+import type {
+  TerminalCreateRequest,
+  TerminalMutationMethod,
+  TerminalServiceSettingsPatch,
+} from "../shared/terminal-contracts.js";
+import { TerminalServiceError } from "./terminal-service.js";
+import type { TerminalSessionManager } from "./terminal-session-manager.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -19,10 +21,9 @@ export function stringParam(
   return value;
 }
 
-/** Shared wire-to-service mapping. Only a receipt-owning caller may dispatch an
- * identified operation here; ordinary service methods retain their behavior. */
+/** Decode the mutation accepted by the PTY owner's receipt table. */
 export function dispatchTerminalMutation(
-  terminals: TerminalService,
+  terminals: Pick<TerminalSessionManager, TerminalMutationMethod>,
   method: TerminalMutationMethod,
   params: unknown,
 ): Promise<unknown> {
@@ -30,9 +31,7 @@ export function dispatchTerminalMutation(
   switch (method) {
     case "create":
       return terminals.create(
-        asRecord(values.request) as unknown as Parameters<
-          TerminalService["create"]
-        >[0],
+        asRecord(values.request) as unknown as TerminalCreateRequest,
       );
     case "rename": {
       const title = values.title;
@@ -57,9 +56,7 @@ export function dispatchTerminalMutation(
     }
     case "updateSettings":
       return terminals.updateSettings(
-        asRecord(values.patch) as Parameters<
-          TerminalService["updateSettings"]
-        >[0],
+        asRecord(values.patch) as TerminalServiceSettingsPatch,
       );
     case "clearHistory":
       return terminals.clearHistory();
