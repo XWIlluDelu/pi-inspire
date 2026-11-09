@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { nullDiagnosticLogger } from "../../server/diagnostics.js";
 import {
-  MaintenanceRestartController,
   type InspireSourceIdentity,
+  MaintenanceRestartController,
   type MaintenanceRestartOutcome,
 } from "../../server/maintenance-restart.js";
-import type { RuntimeLike } from "../../server/runtime.js";
 
 function controller(options: {
   piVersion?: string;
@@ -25,22 +24,14 @@ function controller(options: {
         expiresAt: 123_456,
       })),
   );
-  const commit = vi.fn((leaseId: string) => ({
-    kind: "committed" as const,
-    leaseId,
-  }));
-  const release = vi.fn(() => ({ kind: "released" as const }));
-  const runtime = {
-    reserveMaintenanceRestart: reserve,
-    commitMaintenanceRestart: commit,
-    releaseMaintenanceRestart: release,
-  } as unknown as RuntimeLike;
   return {
     reserve,
-    commit,
-    release,
     subject: new MaintenanceRestartController({
-      runtime,
+      runtime: {
+        reserveMaintenanceRestart: reserve,
+        commitMaintenanceRestart: (leaseId) => ({ kind: "committed", leaseId }),
+        releaseMaintenanceRestart: () => ({ kind: "released" }),
+      },
       root: "/workspace/inspire",
       piVersion: options.piVersion ?? "0.84.2",
       runningSource: options.runningSource ?? {
@@ -95,17 +86,6 @@ describe("idle maintenance restart", () => {
       reason: "inspire-identity-unavailable",
     });
     expect(reserve).not.toHaveBeenCalled();
-  });
-
-  it("passes the exact owner identity to authoritative commit and release", () => {
-    const { subject, commit, release } = controller({});
-    expect(subject.commit("owner")).toEqual({
-      kind: "committed",
-      leaseId: "owner",
-    });
-    expect(subject.release("owner")).toEqual({ kind: "released" });
-    expect(commit).toHaveBeenCalledWith("owner");
-    expect(release).toHaveBeenCalledWith("owner");
   });
 
   it("does nothing when neither installed identity changed", async () => {

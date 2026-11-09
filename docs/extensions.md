@@ -150,8 +150,8 @@ Limits of attaching to another Pi:
 - Input queued in that Pi is not listed in Inspire's Pending; Pi has no public queue interface.
 - Stop interrupts agent work. A `!` shell started in the terminal is interrupted there.
 - A terminal Pi's native dialogs are answered there. Inspire-owned RPC workers preserved by
-  **Restart Host only** recover their pending questions in the browser after **Take over**; select,
-  confirm, input and editor answers continue through the original worker's RPC channel.
+  `inspire restart --host-only` recover their pending questions in the browser after **Take over**.
+  Select, confirm, input and editor answers continue through the original worker's RPC channel.
 - A receipt means Pi accepted the call, not that the work completed. Pi reports later errors itself.
 - A Pi without attach-control is invisible to Inspire; both can still append to the same session.
 
@@ -167,7 +167,7 @@ branch. Session deletion uses `shutdown` across all discovered branches, then wa
 `PI_ATTACH_CONTROL=0` disables the extension for one process. `PI_ATTACH_CONTROL_TAG` adds a
 client label to the record: Inspire loads attach-control into its own workers with their worker
 tag, ignores those records while it owns the workers, and finds them again like any other Pi after
-**Restart Host only**.
+`inspire restart --host-only`.
 
 ## Try the native UI example
 

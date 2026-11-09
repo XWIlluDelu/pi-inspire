@@ -308,17 +308,17 @@ run/dialog/queue, and no Host operation is in flight. Independently running exte
 block maintenance; a Host submission to it still does. A busy, dirty, indeterminate, or old Host
 is skipped without force or same-day retry.
 
-Scheduled restart uses an authenticated, single-owner prepare/commit handoff:
+Scheduled restart uses a single-owner handoff through signed actions at `/api/host/local-control`.
 
-1. `POST /api/maintenance/restart` grants an opaque `leaseId` and 30-second `expiresAt`.
+1. `maintenance-prepare` grants an opaque `leaseId` and 30-second `expiresAt`.
    Preparation blocks new work but does not authorize restart. After systemd ownership checks,
-   `/api/maintenance/restart/commit` validates that current, unexpired lease and idle runtime,
+   `maintenance-commit` validates that current, unexpired lease and idle runtime,
    then synchronously commits the drain. Only its matching `committed` response authorizes one
    external restart; duplicate, expired, released, foreign and previous-Host leases cannot do so.
    Preparation may expire and reopen admission; a committed drain never auto-expires.
 2. Do not retry commit or consume a late response after timeout. Before command issuance,
    cancellation, failed inspection or a lost commit response triggers owner-bound
-   `/api/maintenance/restart/release`. Release invalidates the identity, including reordered
+   `maintenance-release`. Release invalidates the identity, including reordered
    commits. Proven failure to spawn systemctl also permits release. Once issued, an exit failure,
    signal or lost result leaves restart uncertain: retain the drain and report recovery required.
    Report lost release acknowledgement too. Lease capabilities stay out of logs and persisted
@@ -338,13 +338,17 @@ Scheduled restart uses an authenticated, single-owner prepare/commit handoff:
   Pi SDK before stopping the Host. Preparation failure leaves it running. Host-only restart
   preserves the independent terminal daemon.
 - `inspire restart --all` requires this installation's verified Linux systemd Host and terminal
-  units. It ends terminal processes and restarts both in one transaction, with Host ordered after
-  terminal readiness. Unsupported or foreign services are refused before stopping anything;
-  connection services are outside the scope, and a failed full restart cannot fall back to Host-only.
-- Page controls live in Settings → System, with concise confirmation for each scope. Ordinary
-  Restart Host supports launcher-owned native Windows, macOS, and Linux instances, including custom
-  loopback addresses, ports, and state paths. Installed Linux services retain their exact running
-  systemd invocation as authority. A raw Host entrypoint without either owner cannot restart itself.
+  units. It restarts both in one transaction, with Host ordered after terminal readiness. It ends
+  project terminals in the installed unit. An independent daemon retained from a direct launch
+  keeps its own lifecycle under [[terminal]]. Run the command from an external OS terminal so it
+  can report the result.
+  Unsupported or foreign services are refused before stopping anything. Connection services are
+  outside the scope, and a failed full restart cannot fall back to Host-only.
+- **Restart Host** and **Restart all** live in Settings → System → Host, with concise confirmation
+  for each scope. Restart Host supports launcher-owned native Windows, macOS, and Linux instances,
+  including custom loopback addresses, ports, and state paths. Installed Linux services retain their
+  exact running systemd invocation as authority. A raw Host entrypoint without either owner cannot
+  restart itself.
   Full restart remains restricted to the installed Linux services and names the terminal-process
   impact. Ordinary and full availability are exposed and enforced separately; unsupported scope is
   refused before preparation or work interruption. Restart stays out of the command palette and
@@ -373,21 +377,22 @@ Scheduled restart uses an authenticated, single-owner prepare/commit handoff:
   The new operation authorizes interrupting Inspire-owned Pi work, and for Restart Host also
   taken-over Pi work, and discarding Pending input. It bypasses workload checks, including active compaction
   and session operations, while keeping preparation, service ownership, lease exclusivity, and
-  final commit. Automatic maintenance stays update/idle-gated
-  and Host-only.
-- Page restarts have three scopes. **Restart Host** reloads every taken-over Pi through
-  attach-control after the idle lease and before the restart request, so it applies current
-  settings; Inspire's own workers restart with the Host. **Restart Host only** preserves every Pi
-  process and its running work, including Inspire's workers: running work does not block it, and
-  closing detaches workers instead of stopping them. **Restart all** is Restart Host plus the
-  terminal services. A busy taken-over Pi counts as active work for the scopes that reload it; a
-  failed reload is logged and does not block the restart. After any restart, sessions return to
-  ordinary admission, so former workers appear as live Pi with **Take over**.
+  final commit. Automatic maintenance keeps its update and idle checks and restarts only the Host
+  service.
+- **Restart Host** reloads every taken-over Pi through attach-control after the idle lease and before
+  the restart request, so it applies current settings. Inspire's own workers restart with the Host.
+  **Restart all** also restarts the
+  terminal services. A busy taken-over Pi counts as active work for the scopes that reload it.
+  The Host logs a failed reload and continues the restart.
+- `inspire restart --host-only` preserves every Pi process and its running work, including
+  Inspire's workers. Running work can continue during restart because the closing Host detaches
+  its workers. After any restart, sessions return to ordinary admission, so preserved workers
+  appear as live Pi with **Take over**.
 - `inspire restart` and `inspire restart --host-only` send a signed `restart-prepare` local-control
-  request before restarting, so CLI and page restarts share scopes: `host` reloads taken-over Pi,
-  `host-only` makes the closing Host detach its workers. A running Host must acknowledge the
-  requested scope before the CLI stops or restarts it. Failed or unavailable preparation aborts
-  the restart and leaves the Host running. An already absent or exited Host needs no preparation.
+  request before restarting. The `host` scope reloads taken-over Pi, and `host-only` makes the
+  closing Host detach its workers. A running Host must acknowledge the requested scope before the
+  CLI stops or restarts it. Failed or unavailable preparation aborts the restart and leaves the
+  Host running. An already absent or exited Host needs no preparation.
 
 ### Submission and recovery
 

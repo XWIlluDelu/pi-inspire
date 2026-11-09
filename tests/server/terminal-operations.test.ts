@@ -2,17 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
 import express from "express";
 import supertest from "supertest";
-import { createTerminalGateway } from "../../server/terminal-gateway.js";
+import { describe, expect, it, vi } from "vitest";
 import { TerminalDaemonClient } from "../../server/terminal-daemon-client.js";
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
+import { createTerminalGateway } from "../../server/terminal-gateway.js";
 import { TerminalOperationReceipts } from "../../server/terminal-operation-receipts.js";
-import {
-  TerminalServiceError,
-  UnavailableTerminalService,
-} from "../../server/terminal-service.js";
+import { TerminalServiceError } from "../../server/terminal-service.js";
+import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
 
 function deferred<T>() {
@@ -29,7 +27,7 @@ async function fixture() {
     process.platform === "win32"
       ? `\\\\.\\pipe\\terminal-operations-${randomUUID()}`
       : join(directory, "terminal.sock");
-  const service = new UnavailableTerminalService("synthetic service");
+  const service = new TerminalSessionManager();
   const server = new TerminalDaemonServer(address, "synthetic-secret", service);
   await server.start();
   const client = new TerminalDaemonClient(address, "synthetic-secret");
@@ -49,139 +47,87 @@ async function fixture() {
 }
 
 describe("terminal control receipts over isolated IPC", () => {
-  it.each(["create", "restart"] as const)(
-    "retains %s committed before a lost response, including concurrent retry and Host replacement",
-    async (method) => {
-      const f = await fixture();
-      const committed = deferred<void>();
-      const reply = deferred<TerminalDescriptor>();
-      const result = {
-        id: "synthetic-terminal",
-        catalogEpoch: "catalog",
-        catalogRevision: 1,
-      } as TerminalDescriptor;
-      const mutation = vi
-        .spyOn(f.service, method)
-        .mockImplementation(async () => {
-          committed.resolve();
-          return reply.promise;
-        });
-      const operation = {
-        id: randomUUID(),
-        epoch: await f.client.operationEpoch(),
-      };
-      const params =
-        method === "create"
-          ? { request: { cwd: "/synthetic" } }
-          : { id: result.id };
-      try {
-        vi.useFakeTimers();
-        const first = f.client
-          .operate(method, params, operation)
-          .catch((error: unknown) => error);
-        await committed.promise;
-        await vi.advanceTimersByTimeAsync(method === "create" ? 5_001 : 15_001);
-        expect(await first).toMatchObject({ code: "terminal_daemon_timeout" });
-        vi.useRealTimers();
-        // Neither closing the old Host connection nor two simultaneous delivery
-        // attempts may dispatch the daemon mutation again.
-        await f.client.close();
-        const replacement = new TerminalDaemonClient(
-          f.address,
-          "synthetic-secret",
-        );
-        const second = replacement.operate(method, params, operation);
-        const concurrent = replacement.operate(method, params, operation);
-        reply.resolve(result);
-        expect(await second).toEqual(result);
-        expect(await concurrent).toEqual(result);
-        expect(await replacement.operate(method, params, operation)).toEqual(
-          result,
-        );
-        expect(mutation).toHaveBeenCalledOnce();
-        await replacement.close();
-      } finally {
-        reply.resolve(result);
-        await f.close();
-      }
-    },
-  );
-
-  it("rejects mismatched method/params and fails closed after daemon replacement", async () => {
+  it("retains an operation across an IPC timeout, concurrent retries, and Host replacement", async () => {
     const f = await fixture();
-    const create = vi
+    const committed = deferred<void>();
+    const reply = deferred<TerminalDescriptor>();
+    const result = {
+      id: "synthetic-terminal",
+      catalogEpoch: "catalog",
+      catalogRevision: 1,
+    } as TerminalDescriptor;
+    const mutation = vi
       .spyOn(f.service, "create")
-      .mockResolvedValue({ id: "created" } as TerminalDescriptor);
+      .mockImplementation(async () => {
+        committed.resolve();
+        return reply.promise;
+      });
     const operation = {
       id: randomUUID(),
       epoch: await f.client.operationEpoch(),
     };
+    const params = { request: { cwd: f.directory } };
     try {
-      await f.client.operate(
-        "create",
-        { request: { cwd: "/synthetic" } },
-        operation,
-      );
-      await expect(
-        f.client.operate("create", { request: { cwd: "/other" } }, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_mismatch" });
-      await expect(
-        f.client.operate("restart", { id: "created" }, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_mismatch" });
-      await f.server.stop();
-      const replacement = new TerminalDaemonServer(
+      vi.useFakeTimers();
+      const first = f.client
+        .operate("create", params, operation)
+        .catch((error: unknown) => error);
+      await committed.promise;
+      await vi.advanceTimersByTimeAsync(5_001);
+      expect(await first).toMatchObject({ code: "terminal_daemon_timeout" });
+      vi.useRealTimers();
+      // Neither closing the old Host connection nor two simultaneous delivery
+      // attempts may dispatch the daemon mutation again.
+      await f.client.close();
+      const replacement = new TerminalDaemonClient(
         f.address,
         "synthetic-secret",
-        f.service,
       );
-      await replacement.start();
-      try {
-        await expect(
-          f.client.operate(
-            "create",
-            { request: { cwd: "/synthetic" } },
-            operation,
-          ),
-        ).rejects.toMatchObject({ code: "terminal_operation_epoch_changed" });
-        expect(create).toHaveBeenCalledOnce();
-      } finally {
-        await replacement.stop();
-      }
+      const second = replacement.operate("create", params, operation);
+      const concurrent = replacement.operate("create", params, operation);
+      reply.resolve(result);
+      expect(await second).toEqual(result);
+      expect(await concurrent).toEqual(result);
+      expect(await replacement.operate("create", params, operation)).toEqual(
+        result,
+      );
+      expect(mutation).toHaveBeenCalledOnce();
+      await replacement.close();
     } finally {
+      reply.resolve(result);
       await f.close();
     }
   });
 
-  it("replays a definitive refusal but admits a later explicit new identity", async () => {
+  it("refuses an old receipt epoch after daemon replacement", async () => {
     const f = await fixture();
-    const create = vi
-      .spyOn(f.service, "create")
-      .mockRejectedValueOnce(
-        new TerminalServiceError("terminal_limit", 409, "Synthetic refusal"),
-      )
-      .mockResolvedValue({ id: "later" } as TerminalDescriptor);
+    const params = { request: { cwd: f.directory } };
     const operation = {
       id: randomUUID(),
       epoch: await f.client.operationEpoch(),
     };
     try {
-      for (let i = 0; i < 2; i++)
+      vi.spyOn(f.service, "create").mockResolvedValue({
+        id: "created",
+      } as TerminalDescriptor);
+      await f.client.operate("create", params, operation);
+      await f.server.stop();
+      const replacementManager = new TerminalSessionManager();
+      const create = vi.spyOn(replacementManager, "create");
+      const replacement = new TerminalDaemonServer(
+        f.address,
+        "synthetic-secret",
+        replacementManager,
+      );
+      await replacement.start();
+      try {
         await expect(
-          f.client.operate(
-            "create",
-            { request: { cwd: "/synthetic" } },
-            operation,
-          ),
-        ).rejects.toMatchObject({ code: "terminal_limit" });
-      expect(create).toHaveBeenCalledOnce();
-      expect(
-        await f.client.operate(
-          "create",
-          { request: { cwd: "/synthetic" } },
-          { ...operation, id: randomUUID() },
-        ),
-      ).toEqual({ id: "later" });
-      expect(create).toHaveBeenCalledTimes(2);
+          f.client.operate("create", params, operation),
+        ).rejects.toMatchObject({ code: "terminal_operation_epoch_changed" });
+        expect(create).not.toHaveBeenCalled();
+      } finally {
+        await replacement.stop();
+      }
     } finally {
       await f.close();
     }

@@ -36,6 +36,11 @@ const models = [
   { provider: "fixture", id: "second", name: "Second", reasoning: true },
   { provider: "fixture", id: "first", name: "First", reasoning: true },
 ];
+const metadata = (cwd: string, models: ModelOption[]): ModelMetadata => ({
+  models,
+  virtualModels: [],
+  defaults: { cwd, model: models[0] ?? null, thinkingLevel: "high" },
+});
 const initialSettings = {
   defaultProvider: "fixture",
   defaultModel: "first",
@@ -104,14 +109,14 @@ function routes(
     })),
     refreshModels: vi.fn(async () => ({ models: models as ModelOption[] })),
   };
-  const availableModels = vi.fn(async () => models);
+  const modelMetadata = vi.fn(async (cwd: string) => metadata(cwd, models));
   const invalidateModels = vi.fn();
   const app = express();
   app.use(express.json());
   registerModelSettingsRoutes(app, {
     runtime: runtime as unknown as RuntimeLike,
     modelSettings: service,
-    availableModels,
+    modelMetadata,
     invalidateModels,
     ...overrides,
   });
@@ -123,7 +128,7 @@ function routes(
       _next: express.NextFunction,
     ) => response.status(error.status ?? 500).json({ error: error.message }),
   );
-  return { app, runtime, availableModels, invalidateModels };
+  return { app, runtime, modelMetadata, invalidateModels };
 }
 
 // Only scenarios with two serial native validations use a 45s integration
@@ -215,7 +220,10 @@ describe("model settings routes", () => {
     expect(builtIn).toBeDefined();
     expect(native.getModels().length).toBeGreaterThan(available.length);
     const sessionChoices = [builtIn];
-    const { app, runtime, invalidateModels } = routes({ availableModels });
+    const { app, runtime, invalidateModels } = routes({
+      modelMetadata: async (cwd, refresh) =>
+        metadata(cwd, await availableModels(refresh)),
+    });
     runtime.snapshot.mockResolvedValue({
       active: { availableModels: sessionChoices },
     });
@@ -289,11 +297,6 @@ describe("model settings routes", () => {
     ).toEqual(initialSettings.enabledModels);
   }, 45_000);
   it("invalidates workspace discovery without delaying a session save or retaining stale results", async () => {
-    const metadata = (items: typeof models): ModelMetadata => ({
-      models: items,
-      virtualModels: [],
-      defaults: { cwd, model: items[0]!, thinkingLevel: "high" },
-    });
     let release!: (value: ModelMetadata) => void;
     const old = new Promise<ModelMetadata>((resolve) => {
       release = resolve;
@@ -301,15 +304,14 @@ describe("model settings routes", () => {
     const query = vi
       .fn()
       .mockReturnValueOnce(old)
-      .mockResolvedValue(metadata([models[1]!]));
+      .mockResolvedValue(metadata(cwd, [models[1]!]));
     const catalog = new ModelMetadataCatalog(query);
     const inFlight = catalog.read(cwd);
-    const availableModels = vi.fn(
-      async (refresh?: boolean, target?: string) =>
-        (await catalog.read(target!, refresh)).models,
+    const modelMetadata = vi.fn((cwd: string, refresh?: boolean) =>
+      catalog.read(cwd, refresh),
     );
     const { app, runtime } = routes({
-      availableModels,
+      modelMetadata,
       invalidateModels: () => catalog.invalidate(),
     });
     const before = await snapshot();
@@ -324,9 +326,9 @@ describe("model settings routes", () => {
     expect(response.body.snapshot.models).toEqual(models);
     expect(runtime.refreshModels).toHaveBeenCalledWith("fixture");
     expect(read).toHaveBeenCalledOnce();
-    expect(availableModels).not.toHaveBeenCalled();
+    expect(modelMetadata).not.toHaveBeenCalled();
     expect(catalog.peek(cwd)).toBeUndefined();
-    release(metadata(models));
+    release(metadata(cwd, models));
     await inFlight;
     expect(catalog.peek(cwd)).toBeUndefined();
     expect((await catalog.read(cwd)).defaults.model?.id).toBe("first");
@@ -336,9 +338,9 @@ describe("model settings routes", () => {
   it.each(["workspace", "session"])(
     "keeps file edits available when the %s model catalog fails",
     async (target) => {
-      const { app, runtime, availableModels } = routes();
+      const { app, runtime, modelMetadata } = routes();
       const error = new Error("PRIVATE CATALOG DETAIL");
-      availableModels.mockRejectedValue(error);
+      modelMetadata.mockRejectedValue(error);
       runtime.snapshot.mockRejectedValue(error);
       runtime.refreshModels.mockRejectedValue(error);
       const owner = target === "session" ? { sessionId: "fixture" } : { cwd };

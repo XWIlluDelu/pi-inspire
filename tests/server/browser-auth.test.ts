@@ -47,16 +47,18 @@ describe("origin-key browser authentication", () => {
     expect(() =>
       auth.register(origin, { token: certificate, publicKey: key.publicKey }),
     ).toThrow();
-    expect(auth.accepts(certificate, origin)).toBe(false);
-    expect(auth.accepts(master, origin)).toBe(false);
+    expect(auth.verifyAccess(certificate, origin)).toBeNull();
+    expect(auth.verifyAccess(master, origin)).toBeNull();
     const { challenge } = auth.challenge(origin, certificate);
     const access = auth.exchange(
       origin,
       challenge,
       signed(key.privateKey, challenge),
     );
-    expect(auth.accepts(access.bearer, origin)).toBe(true);
-    expect(auth.accepts(access.bearer, other)).toBe(false);
+    expect(auth.verifyAccess(access.bearer, origin)).toMatchObject({
+      browserId: expect.any(String),
+    });
+    expect(auth.verifyAccess(access.bearer, other)).toBeNull();
     expect(() => auth.challenge(origin, access.bearer)).toThrow();
     expect(() =>
       auth.register(origin, { token: access.bearer, publicKey: key.publicKey }),
@@ -113,16 +115,18 @@ describe("origin-key browser authentication", () => {
       signed(key.privateKey, challenge),
     );
     const restarted = new BrowserAuth(master, () => now);
-    expect(restarted.accepts(access.bearer, origin)).toBe(true);
+    expect(restarted.verifyAccess(access.bearer, origin)).toEqual(
+      auth.verifyAccess(access.bearer, origin),
+    );
     expect(restarted.challenge(origin, certificate).challenge).toBeTruthy();
     expect(() =>
       restarted.exchange(origin, challenge, signed(key.privateKey, challenge)),
     ).toThrow();
     const rotated = new BrowserAuth("rotated", () => now);
-    expect(rotated.accepts(access.bearer, origin)).toBe(false);
+    expect(rotated.verifyAccess(access.bearer, origin)).toBeNull();
     expect(() => rotated.challenge(origin, certificate)).toThrow();
     now += BROWSER_ACCESS_TTL_MS;
-    expect(auth.accepts(access.bearer, origin)).toBe(false);
+    expect(auth.verifyAccess(access.bearer, origin)).toBeNull();
   });
 
   it("bounds pending challenges and recovers capacity after expiry", () => {
@@ -157,16 +161,19 @@ describe("origin-key browser authentication", () => {
       }).certificate,
     ).toBeTruthy();
     const ticket = auth.ticket(origin, "events").ticket;
-    expect(auth.consumeTicket(ticket, origin, "terminal")).toBe(false);
-    expect(auth.consumeTicket(ticket, origin, "events")).toBe(false);
-    const valid = auth.ticket(origin, "events").ticket;
-    expect(auth.consumeTicket(valid, origin, "events")).toBe(true);
-    expect(auth.consumeTicket(valid, origin, "events")).toBe(false);
+    expect(auth.consumeTicketGrant(ticket, origin, "terminal")).toBeNull();
+    expect(auth.consumeTicketGrant(ticket, origin, "events")).toBeNull();
+    const valid = auth.ticket(origin, "events", "paired-installation").ticket;
+    expect(auth.consumeTicketGrant(valid, origin, "events")).toMatchObject({
+      origin,
+      browserId: "paired-installation",
+    });
+    expect(auth.consumeTicketGrant(valid, origin, "events")).toBeNull();
     const foreign = auth.ticket(origin, "terminal").ticket;
-    expect(auth.consumeTicket(foreign, other, "terminal")).toBe(false);
+    expect(auth.consumeTicketGrant(foreign, other, "terminal")).toBeNull();
     const stale = auth.ticket(origin, "events").ticket;
     now += BROWSER_TICKET_TTL_MS;
-    expect(auth.consumeTicket(stale, origin, "events")).toBe(false);
+    expect(auth.consumeTicketGrant(stale, origin, "events")).toBeNull();
     const expiredBootstrap = auth.bootstrap(origin);
     now += AUTH_CHALLENGE_TTL_MS;
     expect(() =>

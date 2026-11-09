@@ -119,7 +119,7 @@ export function secretMatches(
 
 /** Certificates are public, origin-bound key registrations, not credentials.
  * Domain-separated MACs invalidate all registrations/access on master rotation.
- * Only challenges, launch transfers and socket tickets need process state. */
+ * Only single-use challenges and grants need process state. */
 export class BrowserAuth {
   private readonly challenges = new Map<
     string,
@@ -298,28 +298,24 @@ export class BrowserAuth {
     };
   }
 
-  accepts(bearer: string | undefined, origin: string): boolean {
-    if (!bearer) return false;
-    try {
-      const data = accessSchema.safeParse(this.unseal("access", bearer));
-      return (
-        data.success &&
-        data.data.origin === origin &&
-        data.data.expiresAt > this.now() &&
-        data.data.expiresAt <= this.now() + BROWSER_ACCESS_TTL_MS
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  installation(
+  verifyAccess(
     bearer: string | undefined,
     origin: string,
-  ): { id: string; origin: string } | null {
-    if (!this.accepts(bearer, origin)) return null;
-    const data = accessSchema.parse(this.unseal("access", bearer!));
-    return data.browserId ? { id: data.browserId, origin } : null;
+  ): { browserId?: string } | null {
+    if (!bearer) return null;
+    try {
+      const access = accessSchema.parse(this.unseal("access", bearer));
+      const now = this.now();
+      if (
+        access.origin !== origin ||
+        access.expiresAt <= now ||
+        access.expiresAt > now + BROWSER_ACCESS_TTL_MS
+      )
+        return null;
+      return { browserId: access.browserId };
+    } catch {
+      return null;
+    }
   }
 
   notificationNamespace(): string {
@@ -362,14 +358,6 @@ export class BrowserAuth {
         401,
       );
     return { resourceId: grant.resourceId, sessionId: grant.sessionId };
-  }
-
-  consumeTicket(
-    ticket: string | null,
-    origin: string,
-    audience: string,
-  ): boolean {
-    return this.consumeTicketGrant(ticket, origin, audience) !== null;
   }
 
   consumeTicketGrant(

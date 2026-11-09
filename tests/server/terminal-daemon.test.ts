@@ -17,6 +17,7 @@ import {
 } from "../../server/terminal-session-manager.js";
 import {
   decodeTerminalServerDataFrame,
+  type TerminalDescriptor,
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts.js";
 
@@ -128,9 +129,9 @@ describe("terminal daemon", () => {
       import { TERMINAL_DAEMON_PROTOCOL_VERSION } from ${moduleUrl("terminal-daemon-protocol")};
       import { connectTerminalDaemon } from ${moduleUrl("terminal-daemon-tls")};
       import { encodeTerminalIpcJson } from ${moduleUrl("terminal-ipc")};
-      import { UnavailableTerminalService } from ${moduleUrl("terminal-service")};
+      import { TerminalSessionManager } from ${moduleUrl("terminal-session-manager")};
       const address = ${JSON.stringify(address)};
-      const service = new UnavailableTerminalService("isolated fixture");
+      const service = new TerminalSessionManager();
       let rejectAttach, attachmentSink, received;
       const admitted = new Promise(resolve => { received = resolve; });
       service.attach = (_options, sink) => {
@@ -180,7 +181,12 @@ describe("terminal daemon", () => {
     "keeps the %s RPC open through graceful stop and delayed PTY exit",
     async (method) => {
       const { client, directory, ptys, server } = await setup();
-      const terminal = await client.create({ cwd: directory });
+      const epoch = await client.operationEpoch();
+      const terminal = await client.operate<TerminalDescriptor>(
+        "create",
+        { request: { cwd: directory } },
+        { id: randomUUID(), epoch },
+      );
       const pty = ptys[0]!;
       const exit = pty.kill.bind(pty);
       let markStopping!: () => void;
@@ -194,10 +200,13 @@ describe("terminal daemon", () => {
       vi.useFakeTimers();
       try {
         let settled = false;
-        const request =
+        const request = client.operate(
+          method,
           method === "remove"
-            ? client.remove(terminal.id, false)
-            : client.restart(terminal.id);
+            ? { id: terminal.id, force: false }
+            : { id: terminal.id },
+          { id: randomUUID(), epoch },
+        );
         const result = request.then(
           (receipt) => {
             settled = true;
@@ -238,26 +247,28 @@ describe("terminal daemon", () => {
   it("keeps terminal RPC and byte streams behind authenticated IPC", async () => {
     const { address, client, directory, ptys, server } = await setup();
     await client.probe();
+    const epoch = await client.operationEpoch();
     expect(await client.getSettings()).toEqual({
       persistOutput: false,
       historyRetentionDays: 30,
     });
     expect(
-      await client.updateSettings({
-        persistOutput: true,
-        historyRetentionDays: 14,
-      }),
+      await client.operate(
+        "updateSettings",
+        { patch: { persistOutput: true, historyRetentionDays: 14 } },
+        { id: randomUUID(), epoch },
+      ),
     ).toEqual({ persistOutput: true, historyRetentionDays: 14 });
-    await client.clearHistory();
+    await client.operate("clearHistory", {}, { id: randomUUID(), epoch });
     await expect(
       new TerminalDaemonClient(address, "wrong-secret").probe(),
     ).rejects.toThrow();
 
-    const terminal = await client.create({
-      cwd: directory,
-      cols: 90,
-      rows: 28,
-    });
+    const terminal = await client.operate<TerminalDescriptor>(
+      "create",
+      { request: { cwd: directory, cols: 90, rows: 28 } },
+      { id: randomUUID(), epoch },
+    );
     const catalog = await client.list(directory);
     expect(catalog.terminals).toMatchObject([
       { id: terminal.id, status: "running" },

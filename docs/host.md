@@ -118,8 +118,8 @@ compare the same page and theme in an ordinary Chrome tab.
 | `inspire status` | Check the managed Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
 | `inspire restart` | Prepare the next build/runtime, then restart as **Restart Host** does: the Host and its own Pi workers restart, and taken-over Pi reload their settings. Project terminals keep running. |
-| `inspire restart --host-only` | Restart as **Restart Host only**: every Pi process, including Inspire's workers, keeps running with its work. |
-| `inspire restart --all` | Restart this installation's Linux Host and terminal services, ending terminal processes. |
+| `inspire restart --host-only` | Restart Inspire while every Pi process, including Inspire's workers, keeps running with its work. |
+| `inspire restart --all` | Restart this installation's Linux Host and terminal services, closing project terminals in the installed terminal service. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
 | `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
 | `inspire terminal stop` | Stop that daemon; running terminals require `--force`. |
@@ -171,19 +171,22 @@ that Pi; a Host-only restart does not reload it.
 
 ## Host and terminal maintenance
 
-**Settings → System → Host** offers three restarts:
+**Settings → System → Host** offers two restart actions.
 
 | Action | Effect |
 | --- | --- |
 | **Restart Host** | Restarts Inspire and its own Pi workers, and reloads every terminal Pi it has taken over so they apply current settings. Use it after changing settings or extensions. |
-| **Restart Host only** | Restarts Inspire alone. Every Pi process, including Inspire's own workers, keeps its running work and loaded settings; afterwards Inspire finds its former workers read-only with **Take over**. Taking over also restores their pending browser questions and lets you answer them. |
-| **Restart all** | Like Restart Host, and also restarts the terminal services, ending project terminal processes (installed Linux services only). |
+| **Restart all** | Like Restart Host, and also restarts the installed Linux terminal service, closing its project terminals. |
 
 Restart Host and Restart all check for unfinished work first. If work is running, they offer a
 separately confirmed **Stop work and restart**, which interrupts that work and discards Pending
-input; idle workers do not block a restart. Restart Host only lets running work continue. After a restart, sessions open by the ordinary rule: a session a terminal Pi
-is running opens read-only with **Take over**, and the rest continue directly. After a disconnect,
-the browser keeps tracking the submitted restart without sending another.
+input. Idle workers do not block a restart. After a restart, a session a terminal Pi is running
+opens read-only with **Take over**, and the rest continue directly. After a disconnect, the browser
+keeps tracking the submitted restart without sending another.
+
+Run `inspire restart --host-only` to restart Inspire while every Pi process, including Inspire's
+own workers, keeps its running work and loaded settings. Inspire finds its former workers
+read-only with **Take over**. Taking over also restores their pending browser questions.
 
 The browser drops its tracking once it reconnects to the new Host or sees the request rejected.
 Uncertain requests keep their identity for status checks and explicit retries. **Recheck status**
@@ -193,19 +196,22 @@ sending or cancelling a restart. A restart already pending on the Host blocks a 
 
 Page restart works on Windows, macOS and Linux for a Host started through `inspire` or
 `npm run inspire`, and for the installed Linux service. It keeps the launcher, environment, instance
-configuration, pairing and project terminals, and opens no new browser window. If preparation
-fails, the Host keeps running; if Pi cleanup fails, it is not replaced. A Host started from an
-internal server entry point must be restarted by its operator.
+configuration and pairing, and opens no new browser window. **Restart Host** also keeps project
+terminals running. If preparation fails, the Host keeps running. A failed Pi cleanup prevents Host
+replacement. A Host started from an internal server entry point must be restarted by its operator.
 
-Restarts leave connection services running. `--all` requires the installed Linux services, and
-Settings shows the availability of both scopes separately.
-`inspire stop` and `inspire restart` reach a managed Host even when its HTTP listener is down;
-reuse the running Host's port and state-path overrides. Restart waits for workers to shut down and
-the process to exit, and refuses to replace a Host whose cleanup failed or that does not respond.
+Restarts leave connection services running. `inspire restart --all` requires the installed Linux
+services and an external OS terminal, since the project terminal running the command could close
+before it shows the result. Settings shows the availability of both restart scopes.
+
+CLI restart requires the running Host to confirm the requested scope over authenticated HTTP
+before it stops the process. If the listener is down, use `inspire stop` with the running Host's
+port and state-path overrides, then start Inspire again after shutdown completes. Stopping an
+installed service also ends its project terminals.
 
 ### Terminal-service maintenance
 
-Restart Host and Restart Host only keep the terminal daemon, so neither upgrades it. Manage the daemon from an
+**Restart Host** and `inspire restart --host-only` keep the existing terminal daemon. Manage it from an
 **external terminal**, not from an Inspire project terminal (stopping the daemon would end the
 command; it refuses to run there, while `status` is allowed):
 
@@ -238,11 +244,12 @@ connection, and a failed check alone does not mean the protocols differ: inspect
 `inspire terminal status` and the owning service first. The error card keeps the connection detail
 for copying.
 
-Installing or enabling the Linux units does not migrate an existing transient daemon or stop its
-work. A compatible existing daemon can keep serving the Host. A confirmed duplicate listener exits
-with code 78, which the unit does not crash-restart; other crashes follow the normal restart
-policy. An incompatible owner needs an explicit migration once its terminal work is finished (see
-[Older terminal daemons](#older-terminal-daemons)).
+After enabling the Linux units, a compatible terminal daemon retained from a direct launch keeps
+serving the Host. **Restart all** affects the installed terminal service. The retained daemon keeps
+running, and the installed daemon can exit with code 78 when it finds that owner. To move terminal
+ownership to the installed service, finish terminal work, run `inspire terminal stop` from an
+external OS terminal, then run `systemctl --user start inspire-terminal.service`. See
+[Older terminal daemons](#older-terminal-daemons) for daemons without authenticated lifecycle controls.
 
 Custom token or socket paths on POSIX need a parent directory private to the current user, or one
 Inspire can create with mode `0700`; Inspire refuses shared parents and does not change their
@@ -383,7 +390,9 @@ without a model call. CI exercises the packaged lifecycle on Linux, macOS and Wi
 records the checked versions.
 
 In an updated source checkout, `npm run inspire -- restart` rebuilds changed client inputs before
-replacing the Host. Pi extension changes need only [`/reload`](pi-commands.md#compaction-and-reload).
+replacing a Host that supports signed restart preparation. For a Host from before that change,
+follow the [one-time upgrade steps](#older-hosts-and-restart-preparation). Pi extension changes
+need only [`/reload`](pi-commands.md#compaction-and-reload).
 
 ## Upgrading from older versions
 
@@ -400,18 +409,23 @@ relying on per-port isolation.** Inspire cannot replace an operator-supplied sec
 cookie may contain a copy of it that still works as an explicit bearer. Replace the value in your
 secret configuration and restart the Host. Old browser bundles must reload and pair again.
 
-### Older Host readiness and shutdown
+### Older Hosts and restart preparation
 
-The CLI authenticates the matching instance before reporting it ready. A Host without this protocol
-needs one upgrade restart: `inspire restart` performs it when the Host already supports
-authenticated local shutdown; legacy Linux can use the exact-process signal fallback; older
-Windows/macOS Hosts must first be stopped through their service manager or inspected process
-controls. The [ownership contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#instances-and-local-control)
-defines the boundaries.
+An older Host such as the v0.6.5 release can authenticate readiness without supporting signed
+restart preparation. After updating that installation in place, open **Settings → System → Host**
+on the still-running Host and choose **Restart Host**. The running Host prepares and starts the
+replacement through its existing launcher or service while keeping project terminals running.
+
+If page restart is unavailable, stop the old Host through its launcher or service manager and
+start the updated installation once shutdown completes. For legacy Linux instances, `inspire stop`
+can use the verified process fallback. On Windows and macOS, a Host without authenticated shutdown
+must be stopped through its service manager or inspected process controls. See the
+[ownership contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#instances-and-local-control).
 
 ### Older terminal daemons
 
-Terminal units that set `NODE_ENV=production` need reinstallation when terminal processes can end:
+Terminal units that set `NODE_ENV=production` need reinstallation when terminal processes can end.
+Run these commands from an external OS terminal.
 
 ```bash
 inspire service install-host
@@ -423,10 +437,10 @@ terminal work first. A Host never kills or silently replaces a still-listening o
 daemons use a fresh private TLS secret at `<terminal-token-path>.tls-v3`, keeping the configured
 token-path stem compatible with existing service arguments.
 
-Daemons from before lifecycle controls need a one-time manual upgrade through their owner.
-Installed Linux services can use **System → Host → Restart all** after finishing terminal work, but
-that does not stop an independent transient daemon. For older direct launches, stop the Host, find
-the current user's exact terminal daemon and stop its process tree once:
+Daemons from before lifecycle controls need a one-time manual upgrade through their owner. For the
+installed Linux terminal service, use **System → Host → Restart all** after finishing terminal work.
+For older direct launches, stop the Host, find the current user's exact terminal daemon and stop
+its process tree once:
 
 - macOS: inspect `ps -axo user,pid,command` (the title may be `inspire-terminal`) and use `lsof` to
   confirm its socket and working directory, then `kill -TERM <pid>`.

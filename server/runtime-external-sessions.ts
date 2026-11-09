@@ -45,7 +45,7 @@ interface ExternalSessionHost {
   assertUsable(slot: RuntimeSlot): void;
   log(slot: RuntimeSlot, error: unknown): void;
   released(slot: RuntimeSlot): void;
-  syncUi?(
+  syncUi(
     slot: RuntimeSlot,
     requests: Record<string, unknown>[],
     owner: ExternalSessionConnection,
@@ -197,7 +197,7 @@ export class RuntimeExternalSessions {
     try {
       return await operation;
     } finally {
-      if (this.connecting.get(slot) === operation) this.connecting.delete(slot);
+      this.connecting.delete(slot);
     }
   }
 
@@ -261,7 +261,6 @@ export class RuntimeExternalSessions {
       sending: 0,
       selectionRevision: 0,
     };
-    this.detach(slot, native);
     this.connections.set(slot, connection);
     // Attached Pi accepts input: the view is no longer read-only.
     if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
@@ -290,7 +289,7 @@ export class RuntimeExternalSessions {
     const receiverChanged =
       priorState.taskRuns?.instanceId !== state.taskRuns?.instanceId;
     connection.state = state;
-    this.host.syncUi?.(slot, state.uiRequests ?? [], connection.native);
+    this.host.syncUi(slot, state.uiRequests ?? [], connection.native);
     if (selectionChanged) connection.selectionRevision++;
     if (force || receiverChanged) {
       slot.availableModels = null;
@@ -586,13 +585,13 @@ export class RuntimeExternalSessions {
     }
   }
 
-  detach(slot: RuntimeSlot, replacement?: ExternalSessionConnection): void {
+  detach(slot: RuntimeSlot): void {
     const connection = this.connections.get(slot);
     if (!connection) return;
     this.connections.delete(slot);
-    this.host.syncUi?.(slot, [], connection.native);
+    this.host.syncUi(slot, [], connection.native);
     clearTimeout(connection.timer);
-    if (connection.native !== replacement) connection.native.close();
+    connection.native.close();
   }
 
   close(): void {

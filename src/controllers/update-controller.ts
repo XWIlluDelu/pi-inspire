@@ -69,7 +69,6 @@ function projection(status: HostUpdateStatus): Partial<UpdateControllerState> {
 
 /** Projects Host-owned checks and owns browser request feedback and recovery. */
 export class UpdateController {
-  private requestGeneration = 0;
   private readonly checkRequests: Record<UpdateKind, number> = {
     inspire: 0,
     pi: 0,
@@ -85,7 +84,6 @@ export class UpdateController {
   constructor(private readonly host: UpdateControllerHost) {}
 
   invalidateForTransportReplacement(): void {
-    this.requestGeneration += 1;
     this.checkRequests.inspire += 1;
     this.checkRequests.pi += 1;
     this.checkRecoveries.inspire.reset();
@@ -141,11 +139,10 @@ export class UpdateController {
     if (!api || !identity || this.snoozing) return;
     this.snoozing = true;
     const request = ++this.snoozeRequest;
-    const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
     const owns = () =>
       request === this.snoozeRequest &&
-      this.owns(api, requestGeneration, transportGeneration);
+      this.ownsTransport(api, transportGeneration);
     void api
       .snoozeUpdate(identity)
       .then((status) => {
@@ -160,13 +157,8 @@ export class UpdateController {
       });
   }
 
-  private owns(
-    api: UpdateApi,
-    requestGeneration: number,
-    transportGeneration: number,
-  ): boolean {
+  private ownsTransport(api: UpdateApi, transportGeneration: number): boolean {
     return (
-      requestGeneration === this.requestGeneration &&
       transportGeneration === this.host.transportGeneration() &&
       api === this.host.api()
     );
@@ -184,12 +176,11 @@ export class UpdateController {
         : state.piUpdateChecking || state.piUpdateRequestPending;
     if (!api || checking) return;
     const request = ++this.checkRequests[kind];
-    const requestGeneration = this.requestGeneration;
     const transportGeneration = this.host.transportGeneration();
     const recovery = this.checkRecoveries[kind];
     const owns = () =>
       request === this.checkRequests[kind] &&
-      this.owns(api, requestGeneration, transportGeneration);
+      this.ownsTransport(api, transportGeneration);
     const pending = () => this.host.state()[`${kind}UpdateRequestPending`];
     const patchRequest = (value: boolean, error: string | null = null) =>
       this.host.patch(

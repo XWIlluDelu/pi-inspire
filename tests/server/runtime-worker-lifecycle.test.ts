@@ -35,7 +35,7 @@ describe("worker startup and retirement", () => {
     const source = catalog([record("a", TEST_CWD)]);
     const registrationError = new Error("Maintenance storage is unavailable");
     const remember = vi.fn(async () => {});
-    source.rememberProjectCwds = remember;
+    source.rememberProjectCwd = remember;
     remember.mockRejectedValue(registrationError);
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(source, attachments, {
@@ -61,7 +61,7 @@ describe("worker startup and retirement", () => {
       const created = await runtime.newSession(TEST_CWD);
       expect(created.active?.sessionId).toBe("new-id");
       expect(workers[1]?.starts).toBe(1);
-      expect(remember).toHaveBeenCalledWith([await realpath(TEST_CWD)]);
+      expect(remember).toHaveBeenCalledWith(await realpath(TEST_CWD));
     } finally {
       await runtime.close();
     }
@@ -108,7 +108,7 @@ describe("worker startup and retirement", () => {
   it("creates the selected directory only on explicit new-session admission, before starting Pi", async () => {
     const cwd = join(fixtureWorkspace, "projects", "new-project");
     const source = catalog([]);
-    source.rememberProjectCwds = vi.fn(async () => {});
+    source.rememberProjectCwd = vi.fn(async () => {});
     const create = vi.fn((options) => {
       expect(existsSync(cwd)).toBe(true);
       return new FakeRpc(options) as unknown as PiRpcProcess;
@@ -131,9 +131,9 @@ describe("worker startup and retirement", () => {
       });
       expect((await stat(cwd)).isDirectory()).toBe(true);
       expect(snapshot.active?.cwd).toBe(create.mock.calls[0]![0].cwd);
-      expect(source.rememberProjectCwds).toHaveBeenCalledWith([
+      expect(source.rememberProjectCwd).toHaveBeenCalledWith(
         snapshot.active!.cwd,
-      ]);
+      );
       expect(create.mock.calls[0]![0].args).toEqual(
         expect.arrayContaining([
           "--model",

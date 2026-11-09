@@ -6,9 +6,10 @@ import { hostRestartClient } from "../controllers/host-restart-controller";
 import { useModalFocus } from "../use-modal-focus";
 import { SettingField } from "./SettingsControls";
 
-const RESTART_NAMES: Record<HostRestartScope, string> = {
+type SettingsRestartScope = Exclude<HostRestartScope, "host-only">;
+
+const RESTART_NAMES: Record<SettingsRestartScope, string> = {
   host: "Restart Host",
-  "host-only": "Restart Host only",
   all: "Restart all",
 };
 
@@ -18,7 +19,7 @@ function RestartConfirmation({
   onClose,
   onConfirm,
 }: {
-  scope: HostRestartScope;
+  scope: SettingsRestartScope;
   interruptWork: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -44,13 +45,11 @@ function RestartConfirmation({
         <p className="dialog__message" id="host-restart-description">
           {interruptWork
             ? scope === "all"
-              ? "This will stop all active Pi work, discard Pending messages, end all project terminal processes, and briefly disconnect the page."
+              ? "This will stop all active Pi work, discard Pending messages, close project terminals in the installed service, and briefly disconnect the page."
               : "This will stop all active Pi work, discard Pending messages, and briefly disconnect the page. Project terminals keep running."
             : scope === "all"
-              ? "This will end all project terminal processes and briefly disconnect the page."
-              : scope === "host-only"
-                ? "Every Pi process, including Inspire's own, keeps its running work and loaded settings. The page will briefly disconnect."
-                : "Taken-over terminal Pi processes reload their settings. The page will briefly disconnect."}
+              ? "This will close project terminals in the installed service and briefly disconnect the page."
+              : "Taken-over terminal Pi processes reload their settings. The page will briefly disconnect."}
         </p>
         <div className="host-restart__actions">
           <button
@@ -84,7 +83,7 @@ export function HostRestartSettings({
     hostRestartClient.snapshot,
   );
   const [confirmation, setConfirmation] = useState<{
-    scope: HostRestartScope;
+    scope: SettingsRestartScope;
     hostId: string;
     interruptWork: boolean;
   } | null>(null);
@@ -171,33 +170,11 @@ export function HostRestartSettings({
         )}
       </SettingField>
       <SettingField
-        label="Restart Host only"
-        description="Restart Inspire only; every Pi keeps running."
-      >
-        {/* Running work continues, so this restart never needs Stop work. */}
-        <button
-          type="button"
-          className="button button--danger-outline"
-          aria-label="Restart Host only"
-          disabled={hostDisabled}
-          onClick={() =>
-            setConfirmation({
-              scope: "host-only",
-              hostId: state.status!.hostId,
-              interruptWork: false,
-            })
-          }
-        >
-          <RefreshCw size={13} aria-hidden />
-          Host only
-        </button>
-      </SettingField>
-      <SettingField
         label="Restart all"
         description={
           state.status && !state.status.allAvailable
             ? state.status.allReason
-            : "Restart Inspire and Pi, and close all project terminals."
+            : "Restart Inspire and Pi. Close project terminals in the installed service."
         }
       >
         {canStopAndRestart && !allDisabled && operation?.scope === "all" ? (

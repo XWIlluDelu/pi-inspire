@@ -259,8 +259,8 @@ updates after the next reply.
 For an idle Inspire-owned session, `/reload` replaces its worker to reload extensions, skills,
 prompts and context files, resetting worker-local extension state. Other sessions and the Host stay
 unchanged. **Restart Host** replaces all Inspire-owned workers, reloads taken-over terminal Pi
-processes, and applies changed Host configuration; **Restart Host only** keeps every Pi process,
-including Inspire's own workers, and its running work.
+processes, and applies changed Host configuration. `inspire restart --host-only` keeps every Pi
+process, including Inspire's own workers, and its running work.
 
 <a id="updates"></a>
 

@@ -2,9 +2,13 @@ import { execFile as execFileCallback } from "node:child_process";
 import { lstat, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { resolvePiInstallationIdentity } from "./pi-installation.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
-import type { MaintenanceRestartTransition, RuntimeLike } from "./runtime.js";
+import { resolvePiInstallationIdentity } from "./pi-installation.js";
+import type {
+  MaintenanceRestartTransition,
+  RestartLeaseOwner,
+} from "./runtime.js";
+
 export type { MaintenanceRestartTransition } from "./runtime.js";
 
 const execFile = promisify(execFileCallback);
@@ -27,7 +31,7 @@ export type MaintenanceRestartOutcome =
   | { kind: "skipped"; reason: string };
 
 interface MaintenanceRestartControllerOptions {
-  runtime: RuntimeLike;
+  runtime: RestartLeaseOwner;
   root: string;
   piVersion: string;
   runningSource: InspireSourceIdentity;
@@ -134,13 +138,6 @@ export class MaintenanceRestartController {
   }
 
   async reserve(): Promise<MaintenanceRestartOutcome> {
-    if (
-      !this.options.runtime.reserveMaintenanceRestart ||
-      !this.options.runtime.commitMaintenanceRestart ||
-      !this.options.runtime.releaseMaintenanceRestart
-    )
-      return this.skip("runtime-unsupported");
-
     const source = this.options.runningSource;
     if (source.kind === "unknown")
       return this.skip("inspire-identity-unavailable");
@@ -185,21 +182,11 @@ export class MaintenanceRestartController {
   }
 
   commit(leaseId: string): MaintenanceRestartTransition {
-    return (
-      this.options.runtime.commitMaintenanceRestart?.(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      }
-    );
+    return this.options.runtime.commitMaintenanceRestart(leaseId);
   }
 
   release(leaseId: string): MaintenanceRestartTransition {
-    return (
-      this.options.runtime.releaseMaintenanceRestart?.(leaseId) ?? {
-        kind: "skipped",
-        reason: "runtime-unsupported",
-      }
-    );
+    return this.options.runtime.releaseMaintenanceRestart(leaseId);
   }
 
   private skip(reason: string): MaintenanceRestartOutcome {

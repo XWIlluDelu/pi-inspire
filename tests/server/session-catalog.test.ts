@@ -11,14 +11,15 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
-  newestPerCwd,
-  orderSessionRecords,
   SessionCatalog,
   type SessionRecord,
 } from "../../server/session-catalog.js";
 import { SessionMetadataIndex } from "../../server/session-metadata.js";
 import { searchSessionRecords } from "../../server/session-search.js";
-import { MAX_SESSION_DISPLAY_TITLE_CHARS } from "../../shared/contracts.js";
+import {
+  MAX_CURATED_SESSION_RESULTS,
+  MAX_SESSION_DISPLAY_TITLE_CHARS,
+} from "../../shared/contracts.js";
 
 function record(id: string, cwd: string, modified: string): SessionRecord {
   return {
@@ -125,13 +126,16 @@ describe("catalog identity and pagination", () => {
     expect(list).toHaveBeenCalledTimes(2);
   });
 
-  it("uses deterministic newest-first ordering with stable tie-breakers", () => {
+  it("uses deterministic newest-first ordering with stable tie-breakers", async () => {
     const sameTime = "2026-07-27T10:00:00Z";
     const old = record("old", "/work/a", "2026-07-01T10:00:00Z");
     const beta = record("beta", "/work/a", sameTime);
     const alpha = record("alpha", "/work/a", sameTime);
+    const catalog = new SessionCatalog("/unused", {
+      list: async () => [old, beta, alpha],
+    });
     expect(
-      orderSessionRecords([old, beta, alpha]).map((session) => session.id),
+      (await catalog.list()).sessions.map((session) => session.id),
     ).toEqual(["alpha", "beta", "old"]);
   });
 
@@ -204,13 +208,13 @@ describe("catalog identity and pagination", () => {
   });
 
   it("reports offset, bounded limit, and total independently from page length", async () => {
-    const catalog = new SessionCatalog("/unused");
-    const rows = orderSessionRecords([
-      record("match-old", "/work/a", "2026-07-01T10:00:00Z"),
-      record("other", "/work/a", "2026-07-03T10:00:00Z"),
-      record("match-new", "/work/a", "2026-07-02T10:00:00Z"),
-    ]);
-    vi.spyOn(catalog, "refresh").mockResolvedValue(rows);
+    const catalog = new SessionCatalog("/unused", {
+      list: async () => [
+        record("match-old", "/work/a", "2026-07-01T10:00:00Z"),
+        record("other", "/work/a", "2026-07-03T10:00:00Z"),
+        record("match-new", "/work/a", "2026-07-02T10:00:00Z"),
+      ],
+    });
 
     const page = await catalog.list({ offset: 1, limit: 1000 });
     expect(page).toMatchObject({ total: 3, offset: 1, limit: 100 });
@@ -600,34 +604,31 @@ describe("catalog title provenance", () => {
   });
 });
 
-describe("newestPerCwd", () => {
+it("returns all requested folder sessions in catalog order or refuses the combined limit", async () => {
+  const alpha = "/work/alpha";
+  const beta = "/work/beta";
   const sessions = [
-    record("other", "/work/other", "2026-07-27T10:00:00Z"),
-    record("beta-old", "/work/beta", "2026-02-01T10:00:00Z"),
-    record("alpha-mid", "/work/alpha", "2026-05-01T10:00:00Z"),
-    record("alpha-new", "/work/alpha", "2026-07-01T10:00:00Z"),
-    record("alpha-old", "/work/alpha", "2026-01-01T10:00:00Z"),
+    record("beta-old", beta, "2026-02-01T10:00:00Z"),
+    record("alpha-new", alpha, "2026-07-01T10:00:00Z"),
+    record("alpha-old", alpha, "2026-01-01T10:00:00Z"),
   ];
-
-  it("answers with each named folder's sessions, newest first", () => {
-    // The catalog's own order is not assumed: a folder pin has to produce the
-    // folder's newest work whatever order the session tree was listed in.
-    expect(
-      newestPerCwd(sessions, ["/work/alpha", "/work/beta"], 40).map(
-        (session) => session.id,
+  const overflow = "/work/overflow";
+  const catalog = new SessionCatalog("/unused", {
+    list: async () => [
+      ...sessions,
+      ...Array.from({ length: MAX_CURATED_SESSION_RESULTS - 1 }, (_, index) =>
+        record(`overflow-${index}`, overflow, "2026-02-01T10:00:00Z"),
       ),
-    ).toEqual(["alpha-new", "alpha-mid", "beta-old", "alpha-old"]);
+    ],
   });
 
-  it("bounds each folder independently rather than the answer as a whole", () => {
-    expect(
-      newestPerCwd(sessions, ["/work/alpha", "/work/beta"], 1).map(
-        (session) => session.id,
-      ),
-    ).toEqual(["alpha-new", "beta-old"]);
-  });
-
-  it("returns nothing when no folder is pinned", () => {
-    expect(newestPerCwd(sessions, [], 40)).toEqual([]);
+  const curated = await catalog.listByCwds([beta, alpha, beta]);
+  expect(curated.map((session) => session.id)).toEqual([
+    "alpha-new",
+    "beta-old",
+    "alpha-old",
+  ]);
+  await expect(catalog.listByCwds([overflow, alpha])).rejects.toMatchObject({
+    status: 413,
   });
 });

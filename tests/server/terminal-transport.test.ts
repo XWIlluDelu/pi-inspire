@@ -9,8 +9,6 @@ import { WebSocket } from "ws";
 import { createInspireServer } from "../../server/app.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
-import { dispatchTerminalMutation } from "../../server/terminal-operation-dispatch.js";
-import { TerminalOperationReceipts } from "../../server/terminal-operation-receipts.js";
 import type {
   TerminalAttachment,
   TerminalAttachmentSink,
@@ -21,7 +19,6 @@ import type {
   TerminalCatalogResponse,
   TerminalDescriptor,
   TerminalMutationMethod,
-  TerminalOperationIdentity,
   TerminalServiceSettings,
 } from "../../shared/terminal-contracts.js";
 import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
@@ -58,18 +55,13 @@ const terminal: TerminalDescriptor = {
 };
 
 class FakeTerminalService implements TerminalService {
-  private readonly operations = new TerminalOperationReceipts();
+  private readonly epoch = randomUUID();
   async operationEpoch() {
-    return this.operations.getEpoch();
+    return this.epoch;
   }
-  operate<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-    operation: TerminalOperationIdentity,
-  ): Promise<Result> {
-    return this.operations.run(operation, method, params, () =>
-      dispatchTerminalMutation(this, method, params),
-    ) as Promise<Result>;
+  async operate<Result>(method: TerminalMutationMethod): Promise<Result> {
+    expect(method).toBe("remove");
+    return { catalogEpoch: "catalog-1", revision: 2 } as Result;
   }
   readonly input = vi.fn();
   readonly controls = vi.fn();
@@ -85,28 +77,9 @@ class FakeTerminalService implements TerminalService {
       profiles: [],
     };
   }
-  async create() {
-    return terminal;
-  }
-  async rename() {
-    return terminal;
-  }
-  async reorder() {
-    return this.list();
-  }
-  async restart() {
-    return terminal;
-  }
-  async remove() {
-    return { catalogEpoch: "catalog-1", revision: 2 };
-  }
   getSettings(): TerminalServiceSettings {
     return { persistOutput: false, historyRetentionDays: 30 };
   }
-  async updateSettings() {
-    return this.getSettings();
-  }
-  async clearHistory() {}
   async attach(
     options: TerminalAttachOptions,
     sink: TerminalAttachmentSink,
@@ -193,17 +166,21 @@ describe("terminal HTTP and WebSocket transport", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ historyRetentionDays: 0 })
       .expect(400);
+    const operate = vi.spyOn(terminalService, "operate");
+    const operation = {
+      id: randomUUID(),
+      epoch: await terminalService.operationEpoch(),
+    };
     await request(application.server)
       .delete(`/api/terminals/${terminal.id}`)
       .set("Authorization", `Bearer ${token}`)
-      .set(
-        "X-Terminal-Operation",
-        JSON.stringify({
-          id: randomUUID(),
-          epoch: await terminalService.operationEpoch(),
-        }),
-      )
+      .set("X-Terminal-Operation", JSON.stringify(operation))
       .expect(200, { catalogEpoch: "catalog-1", revision: 2 });
+    expect(operate).toHaveBeenCalledExactlyOnceWith(
+      "remove",
+      { id: terminal.id, force: false },
+      operation,
+    );
   });
 
   it.each(["awaiting attach", "attached"] as const)(

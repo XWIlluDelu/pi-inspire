@@ -97,6 +97,7 @@ async function directAttachment(
       emit: vi.fn(),
       assertUsable: vi.fn(),
       released: vi.fn(),
+      syncUi: vi.fn(),
       corresponds: () => true,
       log: vi.fn(),
       reconcile: async () => {},

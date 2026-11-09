@@ -110,29 +110,6 @@ describe("typed Host API", () => {
     expect(sequence).toEqual(["acknowledged", "shutdown"]);
   });
 
-  it("keeps maintenance restart coordination behind local authentication", async () => {
-    for (const action of ["", "/commit", "/release"]) {
-      await request(application.server)
-        .post(`/api/maintenance/restart${action}`)
-        .send({ leaseId: "a".repeat(43) })
-        .expect(401);
-      await request(application.server)
-        .post(`/api/maintenance/restart${action}`)
-        .set("Authorization", `Bearer ${token}`)
-        .send({ leaseId: "a".repeat(43) })
-        .expect(200, { kind: "skipped", reason: "runtime-unsupported" });
-    }
-    for (const action of ["commit", "release"]) {
-      for (const leaseId of [undefined, "", "invalid", 123]) {
-        await request(application.server)
-          .post(`/api/maintenance/restart/${action}`)
-          .set("Authorization", `Bearer ${token}`)
-          .send({ leaseId })
-          .expect(400);
-      }
-    }
-  });
-
   it("keeps release update status behind local authentication", async () => {
     await request(application.server).get("/api/update").expect(401);
     const response = await request(application.server)

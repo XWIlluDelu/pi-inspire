@@ -78,13 +78,14 @@ if (args[1] === 'show') console.log([
 `,
   );
   await chmod(systemctl, 0o755);
-  const env = {
+  const logPath = join(root, "calls.log");
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${join(root, "bin")}${delimiter}${process.env.PATH}`,
     HOME: root,
     XDG_CONFIG_HOME: join(root, "config"),
     FIXTURE_ROOT: root,
-    FIXTURE_LOG: join(root, "calls.log"),
+    FIXTURE_LOG: logPath,
     INSPIRE_OPEN: "0",
   };
   for (const name of [
@@ -92,9 +93,10 @@ if (args[1] === 'show') console.log([
     "INSPIRE_HOST",
     "INSPIRE_PORT",
     "INSPIRE_TOKEN",
+    "INSPIRE_TERMINAL_ID",
     "SYSTEMD_EXEC_PID",
   ])
-    delete (env as Record<string, string | undefined>)[name];
+    delete env[name];
   return {
     root,
     env,
@@ -104,7 +106,7 @@ if (args[1] === 'show') console.log([
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       }),
-    log: () => readFile(env.FIXTURE_LOG, "utf8"),
+    log: () => readFile(logPath, "utf8"),
   };
 }
 
@@ -147,6 +149,15 @@ describe.runIf(process.platform === "linux")(
         );
       },
     );
+    it("requires an external terminal only when restart would end project terminals", async () => {
+      const f = await fixture(false);
+      f.env.INSPIRE_TERMINAL_ID = "project-terminal";
+      expect(() => f.run(["restart", "--all"])).toThrow(/external OS terminal/);
+      await expect(f.log()).rejects.toMatchObject({ code: "ENOENT" });
+
+      expect(f.run(["restart"])).toContain("Terminals remain running");
+      expect(await f.log()).toContain("--user restart inspire-host.service");
+    });
     it.each([{ args: [] }, { args: ["--host-only"] }])(
       "does not stop a service when Pi restart preparation fails: $args",
       async ({ args }) => {

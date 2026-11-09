@@ -129,8 +129,9 @@ receives no POSIX signal argument.
 
 ## Identified controls and recovery
 
-Browser mutations carry one immutable operation identity through Host and daemon. Same-content retries
-share the running operation or retained result; reuse with different parameters is refused. Lost
+Browser mutations carry one immutable operation identity to the PTY manager, which owns the receipt
+epoch in both the daemon and the in-process development Host. Same-content retries share the running
+operation or retained result. The owner refuses reuse with different parameters. Lost
 responses, deadlines, and disconnects leave the outcome unresolved; they do not cancel work.
 Read-only catalog/settings reads and attachment/input continuity remain independent. A confirmed
 completion or rejection remains authoritative even if the browser cannot remove its recovery record.
@@ -155,8 +156,8 @@ Unavailable or malformed storage blocks untracked writes. Every control mutation
 identity is refused before dispatch. Valid identified requests rejected during route validation carry
 the matching operation ID and definite rejected outcome, including nested terminal routes.
 
-The in-process development owner follows the same mutation contract. Diagnostics distinguish absent
-endpoints, unverified connections and data-protocol incompatibility. Terminal errors use the shared
+Diagnostics distinguish absent endpoints, unverified connections and data-protocol incompatibility.
+Terminal errors use the shared
 notice card with complete Copy and separate Dismiss; text selection does not dismiss them.
 
 An incompatible daemon requires an explicit upgrade after its work is finished. Without verified
