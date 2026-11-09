@@ -23,6 +23,7 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
       leaseId: "lease",
     })),
     releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" })),
+    refreshAttachedPi: vi.fn(async (_interruptWork: boolean) => {}),
   };
   const backend: HostRestartBackend = {
     inspect: vi.fn(async () => ({ host: true, all: true })),
@@ -47,6 +48,39 @@ async function intent(controller: HostRestartController) {
 }
 
 describe("manual Host restart ownership", () => {
+  it.each([
+    ["host", true],
+    ["all", true],
+    ["host-only", false],
+  ] as const)(
+    "%s restart reloads taken-over Pi (%s) or preserves every Pi",
+    async (scope, refreshes) => {
+      const f = fixture();
+      f.controller.start({
+        hostId: (await f.controller.status()).hostId,
+        operationId: randomUUID(),
+        scope,
+      });
+      await vi.waitFor(async () =>
+        expect((await f.controller.status()).operation?.phase).toBe(
+          "submitted",
+        ),
+      );
+      expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
+        false,
+        refreshes,
+        !refreshes,
+      );
+      expect(f.runtime.refreshAttachedPi).toHaveBeenCalledTimes(
+        refreshes ? 1 : 0,
+      );
+      expect(f.backend.request).toHaveBeenCalledWith(
+        scope === "all",
+        expect.any(Function),
+      );
+    },
+  );
+
   it("prepares before acquiring idle authority and deduplicates requests from any observer", async () => {
     let ready!: () => void;
     const f = fixture({
@@ -134,7 +168,11 @@ describe("manual Host restart ownership", () => {
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation?.phase).toBe("submitted"),
     );
-    expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(true);
+    expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
+      true,
+      true,
+      false,
+    );
     expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");
     expect(f.backend.prepare).toHaveBeenCalledTimes(2);
     expect(f.backend.request).toHaveBeenCalledOnce();

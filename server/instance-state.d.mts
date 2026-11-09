@@ -52,6 +52,12 @@ export function inspectInstance(
   expected: ExpectedInstance,
   options?: { processMarker?: string; healthTimeoutMs?: number },
 ): Promise<InspectionResult>;
+export function prepareInstanceRestart(
+  path: string,
+  expected: { root: string; host: string; port: number },
+  scope: "host" | "host-only",
+  options?: { processMarker?: string },
+): Promise<unknown>;
 export function stopManagedInstance(
   path: string,
   expected: ExpectedInstance,

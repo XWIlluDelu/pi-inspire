@@ -874,6 +874,15 @@ export function createInspireServer(deps: AppDependencies): {
           ? await deps.maintenanceRestart.reserve()
           : { kind: "skipped", reason: "runtime-unsupported" };
         break;
+      case "restart-prepare": {
+        const { scope } = z
+          .object({ scope: z.enum(["host", "host-only"]) })
+          .parse(grant.request.payload);
+        if (scope === "host-only") deps.runtime.preserveWorkersOnClose?.();
+        else await deps.runtime.refreshAttachedPi?.(false);
+        result = { kind: "prepared", scope };
+        break;
+      }
       case "maintenance-commit":
       case "maintenance-release": {
         const { leaseId } = maintenanceLeaseSchema.parse(grant.request.payload);
@@ -1030,7 +1039,7 @@ export function createInspireServer(deps: AppDependencies): {
     .object({
       hostId: z.string().uuid(),
       operationId: z.string().uuid(),
-      scope: z.enum(["host", "all"]),
+      scope: z.enum(["host", "host-only", "all"]),
       interruptWork: z.literal(true).optional(),
     })
     .strict();

@@ -211,7 +211,8 @@ root-to-leaf line: an ancestor (a report may lag one append) or a continuation.
   becomes a lasting fence. Read-only views recheck about every two seconds and become editable as
   soon as no instance corresponds.
 
-Sessions worked on in Inspire since Host start (input sent, a takeover, or a
+Inspire's own workers load attach-control with their worker tag; their records are ignored while
+this Host owns them. Sessions worked on in Inspire since Host start (input sent, a takeover, or a
 branch chosen to continue here) keep that continuity: idle reclamation, navigation and other
 processes' appends never return them to read-only viewing. A worker warmed by merely viewing a
 session grants none; entering such a session again applies the rule, stopping that idle worker if a

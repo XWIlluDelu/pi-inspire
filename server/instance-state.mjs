@@ -524,6 +524,25 @@ async function waitForProcessExit(path, state, timeoutMs) {
   return false;
 }
 
+/** Tells a healthy Host which restart follows, so CLI restarts match the
+ * page: `host` reloads the Pi it has taken over, `host-only` keeps every Pi
+ * process, including its own workers, running. */
+export async function prepareInstanceRestart(path, expected, scope, options = {}) {
+  const result = await inspectInstance(path, expected, options);
+  if (result.kind === "unavailable")
+    throw new Error("The running Host could not prepare its Pi instances for restart. The Host was not stopped.");
+  if (result.kind !== "healthy") return null;
+  const prepared = await requestInstanceControl(
+    result.state,
+    "restart-prepare",
+    { scope },
+    60_000,
+  );
+  if (prepared?.kind !== "prepared" || prepared.scope !== scope)
+    throw new Error("The running Host did not confirm restart preparation. The Host was not stopped.");
+  return prepared;
+}
+
 export async function stopManagedInstance(path, expected, options = {}) {
   const state = await readState(path);
   if (!state) return { kind: "absent" };

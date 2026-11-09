@@ -93,15 +93,20 @@ export class HostRestartController {
     let mayHaveIssued = false;
     try {
       const available = await this.backend.inspect();
-      if (!available[operation.scope])
+      if (!available[operation.scope === "all" ? "all" : "host"])
         throw new Error(
           operation.scope === "all" ? ALL_UNAVAILABLE : UNAVAILABLE,
         );
       await this.backend.prepare();
       // Preparation can be slow. Acquire the authoritative admission fence
       // afterwards, not from an earlier observation of active work.
+      const refreshPi = operation.scope !== "host-only";
+      // Host only keeps every Pi process and its running work: Inspire's
+      // workers are detached instead of stopped when this Host closes.
       const reservation = this.runtime.reserveMaintenanceRestart?.(
         operation.interruptWork === true,
+        refreshPi,
+        !refreshPi,
       );
       if (reservation?.kind === "busy") {
         operation.busyReason = reservation.reason;
@@ -114,6 +119,13 @@ export class HostRestartController {
       if (!reservation || reservation.kind !== "ready")
         throw new Error("Restart admission is unavailable.");
       leaseId = reservation.leaseId;
+      // Ordinary restarts apply current settings to every Pi Inspire is
+      // working with: its own workers restart with the Host, and taken-over
+      // Pi processes reload in place.
+      if (refreshPi)
+        await this.runtime.refreshAttachedPi?.(
+          operation.interruptWork === true,
+        );
       const result = await this.backend.request(
         operation.scope === "all",
         () => {

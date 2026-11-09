@@ -147,6 +147,29 @@ describe.runIf(process.platform === "linux")(
         );
       },
     );
+    it.each([{ args: [] }, { args: ["--host-only"] }])(
+      "does not stop a service when Pi restart preparation fails: $args",
+      async ({ args }) => {
+        const f = await fixture(false);
+        const path = join(f.root, "build/server", "instance-state.mjs");
+        const original = await readFile(path, "utf8");
+        await writeFile(
+          path,
+          original.replace(
+            "export async function prepareInstanceRestart(path, expected, scope, options = {}) {",
+            'export async function prepareInstanceRestart(path, expected, scope, options = {}) { throw new Error("Pi restart preparation failed");',
+          ),
+        );
+        expect(() => f.run(["restart", ...args])).toThrow(
+          /Pi restart preparation failed/,
+        );
+        expect(
+          (await f.log())
+            .split("\n")
+            .filter((line) => /--user (stop|restart)/u.test(line)),
+        ).toEqual([]);
+      },
+    );
     it("keeps inherited default instance values under the installed service", async () => {
       const f = await fixture(false);
       const { inspireRuntimeDirectory } = await import(

@@ -186,6 +186,16 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
     import.meta.url,
   ),
 );
+/** Workers report themselves through attach-control too, so a worker kept
+ * across a Host-only restart is found again like any other live Pi. */
+const ATTACH_CONTROL_PATH = fileURLToPath(
+  new URL(
+    fileURLToPath(import.meta.url).endsWith(".ts")
+      ? "../extensions/attach-control.ts"
+      : "../extensions/attach-control.js",
+    import.meta.url,
+  ),
+);
 const MAX_DEFERRED_PROMPTS = 16;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
@@ -394,7 +404,13 @@ export interface RuntimeLike {
    * interrupt existing runtime work; scheduled callers remain idle-only. */
   reserveMaintenanceRestart?(
     interruptWork?: boolean,
+    includeAttached?: boolean,
+    preserveWork?: boolean,
   ): MaintenanceRestartDecision;
+  /** Reload every taken-over Pi so it applies current settings. */
+  refreshAttachedPi?(interruptWork: boolean): Promise<void>;
+  /** The coming close is a Host-only restart: keep every worker running. */
+  preserveWorkersOnClose?(): void;
   commitMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
   releaseMaintenanceRestart?(leaseId: string): MaintenanceRestartTransition;
   close(): Promise<void>;
@@ -437,6 +453,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     RuntimeSlot,
     Promise<void>
   >();
+
+  /** Set by a committed Host-only restart: closing detaches workers instead
+   * of stopping them, and afterwards they are live Pi like any terminal Pi. */
+  private preserveWorkers = false;
+
+  preserveWorkersOnClose(): void {
+    this.preserveWorkers = true;
+  }
+
+  /** Attach-control tags of workers this Host currently owns. */
+  ownWorkerTags(): Set<string> {
+    return new Set(
+      [...this.slots.values()].flatMap((slot) =>
+        slot.bridge && slot.process ? [slot.bridge.workerId] : [],
+      ),
+    );
+  }
 
   /** Sessions worked on through Inspire since this Host started. Their
    * position survives idle reclamation and navigation without a new
@@ -547,6 +580,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     expiresAt: number;
     phase: "preparing" | "committed";
     interruptWork: boolean;
+    preserveWork: boolean;
   } | null = null;
   private maintenanceRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
@@ -821,13 +855,26 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   /** Prepare a short no-new-work lease. Only an authoritative commit of this
    * exact lease may authorize restart; committed admission never auto-reopens. */
-  reserveMaintenanceRestart(interruptWork = false): MaintenanceRestartDecision {
+  reserveMaintenanceRestart(
+    interruptWork = false,
+    includeAttached = false,
+    preserveWork = false,
+  ): MaintenanceRestartDecision {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
     if (this.maintenanceRestart !== null)
       return { kind: "busy", reason: "restart-pending" };
     if (!interruptWork) {
-      if (this.hasActiveRuntimeWork())
+      // Running Pi work survives a preserving restart; only Host operations
+      // still in flight must finish first.
+      if (
+        (!preserveWork && this.hasActiveRuntimeWork()) ||
+        (includeAttached &&
+          [...this.slots.values()].some(
+            (slot) =>
+              this.externalSessions?.has(slot) && isBusyRunState(slot.runState),
+          ))
+      )
         return { kind: "busy", reason: "active-work" };
       if (this.maintenanceOperations > 0 || this.hasInFlightRuntimeOperation())
         return { kind: "busy", reason: "in-flight-operation" };
@@ -840,6 +887,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       expiresAt,
       phase: "preparing",
       interruptWork,
+      preserveWork,
     };
     this.maintenanceRestartTimer = setTimeout(
       () => this.expireMaintenanceRestart(),
@@ -852,6 +900,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return { kind: "ready", leaseId, expiresAt };
   }
 
+  async refreshAttachedPi(interruptWork: boolean): Promise<void> {
+    await Promise.all(
+      [...this.slots.values()].map(async (slot) => {
+        const connection = this.externalSessions?.connection(slot);
+        if (!connection) return;
+        try {
+          if (interruptWork && isBusyRunState(slot.runState))
+            await connection.abort();
+          await connection.reload();
+        } catch (error) {
+          this.logRuntimeError(slot.id, error, "attached_pi_reload");
+        }
+      }),
+    );
+  }
+
   commitMaintenanceRestart(leaseId: string): MaintenanceRestartTransition {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
@@ -862,11 +926,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       return { kind: "skipped", reason: "lease-already-committed" };
     if (
       !lease.interruptWork &&
-      (this.hasActiveRuntimeWork() ||
+      ((!lease.preserveWork && this.hasActiveRuntimeWork()) ||
         this.maintenanceOperations > 0 ||
         this.hasInFlightRuntimeOperation())
     )
       return { kind: "skipped", reason: "active-work" };
+    if (lease.preserveWork) this.preserveWorkers = true;
     // No await between validation and closing admission indefinitely. A delayed
     // external restart remains safe even after the preparation deadline passes.
     lease.phase = "committed";
@@ -999,14 +1064,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       cwd,
       // Internal GUI navigation only; Pi and the user's configuration own
       // model tools, system prompts, and any collaboration extensions.
-      args: [...args, "--extension", BRANCH_EXTENSION_PATH],
+      args: [
+        ...args,
+        "--extension",
+        BRANCH_EXTENSION_PATH,
+        "--extension",
+        ATTACH_CONTROL_PATH,
+      ],
       workerId: bridge.workerId,
       diagnostic: (level, event, fields) =>
         this.diagnostics.record(level, event, fields),
       env: {
-        // Inspire already controls its own workers; they are not external
-        // instances to attach to.
-        PI_ATTACH_CONTROL: "0",
+        // While this Host owns the worker, its tag keeps it out of presence.
+        PI_ATTACH_CONTROL_TAG: bridge.workerId,
         INSPIRE_BRANCH_COMMAND: bridge.command,
         INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
         INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
@@ -1937,6 +2007,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 `${reserved}${PROVIDER_AUTH_SUFFIX}`,
                 `${reserved}${RETRY_STATE_SUFFIX}`,
                 `${reserved}${PENDING_IMAGE_SUFFIX}`,
+                // Used by attached clients, not typed by people.
+                "attach-control",
               ]
             : [];
           return result.commands.filter((command) => {
@@ -5491,7 +5563,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.ready = false;
       if (rpc) {
         this.processRegistry.detach(rpc);
-        stopping.push(rpc.stop());
+        // A Host-only restart leaves the worker and its work running.
+        stopping.push(
+          (this.preserveWorkers ? rpc.detach() : null) ?? rpc.stop(),
+        );
       }
       if (slot.stopping) stopping.push(slot.stopping);
     }

@@ -7,6 +7,7 @@ const staticWebTests = [
 
 export default defineConfig({
   test: {
+    globalSetup: ["tests/global-setup.ts"],
     env: {
       NODE_ENV: "development",
       INSPIRE_PI_COMMAND: testPiCommand,

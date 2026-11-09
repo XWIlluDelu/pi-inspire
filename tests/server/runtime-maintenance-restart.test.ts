@@ -36,6 +36,40 @@ describe("maintenance restart admission", () => {
     );
   }
 
+  it("detaches busy workers instead of stopping them after a Host-only restart", async () => {
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      trackedAttachmentStore(),
+      (options) => {
+        const worker = Object.assign(new FakeRpc(options), {
+          detach: vi.fn(async () => {}),
+        });
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      preview,
+    );
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    workers[0]!.emit("event", { type: "agent_start" });
+    // Running work does not block a restart that preserves it.
+    expect(runtime.reserveMaintenanceRestart(false, true, false).kind).toBe(
+      "busy",
+    );
+    const lease = runtime.reserveMaintenanceRestart(false, false, true);
+    expect(lease.kind).toBe("ready");
+    expect(
+      runtime.commitMaintenanceRestart(
+        (lease as { leaseId: string }).leaseId,
+      ).kind,
+    ).toBe("committed");
+    await runtime.close();
+    const worker = workers[0] as FakeRpc & { detach: () => Promise<void> };
+    expect(worker.detach).toHaveBeenCalledOnce();
+    expect(worker.stops).toBe(0);
+  });
+
   it.each(["start-error", "transport-exit", "startup-dialog"])(
     "allows a fresh ordinary restart after confirmed retirement of a %s",
     async (failure) => {
