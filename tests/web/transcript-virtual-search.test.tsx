@@ -19,6 +19,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 }));
 
 import { Transcript } from "../../src/components/Transcript";
+import { openTranscriptSearch } from "./helpers";
 
 describe("virtualized transcript search navigation", () => {
   it("clears view-local search when the branch projection changes", () => {
@@ -30,9 +31,7 @@ describe("virtualized transcript search navigation", () => {
       toolVisibility: "collapsed" as const,
     };
     const { rerender } = render(<Transcript {...props} viewId="branch-a" />);
-    const search = screen.getByRole("searchbox", {
-      name: "Search conversation",
-    });
+    const search = openTranscriptSearch();
     fireEvent.change(search, { target: { value: "answer" } });
     expect(search).toHaveValue("answer");
 
@@ -174,10 +173,7 @@ describe("virtualized transcript search navigation", () => {
       />,
     );
 
-    fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
-      { target: { value: "TARGET" } },
-    );
+    fireEvent.change(openTranscriptSearch(), { target: { value: "TARGET" } });
     expect(
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 match");
@@ -252,10 +248,7 @@ describe("virtualized transcript search navigation", () => {
 
     render(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: "Prepend older" }));
-    fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
-      { target: { value: "anchored" } },
-    );
+    fireEvent.change(openTranscriptSearch(), { target: { value: "anchored" } });
     fireEvent.click(
       screen.getByRole("button", { name: "Next transcript match" }),
     );

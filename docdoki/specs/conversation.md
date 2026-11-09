@@ -145,53 +145,57 @@ boundaries in this contract.
 
 ## View-local search and Prompt Map
 
-- View-local search covers already-loaded settled messages, not the whole branch; its input tooltip
-  describes that limit without a persistent scope disclaimer or a second History-search action.
-  History retains complete saved-history search across branches and tool activity in its own surface.
-  Do not preload all messages or build a new index merely to make this local utility look exhaustive.
-  View-local search performs case-insensitive literal matching over settled conversation text and
-  can scope results to all searchable turns, user input only, or model output only. It wraps
-  previous/next navigation and jumps by transcript row through virtualization. The streaming tail
-  and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
-  latest-follow across prepends and live appends until search is cleared or the user explicitly
-  jumps to latest. Deliberate search navigation opens the matching context-summary row so its
-  matched body is visible; unrelated rows and ordinary rendering do not expand it.
-  Rendered occurrences receive theme-aware highlights without changing message markup, source
-  copy or geometry. The current occurrence is stronger and is brought into view within a long
-  message or local horizontal reader. Virtual rows and deferred rich text acquire highlights when
-  mounted; clearing search or leaving the transcript removes them. Source-only Markdown matches
-  still navigate to their row, without assigning an ambiguous source hit to unrelated visible text.
-  Shell output and context summaries use the same display normalization for search and rendering:
-  terminal control sequences and removed summary prefixes do not add invisible matches.
+- View-local search covers already-loaded settled messages, not the whole branch. Its input tooltip
+  states that limit; there is no persistent scope disclaimer or second History-search action.
+  History keeps complete saved-history search across branches and tool activity in its own surface.
+  Do not preload all messages or build a new index to make this local utility look exhaustive.
 
-  Desktop search stays visible as a single-row input at the top-right of the reading measure.
-  Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text. IME composition,
-  modal and contextual surfaces retain their keyboard ownership. Clearing the query releases match
-  ownership while keeping the row visible; desktop search has no Find launcher or Close button.
-  Its opaque surface fill is distinct from the reading stage, with the shared control radius,
-  a quiet boundary and the existing light shadow. Hover strengthens the ink; focus or a non-empty
-  query uses the accent boundary. These states do not change its geometry or let scrolling text
-  show through. Search and narrow navigation surfaces do not reserve layout height; opening narrow
-  controls preserves the scrollport and reading position. Desktop Escape releases input focus
-  without clearing its query or selected match.
-  Session/view changes retire search state. Width changes keep an active query visible in the
-  corresponding desktop or narrow tool; neither layout retains an invisible active search.
+  Search performs case-insensitive literal matching over settled conversation text and can scope
+  results to all searchable turns, user input only, or model output only. Previous/next navigation
+  wraps and jumps by transcript row through virtualization. The streaming tail and hidden
+  thinking/tool payloads are excluded. An active selected match locks out geometric latest-follow
+  across prepends and live appends until search is cleared or the user explicitly jumps to latest.
+  Deliberate search navigation opens the matching context-summary row so its matched body is
+  visible; unrelated rows and ordinary rendering do not expand it.
+
+  Rendered occurrences receive theme-aware highlights without changing message markup, source copy
+  or geometry. The current occurrence is stronger and is brought into view within a long message or
+  local horizontal reader. Virtual rows and deferred rich text acquire highlights when mounted;
+  clearing search or leaving the transcript removes them. Source-only Markdown matches still
+  navigate to their row, without assigning an ambiguous source hit to unrelated visible text. Shell
+  output and context summaries use the same display normalization for search and rendering, so
+  terminal control sequences and removed summary prefixes add no invisible matches.
+
+  Desktop search remains visible as a compact single-row input at the top-right of the reading
+  measure. Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text without
+  an extra launcher. Escape blurs the desktop input while preserving its query, highlights and
+  selected match; clearing the input releases match ownership. IME composition, modal and contextual
+  surfaces keep their keyboard ownership. Local-tool placement follows [[design-system]]: the
+  launcher and working surface form one interaction rather than disconnected destinations.
+
+  [[design-system]] owns the row's surface and states. Search and narrow navigation surfaces reserve
+  no layout height; opening them preserves the
+  scrollport and reading position. Session/view changes retire search state. Width changes keep an
+  active query visible in the corresponding desktop or narrow tool; neither layout keeps an
+  invisible active search.
+
+  On a narrow workbench, adjacent 44px Search and Prompt Map launchers live in the conversation
+  tool row. Search replaces that row in place with an input across the reading width, focusing
+  and selecting its text. Close or Escape clears the query and match ownership, closes the row,
+  and restores focus to its local launcher. An outside press dismisses either narrow tool; the
+  portaled search-scope menu remains part of search. No duplicate search launcher sits in the
+  global header.
+
   A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
   actually away from its latest boundary, independently of automatic-follow or search ownership.
   It restores follow at the complete Transcript bottom, including Pending and extension content
-  after virtualized message rows. Search and narrow launchers precede messages in keyboard order;
+  after virtualized message rows. The search row and narrow tool launchers precede messages in keyboard order;
   Latest follows them.
-
-  On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
-  backdrop that floats over Transcript without reserving layout height; activating it replaces the
-  launchers with the complete search row on a surface background and focuses the input, while Close,
-  Escape, outside dismissal, or a view change clears the hidden search ownership before restoring
-  the launchers.
 
 - The Prompt Map is a read-only outline of every visible user turn on the current branch. Its
   branch-bound, bounded index is independent of loaded Transcript pages and History's raw-entry
-  window; one shared projection derives its Unicode-safe snippets and image counts consistently for
-  loaded, preview, and indexed turns, and selecting an unloaded prompt seeks directly to that turn
+  window. One shared projection derives its Unicode-safe snippets and image counts consistently for
+  loaded, preview, and indexed turns. Selecting an unloaded prompt seeks directly to that turn
   without sequentially scanning older pages or materializing folded activity. At desktop rest it is
   only a floating stack of at most 12 fixed-spacing theme-muted horizontal ticks with one accent
   current mark: no full-height border, background, icon, or boundary buttons.
@@ -201,33 +205,33 @@ boundaries in this contract.
   only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus
   expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping
   Previous and Next controls. Ordinals and attachment counts use the shared small monospace scale
-  and readable secondary ink, without a second opacity reduction; the current prompt retains its
-  accent emphasis. The ordinal column fits the actual total's digit count and aligns right, so
-  one- and multi-digit labels share a text start. Metadata shares the prompt's first-line baseline
-  without enlarging its row. Keyboard focus contours stay inside the clipped scrolling rows.
-  Leaving the surface collapses it automatically, while touch uses tap
-  and outside dismissal. Native disabled semantics and subdued token colors distinguish unavailable
-  directions.
+  and readable secondary ink with no second opacity reduction; the current prompt keeps its accent
+  emphasis. The ordinal column fits the actual total's digit count and aligns right, so one- and
+  multi-digit labels share a text start. Metadata shares the prompt's first-line baseline without
+  enlarging its row. Keyboard focus contours stay inside the clipped scrolling rows. Leaving the
+  surface collapses it automatically; touch uses tap and outside dismissal. Native disabled
+  semantics and subdued token colors distinguish unavailable directions.
 
   The expanded list initially follows a changed current turn, then yields scroll ownership while the
-  user browses it; disclosure preserves keyboard focus, and only one seek may own navigation until
+  user browses it. Disclosure preserves keyboard focus, and only one seek may own navigation until
   it succeeds or exposes an exact-target retry. At the authoritative Transcript latest boundary, the
   current mark is the final prompt even when a tall viewport leaves that prompt below the ordinary
-  reading line. On a narrow workbench, the desktop vertical rail is removed: a 44px launcher joins
-  Search in the backdrop-free idle top-right control floating over Transcript, and activation
-  replaces those launchers on a shared surface in the same floating zone with the desktop navigator
-  rotated 90 degrees—Previous at left, at most 12 fixed-spacing vertical prompt marks in the center,
-  and Next at right.
+  reading line.
 
-  The same local-window and disabled-boundary semantics remain; selecting the center marks opens the
-  complete independently scrollable virtual directory as a bounded sheet, and outside dismissal
-  restores the two Search and Prompt Map launchers. Search and Prompt Map modes are mutually
-  exclusive. While either local tool owns focus or its narrow mode, Escape resolves that tool before
-  the global run-abort shortcut. Sparse seek windows remain explicitly separated in Transcript,
-  while same-branch pagination, append snapshots, branch rewrites, search ownership, and
-  latest-follow preserve their existing authorities. Outline loading, conflict resync, turn reads
-  and the eventual scroll share the original session/view owner; crossing an await cannot recapture
-  another session.
+  On a narrow workbench the desktop vertical rail is removed. A 44px launcher sits in the
+  backdrop-free idle top-right control floating over Transcript. Activation replaces that launcher,
+  on a shared surface in the same floating zone, with the desktop navigator rotated 90
+  degrees: Previous at left, at most 12 fixed-spacing vertical prompt marks in the center, and Next
+  at right.
+
+  The same local-window and disabled-boundary semantics apply. Selecting the center marks opens the
+  complete independently scrollable virtual directory as a bounded sheet; outside dismissal restores
+  the Prompt Map launcher. Search and Prompt Map modes are mutually exclusive. While either local
+  tool owns focus or its narrow mode, Escape resolves that tool before the global run-abort shortcut.
+  Sparse seek windows stay explicitly separated in Transcript, while same-branch pagination, append
+  snapshots, branch rewrites, search ownership, and latest-follow keep their existing authorities.
+  Outline loading, conflict resync, turn reads and the eventual scroll share the original
+  session/view owner; crossing an await cannot recapture another session.
 
 ## Response streaming and message-owned outcomes
 

@@ -295,7 +295,7 @@ body.srail-dragging {
     display: none;
   }
 
-  .transcript-search--mobile-open {
+  .transcript-search--open {
     max-width: none;
     z-index: 5;
     top: var(--space-2);
@@ -487,6 +487,18 @@ body.srail-dragging {
   }
 }
 
+@media (max-width: 600px), (pointer: coarse) {
+  .transcript-search input {
+    min-width: 40px;
+  }
+
+  .transcript-search > button {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+  }
+}
+
 @media (max-width: 600px) {
   .prompt-map:not(.prompt-map--open) {
     min-width: 44px;
@@ -589,12 +601,6 @@ body.srail-dragging {
   .transcript {
     padding-inline: max(var(--space-3), var(--safe-left))
       max(var(--space-3), var(--safe-right));
-  }
-
-  .transcript-search > button {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
   }
 
   .composer-dock {

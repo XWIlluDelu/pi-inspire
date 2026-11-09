@@ -94,8 +94,8 @@
   min-height: 0;
   overflow-y: auto;
   padding-inline: var(--space-6);
-  /* Search jumps and row anchors land below the floating search pill zone
-     (top 12 + pill 32 + breathing room) instead of sliding underneath it. */
+  /* Search jumps and row anchors land below the open search row
+     (top 12 + row 32 + breathing room) instead of sliding underneath it. */
   scroll-padding-top: calc(var(--space-3) + 44px);
   /* With no hairline under the topbar, scrolled content dissolves just
      before reaching it instead of colliding with the session title. */
@@ -223,10 +223,6 @@
   font-size: var(--text-xs);
 }
 
-.transcript-search__scope .dropdown__menu {
-  min-width: 108px;
-}
-
 .transcript-search input {
   flex: 1 1 150px;
   width: min(24vw, 220px);
@@ -282,6 +278,24 @@
 
 .transcript-search > .transcript-search__close {
   display: none;
+}
+
+/* Side panes can leave a phone-width reader on desktop: span the stage. */
+@container reading-stage (max-width: 440px) {
+  .transcript-search {
+    left: var(--space-6);
+    right: var(--space-6);
+    gap: 2px;
+  }
+
+  .transcript-search input {
+    width: 100%;
+    min-width: 40px;
+  }
+
+  .transcript-search output {
+    min-width: 4em;
+  }
 }
 
 .transcript__column {

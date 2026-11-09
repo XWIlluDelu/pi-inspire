@@ -26,25 +26,26 @@ independent project shells in [[terminal]].
 
 ## Responsive reading and pane geometry
 
-- The primary desktop layout provides stable regions for project/session navigation, conversation,
-  and contextual work. A Prompt Map may occupy the conversation's own left reading margin and
-  navigates only the current branch's user turns, so it neither joins project/session navigation nor
-  duplicates contextual History. The desktop reading column always reserves the resting rail's
-  minimum gutter from the center pane's actual width; window and side-pane resizing update both
-  gutter and rail position before paint, so the rail never covers conversation content or retains an
+- The desktop layout provides stable regions for project/session navigation, conversation, and
+  contextual work. A Prompt Map may occupy the conversation's own left reading margin. It navigates
+  only the current branch's user turns; it is not part of project/session navigation and does not
+  duplicate contextual History. The desktop reading column always reserves the resting rail's
+  minimum gutter from the center pane's actual width. Window and side-pane resizing update gutter and
+  rail position before paint, so the rail never covers conversation content or keeps an
   earlier-width position.
 
   Search and navigation controls occupy the reading measure without reserving a toolbar row on
-  desktop or narrow screens. [[conversation]] owns the inline desktop search, narrow launchers and
-  floating `Jump to latest` behavior.
-  The transcript scroll thumb is separate from Prompt Map: its complete grab band fits the
-  trailing reading gutter without covering content, and its travel stays inside the scrollport
-  even in short windows. Native reading width, wheel and keyboard scrolling remain unchanged.
+  desktop or narrow screens. Conversation search opens on demand from the header; nothing rests
+  over conversation text. [[conversation]] owns search, the narrow Prompt Map launcher and
+  floating `Jump to latest` behavior. The transcript scroll thumb is separate from Prompt Map: its
+  complete grab band fits the trailing reading gutter without covering content, and its travel stays
+  inside the scrollport even in short windows. Native reading width, wheel and keyboard scrolling
+  are unchanged.
 
-  On a narrow workbench, the floating rail is removed entirely: a top-right control floats over
-  Transcript without reserving layout height, has no shared backdrop while its mutually exclusive
-  Search and Prompt Map launchers are idle, and gives Search or the rotated Prompt Map a surface
-  background when active in that same zone while retaining its complete temporary directory.
+  On a narrow workbench the floating rail is removed. A top-right Prompt Map launcher floats over
+  Transcript without reserving layout height or a shared backdrop. When active, the rotated Prompt
+  Map gets a surface background in that same zone and keeps its complete temporary directory.
+  Search, opened from the header, uses the same zone and is mutually exclusive with the Prompt Map.
   [[conversation]] owns interaction details.
 
 - The navigation and contextual regions can collapse so the conversation can use the available

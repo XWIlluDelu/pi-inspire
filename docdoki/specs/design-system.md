@@ -48,6 +48,24 @@ behavioral contracts remain with the corresponding feature specs.
 Labels and feedback describe the user's task and visible state, without exposing internal loading
 paths or control flags.
 
+## Contextual tools and disclosure
+
+Judge simplicity over the complete interaction, not just the idle view. Hiding a useful control
+does not simplify a task when it adds an activation step and then makes the user locate the
+working surface or reconstruct its context.
+
+- Keep local tools visibly associated with the content they affect. A non-modal tool's launcher
+  and working surface must have an immediate, legible spatial connection: expand nearby or replace
+  the launcher in place rather than appearing in an unrelated region.
+- Preserve that connection through responsive changes and pane resizing. Position the launcher
+  and surface as one interaction, not as independently placed decorations.
+- Use progressive disclosure when it saves meaningful space or reduces competing information
+  without making the task harder to discover or perform. Prefer an available compact control when
+  disclosure merely trades visible UI for extra clicks, pointer travel and visual search.
+
+Feature specs decide which tools remain visible and which expand on demand. Reviews and regression
+checks cover the default state, activation, focus, dismissal and responsive continuity.
+
 ## Identity and palette
 
 ### Identity assets
@@ -373,8 +391,15 @@ complete label/count pair cannot fit, omit the count and keep the exact Changes 
 
 Session, conversation and workspace search use muted icons/placeholders and ink-colored input,
 stronger hover icons and accent focus borders. Session search rests on an inset control surface with
-a fine boundary that strengthens on hover and changes to surface fill on focus. Conversation/workspace search retain
-opaque surface fills and fine resting borders.
+a fine boundary that strengthens on hover and changes to surface fill on focus.
+Workspace search keeps an opaque surface fill and fine resting border. Conversation search has an
+opaque fill distinct from the reading stage, the shared control radius, a quiet boundary and the
+light shadow; hover strengthens the ink, and focus or a non-empty query uses the accent boundary,
+without changing geometry or letting scrolling text show through.
+Conversation search keeps 36px action targets on touch screens at every width; its input
+can yield space to the match count and actions when both side panes are open.
+Workspace and History search share a 34px field, 13px search icon, 12px inner inset and
+8px icon/text gap, starting 4px below the contextual tool header.
 
 Selected session rows have a translucent lifted surface; collapsed folders containing the selection
 have a quiet accent tint. Both use an inset straight, round-ended accent marker, with neutral ordinary
