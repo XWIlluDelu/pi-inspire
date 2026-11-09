@@ -80,6 +80,52 @@ for (const mobile of [false, true]) {
           }
         : { viewport: { width: 1365, height: 950 } },
     );
+    test("truncated CodeMode output uses a compact footnote and retains Script disclosure", async ({
+      page,
+    }) => {
+      const send = await openReview(page);
+      const call = tool("codemode", { code: 'text("Review summary");' });
+      const result = {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: "codemode",
+        isError: false,
+        __inspireMessageId: "truncated-codemode-result",
+        content: [{ type: "text", text: "Review summary" }],
+        details: { fullOutputPath: "/tmp/review-output.txt" },
+      };
+      send(
+        { type: "message_end", message: assistant([call]) },
+        { type: "message_end", message: result },
+      );
+      const card = toolCard(page, "codemode");
+      const notice = card.locator(".tool-notice");
+      const action = notice.getByRole("button", { name: "View full output" });
+      await expect(action).toBeVisible();
+      const layout = await notice.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const action = el.querySelector("button")!.getBoundingClientRect();
+        return {
+          height: box.height,
+          actionHeight: action.height,
+          center: action.y + action.height / 2 - box.y - box.height / 2,
+        };
+      });
+      expect(layout.height).toBeCloseTo(mobile ? 48 : 28, 1);
+      expect(layout.actionHeight).toBeCloseTo(mobile ? 44 : 24, 1);
+      expect(Math.abs(layout.center)).toBeLessThanOrEqual(0.5);
+      const script = card.getByText("Script", { exact: true });
+      await script.click();
+      await expect(card.locator(".tool-code")).toContainText("Review summary");
+      await script.click();
+      await expect(card.locator(".tool-code")).toHaveCount(0);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+    });
+
     test("partial CodeMode keeps its phase and local disclosure in one compact block", async ({
       page,
     }) => {
@@ -1249,8 +1295,15 @@ test("saved tool images and full logs reopen through the authorized viewers on d
     );
     for (const presentation of ["native", "generic"] as const) {
       if (presentation === "generic") {
+        // The desktop log reader is persisted across reload; close it before narrowing.
+        const contextToggle = page.getByRole("button", {
+          name: "Toggle resources panel",
+          exact: true,
+        });
+        await contextToggle.click();
+        await expect(contextToggle).toHaveAttribute("aria-expanded", "false");
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.route("**/api/bootstrap", async (route) => {
+        await page.route("**/api/bootstrap**", async (route) => {
           const response = await route.fetch();
           const body = await response.json();
           body.toolPresentations = {
@@ -1309,7 +1362,10 @@ test("saved tool images and full logs reopen through the authorized viewers on d
         fixture.fullOutputPath,
       );
       const actionBox = await action.boundingBox();
-      expect(actionBox!.height).toBeGreaterThanOrEqual(44);
+      const coarse = await page.evaluate(
+        () => matchMedia("(pointer: coarse)").matches,
+      );
+      expect(actionBox!.height).toBeGreaterThanOrEqual(coarse ? 44 : 24);
       expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(
         (await page.viewportSize())!.width,
       );

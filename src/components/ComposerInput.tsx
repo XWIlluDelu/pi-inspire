@@ -601,23 +601,20 @@ export function ComposerInput({
       frame = requestAnimationFrame(resizeEditor);
     };
     const wrap = inputWrapRef.current;
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(schedule);
+    const observer = new ResizeObserver(schedule);
     if (wrap) {
-      observer?.observe(wrap);
+      observer.observe(wrap);
       const main = wrap.closest("main");
-      if (main) observer?.observe(main);
+      if (main) observer.observe(main);
       const dock = wrap.closest(".composer-dock");
-      if (dock) observer?.observe(dock);
+      if (dock) observer.observe(dock);
     }
     window.addEventListener("resize", schedule);
     window.visualViewport?.addEventListener("resize", schedule);
     void document.fonts?.ready.then(schedule);
     return () => {
       cancelAnimationFrame(frame);
-      observer?.disconnect();
+      observer.disconnect();
       window.removeEventListener("resize", schedule);
       window.visualViewport?.removeEventListener("resize", schedule);
     };

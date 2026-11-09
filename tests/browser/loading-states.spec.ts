@@ -2,8 +2,9 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import {
   openFixtureSession,
-  pairedPage,
   pairAndOpen,
+  pairedPage,
+  openSettings,
 } from "./support/navigation";
 
 // The same deferred boundary is served as a source module by Vite and as a
@@ -49,7 +50,7 @@ for (const viewport of [
     await pairedPage(page);
     const release = await holdRequests(page, settingsModule);
     try {
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await openSettings(page);
       const dialog = page.getByRole("dialog", {
         name: "Settings",
         exact: true,
@@ -96,7 +97,9 @@ for (const viewport of [
       await page.keyboard.press("Escape");
       await expect(dialog).not.toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Settings", exact: true }),
+        page.viewportSize()!.width <= 900
+          ? page.locator(".topbar__nav-toggle")
+          : page.getByRole("button", { name: "Settings", exact: true }),
       ).toBeFocused();
     } finally {
       release();
@@ -114,7 +117,7 @@ test("Π chooses again at a complete animation boundary and stays static with re
   await pairedPage(page);
   const release = await holdRequests(page, settingsModule);
   try {
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const loader = page
       .getByRole("dialog", { name: "Settings", exact: true })
       .getByRole("status")
@@ -156,7 +159,7 @@ test("Settings deferred failure has a styled recovery action and remains dismiss
 }) => {
   await pairedPage(page);
   await page.route(settingsModule, (route) => route.abort());
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(dialog.getByRole("alert")).toContainText(
     "Settings could not be opened.",
@@ -167,10 +170,10 @@ test("Settings deferred failure has a styled recovery action and remains dismiss
   await expect(dialog.locator(".settings__skeleton")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await page.unroute(settingsModule);
   await dialog.getByRole("button", { name: "Reload" }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await expect(
     page.getByRole("navigation", { name: "Settings categories" }),
   ).toBeVisible();
@@ -200,7 +203,6 @@ for (const width of [390, 768]) {
       await expect(
         pane.getByRole("button", { name: "Close context pane" }),
       ).toBeFocused();
-      await expect(page.locator(".pane-scrim--resources")).toHaveCount(0);
       await expect(page.locator("main")).toHaveAttribute("inert", "");
       await expect
         .poll(() => pane.boundingBox())
@@ -217,7 +219,7 @@ for (const width of [390, 768]) {
       });
       release();
       await expect(
-        pane.getByRole("button", { name: "Files", exact: true }),
+        pane.getByRole("tab", { name: "Files", exact: true }),
       ).toBeVisible();
       await expect(pane).toHaveAttribute("data-loading-shell", "context");
       expect(await pane.locator(".ctx__close").boundingBox()).toEqual(
@@ -232,7 +234,7 @@ for (const width of [390, 768]) {
         height: 844,
       });
       await expect(
-        pane.getByRole("button", { name: "Files", exact: true }),
+        pane.getByRole("tab", { name: "Files", exact: true }),
       ).toBeFocused();
       await pane.getByRole("button", { name: "Close context pane" }).click();
       await expect(pane).not.toBeVisible();
@@ -242,13 +244,11 @@ for (const width of [390, 768]) {
       await expect(toggle).toBeFocused();
       await toggle.click();
       await expect(
-        pane.getByRole("button", { name: "Files", exact: true }),
+        pane.getByRole("tab", { name: "Files", exact: true }),
       ).toBeFocused();
       const releaseTree = await holdRequests(page, "**/api/branches/tree?*");
       try {
-        await pane
-          .getByRole("button", { name: "History", exact: true })
-          .click();
+        await pane.getByRole("tab", { name: "History", exact: true }).click();
         const loading = pane
           .getByRole("status")
           .filter({ hasText: "Loading history" });
@@ -320,9 +320,11 @@ test("Context deferred failure preserves its shell, focus and recovery", async (
     await page.unroute(pattern);
     await pane.getByRole("button", { name: "Reload" }).click();
     await expect(page.getByRole("main")).toBeVisible();
-    await toggle.click();
+    // Recovery reload restores the open drawer and its focus owner.
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(pane).toBeVisible();
     await expect(
-      pane.getByRole("button", { name: "Files", exact: true }),
+      pane.getByRole("tab", { name: "Files", exact: true }),
     ).toBeFocused();
   } finally {
     release();

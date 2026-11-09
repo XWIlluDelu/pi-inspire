@@ -11,6 +11,7 @@ import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import { Transcript } from "../../src/components/Transcript";
 import { store } from "../../src/store";
 import { captureClipboardSource } from "./fixtures/clipboard-source";
+import { openTranscriptSearch } from "./helpers";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -63,9 +64,7 @@ describe("message actions", () => {
     expect(
       screen.queryByText(ATTACHMENT_CONTEXT_HEADING),
     ).not.toBeInTheDocument();
-    const search = screen.getByRole("searchbox", {
-      name: "Search conversation",
-    });
+    const search = openTranscriptSearch();
     fireEvent.change(search, { target: { value: "AGENTS" } });
     expect(
       screen.getByLabelText("Transcript search matches"),
@@ -159,9 +158,7 @@ describe("message actions", () => {
       expect(
         screen.getByRole("group", { name: "Attached images" }),
       ).toBeInTheDocument();
-      const search = screen.getByRole("searchbox", {
-        name: "Search conversation",
-      });
+      const search = openTranscriptSearch();
       fireEvent.change(search, { target: { value: "Multiply coordinates" } });
       expect(
         screen.getByLabelText("Transcript search matches"),
@@ -308,7 +305,7 @@ describe("message actions", () => {
             },
             {
               role: "custom",
-              customType: "intercom_message",
+              customType: "relay_message",
               content: "custom payload",
               details: { channel: "local" },
               display: true,
@@ -374,13 +371,13 @@ describe("message actions", () => {
       );
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Copy intercom message block" }),
+        screen.getByRole("button", { name: "Copy relay message block" }),
       );
       await waitFor(() =>
         expect(writeText).toHaveBeenLastCalledWith(
           [
-            "Intercom message",
-            "Type: intercom_message",
+            "Relay message",
+            "Type: relay_message",
             "Content",
             "custom payload",
             "Details",

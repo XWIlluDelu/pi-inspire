@@ -179,10 +179,7 @@ export const Notices = memo(function Notices({
       if (overflowing) element.scrollTop = scrollTop;
     };
     measure();
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(measure);
+    const observer = new ResizeObserver(measure);
     [
       ...boundaries,
       ...tools,
@@ -192,11 +189,11 @@ export const Notices = memo(function Notices({
       composer?.closest(".composer-dock"),
       document.querySelector("main"),
     ].forEach((node) => {
-      if (node) observer?.observe(node);
+      if (node) observer.observe(node);
     });
     window.addEventListener("resize", measure);
     return () => {
-      observer?.disconnect();
+      observer.disconnect();
       window.removeEventListener("resize", measure);
     };
   });

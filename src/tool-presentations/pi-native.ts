@@ -12,7 +12,8 @@ import type {
   ToolProperty,
   ToolSearchGroup,
 } from "./model";
-import { mergeSearchContext, toolResultImage } from "./model";
+import { formatCount } from "../format";
+import { joinResourcePath, mergeSearchContext, toolResultImage } from "./model";
 
 const PI_RULE_PREFIX = "inspire.pi";
 
@@ -58,10 +59,6 @@ function presentation(
   blocks: ToolPresentation["blocks"],
 ): ToolPresentation {
   return { summary: compact, blocks };
-}
-
-function formatCount(value: number, noun: string): string {
-  return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
 }
 
 function compactSummary(value: string, maximum = 90): string {
@@ -651,12 +648,6 @@ function grepRule(): ToolPresentationRule {
       );
     },
   };
-}
-
-function joinResourcePath(root: string, child: string): string {
-  if (/^(?:\/|[A-Za-z]:[\\/])/.test(child)) return child;
-  if (!root || root === ".") return child;
-  return `${root.replace(/[\\/]$/, "")}/${child.replace(/^[\\/]/, "")}`;
 }
 
 function listOutput(

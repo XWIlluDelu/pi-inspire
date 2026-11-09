@@ -42,7 +42,7 @@ export function ModelSelector({
   value: ModelOption | null;
   models: ModelOption[];
   recent: ModelIdentity[];
-  onChange: (provider: string, id: string) => void | Promise<unknown>;
+  onChange: (provider: string, id: string) => void;
   emptyLabel?: string;
   disabled?: boolean;
   loading?: boolean;
@@ -154,19 +154,8 @@ export function ModelSelector({
       selectCurrent ||
       !value ||
       modelIdentityKey(model) !== modelIdentityKey(value)
-    ) {
-      const trigger = triggerRef.current;
-      const selection = onChange(model.provider, model.id);
-      const settled = () =>
-        requestAnimationFrame(() => {
-          if (
-            triggerRef.current === trigger &&
-            document.activeElement === document.body
-          )
-            trigger?.focus({ preventScroll: true });
-        });
-      void selection?.then(settled, settled);
-    }
+    )
+      onChange(model.provider, model.id);
   };
   const onMenuKey = (event: React.KeyboardEvent) => {
     if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))

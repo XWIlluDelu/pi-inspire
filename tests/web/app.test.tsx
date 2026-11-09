@@ -1015,6 +1015,7 @@ describe("welcome flow", () => {
       const before = abortCalls;
       act(() => ws.emit({ type: "agent_start" }));
 
+      // Narrow local tools return focus to their own launchers.
       fireEvent.click(
         screen.getByRole("button", { name: "Open conversation search" }),
       );

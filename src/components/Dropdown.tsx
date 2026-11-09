@@ -284,7 +284,7 @@ export function Dropdown({
       {header || (open && placement)
         ? createPortal(
             <div
-              className={`dropdown__menu dropdown__menu--floating${header ? " dropdown__menu--composed" : ""}${menuClassName ? ` ${menuClassName}` : ""}`}
+              className={`dropdown__menu${header ? " dropdown__menu--composed" : ""}${menuClassName ? ` ${menuClassName}` : ""}`}
               hidden={!open || !placement}
               data-placement={placement?.direction}
               data-keyboard-active={keyboardActive}

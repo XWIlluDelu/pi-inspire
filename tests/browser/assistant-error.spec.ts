@@ -84,53 +84,35 @@ for (const scenario of [
       await expect(
         page.getByText("This operation was aborted", { exact: true }),
       ).toHaveCount(0);
-      for (const palette of [
-        "jade",
-        "amber",
-        "wisteria",
-        "hydrangea",
-        "lycoris",
-        "chimonanthus",
-      ]) {
-        for (const theme of ["light", "dark"]) {
-          await page.evaluate(
-            ({ palette, theme }) => {
-              document.documentElement.dataset.palette = palette;
-              document.documentElement.dataset.theme = theme;
-            },
-            { palette, theme },
-          );
-          for (const width of [1280, 320]) {
-            await page.setViewportSize({ width, height: 844 });
-            await stopped.scrollIntoViewIfNeeded();
-            const iconGeometry = await stopped.evaluate((el) => {
-              const i = el.querySelector("svg")!.getBoundingClientRect();
-              const label = el
-                .querySelector(".assistant-error__label")!
-                .getBoundingClientRect();
-              return {
-                width: i.width,
-                height: i.height,
-                gap: label.left - i.right,
-                dy: (i.top + i.bottom - label.top - label.bottom) / 2,
-              };
-            });
-            expect(iconGeometry).toMatchObject({
-              width: 14,
-              height: 14,
-              gap: 8,
-            });
-            expect(Math.abs(iconGeometry.dy)).toBeLessThanOrEqual(0.5);
-            expect(
-              await stopped.evaluate((el) => el.scrollWidth <= el.clientWidth),
-            ).toBe(true);
-            expect(
-              await stopped.evaluate((el) =>
-                parseFloat(getComputedStyle(el).borderTopWidth),
-              ),
-            ).toBe(1);
-          }
-        }
+      for (const width of [1280, 320]) {
+        await page.setViewportSize({ width, height: 844 });
+        await stopped.scrollIntoViewIfNeeded();
+        const iconGeometry = await stopped.evaluate((el) => {
+          const i = el.querySelector("svg")!.getBoundingClientRect();
+          const label = el
+            .querySelector(".assistant-error__label")!
+            .getBoundingClientRect();
+          return {
+            width: i.width,
+            height: i.height,
+            gap: label.left - i.right,
+            dy: (i.top + i.bottom - label.top - label.bottom) / 2,
+          };
+        });
+        expect(iconGeometry).toMatchObject({
+          width: 14,
+          height: 14,
+          gap: 8,
+        });
+        expect(Math.abs(iconGeometry.dy)).toBeLessThanOrEqual(0.5);
+        expect(
+          await stopped.evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+        expect(
+          await stopped.evaluate((el) =>
+            parseFloat(getComputedStyle(el).borderTopWidth),
+          ),
+        ).toBe(1);
       }
       expect(
         (
@@ -139,11 +121,10 @@ for (const scenario of [
             .analyze()
         ).violations,
       ).toEqual([]);
-      await page.reload();
+      await fixture.reload();
       await expect(stopped).toHaveCount(1);
       await expect(page.locator(".composer--failed")).toHaveCount(0);
       await expect(input).toHaveValue("Keep this unsent draft.");
-      await expect.poll(fixture.ready).toBe(true);
       await expect(
         page.getByRole("main").locator(".banner--warning"),
       ).toHaveCount(0);

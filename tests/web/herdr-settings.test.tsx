@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,10 +10,12 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HerdrEnhancementStatus } from "../../shared/herdr";
 import { HerdrSettings } from "../../src/components/HerdrSettings";
+import { deferred } from "./helpers";
 
 const fixture = vi.hoisted(() => ({
   saved: false,
   save: vi.fn(),
+  navigate: vi.fn(),
 }));
 vi.mock("../../src/store", () => ({
   useAppState: (selector: (state: unknown) => unknown) =>
@@ -31,19 +34,30 @@ const ready = {
 beforeEach(() => {
   fixture.saved = false;
   fixture.save.mockClear();
+  fixture.navigate.mockClear();
 });
 afterEach(cleanup);
 
 describe("Herdr Settings", () => {
   it("enables a supported installation and explains the pending Host restart without issuing one", async () => {
     const getStatus = vi.fn(async () => ready);
-    const { rerender } = render(<HerdrSettings getStatus={getStatus} />);
+    const { rerender } = render(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
     await waitFor(() => expect(toggle).not.toBeDisabled());
     fireEvent.click(toggle);
     expect(fixture.save).toHaveBeenCalledWith(true);
     fixture.saved = true;
-    rerender(<HerdrSettings getStatus={getStatus} />);
+    rerender(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     expect(screen.getByRole("status").textContent).toMatch(
       /Restart Host to turn on/,
     );
@@ -51,6 +65,10 @@ describe("Herdr Settings", () => {
       screen.getByRole("button", { name: "Review Host restart" }),
     ).toBeInTheDocument();
     expect(getStatus).toHaveBeenCalledOnce();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review Host restart" }),
+    );
+    expect(fixture.navigate).toHaveBeenCalledOnce();
   });
 
   it("explains an unavailable backend and still allows disabling a saved choice", async () => {
@@ -61,7 +79,12 @@ describe("Herdr Settings", () => {
       installed: false,
       issue: "Herdr is unavailable on this platform.",
     }));
-    const { rerender } = render(<HerdrSettings getStatus={getStatus} />);
+    const { rerender } = render(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain(
@@ -70,7 +93,12 @@ describe("Herdr Settings", () => {
     );
     expect(toggle).toBeDisabled();
     fixture.saved = true;
-    rerender(<HerdrSettings getStatus={getStatus} />);
+    rerender(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     expect(toggle).not.toBeDisabled();
     fireEvent.click(toggle);
     expect(fixture.save).toHaveBeenCalledWith(false);
@@ -90,19 +118,34 @@ describe("Herdr Settings", () => {
       .fn<() => Promise<HerdrEnhancementStatus>>()
       .mockResolvedValueOnce(blocked)
       .mockReturnValueOnce(recheck);
-    const { rerender } = render(<HerdrSettings getStatus={getStatus} />);
+    const { rerender } = render(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
     await screen.findByText(blocked.issue);
     expect(toggle).toBeDisabled();
     expect(fixture.save).not.toHaveBeenCalled();
 
     fixture.saved = true;
-    rerender(<HerdrSettings getStatus={getStatus} />);
+    rerender(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     expect(toggle).not.toBeDisabled();
     fireEvent.click(toggle);
     expect(fixture.save).toHaveBeenCalledWith(false);
     fixture.saved = false;
-    rerender(<HerdrSettings getStatus={getStatus} />);
+    rerender(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
 
     const retry = screen.getByRole("button", { name: "Recheck availability" });
     fireEvent.click(retry);
@@ -121,12 +164,49 @@ describe("Herdr Settings", () => {
     expect(fixture.save).toHaveBeenLastCalledWith(true);
   });
 
+  it("retires a pending recheck when its status source changes", async () => {
+    const blocked = { ...ready, ready: false, issue: "Old Host unavailable" };
+    const recheck = deferred<HerdrEnhancementStatus>();
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce(blocked)
+      .mockReturnValueOnce(recheck.promise);
+    const view = render(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
+    await screen.findByText(blocked.issue);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Recheck availability" }),
+    );
+    expect(getStatus).toHaveBeenCalledTimes(2);
+
+    view.rerender(
+      <HerdrSettings
+        getStatus={async () => ready}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
+    const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    await act(async () => recheck.resolve(blocked));
+    expect(toggle).not.toBeDisabled();
+    expect(screen.queryByText(blocked.issue)).toBeNull();
+  });
+
   it("reports a missing status hook without blocking turning off", async () => {
     fixture.saved = true;
     const getStatus = vi.fn(async () => {
       throw new Error("503");
     });
-    render(<HerdrSettings getStatus={getStatus} />);
+    render(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain(
         "status is unavailable",

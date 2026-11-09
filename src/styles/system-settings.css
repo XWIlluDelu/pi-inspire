@@ -5,23 +5,29 @@
 }
 
 .system-versions__check {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
+  display: inline-grid;
+  place-items: center;
 }
 
-/* All state labels share one cell so the longest reserves the button width. */
-.system-versions__check-label {
-  display: grid;
-  text-align: center;
-}
-
-.system-versions__check-label > span {
+.system-versions__check-content,
+.system-versions__check-reserve {
   grid-area: 1 / 1;
 }
 
-.system-versions__check-label > [aria-hidden="true"] {
+.system-versions__check-content {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.system-versions__check-content > svg {
+  flex-shrink: 0;
+}
+
+/* Reserve the widest complete state, not a fixed label slot beside the icon. */
+.system-versions__check-reserve {
   visibility: hidden;
+  padding-left: calc(13px + var(--space-2));
 }
 
 .system-versions__error {

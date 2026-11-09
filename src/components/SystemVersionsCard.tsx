@@ -178,18 +178,25 @@ export function SystemVersionsCard() {
               void store.checkInspireUpdate();
             }}
           >
-            {pending || checking ? (
-              <PiLoader size={13} aria-hidden />
-            ) : (
-              <RefreshCw size={13} aria-hidden />
-            )}
-            <span className="system-versions__check-label">
-              {Object.entries(checkLabels).map(([status, label]) => (
-                <span key={status} aria-hidden={status !== checkState}>
-                  {label}
-                </span>
-              ))}
+            <span className="system-versions__check-content">
+              {pending || checking ? (
+                <PiLoader size={13} aria-hidden />
+              ) : (
+                <RefreshCw size={13} aria-hidden />
+              )}
+              <span className="system-versions__check-label">
+                {checkLabels[checkState]}
+              </span>
             </span>
+            {Object.values(checkLabels).map((label) => (
+              <span
+                key={label}
+                className="system-versions__check-reserve"
+                aria-hidden
+              >
+                {label}
+              </span>
+            ))}
           </button>
         </div>
       }

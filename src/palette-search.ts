@@ -72,7 +72,7 @@ export function rankPaletteItems<T extends PaletteSearchItem>(
       if (matches.every((match) => match !== null))
         consider(
           4,
-          matches.reduce<number>((sum, match) => sum + (match ?? 0), 0),
+          matches.reduce((sum, match) => sum + match, 0),
         );
       return Number.isFinite(tier) ? [{ item, index, tier, score }] : [];
     })

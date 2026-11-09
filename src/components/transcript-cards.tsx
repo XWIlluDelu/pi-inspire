@@ -83,7 +83,6 @@ import {
   DYNAMIC_THINKING_EXPANDED_MIN_MS,
   DYNAMIC_TOOL_CLOSE_DELAY_MS,
   DYNAMIC_TOOL_EXPANDED_MIN_MS,
-  prefersReducedMotion,
   useDynamicCardOpen,
 } from "./transcript-activity";
 import {
@@ -96,6 +95,8 @@ import {
   useActivityStripSelection,
   useVisibleActivityItemIds,
 } from "./transcript-activity-visibility";
+import { formatCount } from "../format";
+import { prefersReducedMotion } from "../input-device";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
@@ -1267,10 +1268,6 @@ function ToolPresentationBlockContent({
   }
 }
 
-function formatCount(value: number, noun: string): string {
-  return `${value.toLocaleString()} ${noun}${value === 1 ? "" : "s"}`;
-}
-
 function presentationBlocks(
   presentation: ToolPresentation,
 ): ToolPresentationBlock[] | null {
@@ -1616,17 +1613,19 @@ function CodeModeSummary({
 }) {
   const duration = codeModeDuration(result);
   const summary = childCallsSummary(calls);
+  if (!duration && !summary) return null;
+  // One metadata run, separated like the call counts it precedes.
   return (
-    <>
-      {duration ? (
-        <span className="card__summary codemode-duration">{duration}</span>
+    <span
+      className="card__summary codemode-summary"
+      title={summary || undefined}
+    >
+      {duration ? <span className="codemode-duration">{duration}</span> : null}
+      {duration && summary ? (
+        <span className="tool-summary__separator"> · </span>
       ) : null}
-      {summary ? (
-        <span className="card__summary" title={summary}>
-          {summary}
-        </span>
-      ) : null}
-    </>
+      {summary ? <span>{summary}</span> : null}
+    </span>
   );
 }
 

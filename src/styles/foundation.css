@@ -41,13 +41,15 @@
   --content-max: var(--reading-width-max);
   --composer-max: var(--reading-width-max);
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
-  --font-label: "Rajdhani", var(--font-sans);
+  /* Structural labels share the interface face: two type voices only. */
+  --font-label: var(--font-sans);
   --font-mono: "Flux Mono SC", ui-monospace, monospace;
   --text-xs: 11.5px;
   --text-sm: 12.5px;
   --text-base: 14px;
   --text-reading: 15.5px;
   --text-reading-small: 12.5px;
+  --text-reading-table: 14px;
   --text-reading-code: 12.5px;
   --text-reading-h1: 26px;
   --text-reading-h2: 21px;
@@ -59,7 +61,7 @@
   --text-display: 32px;
   --text-wordmark: 24px;
   --leading-ui: 1.45;
-  /* Compact Plex labels need a small optical correction inside centred UI rows. */
+  /* Optical correction for large dialog headings. */
   --ui-text-offset: 1px;
   --leading-reading: 1.7;
   --leading-mono: 1.6;
@@ -72,6 +74,7 @@
 :root[data-content-text-size="compact"] {
   --text-reading: 14px;
   --text-reading-small: 11.5px;
+  --text-reading-table: 12.5px;
   --text-reading-code: 11.5px;
   --text-reading-h1: 21px;
   --text-reading-h2: 17px;
@@ -81,6 +84,7 @@
 :root[data-content-text-size="large"] {
   --text-reading: 17px;
   --text-reading-small: 14px;
+  --text-reading-table: 15.5px;
   --text-reading-code: 14px;
   --text-reading-h1: 32px;
   --text-reading-h2: 26px;
@@ -137,7 +141,6 @@
   --bg-inset: #E6E2D8;
   --bg-control: #EBE7DF;
   --bg-prompt: #EFECE4;
-  --bg-activity: #F5F2EB;
   --bg-code: #ECE7DD;
   --ink: #161412;
   --body: #2E2B26;
@@ -174,7 +177,6 @@
   --activity-warning: #B45309;
   --activity-error: #C53B38;
   --error-tint: rgba(190, 18, 60, 0.08);
-  --think-tint: rgba(102, 82, 186, 0.08);
   --warning-tint: rgba(180, 83, 9, 0.08);
   --git-modified: #914009;
   --git-untracked: #176A47;
@@ -201,7 +203,6 @@
   --bg-inset: #090807;
   --bg-control: #24201C;
   --bg-prompt: #1E1B17;
-  --bg-activity: #161411;
   --bg-code: #090807;
   --ink: #F5F2ED;
   --body: #D4CEC5;
@@ -238,7 +239,6 @@
   --activity-warning: #F59E0B;
   --activity-error: #F06A65;
   --error-tint: rgba(244, 63, 94, 0.12);
-  --think-tint: rgba(164, 144, 240, 0.11);
   --warning-tint: rgba(245, 158, 11, 0.12);
   --git-modified: var(--warning);
   --git-untracked: var(--success);
@@ -265,7 +265,6 @@
   --bg-inset: #E3E0EC;
   --bg-control: #E7E4F0;
   --bg-prompt: #ECEAF2;
-  --bg-activity: #F2F0F7;
   --bg-code: #EAE7F1;
   --ink: #16141C;
   --body: #2D2A35;
@@ -285,7 +284,6 @@
   --activity-tool: #684E8E;
   --activity-think: #4663AC;
   --think: #4663AC;
-  --think-tint: rgba(70, 99, 172, 0.08);
   --on-accent: #FFFFFF;
   --brand-ink: #16141C;
   --brand-accent: #6E5494;
@@ -318,7 +316,6 @@
   --bg-inset: #09080C;
   --bg-control: #221F2C;
   --bg-prompt: #1C1A25;
-  --bg-activity: #15131C;
   --bg-code: #09080C;
   --ink: #F2F0F7;
   --body: #CCC8D8;
@@ -338,7 +335,6 @@
   --activity-tool: #B39DDB;
   --activity-think: #7AA2F7;
   --think: #7AA2F7;
-  --think-tint: rgba(122, 162, 247, 0.11);
   --on-accent: #151120;
   --brand-ink: #F2F0F7;
   --brand-accent: #B39DDB;
@@ -372,7 +368,6 @@
   --bg-inset: #E0E4DD;
   --bg-control: #E5E9E2;
   --bg-prompt: #EAECE7;
-  --bg-activity: #EFF2ED;
   --bg-code: #E6EAE3;
   --ink: #131715;
   --body: #2A312D;
@@ -392,7 +387,6 @@
   --activity-tool: #1E7564;
   --activity-think: #6554B8;
   --think: #6554B8;
-  --think-tint: rgba(101, 84, 184, 0.08);
   --accent-fill: #1C705F;
   --on-accent: #FFFFFF;
   --brand-ink: #131715;
@@ -425,7 +419,6 @@
   --bg-inset: #080B09;
   --bg-control: #1F2622;
   --bg-prompt: #1A211D;
-  --bg-activity: #141916;
   --bg-code: #080B09;
   --ink: #F0F3F1;
   --body: #CBD3CE;
@@ -445,7 +438,6 @@
   --activity-tool: #5EC4AE;
   --activity-think: #A393EB;
   --think: #A393EB;
-  --think-tint: rgba(163, 147, 235, 0.11);
   --accent-fill: #50B8A2;
   --on-accent: #081C17;
   --brand-ink: #F0F3F1;
@@ -479,7 +471,6 @@
   --bg-inset: #E7DFDC;
   --bg-control: #ECE5E2;
   --bg-prompt: #EFE9E6;
-  --bg-activity: #F5F0ED;
   --bg-code: #ECE5E1;
   --ink: #191414;
   --body: #322A29;
@@ -499,7 +490,6 @@
   --activity-tool: #B5493B;
   --activity-think: #4A6696;
   --think: #4A6696;
-  --think-tint: rgba(74, 102, 150, 0.08);
   --on-accent: #FFFFFF;
   --brand-ink: #191414;
   --brand-accent: #BC5042;
@@ -532,7 +522,6 @@
   --bg-inset: #0A0808;
   --bg-control: #261F1F;
   --bg-prompt: #201A1A;
-  --bg-activity: #181313;
   --bg-code: #0A0808;
   --ink: #F6F1F0;
   --body: #D6CBC9;
@@ -552,7 +541,6 @@
   --activity-tool: #EE8474;
   --activity-think: #88A4E0;
   --think: #88A4E0;
-  --think-tint: rgba(136, 164, 224, 0.11);
   --on-accent: #1F0D0B;
   --brand-ink: #F6F1F0;
   --brand-accent: #EE8474;
@@ -591,7 +579,6 @@
   --bg-inset: #EAE8E3;
   --bg-control: #EEECE8;
   --bg-prompt: #EEECE8;
-  --bg-activity: #F3F2EF;
   --bg-code: #EFEEEB;
   --bg-file-canvas: #FAFAFA;
   --bg-file-surface: #FFFFFF;
@@ -617,7 +604,6 @@
   --on-status: #FFFFFF;
   --error-tint: rgba(190, 18, 60, 0.08);
   --info: #0284C7;
-  --think-tint: rgba(124, 58, 237, 0.08);
   --warning-tint: rgba(180, 83, 9, 0.08);
   --selection: rgba(217, 90, 0, 0.18);
   --activity-tool: var(--accent-deep);
@@ -654,7 +640,6 @@
   --bg-inset: #14171B;
   --bg-control: #23272C;
   --bg-prompt: #23272C;
-  --bg-activity: #1A1D21;
   --bg-code: #14171B;
   --bg-file-canvas: #151515;
   --bg-file-surface: #1D1D1D;
@@ -680,7 +665,6 @@
   --on-status: #0B0D10;
   --error-tint: rgba(244, 63, 94, 0.12);
   --info: #38BDF8;
-  --think-tint: rgba(168, 85, 247, 0.1);
   --warning-tint: rgba(245, 158, 11, 0.12);
   --selection: rgba(255, 120, 31, 0.25);
   --activity-tool: var(--accent-deep);
@@ -717,7 +701,6 @@
   --bg-inset: #E5EBE8;
   --bg-control: #E9EEEB;
   --bg-prompt: #E9EEEB;
-  --bg-activity: #F0F3F2;
   --bg-code: #EDF1EF;
   --bg-file-canvas: #FAFAFA;
   --bg-file-surface: #FFFFFF;
@@ -743,7 +726,6 @@
   --on-status: #FFFFFF;
   --error-tint: rgba(180, 55, 49, 0.08);
   --info: #2563EB;
-  --think-tint: rgba(124, 58, 237, 0.08);
   --warning-tint: rgba(180, 83, 9, 0.08);
   --selection: rgba(0, 125, 120, 0.2);
   --activity-tool: var(--accent-deep);
@@ -780,7 +762,6 @@
   --bg-inset: #141A16;
   --bg-control: #232B26;
   --bg-prompt: #232B26;
-  --bg-activity: #1A201C;
   --bg-code: #141A16;
   --bg-file-canvas: #151515;
   --bg-file-surface: #1D1D1D;
@@ -806,7 +787,6 @@
   --on-status: #071D1B;
   --error-tint: rgba(234, 138, 130, 0.12);
   --info: #60A5FA;
-  --think-tint: rgba(168, 85, 247, 0.1);
   --warning-tint: rgba(245, 158, 11, 0.12);
   --selection: rgba(82, 210, 201, 0.28);
   --activity-tool: var(--accent-deep);
@@ -1353,8 +1333,7 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--body);
-  padding: calc(var(--space-2) + var(--ui-text-offset)) 14px
-    calc(var(--space-2) - var(--ui-text-offset));
+  padding: var(--space-2) 14px;
   font-size: var(--text-base);
   font-weight: 500;
   transition:
@@ -1378,18 +1357,11 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   visibility: hidden;
 }
 
-/* Skew padding without changing its total, then keep icons on the row centre.
-   Independent translate leaves spinning icons' rotation untouched. */
+/* Text and icons share the same centered row, including reserved state labels.
+   Avoid text-only offsets and compensating padding that local sizes can undo. */
 .button > svg,
 .button > .copy-feedback {
   flex-shrink: 0;
-  translate: 0 calc(-1 * var(--ui-text-offset));
-}
-
-/* Atomic control labels, not prose or mixed-font reading content. */
-.segmented__item > span,
-.dropdown__value {
-  translate: 0 var(--ui-text-offset);
 }
 
 .button:hover {

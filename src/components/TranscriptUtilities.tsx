@@ -16,7 +16,10 @@ import {
 
 export type MobileTranscriptTool = "search" | "prompt" | null;
 
-/** Floating search and narrow launchers; Transcript retains state and focus ownership. */
+/**
+ * Persistent desktop search and local narrow launchers.
+ * Transcript retains state and focus ownership.
+ */
 export function TranscriptUtilities({
   search,
   inputRef,
@@ -67,7 +70,7 @@ export function TranscriptUtilities({
         ) : null}
       </div>
       <div
-        className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--mobile-open" : ""}`}
+        className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--open" : ""}`}
         role="search"
         aria-label="Search conversation"
         onClick={(event) => {
@@ -101,8 +104,7 @@ export function TranscriptUtilities({
             } else if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
-              const mobileSearch = mobileTool === "search";
-              if (mobileSearch) onClose(true);
+              if (mobileTool === "search") onClose(true);
               else inputRef.current?.blur();
             }
           }}

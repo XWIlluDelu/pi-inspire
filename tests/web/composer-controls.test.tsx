@@ -397,27 +397,14 @@ describe("composer meta row", () => {
     );
   });
 
-  it("uses advertised native model controls independently of Pi activity and model reasoning", () => {
+  it("keeps attached terminal Pi model controls independent of Pi activity, gated only by model reasoning", () => {
     const socket = FakeWebSocket.instances.at(-1)!;
     const snapshot = activeSnapshot();
     snapshot.runState = "running";
-    snapshot.sessionStatuses.s1 = {
-      runState: "running",
-      external: true,
-      nativeModelControls: false,
-    };
+    snapshot.sessionStatuses.s1 = { runState: "running", external: true };
     act(() => socket.emit({ type: "snapshot", data: snapshot }));
     render(<Composer />);
-    expect(screen.getByRole("button", { name: "Model" })).toBeDisabled();
-    expect(
-      screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toBeDisabled();
     expect(screen.getByLabelText("Message")).toBeEnabled();
-    snapshot.sessionStatuses.s1 = {
-      ...snapshot.sessionStatuses.s1!,
-      nativeModelControls: true,
-    };
-    act(() => socket.emit({ type: "snapshot", data: snapshot }));
     expect(screen.getByRole("button", { name: "Model" })).toBeEnabled();
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),

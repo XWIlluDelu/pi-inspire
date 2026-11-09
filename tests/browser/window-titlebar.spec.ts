@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { pairAndOpen } from "./support/navigation";
+import { pairAndOpen, openSettings } from "./support/navigation";
 
 // Chromium's media emulation does not implement display-mode. Exercise the
 // production rules, replacing only that predicate and browser-owned geometry.
@@ -335,7 +335,7 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
   tag: "@platform-ui",
 }, async ({ page }) => {
   await overlay(page, true);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   for (const theme of ["Light", "Dark"]) {
     await settings
@@ -349,6 +349,7 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
       "Chimonanthus",
       "Jade",
       "Amber",
+      "Carbon & Silicon",
     ]) {
       await settings
         .getByRole("group", { name: "Color palette", exact: true })
@@ -422,7 +423,7 @@ test("Overlay chrome and needle colors follow every palette and luminosity, and 
 test("settings menus keep their anchor and clear window chrome when the Overlay height changes", {
   tag: "@platform-ui",
 }, async ({ page }) => {
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Behavior", exact: true }).click();
   const trigger = settings.getByRole("combobox", {

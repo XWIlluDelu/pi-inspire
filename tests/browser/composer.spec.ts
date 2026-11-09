@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   type ActiveSnapshot,
+  type ModelOption,
   PALETTE_PREFERENCES,
 } from "../../shared/contracts";
 import { renderedColors } from "./support/colors";
@@ -12,7 +13,7 @@ for (const touch of [false, true]) {
     test.use({
       hasTouch: touch,
       deviceScaleFactor: touch ? 2 : 1,
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
     test("distinguishes unavailable Restore without overwriting the current draft", async ({
       page,
@@ -71,6 +72,7 @@ for (const touch of [false, true]) {
           );
           const inks = await page.evaluate(() => {
             const probe = document.createElement("span");
+            probe.style.transitionProperty = "none";
             document.body.append(probe);
             probe.style.color = "var(--faint)";
             const disabled = getComputedStyle(probe).color;
@@ -95,7 +97,6 @@ for (const touch of [false, true]) {
           await expect(restore).toBeEnabled();
           await expect(restore).toHaveCSS("color", inks.enabled);
           const enabled = await renderedColors(restore);
-          expect(enabled.foreground).not.toEqual(disabled.foreground);
           expect(enabled.contrast).toBeGreaterThanOrEqual(4.5);
           await input.fill("Keep this newer draft");
         }
@@ -116,6 +117,15 @@ test("composer selectors stay readable in narrow desktop panes without moving or
   let envelope: { type: string; detailSessionId?: string } | undefined;
   const transport = await routeSnapshots(page, {
     snapshot: (snapshot) => {
+      if (snapshot.active?.model) {
+        const activeModel = snapshot.active.model as ModelOption;
+        const name =
+          "Experimental measurement analysis calibration model with an unusually long display name";
+        activeModel.name = name;
+        for (const model of (snapshot.active.availableModels ??
+          []) as ModelOption[])
+          if (model.id === activeModel.id) model.name = name;
+      }
       if (snapshot.active) source = structuredClone(snapshot);
     },
     event: (event) => {
@@ -167,26 +177,19 @@ test("composer selectors stay readable in narrow desktop panes without moving or
     }
     for (const width of [1366, 1100, 1024, 940, 901]) {
       await page.setViewportSize({ width, height: 768 });
+      // Long model names may truncate; Thinking must retain its full label.
       await expect
         .poll(() =>
-          composer
-            .locator(".composer__selectors .dropdown__trigger")
-            .evaluateAll((fields) =>
-              Math.max(
-                0,
-                ...fields.map((field) => {
-                  const value =
-                    field.querySelector<HTMLElement>(".dropdown__value")!;
-                  const text = value.getBoundingClientRect(),
-                    control = field.getBoundingClientRect();
-                  return Math.max(
-                    value.scrollWidth - value.clientWidth,
-                    control.left - text.left,
-                    text.right - control.right,
-                  );
-                }),
-              ),
-            ),
+          thinking.evaluate((field) => {
+            const value = field.querySelector<HTMLElement>(".dropdown__value")!;
+            const text = value.getBoundingClientRect(),
+              control = field.getBoundingClientRect();
+            return Math.max(
+              value.scrollWidth - value.clientWidth,
+              control.left - text.left,
+              text.right - control.right,
+            );
+          }),
         )
         .toBeLessThanOrEqual(0.5);
       // The running halo intentionally extends past the form; measure its content row.

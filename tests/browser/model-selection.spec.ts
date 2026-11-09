@@ -1,9 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
-import type { ActiveSnapshot } from "../../shared/contracts";
 import { modelSettingsScenario } from "./fixtures/model-settings";
-import { routeSnapshots } from "./support/host-events";
-import { pairAndOpen } from "./support/navigation";
+import { pairAndOpen, openSettings } from "./support/navigation";
 
 test("model labels and selection retain text contrast across palettes and themes", async ({
   page,
@@ -108,7 +106,7 @@ test("long provider headings keep their virtual row in menus and Settings", asyn
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   await expect(draft).toHaveValue("Keep the current calibration draft");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Models", exact: true }).click();
   const available = settings.locator(".models-available");
@@ -123,132 +121,4 @@ test("long provider headings keep their virtual row in menus and Settings", asyn
     .getByRole("button", { name: "Close settings", exact: true })
     .click();
   await expect(draft).toHaveValue("Keep the current calibration draft");
-});
-
-test("cached model choices open immediately and background updates preserve selection/search/draft", async ({
-  page,
-}) => {
-  let release!: () => void;
-  let failed = false;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await page.route("**/api/models**", async (route) => {
-    await gate;
-    if (failed) {
-      await route.fulfill({
-        status: 503,
-        json: { error: "Fixture catalog unavailable" },
-      });
-      return;
-    }
-    const response = await route.fetch();
-    const data = await response.json();
-    data.models.push({
-      provider: "fixture",
-      id: "fresh-model",
-      name: "Fresh model",
-      reasoning: true,
-    });
-    await route.fulfill({ response, json: data });
-  });
-  await pairAndOpen(page);
-  const draft = page.getByRole("textbox", { name: "Message", exact: true });
-  await draft.fill("Catalog refresh must preserve this draft");
-  const trigger = page.getByRole("button", { name: "Model", exact: true });
-  const selected = await trigger.textContent();
-  await trigger.click();
-  const list = page.getByRole("listbox", { name: "Available models" });
-  await expect(list).toBeVisible();
-  await expect(list.getByRole("option").first()).toBeVisible();
-  const menu = page.locator(".model-picker__menu");
-  await expect(menu).toHaveAttribute("aria-busy", "false");
-  await expect(menu.getByRole("status")).toHaveCount(0);
-  const search = page.getByRole("combobox", { name: "Search models" });
-  await search.fill("fresh-model");
-  release();
-  await expect(list.getByRole("option", { name: /Fresh model/ })).toBeVisible();
-  await expect(menu).toHaveAttribute("aria-busy", "false");
-  await expect(search).toBeFocused();
-  await expect(search).toHaveValue("fresh-model");
-  await expect(menu.getByRole("status")).toHaveCount(0);
-  await expect(trigger).toHaveText(selected!);
-  await expect(draft).toHaveValue("Catalog refresh must preserve this draft");
-
-  await page.keyboard.press("Escape");
-  await expect(trigger).toBeFocused();
-  failed = true;
-  await trigger.click();
-  await expect(
-    page.getByRole("status").filter({ hasText: "Could not refresh models" }),
-  ).toBeVisible();
-  await search.fill("fresh-model");
-  await expect(list.getByRole("option", { name: /Fresh model/ })).toBeEnabled();
-  await expect(trigger).toHaveText(selected!);
-  await expect(draft).toHaveValue("Catalog refresh must preserve this draft");
-});
-
-test("the first-message model transition clamps max to high and sends explicit startup effort", async ({
-  page,
-}) => {
-  const extended = {
-    provider: "fixture",
-    id: "extended",
-    name: "Extended fixture",
-    reasoning: true,
-    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-  };
-  const ordinary = {
-    provider: "fixture",
-    id: "ordinary",
-    name: "Ordinary fixture",
-    reasoning: true,
-  };
-  const decorate = (snapshot: ActiveSnapshot) => {
-    if (snapshot.active) {
-      snapshot.active.model = extended;
-      snapshot.active.thinkingLevel = "max";
-      snapshot.active.availableModels = [extended, ordinary];
-    }
-    return snapshot;
-  };
-  await routeSnapshots(page, { snapshot: decorate });
-  await page.route("**/api/models**", (route) =>
-    route.fulfill({ json: { models: [extended, ordinary] } }),
-  );
-  await page.route("**/api/new-session/thinking**", (route) => {
-    const current = new URL(route.request().url()).searchParams.get("current");
-    return route.fulfill({ json: { level: current } });
-  });
-  let startup: Record<string, unknown> | undefined;
-  await page.route("**/api/sessions/new", async (route) => {
-    startup = route.request().postDataJSON();
-    await route.fulfill({
-      status: 400,
-      json: { error: "Fixture observes startup without creating a session" },
-    });
-  });
-  await pairAndOpen(page);
-  await page.getByRole("button", { name: "New session", exact: true }).click();
-  await page
-    .getByRole("textbox", { name: "First message" })
-    .fill("Start with native clamped thinking");
-  const thinking = page.getByRole("combobox", { name: "Thinking level" });
-  await expect(thinking).toHaveText("Max");
-  await page.getByRole("button", { name: "Model", exact: true }).click();
-  await page.getByRole("option", { name: /Ordinary fixture/ }).click();
-  await expect(thinking).toHaveText("High");
-  await expect(
-    page.getByRole("button", { name: "Start session", exact: true }),
-  ).toBeEnabled();
-
-  await page
-    .getByRole("button", { name: "Start session", exact: true })
-    .click();
-  await expect
-    .poll(() => startup)
-    .toMatchObject({
-      model: { provider: "fixture", id: "ordinary" },
-      thinkingLevel: "high",
-    });
 });

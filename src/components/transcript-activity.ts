@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { prefersReducedMotion } from "../input-device";
 
 export const CARD_TRANSITION_MS = 180;
 export const DYNAMIC_THINKING_EXPANDED_MIN_MS = 1_800;
@@ -8,10 +9,6 @@ export const DYNAMIC_TOOL_CLOSE_DELAY_MS = 500;
 export const DYNAMIC_FOLD_EXPANDED_MIN_MS = 2_400;
 export const DYNAMIC_FOLD_CLOSE_DELAY_MS = 800;
 const DYNAMIC_TOOL_COMPACT_MIN_MS = 800;
-
-export function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 type DynamicActivityPhase = "cards" | "collapsing" | "collapsed";
 

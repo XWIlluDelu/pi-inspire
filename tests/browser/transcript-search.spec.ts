@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { openEventSession } from "./support/host-events";
+import { openConversationSearch } from "./support/navigation";
 
 const configuration = checkpointAdapterConfiguration;
 const current = () => {
@@ -120,9 +121,7 @@ test("composition keys do not navigate transcript matches or dismiss search", as
     type: "message_end",
     message: { role: "user", content: "测量一，测量二。", timestamp: 1 },
   });
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const input = page.getByRole("searchbox", {
     name: "Search conversation",
     exact: true,
@@ -162,6 +161,10 @@ test("composition keys do not navigate transcript matches or dismiss search", as
   await expect(input).toBeVisible();
   await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("测量");
+  await expect(result).toHaveText("2 of 2");
+  await page.locator(".transcript-wrap").press("Control+f");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("测量");
 });
 
 test("search counts only visible shell and checkpoint text", async ({
@@ -192,9 +195,7 @@ test("search counts only visible shell and checkpoint text", async ({
       },
     },
   );
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const search = page.getByRole("search", {
     name: "Search conversation",
   });
@@ -285,9 +286,7 @@ test("literal highlights follow scope, occurrences and disclosure without changi
   await expect(
     page.getByRole("heading", { name: "Searchable answer" }),
   ).toBeAttached();
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const input = page.getByRole("searchbox", { name: "Search conversation" });
   const count = page.getByLabel("Transcript search matches");
   await input.fill("precise match");
@@ -360,11 +359,20 @@ test("literal highlights follow scope, occurrences and disclosure without changi
       }),
     )
     .toBe(true);
+  // Escape releases focus; clearing the persistent input retires highlights.
   await input.press("Escape");
   await expect(input).toBeVisible();
   await expect(input).not.toBeFocused();
   await expect(input).toHaveValue("precise match");
-  await expect(count).toHaveText("5 of 5");
+  await expect
+    .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
+    .toBe(true);
+  await input.fill("");
+  await expect
+    .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
+    .toBe(false);
+  await input.fill("precise match");
+  await expect(count).toHaveText("5 matches");
   await input.focus();
   const box = (await input.boundingBox())!;
   // Native clear remains usable after theming; no duplicate custom button.
@@ -413,9 +421,7 @@ test("highlights recover when a searched virtual row mounts and clear on session
     })),
   );
   await expect(page.locator(".transcript__column--virtual")).toBeVisible();
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const input = page.getByRole("searchbox", { name: "Search conversation" });
   // Count the whole projection, including rows outside the virtual DOM window.
   await input.fill("Ordinary prompt");
@@ -495,7 +501,7 @@ test.describe("touch reading controls", () => {
       code,
     );
     await expect(page.locator(".ctx")).toHaveCount(0);
-    await page.getByRole("button", { name: "Open conversation search" }).tap();
+    await openConversationSearch(page);
     const input = page.getByRole("searchbox", {
       name: "Search conversation",
     });
@@ -514,16 +520,62 @@ test.describe("touch reading controls", () => {
         await search.evaluate((el) => el.scrollWidth <= el.clientWidth),
       ).toBe(true);
     }
+    for (const [width, height] of [
+      [390, 844],
+      [844, 390],
+      [1024, 768],
+      [901, 768],
+    ]) {
+      await page.setViewportSize({ width, height });
+      if (width === 901) {
+        const expand = page.getByRole("button", {
+          name: "Expand navigation",
+          exact: true,
+        });
+        if (await expand.isVisible()) await expand.tap();
+        await page
+          .getByRole("button", { name: "Toggle resources panel" })
+          .tap();
+        await expect(
+          page.getByRole("complementary", {
+            name: "Context panel",
+            exact: true,
+          }),
+        ).toBeVisible();
+      }
+      const search = page.getByRole("search");
+      for (const button of await search.locator(":scope > button").all()) {
+        if (!(await button.isVisible())) continue;
+        const bounds = (await button.boundingBox())!;
+        expect(Math.min(bounds.width, bounds.height)).toBeGreaterThanOrEqual(
+          36,
+        );
+      }
+      expect(
+        await search.evaluate((el) => el.scrollWidth <= el.clientWidth),
+      ).toBe(true);
+      if (width === 901) {
+        await page
+          .getByRole("combobox", { name: "Search scope", exact: true })
+          .tap();
+        await page.getByRole("option", { name: "Model", exact: true }).tap();
+        expect(
+          await search.evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+        await page
+          .getByRole("button", { name: "Toggle resources panel" })
+          .tap();
+      }
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
     await input.press("Escape");
-    await expect(
-      page.getByRole("button", { name: "Open conversation search" }),
-    ).toBeVisible();
+    await expect(input).toBeHidden();
     await expect
       .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
       .toBe(false);
     await page.getByRole("button", { name: "Insert code in terminal" }).tap();
     await expect(
-      page.getByRole("button", { name: "Terminal", exact: true }),
-    ).toHaveAttribute("aria-pressed", "true");
+      page.locator(".ctx__terminal-tabs [role=tab][aria-selected=true]"),
+    ).toHaveAttribute("aria-selected", "true");
   });
 });

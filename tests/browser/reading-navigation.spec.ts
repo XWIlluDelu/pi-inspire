@@ -2,7 +2,11 @@ import { expect, test } from "@playwright/test";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { renderedColors } from "./support/colors";
 import { routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  openConversationSearch,
+} from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 
 // These suites own mocked Host responses, not Service Worker fetch handling.
@@ -251,17 +255,25 @@ for (const narrow of [false, true]) {
           .getBoundingClientRect().top,
       }));
     const beforeSearch = await anchor();
-    if (narrow)
-      await page
-        .getByRole("button", { name: "Open conversation search" })
-        .click();
-    else {
+    // Local tools remain directly available or expand at their own launcher.
+    await expect(
+      page.locator(".topbar").getByRole("button", {
+        name: "Search conversation",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    const searchLauncher = page.getByRole("button", {
+      name: "Open conversation search",
+      exact: true,
+    });
+    let launcherBox = null;
+    if (narrow) {
+      await expect(search).toBeHidden();
+      launcherBox = await searchLauncher.boundingBox();
+    } else {
       await expect(search).toBeVisible();
-      await search.focus();
-      await expect(
-        page.getByRole("button", { name: "Close conversation search" }),
-      ).toBeHidden();
     }
+    await openConversationSearch(page);
     await expect(search).toBeFocused();
     expect(await anchor()).toEqual(beforeSearch);
     expect(await geometry()).toEqual(original);
@@ -271,12 +283,20 @@ for (const narrow of [false, true]) {
       logBox.y + logBox.height,
     );
     if (narrow) {
+      // Expansion occupies the launcher's interaction region, not a remote destination.
+      const launcher = launcherBox!;
+      const center = {
+        x: launcher.x + launcher.width / 2,
+        y: launcher.y + launcher.height / 2,
+      };
+      expect(center.x).toBeGreaterThanOrEqual(searchBox.x);
+      expect(center.x).toBeLessThanOrEqual(searchBox.x + searchBox.width);
+      expect(center.y).toBeGreaterThanOrEqual(searchBox.y);
+      expect(center.y).toBeLessThanOrEqual(searchBox.y + searchBox.height);
       await page
         .getByRole("button", { name: "Close conversation search" })
         .click();
-      await expect(
-        page.getByRole("button", { name: "Open conversation search" }),
-      ).toBeFocused();
+      await expect(searchLauncher).toBeFocused();
       await page
         .getByRole("button", { name: "Open prompt navigation" })
         .click();
@@ -301,6 +321,7 @@ for (const narrow of [false, true]) {
       await expect(search).toBeFocused();
       await expect(search).toHaveValue("formula");
       await search.fill("");
+      await search.press("Escape");
     }
 
     const fold = log.locator("[data-activity-fold]").first();
@@ -317,18 +338,12 @@ for (const narrow of [false, true]) {
 
     // Actual Tab traversal: top utilities, then message content, then the bottom Latest control.
     await wrap.focus();
-    await page.keyboard.press("Tab");
-    await expect(
-      narrow
-        ? page.getByRole("button", { name: "Open prompt navigation" })
-        : page.getByRole("combobox", { name: "Search scope" }),
-    ).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(
-      narrow
-        ? page.getByRole("button", { name: "Open conversation search" })
-        : search,
-    ).toBeFocused();
+    if (narrow) {
+      await page.keyboard.press("Tab");
+      await expect(
+        page.getByRole("button", { name: "Open prompt navigation" }),
+      ).toBeFocused();
+    }
     let reachedMessages = false;
     let visitedPromptMap = narrow;
     const tabStops = await wrap
@@ -388,6 +403,7 @@ for (const narrow of [false, true]) {
           .getByRole("button", { name: "Toggle resources panel" })
           .click();
       await expect(context).toBeVisible();
+      await openConversationSearch(page);
       const insets = await wrap.evaluate((element) => {
         const center = element.getBoundingClientRect();
         const search = element
@@ -513,6 +529,7 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   await expect(map).toBeHidden();
   const searchLauncher = page.getByRole("button", {
     name: "Open conversation search",
+    exact: true,
   });
   const promptLauncher = page.getByRole("button", {
     name: "Open prompt navigation",

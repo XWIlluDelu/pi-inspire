@@ -1,4 +1,4 @@
-import { incomingIntercom } from "./custom-message-presentation";
+import { incomingRelay } from "./custom-message-presentation";
 
 // A reading sequence for shared activity-header, nested-tool, fallback and
 // extension-message regressions. Outcomes remain native records, not summaries.
@@ -98,7 +98,7 @@ export function activityReadingMessages() {
       ],
       details: { status: 503, retryAfter: 30 },
     },
-    incomingIntercom(
+    incomingRelay(
       "### Review notes\n\nThe keyboard checks are complete. **Copy stays independent of disclosure.**\n\n- Preserve the current draft when switching sessions.\n- Keep long tool paths readable on a narrow screen.",
     ),
     {

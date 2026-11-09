@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { RichText } from "../../src/components/RichText";
 import { Transcript } from "../../src/components/Transcript";
+import { store } from "../../src/store";
 
 class ClipboardDataTransfer {
   private readonly values = new Map<string, string>();
@@ -203,8 +204,36 @@ describe("selection copy", () => {
     displayRange.setEnd(textNode(displayHtml), 1);
     const display = dispatchSelectionCopy(displayHtml, displayRange);
     expect(display.event.defaultPrevented).toBe(true);
-    expect(display.data.getData("text/plain")).toBe("$$d+2$$");
+    expect(display.data.getData("text/plain")).toBe("$$\nd+2\n$$");
     expect(display.data.getData("text/html")).toContain("katex-display");
+  });
+
+  it("puts display delimiters on separate lines without changing formula indentation", async () => {
+    const source = String.raw`\begin{aligned}
+  x&=1\\
+    y&=2
+\end{aligned}`;
+    const { container } = render(
+      <Transcript
+        messages={[
+          {
+            role: "assistant",
+            content: [{ type: "text", text: `$$\n${source}\n$$` }],
+          },
+        ]}
+        streaming={false}
+        thinkingVisibility="collapsed"
+        toolVisibility="collapsed"
+      />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".katex-display")).toBeTruthy(),
+    );
+    const formula = container.querySelector(".katex-display")!;
+    const range = document.createRange();
+    range.selectNodeContents(formula);
+    const result = dispatchSelectionCopy(formula, range);
+    expect(result.data.getData("text/plain")).toBe(`$$\n${source}\n$$`);
   });
 
   it("handles a real DOM selection and writes both ClipboardEvent formats", async () => {
@@ -280,6 +309,56 @@ describe("raw HTML and unsafe URL defense", () => {
 });
 
 describe("local file references", () => {
+  it.each([
+    ["code file link", "`README.md`", "./guide.md#results", "README.md", true],
+    [
+      "code web link",
+      "`README.md`",
+      "https://pi.dev/guide",
+      "README.md",
+      false,
+    ],
+    [
+      "local image link",
+      "![Curve](./curve.png)",
+      "./guide.md#results",
+      "Curve",
+      true,
+    ],
+    [
+      "remote image link",
+      "![Build status](https://pi.dev/status.svg)",
+      "https://pi.dev/build",
+      "Build status",
+      false,
+    ],
+  ])(
+    "preserves authored %s navigation when its content is clicked",
+    async (_label, content, href, label, local) => {
+      const openResource = vi.spyOn(store, "openResource").mockResolvedValue();
+      const { container } = render(
+        <Transcript
+          messages={[
+            {
+              role: "assistant",
+              content: [{ type: "text", text: `[${content}](${href})` }],
+            },
+          ]}
+          streaming={false}
+          thinkingVisibility="expanded"
+          toolVisibility="expanded"
+        />,
+      );
+      const target = await screen.findByText(label);
+      expect(target.closest("a")).toHaveAttribute("href", href);
+      expect(fireEvent.click(target)).toBe(!local);
+      if (local) expect(openResource).toHaveBeenCalledExactlyOnceWith(href);
+      else expect(openResource).not.toHaveBeenCalled();
+      expect(container.querySelector("a button, a a")).toBeNull();
+      expect(container.querySelector("img")).toBeNull();
+    },
+  );
+
   it("keeps a native code path literal while preserving a Markdown URL's encoding", () => {
     render(
       <RichText

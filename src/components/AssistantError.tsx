@@ -80,7 +80,7 @@ export function AssistantError({ text }: { text: string }) {
           onClick={() => setExpanded(!expanded)}
         >
           <ChevronDown size={12} aria-hidden />
-          {expanded ? "Hide details" : "Show details"}
+          <span>{expanded ? "Hide details" : "Show details"}</span>
         </button>
       ) : null}
     </div>

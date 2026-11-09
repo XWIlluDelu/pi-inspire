@@ -105,20 +105,11 @@ async function verifySourceFonts() {
       "Flux Mono SC",
     ),
   ]);
-  const labelFonts = await Promise.all(
-    [500, 600].map(async (weight) =>
-      sha256(
-        await readFile(
-          join(fontRoot, "rajdhani", `Rajdhani-Latin-${weight}.woff2`),
-        ),
-      ),
-    ),
-  );
   return {
-    digests: new Set([...digests.flat(), ...labelFonts]),
+    digests: new Set(digests.flat()),
     // The critical sheet repeats five Latin/core declarations from the
     // complete deferred registries; font assets are still emitted once.
-    installedFaces: { ibm: 648 + 3, flux: 112 + 2, rajdhani: 2 },
+    installedFaces: { ibm: 648 + 3, flux: 112 + 2 },
   };
 }
 
@@ -147,12 +138,10 @@ async function verifyInstalledFonts(installedRoot, expectedFonts) {
       expectedFonts.installedFaces.ibm ||
     (css.match(/@font-face\{font-family:Flux Mono SC;/gu) ?? []).length !==
       expectedFonts.installedFaces.flux ||
-    (css.match(/@font-face\{font-family:Rajdhani;/gu) ?? []).length !==
-      expectedFonts.installedFaces.rajdhani ||
     /Noto|MOTO|IBM Plex Mono/u.test(css)
   ) {
     throw new Error(
-      "Installed bundle does not contain the reviewed IBM UI, Flux code, and Rajdhani label type system",
+      "Installed bundle does not contain the reviewed IBM UI and Flux code type system",
     );
   }
 }
@@ -342,7 +331,6 @@ try {
     "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt",
     "src/assets/licenses/flux-mono-LICENSE.txt",
     "src/assets/licenses/flux-mono-NOTICE.md",
-    "src/assets/licenses/rajdhani-LICENSE.txt",
   ]);
   const packedPaths = new Set(
     (record.files ?? []).map((file) => file.path ?? ""),
@@ -443,13 +431,12 @@ try {
   ) {
     throw new Error("Installed release package has the wrong project license");
   }
-  const fontLicenses = `${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/flux-mono-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/flux-mono-NOTICE.md"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/rajdhani-LICENSE.txt"), "utf8")}`;
+  const fontLicenses = `${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/ibm-plex-sans-sc-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/flux-mono-LICENSE.txt"), "utf8")}\n${await readFile(join(installedRoot, "src/assets/licenses/flux-mono-NOTICE.md"), "utf8")}`;
   for (const witness of [
     "SIL OPEN FONT LICENSE Version 1.1",
     'Reserved Font Name "Plex"',
     "IBM Corp.",
     "Flux Mono SC",
-    "Indian Type Foundry",
     "Modifications are copyright © 2026 XWIlluDelu",
   ]) {
     if (!fontLicenses.includes(witness))

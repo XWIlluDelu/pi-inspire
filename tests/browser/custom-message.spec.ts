@@ -4,7 +4,7 @@ import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import {
   customMessageConfiguration,
-  incomingIntercom,
+  incomingRelay,
 } from "../web/fixtures/custom-message-presentation";
 import { renderedColors } from "./support/colors";
 import { openEventSession } from "./support/host-events";
@@ -24,8 +24,20 @@ async function openReview(page: Page) {
       activityFoldVisibility: "collapsed",
     },
   );
-  return (message: ReturnType<typeof incomingIntercom>) =>
+  return (message: ReturnType<typeof incomingRelay>) =>
     send({ type: "message_end", message });
+}
+
+function headerOffsets(element: Element) {
+  const center = (selector: string) => {
+    const rect = element.querySelector(selector)!.getBoundingClientRect();
+    return rect.top + rect.height / 2;
+  };
+  const identity = center(".custom-message__identity");
+  return [
+    center(".custom-message__head > svg") - identity,
+    center(".custom-message__copy") - identity,
+  ];
 }
 
 test("sender-led custom messages preserve content, keyboard inspection and responsive reading", async ({
@@ -35,23 +47,21 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const send = await openReview(page);
-  const message = incomingIntercom();
+  const message = incomingRelay();
   send(message);
   const card = page.getByRole("article", { name: "Inspire: composer editing" });
   await expect(
     card.getByRole("heading", { name: "Composer review ready" }),
   ).toBeVisible();
-  await expect(card.locator(".custom-message__source")).toHaveText("Intercom");
+  await expect(card.locator(".custom-message__source")).toHaveText("Relay");
   await expect(card.locator(".custom-message__body strong").last()).toHaveText(
     "final paragraph",
   );
   await expect(
-    card.locator(
-      ".custom-message__raw, .custom-message__type, time, .card__status",
-    ),
+    card.locator(".custom-message__raw, time, .card__status"),
   ).toHaveCount(0);
   for (const hidden of [
-    "intercom_message",
+    "relay_message",
     "To reply",
     "/home/reviewer",
     "seq 42",
@@ -71,6 +81,8 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
       document.documentElement.dataset.theme = theme;
     }, theme);
     await card.scrollIntoViewIfNeeded();
+    for (const offset of await card.evaluate(headerOffsets))
+      expect(Math.abs(offset)).toBeLessThan(0.5);
     expect(
       await card.evaluate(
         (element) =>
@@ -123,7 +135,7 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   );
 
   // Unbroken titles reflow rather than colliding with Copy or losing attribution.
-  const longMessage = incomingIntercom("The full body is still here.");
+  const longMessage = incomingRelay("The full body is still here.");
   (longMessage.details as { from: { name: string } }).from.name =
     "sender_with_a_very_long_unbroken_name_".repeat(5);
   longMessage.__inspireMessageId = "custom-message-long-sender";
@@ -147,6 +159,8 @@ test("sender-led custom messages preserve content, keyboard inspection and respo
   });
   expect(wrappedHeader.fits).toBe(true);
   expect(wrappedHeader.headerHeight).toBeGreaterThan(wrappedHeader.copyHeight);
+  for (const offset of await longCard.evaluate(headerOffsets))
+    expect(Math.abs(offset)).toBeLessThan(0.5);
 
   expect(errors).toEqual([]);
 });
@@ -157,7 +171,7 @@ test("context and extension glyphs follow Tool through live palette changes", as
   await page.setViewportSize({ width: 1280, height: 1000 });
   const send = await openReview(page);
   send(conversationFeedbackMessages[1]!);
-  send(incomingIntercom("The full message remains independently readable."));
+  send(incomingRelay("The full message remains independently readable."));
   const checkpoint = page.getByRole("button", {
     name: "Context compacted",
     exact: true,
@@ -210,7 +224,7 @@ test("Markdown tables preserve word minima and keep long tokens in their own scr
   const send = await openReview(page);
   const token = "AnUnbrokenTableToken".repeat(20);
   send(
-    incomingIntercom(
+    incomingRelay(
       `| Surface | Result |\n| --- | --- |\n| Desktop | ${token} |\n\nOutside table: ${token}`,
     ),
   );
@@ -250,7 +264,7 @@ test.describe("touch custom messages", () => {
     page,
   }) => {
     const send = await openReview(page);
-    send(incomingIntercom());
+    send(incomingRelay());
     const card = page.getByRole("article", {
       name: "Inspire: composer editing",
     });

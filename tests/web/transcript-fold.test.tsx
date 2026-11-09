@@ -69,7 +69,6 @@ describe("response activity folds", () => {
     expect(control).toHaveAttribute("data-activity-fold-anchor", "center");
     expect(control.querySelector("button, [tabindex]")).toBeNull();
     expect(control).toHaveTextContent("Activity");
-    expect(control.querySelector(".activity-fold__rail")).toBeNull();
 
     fireEvent.click(control);
     expect(fold).toHaveAttribute("data-activity-fold-presentation", "compact");
@@ -124,6 +123,30 @@ describe("response activity folds", () => {
     ).toHaveLength(1);
     rerender(view(false));
     expect(container.querySelector(".activity-fold__kind--live")).toBeNull();
+  });
+
+  it("formats expanded header telemetry with middle-dot separators and isolated failure ink", () => {
+    const { container } = render(
+      <ResponseActivityFold
+        visibility="expanded"
+        lifecycleActive={false}
+        closeRequested={false}
+        telemetry={[
+          { id: "1", kind: "thinking" },
+          { id: "2", kind: "tool", name: "codemode" },
+          { id: "3", kind: "tool", name: "preview_check", failed: true },
+        ]}
+      >
+        Activity
+      </ResponseActivityFold>,
+    );
+    const summary = container.querySelector(".activity-fold__summary")!;
+    expect(summary).toHaveTextContent(
+      "3 steps · thinking · codemode · preview_check · 1 failed",
+    );
+    expect(
+      summary.querySelector(".activity-fold__summary-failed"),
+    ).toHaveTextContent("1 failed");
   });
 
   it("does not fill an omitted history matrix from deferred hints or from the visible tail", () => {
@@ -512,6 +535,7 @@ describe("response activity folds", () => {
     expect(fold.querySelector(".turn__divider, .turn__head")).toBeNull();
   });
 
+  // This scale regression intentionally mounts and removes all 300 real cards.
   it("bounds a long multi-round history and restores its full activity on expansion", () => {
     const { container } = render(
       transcript(toolRounds(300), "compact", { toolVisibility: "compact" }),
@@ -539,7 +563,7 @@ describe("response activity folds", () => {
       ),
     );
     expectMountedTail();
-  });
+  }, 15_000);
 
   it("restores only deliberate card choices after compact omission", () => {
     // Two omitted cards distinguish a deliberate choice from an untouched
@@ -1067,7 +1091,6 @@ describe("response activity folds", () => {
         "aria-hidden",
         "true",
       );
-      expect(container.querySelector(".activity-fold__track")).toBeNull();
       rerender(transcript([{ ...active, __inspireSettled: true }], density));
       expect(container.querySelector(".activity-fold__kind--live")).toBeNull();
     },
@@ -1582,7 +1605,7 @@ describe("response activity folds", () => {
   it("retains custom details when an older page prepends another message", () => {
     const recentCustom = {
       role: "custom",
-      customType: "intercom",
+      customType: "relay",
       content: "recent",
       details: { source: "peer" },
       __inspireEntryId: "custom-recent",
@@ -1610,7 +1633,7 @@ describe("response activity folds", () => {
         [
           {
             role: "custom",
-            customType: "intercom",
+            customType: "relay",
             content: { message: "earlier" },
             __inspireEntryId: "custom-earlier",
             timestamp: 1,
@@ -1812,17 +1835,17 @@ describe("response activity folds", () => {
     vi.useFakeTimers();
     const started = {
       role: "custom",
-      customType: "intercom_message",
-      content: "intercom is working",
+      customType: "relay_message",
+      content: "relay is working",
       display: true,
       timestamp: 25,
-      __inspireLiveId: "intercom-fold",
+      __inspireLiveId: "relay-fold",
     };
     const { container, rerender } = render(
       transcript([started], "dynamic", { runState: "idle" }),
     );
     expect(container.querySelector("[data-activity-fold]")).toBeNull();
-    expect(screen.getByText("intercom is working")).toBeVisible();
+    expect(screen.getByText("relay is working")).toBeVisible();
     rerender(
       transcript([{ ...started, __inspireSettled: true }], "dynamic", {
         runState: "idle",
@@ -1830,7 +1853,7 @@ describe("response activity folds", () => {
     );
     act(() => vi.advanceTimersByTime(5_000));
     expect(container.querySelector("[data-activity-fold]")).toBeNull();
-    expect(screen.getByText("intercom is working")).toBeVisible();
+    expect(screen.getByText("relay is working")).toBeVisible();
   });
 
   it("dynamically closes a tail fold when the authoritative run fails", () => {
@@ -1915,7 +1938,7 @@ it("keeps trailing custom messages separate from the preceding final tool strip"
         },
         {
           role: "custom",
-          customType: "intercom_message",
+          customType: "relay_message",
           content: "delivered",
           display: true,
           timestamp: 28,

@@ -149,8 +149,8 @@
 }
 .models-icon-button:hover:where(:not(:disabled)) { background: var(--bg-control); color: var(--ink); }
 .models-text-button { padding: var(--space-2) 0; color: var(--accent-deep); font-size: var(--text-sm); }
-.models-text-button:has(> svg) { display: inline-flex; align-items: center; gap: var(--space-1); padding-block: calc(var(--space-2) + var(--ui-text-offset)) calc(var(--space-2) - var(--ui-text-offset)); }
-.models-text-button > svg { flex: 0 0 auto; translate: 0 calc(-1 * var(--ui-text-offset)); }
+.models-text-button:has(> svg) { display: inline-flex; align-items: center; gap: var(--space-1); }
+.models-text-button > svg { flex: 0 0 auto; }
 .models-icon-button:focus-visible,
 .models-text-button:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .models-icon-button:disabled,
@@ -240,7 +240,6 @@
   cursor: pointer;
 }
 .models-choice .choice-input:disabled { opacity: 1; }
-.models-choice span { transform: translateY(1px); }
 .models-choice:has(input:checked) { color: var(--accent-deep); }
 .models-choice:hover:not(:has(:disabled)),
 .models-rule-action:hover:not(:disabled) { background: var(--bg-control); color: var(--ink); }
@@ -347,8 +346,6 @@
 .models-status[role=alert] { color: var(--error-ink); }
 .models-search { margin: 0 0 var(--space-2); }
 .models-auth__back { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 36px; }
-.models-auth__provider-detail { border-top: 1px solid var(--hairline); }
-.models-auth__provider-detail .models-provider-login { padding-top: var(--space-1); }
 .models-auth__providers { max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .models-auth__providers .models-provider-login__copy > strong { font-weight: 400; }
 .models-auth__providers .search-match { font-weight: 600; }
@@ -403,6 +400,28 @@
   .models-common li > .models-actions { margin-left: auto; }
   .models-subheading { gap: var(--space-1); }
   .models-auth__back { min-height: 44px; }
+}
+
+/* Keep short windows usable without compressing the editor's input viewport. */
+@media (max-height: 500px) {
+  .settings__page:has(.models-editor),
+  .models-settings-layout:has(> .models-editor),
+  .models-settings.models-editor,
+  .models-form,
+  .models-form__body { flex: none; }
+  .models-settings.models-editor { overflow: clip; }
+  .models-form__body { overflow-y: visible; }
+  .models-form__actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    background: var(--bg-surface);
+  }
+  .settings__content:has(.models-editor) {
+    padding-bottom: 0;
+    /* Reserve the touch action, padding, border and focus inset. */
+    scroll-padding-block: var(--space-2) calc(44px + 2 * var(--space-3) + 1px + var(--space-2));
+  }
 }
 
 @media (max-width: 480px) {

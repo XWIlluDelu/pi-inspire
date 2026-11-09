@@ -14,9 +14,10 @@ import type { ChatMessage } from "../../src/events";
 import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 import {
   customMessageConfiguration,
-  incomingIntercom,
-  intercomBody,
+  incomingRelay,
+  relayBody,
 } from "./fixtures/custom-message-presentation";
+import { openTranscriptSearch } from "./helpers";
 
 const base: ChatMessage = {
   role: "custom",
@@ -42,24 +43,20 @@ afterEach(() => {
 describe("extension context messages", () => {
   it("presents sender and exact Markdown body while preserving all original data lazily", async () => {
     configureToolPresentationRegistry(customMessageConfiguration);
-    const message = incomingIntercom();
+    const message = incomingRelay();
     const { container } = render(component(message));
     expect(
       screen.getByRole("article", { name: "Inspire: composer editing" }),
     ).toBeVisible();
-    expect(screen.getByText("Intercom", { exact: true })).toBeVisible();
+    expect(screen.getByText("Relay", { exact: true })).toBeVisible();
     expect(
       await screen.findByRole("heading", { name: "Composer review ready" }),
     ).toBeVisible();
     expect(
       screen.getByText("final paragraph", { selector: "strong" }),
     ).toBeVisible();
-    expect(
-      container.querySelector(
-        ".custom-message__type, .custom-message__raw, time",
-      ),
-    ).toBeNull();
-    expect(container).not.toHaveTextContent("intercom_message");
+    expect(container.querySelector(".custom-message__raw, time")).toBeNull();
+    expect(container).not.toHaveTextContent("relay_message");
     expect(container).not.toHaveTextContent("To reply");
     expect(container).not.toHaveTextContent("seq 42");
     expect(container).not.toHaveTextContent("2030-");
@@ -85,16 +82,15 @@ describe("extension context messages", () => {
       const copied = writeText.mock.calls[0]![0];
       expect(copied).toContain(message.content);
       expect(copied).toContain(JSON.stringify(message.details, null, 2));
-      expect(copied).toContain(intercomBody);
+      expect(copied).toContain(relayBody);
     } finally {
       vi.unstubAllGlobals();
     }
   });
 
   it("updates an already mounted message on a new bootstrap generation without losing Details state", async () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     const { container } = render(component(message));
-    expect(container.querySelector(".custom-message__type")).toBeNull();
     fireEvent.click(screen.getByText("Details"));
     act(() => configureToolPresentationRegistry(customMessageConfiguration));
     expect(
@@ -106,13 +102,13 @@ describe("extension context messages", () => {
         .content,
     ).toBe(message.content);
     act(() => configureToolPresentationRegistry());
-    expect(screen.getByText("Intercom message")).toBeVisible();
+    expect(screen.getByText("Relay message")).toBeVisible();
     expect(container.querySelector("details")).toHaveAttribute("open");
   });
 
   it("retains the original unverified external attribution when a guard fails", async () => {
     configureToolPresentationRegistry(customMessageConfiguration);
-    const message = incomingIntercom();
+    const message = incomingRelay();
     message.content =
       "**From remote@other-host · unverified cross-machine**\n\nExternal body";
     message.details = {
@@ -132,7 +128,7 @@ describe("extension context messages", () => {
       ),
     ).toBeVisible();
     expect(container.querySelector(".custom-message__source")).toBeNull();
-    expect(screen.getByText("Intercom message")).toBeVisible();
+    expect(screen.getByText("Relay message")).toBeVisible();
   });
 
   it.each([false, true])(
@@ -140,7 +136,7 @@ describe("extension context messages", () => {
     async (configured) => {
       if (configured)
         configureToolPresentationRegistry(customMessageConfiguration);
-      const message = incomingIntercom();
+      const message = incomingRelay();
       message.content = [
         { type: "text", text: "**Original block**" },
         { type: "image", mimeType: "image/png", data: "cGljdHVyZQ==" },
@@ -229,10 +225,9 @@ describe("extension context messages", () => {
         activityFoldVisibility="collapsed"
       />,
     );
-    fireEvent.change(
-      screen.getByRole("searchbox", { name: "Search conversation" }),
-      { target: { value: "extension" } },
-    );
+    fireEvent.change(openTranscriptSearch(), {
+      target: { value: "extension" },
+    });
     expect(
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 match");
@@ -258,7 +253,7 @@ it("keeps custom details open when its live message adopts a durable timestamp",
   };
   const started = {
     role: "custom",
-    customType: "intercom_message",
+    customType: "relay_message",
     content: "owned once",
     details: { source: "peer" },
     display: true,

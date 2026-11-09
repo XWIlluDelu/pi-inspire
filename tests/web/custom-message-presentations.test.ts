@@ -9,7 +9,7 @@ import {
 } from "../../src/tool-presentations/registry";
 import {
   customMessageConfiguration,
-  incomingIntercom,
+  incomingRelay,
 } from "./fixtures/custom-message-presentation";
 
 const resolve = createCustomMessagePresentationRegistry(
@@ -22,18 +22,18 @@ describe("custom-message reading projections", () => {
   it("uses exact structured text without editing, summarizing, or truncating the body", () => {
     const body =
       "**Exact**\n\n" + "message\n".repeat(20_000) + "\nFinal paragraph";
-    const message = incomingIntercom(body);
+    const message = incomingRelay(body);
     const original = JSON.stringify(message);
     expect(resolve(message)).toEqual({
       title: "Inspire: composer editing",
-      source: "Intercom",
+      source: "Relay",
       body,
     });
     expect(JSON.stringify(message)).toBe(original);
   });
 
   it("tries the sender id when the optional name is blank or absent", () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     const details = message.details as { from: { name?: string; id: string } };
     for (const name of [undefined, "", "   "]) {
       details.from.name = name;
@@ -44,7 +44,7 @@ describe("custom-message reading projections", () => {
   });
 
   it("rejects incompatible shapes and mixed content without a second interpretation", () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     expect(resolve({ ...message, customType: "other_message" })).toBeNull();
     expect(resolve({ ...message, details: undefined })).toBeNull();
     expect(
@@ -62,7 +62,7 @@ describe("custom-message reading projections", () => {
   });
 
   it("requires actual field absence so external or malformed provenance cannot become local attribution", () => {
-    const message = incomingIntercom();
+    const message = incomingRelay();
     const details = message.details as Record<string, unknown>;
     for (const crossMachine of [
       { origin: { name: "remote", machine: "host" }, trust: "unverified" },
@@ -91,7 +91,7 @@ describe("custom-message reading projections", () => {
       },
     });
     expect(
-      customMessagePresentationRegistry.resolve(incomingIntercom()),
+      customMessagePresentationRegistry.resolve(incomingRelay()),
     ).not.toBeNull();
     expect(
       thinkingPresentationRegistry.resolve("Reasoning\n\nBody"),
@@ -108,7 +108,7 @@ describe("custom-message reading projections", () => {
     ).not.toBeNull();
     configureToolPresentationRegistry();
     expect(
-      customMessagePresentationRegistry.resolve(incomingIntercom()),
+      customMessagePresentationRegistry.resolve(incomingRelay()),
     ).toBeNull();
     expect(thinkingPresentationRegistry.resolve("Reasoning")).toBeNull();
   });
@@ -122,17 +122,17 @@ describe("custom-message configuration schema", () => {
       rules: {},
       mappings: {},
       customMessages: {
-        [type]: customMessageConfiguration.customMessages!.intercom_message,
+        [type]: customMessageConfiguration.customMessages!.relay_message,
       },
     });
     const registry = createCustomMessagePresentationRegistry(
       configuration.customMessages,
     );
     expect(
-      registry.resolve({ ...incomingIntercom(), customType: type })?.title,
+      registry.resolve({ ...incomingRelay(), customType: type })?.title,
     ).toBe("Inspire: composer editing");
     expect(
-      registry.resolve({ ...incomingIntercom(), customType: `${type} ` }),
+      registry.resolve({ ...incomingRelay(), customType: `${type} ` }),
     ).toBeNull();
     for (const invalid of ["", "x".repeat(129)]) {
       expect(
@@ -174,8 +174,8 @@ describe("custom-message configuration schema", () => {
       toolPresentationConfigurationSchema.safeParse({
         ...customMessageConfiguration,
         customMessages: {
-          intercom_message: {
-            ...customMessageConfiguration.customMessages!.intercom_message,
+          relay_message: {
+            ...customMessageConfiguration.customMessages!.relay_message,
             ...invalid,
           },
         },

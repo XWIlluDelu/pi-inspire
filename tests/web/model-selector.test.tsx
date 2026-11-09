@@ -557,12 +557,8 @@ describe("model picker interaction", () => {
     return waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("restores trigger focus after pointer selection without awaiting async model ownership", async () => {
-    let release!: () => void;
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const change = vi.fn(() => pending);
+  it("restores trigger focus after pointer selection", async () => {
+    const change = vi.fn();
     render(
       <ModelSelector
         value={models[0]!}
@@ -578,8 +574,6 @@ describe("model picker interaction", () => {
     fireEvent.click(screen.getByRole("option", { name: /GPT 5/ }));
     expect(change).toHaveBeenCalledWith("openai", "gpt-5");
     await waitFor(() => expect(document.activeElement).toBe(trigger));
-    release();
-    await pending;
   });
 });
 

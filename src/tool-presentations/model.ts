@@ -219,3 +219,13 @@ export function toolPresentationSummaryText(
     return `${text}${separator}${part.text}`;
   }, "");
 }
+
+/** Join a list entry to its root; absolute POSIX/Windows children win. */
+export function joinResourcePath(
+  root: string | undefined,
+  child: string,
+): string {
+  if (/^(?:\/|[A-Za-z]:[\\/])/.test(child)) return child;
+  if (!root || root === ".") return child;
+  return `${root.replace(/[\\/]$/, "")}/${child.replace(/^[\\/]/, "")}`;
+}

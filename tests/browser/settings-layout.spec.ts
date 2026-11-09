@@ -2,12 +2,14 @@ import { expect, test } from "@playwright/test";
 import type { HostUpdateStatus } from "../../shared/contracts";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
-import { hostRequest } from "./support/host-request";
+import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
   pairAndOpen,
   pairedPage,
+  openSettings,
 } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
 
@@ -39,7 +41,7 @@ test("update checks keep button geometry stable throughout checking and results"
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await page
     .getByRole("navigation", { name: "Settings categories" })
     .getByRole("button", { name: "System", exact: true })
@@ -49,9 +51,7 @@ test("update checks keep button geometry stable throughout checking and results"
     name: "Check for updates",
     exact: true,
   });
-  const label = button.locator(
-    '.system-versions__check-label > [aria-hidden="false"]',
-  );
+  const label = button.locator(".system-versions__check-label");
   const publish = (patch: Partial<typeof status>) => {
     status = { ...status, ...patch, revision: status.revision + 1 };
     transport.send({ type: "update_status", updateStatus: status });
@@ -83,12 +83,32 @@ test("update checks keep button geometry stable throughout checking and results"
               after[key],
               `${width} / ${theme} / ${text} / ${key}`,
             ).toBeCloseTo(before[key], 1);
+          const alignment = await button.evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            const content = el.querySelector(
+              ".system-versions__check-content",
+            )!;
+            const group = content.getBoundingClientRect();
+            const icon = content.querySelector("svg")!.getBoundingClientRect();
+            const text = content.querySelector("span")!.getBoundingClientRect();
+            return {
+              x: group.x + group.width / 2 - box.x - box.width / 2,
+              y: icon.y + icon.height / 2 - box.y - box.height / 2,
+              gap: text.left - icon.right,
+              labelOffset: text.y + text.height / 2 - icon.y - icon.height / 2,
+            };
+          });
+          expect(Math.abs(alignment.x)).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(alignment.y)).toBeLessThanOrEqual(0.5);
+          expect(alignment.gap).toBeCloseTo(8, 1);
+          expect(alignment.labelOffset).toBeCloseTo(0, 1);
           expect(
             await versions
               .locator(".settings__section-title-wrap")
               .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
           ).toBe(true);
         };
+        await stable("Check updates");
         responseReady = new Promise<void>((resolve) => {
           release = resolve;
         });
@@ -143,7 +163,7 @@ test("selected Settings categories remain visible across responsive layouts with
 }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const navigation = settings.getByRole("navigation", {
     name: "Settings categories",
@@ -156,6 +176,27 @@ test("selected Settings categories remain visible across responsive layouts with
     [1366, 768],
   ]) {
     await page.setViewportSize({ width, height });
+    const safe =
+      width === 844
+        ? { left: 44, right: 44, bottom: 21 }
+        : { left: 0, right: 0, bottom: 0 };
+    await page.evaluate((safe) => {
+      for (const [edge, value] of Object.entries(safe))
+        document.documentElement.style.setProperty(
+          `--safe-${edge}`,
+          `${value}px`,
+        );
+    }, safe);
+    await expect
+      .poll(async () => {
+        const bounds = (await settings.boundingBox())!;
+        return Math.max(
+          safe.left - bounds.x,
+          bounds.x + bounds.width - (width - safe.right),
+          bounds.y + bounds.height - (height - safe.bottom),
+        );
+      })
+      .toBeLessThanOrEqual(0.5);
     const active = navigation.locator('[aria-current="location"]');
     await expect(active).toHaveText("System");
     await expect
@@ -218,7 +259,7 @@ test("Settings headings sit outside their cards and nested fills follow the bord
 }) => {
   await modelSettingsScenario(page);
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
 
   await page.evaluate(() => document.fonts.ready);
@@ -341,7 +382,7 @@ test("Settings keeps independent palette tiles and a responsive choice column", 
   page,
 }) => {
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const navigation = settings.getByRole("navigation", {
     name: "Settings categories",
@@ -466,7 +507,7 @@ test("Tab from a Settings dropdown skips collapsed content and reaches its discl
 }) => {
   await modelSettingsScenario(page);
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Models", exact: true }).click();
   const thinking = settings.getByRole("combobox", { name: "Default thinking" });
@@ -489,7 +530,7 @@ test("settings dropdown escapes a clipped scroller and keeps pointer hover separ
   await page.setViewportSize({ width: 1280, height: 460 });
   await modelSettingsScenario(page);
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Behavior", exact: true }).click();
   const trigger = settings.getByRole("combobox", {
@@ -575,7 +616,7 @@ test("category switches retain model browsing, provider drafts and a login arriv
     await route.fallback();
   });
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const nav = settings.getByRole("navigation", { name: "Settings categories" });
   // The list has loaded while its category is initially hidden.
@@ -698,7 +739,7 @@ for (const width of [540, 390, 320]) {
     }) => {
       await modelSettingsScenario(page);
       await pairAndOpen(page);
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await openSettings(page);
       const settings = page.getByRole("dialog", {
         name: "Settings",
         exact: true,
@@ -807,7 +848,7 @@ test("Settings activity menus remain clickable beyond their card and persist the
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
     await dialog.getByRole("button", { name: "Reset preferences" }).click();
     const confirmReset = page.getByRole("alertdialog", {
@@ -837,7 +878,7 @@ test("Settings activity menus remain clickable beyond their card and persist the
       })
       .toBe("collapsed");
     await page.reload();
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     await dialog
       .getByRole("button", { name: "Conversation", exact: true })
       .click();
@@ -870,7 +911,7 @@ test("canceling preference reset preserves settings and returns focus to its ope
 }) => {
   await modelSettingsScenario(page);
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const dark = settings
     .getByRole("group", { name: "Theme", exact: true })
@@ -913,7 +954,7 @@ for (const touch of [false, true]) {
     () => {
       test.use({
         hasTouch: touch,
-        reducedMotion: "reduce",
+        contextOptions: { reducedMotion: "reduce" },
         serviceWorkers: "block",
       });
       test("Host status paths wrap inside their text columns without resizing controls", async ({
@@ -949,9 +990,7 @@ for (const touch of [false, true]) {
           });
         });
         await pairedPage(page);
-        await page
-          .getByRole("button", { name: "Settings", exact: true })
-          .click();
+        await openSettings(page);
         const settings = page.getByRole("dialog", {
           name: "Settings",
           exact: true,
@@ -1056,9 +1095,7 @@ for (const touch of [false, true]) {
           });
         });
         await pairedPage(page);
-        await page
-          .getByRole("button", { name: "Settings", exact: true })
-          .click();
+        await openSettings(page);
         const settings = page.getByRole("dialog", {
           name: "Settings",
           exact: true,
@@ -1102,6 +1139,59 @@ for (const touch of [false, true]) {
               const box = await control.evaluate(geometry);
               expect(Math.abs(box.offset), name).toBeLessThan(0.1);
             }
+            await page.evaluate(() => document.fonts.ready);
+            for (const name of [
+              "Check for updates",
+              "Restart Host",
+              "Restart all",
+            ]) {
+              const alignment = await settings
+                .getByRole("button", { name, exact: true })
+                .evaluate((button) => {
+                  const walker = document.createTreeWalker(
+                    button,
+                    NodeFilter.SHOW_TEXT,
+                  );
+                  let node: Node | null;
+                  while ((node = walker.nextNode())) {
+                    if (node.textContent?.trim()) break;
+                  }
+                  const range = document.createRange();
+                  range.selectNode(node!);
+                  const text = range.getBoundingClientRect();
+                  const icon = button
+                    .querySelector("svg")!
+                    .getBoundingClientRect();
+                  const style = getComputedStyle(button);
+                  const canvas = document
+                    .createElement("canvas")
+                    .getContext("2d")!;
+                  canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                  const metrics = canvas.measureText("x");
+                  // Match the lowercase ink center, not just the text's line box.
+                  const inkCenter =
+                    text.top +
+                    metrics.fontBoundingBoxAscent -
+                    metrics.actualBoundingBoxAscent / 2;
+                  return {
+                    gap: text.left - icon.right,
+                    inkOffset: inkCenter - (icon.top + icon.height / 2),
+                  };
+                });
+              expect(alignment.gap, name).toBeCloseTo(8, 1);
+              expect(Math.abs(alignment.inkOffset), name).toBeLessThan(0.5);
+            }
+            // Centered boxes alone miss different raster baselines in fractional-height rows.
+            const restartTops = await settings
+              .locator(".host-restart .button--danger-outline")
+              .evaluateAll((buttons) =>
+                buttons.map((button) => button.getBoundingClientRect().top),
+              );
+            expect(restartTops).toHaveLength(2);
+            const separation = restartTops[1]! - restartTops[0]!;
+            expect(Math.abs(separation - Math.round(separation))).toBeLessThan(
+              0.02,
+            );
             const before = await recheck.evaluate(geometry);
             // Delay this explicit recheck, not a guessed ordinal startup read.
             checksPaused = true;
@@ -1157,7 +1247,7 @@ for (const hasTouch of [false, true]) {
       });
       await page.emulateMedia({ reducedMotion: "reduce" });
       await pairAndOpen(page);
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await openSettings(page);
       const settings = page.getByRole("dialog", {
         name: "Settings",
         exact: true,
@@ -1230,6 +1320,89 @@ for (const hasTouch of [false, true]) {
   });
 }
 
+for (const hasTouch of [false, true]) {
+  for (const install of ["available", "installed"] as const) {
+    test.describe(`Settings footer · ${hasTouch ? "touch" : "pointer"} · ${install}`, () => {
+      test.use({ hasTouch });
+      test("keeps installation status and full utility labels inside the narrow footer", async ({
+        page,
+      }) => {
+        if (install === "installed")
+          await page.addInitScript(() => {
+            const original = window.matchMedia.bind(window);
+            window.matchMedia = (query) => {
+              const media = original(query);
+              if (query === "(display-mode: standalone)")
+                Object.defineProperty(media, "matches", { value: true });
+              return media;
+            };
+          });
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await pairedPage(page);
+        await openSettings(page);
+        const settings = page.getByRole("dialog", {
+          name: "Settings",
+          exact: true,
+        });
+        const footer = settings.locator(".settings__footer");
+        await expect(
+          footer.getByRole("button", {
+            name: "Reset preferences",
+            exact: true,
+          }),
+        ).toBeVisible();
+        if (install === "available")
+          await page.evaluate(() => {
+            const event = new Event("beforeinstallprompt", {
+              cancelable: true,
+            });
+            Object.assign(event, {
+              prompt: () => Promise.resolve(),
+              userChoice: Promise.resolve({ outcome: "dismissed" }),
+            });
+            window.dispatchEvent(event);
+          });
+        else
+          await expect(
+            footer.getByText("App installed", { exact: true }),
+          ).toBeVisible();
+        for (const width of [1440, 820, 390, 360, 320]) {
+          await page.setViewportSize({ width, height: 740 });
+          await page.evaluate(() => document.fonts.ready);
+          const buttons = footer.getByRole("button");
+          await expect(buttons).toHaveCount(install === "available" ? 2 : 1);
+          expect(
+            await footer.evaluate((el) => el.scrollWidth - el.clientWidth),
+          ).toBeLessThanOrEqual(0.5);
+          for (const button of await buttons.all()) {
+            await expect(button).toBeInViewport({ ratio: 1 });
+            await page.keyboard.press("Tab");
+            await button.focus();
+            await expect(button).toBeFocused();
+            await expect(button).toHaveCSS("outline-width", "2px");
+            expect(
+              await button.evaluate(focusRingClipping),
+            ).toBeLessThanOrEqual(0.5);
+            expect(
+              await button.evaluate((el) => el.scrollWidth - el.clientWidth),
+            ).toBeLessThanOrEqual(0.5);
+          }
+          if (install === "available")
+            await expect(
+              footer.getByRole("button", { name: "Install app", exact: true }),
+            ).toHaveText("Install app");
+          await expect(
+            footer.getByRole("button", {
+              name: "Reset preferences",
+              exact: true,
+            }),
+          ).toHaveText("Reset preferences");
+        }
+      });
+    });
+  }
+}
+
 test("System copies update details and native commands while the notice is snoozed", {
   tag: "@platform-ui",
 }, async ({ page, context }) => {
@@ -1264,7 +1437,7 @@ test("System copies update details and native commands while the notice is snooz
     await route.fulfill({ response, json: data });
   });
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings
     .getByRole("navigation", { name: "Settings categories" })

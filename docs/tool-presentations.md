@@ -1,6 +1,9 @@
 # Custom presentations
 
-Local JSON declarations customize tool cards, Thinking, and displayed custom messages without changing Inspire or the Pi extension. Tool and Thinking rules define a collapsed summary and typed body blocks; custom-message declarations select a reading title and Markdown body from the bounded message preview. Inspire owns layout, disclosure, copy, and resource actions, plus lifecycle/status for activity cards.
+Local JSON declarations customize tool cards, Thinking, custom messages and extension controls
+without changing Inspire or the Pi extension. Tool and Thinking rules define a collapsed summary and
+typed body blocks; custom-message declarations pick a title and Markdown body. Inspire keeps
+ownership of layout, disclosure, copy, resource actions and card status.
 
 ## Configuration
 
@@ -11,9 +14,14 @@ Local JSON declarations customize tool cards, Thinking, and displayed custom mes
 | macOS package   | `~/Library/Application Support/Inspire/tool-presentations.json`           |
 | Windows package | `%APPDATA%\Inspire\tool-presentations.json`                               |
 
-`INSPIRE_TOOL_PRESENTATIONS_PATH=/absolute/path/to/file.json` overrides the default. Set it in the environment that starts the Host, then restart. Editing the selected file needs only a browser refresh: every authenticated bootstrap reads and validates it. Invalid input produces a warning and uses the shipped presentations.
+`INSPIRE_TOOL_PRESENTATIONS_PATH=/absolute/path/to/file.json` overrides the default; set it where the
+Host starts, then restart the Host. After editing the file, refresh the browser: each authenticated
+load reads and validates it, and invalid input shows a warning and falls back to the shipped
+presentations.
 
-For versioned personal profiles, keep the JSON in a separate configuration repository and select it with the override or a symlink at the default path. Keep runtime state and pairing data out of that repository. Declarations are sent to the browser, so literals must not contain secrets.
+To version a personal profile, keep it in a separate repository and select it with the override or
+a symlink at the default path. Declarations are sent to the browser, so they must not contain
+secrets.
 
 Every configuration requires `version`, `rules`, and `mappings`. An empty profile uses native presentations and generic extension cards:
 
@@ -23,12 +31,10 @@ Every configuration requires `version`, `rules`, and `mappings`. An empty profil
 
 Presentation profiles do not change which Pi extensions run.
 
-For your first rule, save the [complete example](#example) at the selected path. Replace
-`custom_search` with the exact name reported by your tool, and adapt the field selections to its
-arguments and result. For an existing profile, merge the example's rule and mapping into their
-respective objects. Refresh the browser and inspect a matching call. If the card stays generic,
-check the configuration warning, exact mapping name and required fields before adding more rules.
-The [rule-selection rules](#rule-selection) explain each fallback.
+For a first rule, save the [example](#example) at the selected path, replace `custom_search` with
+your tool's exact name, and adapt the field selections. Refresh and open a matching call. If the
+card stays generic, check the configuration warning, the mapping name and required fields;
+[rule selection](#rule-selection) explains the fallbacks.
 
 ## Example
 
@@ -202,7 +208,9 @@ active. The combined profile retains the same configuration-size bounds.
 In addition to cards, modules may declare:
 
 - `hiddenStatuses`: exact RPC status keys to omit from the top bar without deleting their state.
-- `controls`: status-bound discrete choices in the `thinking` slot. Each declaration has a namespaced
+  A control's own `state.key` is hidden automatically while its value parses as that control's
+  state, so list only other keys here.
+- `controls`: status-bound discrete choices shown in the Thinking selector (`slot: "thinking"`). Each declaration has a namespaced
   `id`, a `label`, an exact slash `command`, a `state` selector (`key`, `value`, optional
   `supported` and `active` field paths), and two to eight `options`. Each option has a safe command
   `value`, compact `label`, optional full `title`, `description`, `confirmation`, and

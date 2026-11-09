@@ -145,9 +145,7 @@ describe("System versions", () => {
     const { rerender } = render(<SystemVersionsCard />);
     const check = screen.getByRole("button", { name: "Check for updates" });
     const activeLabel = () =>
-      check.querySelector(
-        '.system-versions__check-label > [aria-hidden="false"]',
-      );
+      check.querySelector(".system-versions__check-label");
     expect(activeLabel()).toHaveTextContent(/^Checking…$/);
     expect(check).toBeDisabled();
     const copy = screen.getByRole("button", { name: "Copy update details" });
