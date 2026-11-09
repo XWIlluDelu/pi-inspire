@@ -1,4 +1,4 @@
-import type { Page, WebSocketRoute } from "@playwright/test";
+import { expect, type Page, type WebSocketRoute } from "@playwright/test";
 import type { ActiveSnapshot } from "../../../shared/contracts";
 
 /** A public-wire fixture: the Host supplies navigation and read snapshots;
@@ -121,6 +121,13 @@ export async function assistantOutcomeScenario(page: Page) {
   };
   return {
     ready: () => socket !== undefined && socket === readySocket,
+    reload: async () => {
+      const previousSocket = socket;
+      await page.reload();
+      await expect
+        .poll(() => socket !== previousSocket && socket === readySocket)
+        .toBe(true);
+    },
     allowStop: () => {
       refuseStop = false;
     },

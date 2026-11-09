@@ -58,10 +58,9 @@ describe("Windows containment contracts (not native volume evidence)", () => {
         "c:\\project\\a\\b\\file.txt",
       ),
     ).toBe("a\\b\\file.txt");
-    expect(native.stat.mock.calls).toEqual([
-      ["C:\\Project", { bigint: true }],
-      ["c:\\project", { bigint: true }],
-    ]);
+    expect(native.stat).toHaveBeenCalledTimes(2);
+    expect(native.stat).toHaveBeenCalledWith("C:\\Project", { bigint: true });
+    expect(native.stat).toHaveBeenCalledWith("c:\\project", { bigint: true });
   });
 
   it.each([

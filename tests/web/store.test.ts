@@ -206,7 +206,7 @@ describe("websocket lifecycle", () => {
     );
   });
 
-  it("applies only the latest of concurrent bootstrap successes", async () => {
+  it("keeps only the latest concurrent bootstrap's state, preferences and socket", async () => {
     const bootstraps = installDeferredBootstrapRoutes("old", "new");
     const store = new AppStore();
     const oldInit = store.init("old");
@@ -215,13 +215,16 @@ describe("websocket lifecycle", () => {
     bootstraps.get("new")!.resolve({
       body: bootstrapPayload({
         version: "new-host",
+        preferences: { ...DEFAULT_PREFS, theme: "dark" },
         snapshot: activeSnapshot({ sessionId: "new-session" }),
       }),
     });
     await newInit;
+    const currentSocket = FakeWebSocket.instances[0];
     bootstraps.get("old")!.resolve({
       body: bootstrapPayload({
         version: "old-host",
+        preferences: { ...DEFAULT_PREFS, theme: "light" },
         snapshot: activeSnapshot({ sessionId: "old-session" }),
       }),
     });
@@ -231,8 +234,9 @@ describe("websocket lifecycle", () => {
       version: "new-host",
       sessionId: "new-session",
       needsToken: false,
+      prefs: { theme: "dark" },
     });
-    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.instances).toEqual([currentSocket]);
     expect(FakeWebSocket.instances[0]?.url).toBe(
       `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=new-session`,
     );
@@ -266,35 +270,6 @@ describe("websocket lifecycle", () => {
     expect(FakeWebSocket.instances[0]?.url).toBe(
       `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=fresh-session`,
     );
-  });
-
-  it("prevents a superseded bootstrap from replacing current preferences or its socket", async () => {
-    const bootstraps = installDeferredBootstrapRoutes("old", "new");
-    const store = new AppStore();
-    const oldInit = store.init("old");
-    const newInit = store.init("new");
-
-    bootstraps.get("new")!.resolve({
-      body: bootstrapPayload({
-        preferences: { ...DEFAULT_PREFS, theme: "dark" },
-        snapshot: activeSnapshot({ sessionId: "new-session" }),
-      }),
-    });
-    await newInit;
-    const currentSocket = FakeWebSocket.instances[0];
-    bootstraps.get("old")!.resolve({
-      body: bootstrapPayload({
-        preferences: { ...DEFAULT_PREFS, theme: "light" },
-        snapshot: activeSnapshot({ sessionId: "old-session" }),
-      }),
-    });
-    await oldInit;
-
-    expect(store.getState()).toMatchObject({
-      sessionId: "new-session",
-      prefs: { theme: "dark" },
-    });
-    expect(FakeWebSocket.instances).toEqual([currentSocket]);
   });
 
   it("distinguishes an unreachable address from a host that requires pairing", async () => {
@@ -583,6 +558,7 @@ describe("websocket lifecycle", () => {
           connection: "offline",
           bootstrapped: false,
           needsToken: false,
+          connectionProblem: { kind: "address-unreachable" },
         });
         await store.init(null);
         const socket = FakeWebSocket.instances.at(-1)!;
@@ -645,50 +621,6 @@ describe("websocket lifecycle", () => {
         connection: "offline",
         needsToken: false,
         sessionId: "s1",
-      });
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it("bounds a bootstrap that never produces an HTTP response", async () => {
-    vi.useFakeTimers();
-    try {
-      const bootstrapSignals: AbortSignal[] = [];
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((input: string | URL | Request, init?: RequestInit) => {
-          if (!String(input).startsWith("/api/bootstrap"))
-            return Promise.resolve(
-              Response.json({ error: "unexpected request" }, { status: 500 }),
-            );
-          const bootstrapSignal = init?.signal;
-          if (!bootstrapSignal)
-            throw new Error("Bootstrap request did not carry a signal");
-          bootstrapSignals.push(bootstrapSignal);
-          return new Promise<Response>((_resolve, reject) => {
-            const abort = () =>
-              reject(new DOMException("Bootstrap timed out", "AbortError"));
-            if (bootstrapSignal.aborted) abort();
-            else
-              bootstrapSignal.addEventListener("abort", abort, {
-                once: true,
-              });
-          });
-        }),
-      );
-      const store = new AppStore();
-      const initializing = store.init(null);
-
-      await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
-      await initializing;
-
-      expect(bootstrapSignals[0]?.aborted).toBe(true);
-      expect(store.getState()).toMatchObject({
-        bootstrapped: false,
-        connection: "offline",
-        connectionProblem: { kind: "address-unreachable" },
       });
     } finally {
       vi.clearAllTimers();

@@ -4,6 +4,7 @@ import { addAttachmentContext } from "../../server/attachments";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { observeClipboardWrites } from "./support/clipboard";
 import { openEventSession } from "./support/host-events";
+import { openConversationSearch } from "./support/navigation";
 
 // Exercise native artifact admission and persisted file references through the Host.
 test.use({ serviceWorkers: "block" });
@@ -108,9 +109,7 @@ test("sent file prompts show filenames, survive reload and recall, and retain co
       }
     }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const search = page.getByRole("searchbox", {
     name: "Search conversation",
   });
@@ -254,9 +253,7 @@ test("mixed attachments stay above prose with shared spacing, including attachme
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const search = page.getByRole("searchbox", {
     name: "Search conversation",
   });
