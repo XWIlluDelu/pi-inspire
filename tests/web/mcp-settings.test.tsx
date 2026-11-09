@@ -116,7 +116,7 @@ it("keeps reload unavailable while the selected session owns a running operation
   expect(
     screen.getByRole("button", { name: "Reload Pi resources" }),
   ).toBeDisabled();
-  expect(screen.getByText(/Wait for the current Pi operation/)).toBeVisible();
+  expect(screen.getByText(/Wait for Pi to finish/)).toBeVisible();
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
   expect(screen.queryByText(/Reload requested/)).toBeNull();
 });
@@ -131,9 +131,7 @@ it("keeps MCP file editing available for an external owner and directs reload to
     screen.queryByRole("button", { name: "Reload selected session…" }),
   ).toBeNull();
   expect(
-    screen.getByText(
-      "Run /reload in the original Pi terminal to apply the saved configuration.",
-    ),
+    screen.getByText("Run /reload in the original Pi terminal."),
   ).toBeVisible();
   expect(screen.getByRole("button", { name: "Add server" })).toBeEnabled();
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
@@ -251,7 +249,7 @@ it.each(["unselected", "unavailable"] as const)(
     await screen.findByRole("button", { name: "Edit user server docs" });
     if (project === "unselected")
       expect(
-        screen.getByText("Select a project to edit project configuration."),
+        screen.getByText("Select a project to edit its MCP settings."),
       ).toBeVisible();
     else
       expect(screen.getByRole("alert")).toHaveTextContent(

@@ -65,7 +65,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
       <div className="earlier-branch-banner__header">
         <GitBranch size={16} aria-hidden />
         <div className="earlier-branch-banner__copy">
-          <strong>Continuing from earlier history</strong>
+          <strong>Earlier branch</strong>
           {treeError ? (
             <span className="earlier-branch-banner__error" role="alert">
               {treeError}

@@ -168,11 +168,9 @@ function TokenGate() {
         <div>
           <h1 className="token-gate__title">Pair this browser</h1>
           <p className="token-gate__hint">
-            The host is running, but this browser has not been paired yet. Open
-            the URL printed by your Inspire launcher, or paste its access token
-            once below. The pairing is remembered on this device. Pair only a
-            device you trust: it can control Pi, project files, and terminals
-            with your user account&apos;s permissions.
+            Open the link from the Inspire launcher or paste its access token.
+            Pair only on a device you trust. This browser can control your
+            sessions, files and terminals.
           </p>
         </div>
         <form
@@ -188,7 +186,7 @@ function TokenGate() {
                 setError(
                   reason instanceof Error
                     ? reason.message
-                    : "The host became unavailable before pairing completed.",
+                    : "Could not reach the Host. Try pairing again.",
                 );
               })
               .finally(() => setPairing(false));
@@ -228,27 +226,27 @@ function connectionProblemText(
     case "device-offline":
       return {
         title: "This device is offline",
-        detail: `The browser reports no network connection, so ${host} cannot be checked yet.`,
+        detail: "Reconnect to your network and try again.",
       };
     case "relay-unavailable":
       return {
-        title: "Reverse tunnel unavailable",
-        detail: `The public entry at ${host} answered, but its SSH reverse path to the INSΠRE Host is unavailable.`,
+        title: "Relay cannot reach the Host",
+        detail: "Check that the Host and its tunnel are running.",
       };
     case "service-error":
       return {
         title: "Host needs attention",
-        detail: `The address answered at ${host}, but INSΠRE could not initialize: ${problem.message}`,
+        detail: problem.message,
       };
     case "stream-interrupted":
       return {
         title: "Live connection interrupted",
-        detail: `The last confirmed state remains visible while INSΠRE reconnects to ${host}.`,
+        detail: `Reconnecting to ${host}. Recent content stays visible.`,
       };
     default:
       return {
         title: "INSΠRE address not reachable",
-        detail: `No usable response arrived from ${host}.`,
+        detail: `Could not connect to ${host}.`,
       };
   }
 }
@@ -278,9 +276,9 @@ function HostUnavailable({
         (problem.kind === "address-unreachable" ||
           problem.kind === "service-error") ? (
           <div className="token-gate__instruction">
-            <span>Start or restart the Host with the installed launcher:</span>
+            <span>Installed version</span>
             <code>inspire restart</code>
-            <span>Or, from a source checkout:</span>
+            <span>From the source folder</span>
             <code>npm run inspire -- restart</code>
           </div>
         ) : null}
@@ -434,7 +432,7 @@ const ConversationStage = memo(function ConversationStage({
             <p role="status">
               {state.readOnlyReason === "workspace-unavailable"
                 ? "Project folder unavailable. This session is read-only."
-                : "Pi connection unavailable. History remains readable while Inspire checks for recovery."}
+                : "Pi is unavailable. You can still read this session."}
             </p>
           )}
         </div>
@@ -473,7 +471,7 @@ function TakeOverNotice({ sessionId }: { sessionId: string }) {
   };
   return (
     <div role="status">
-      <p>Running in another Pi. Its progress shows here.</p>
+      <p>Running in another Pi.</p>
       <button
         type="button"
         className="button button--quiet"
@@ -1060,7 +1058,7 @@ export function App() {
                     state.connectionProblem,
                     window.location.host,
                   ).detail
-                : "The live INSΠRE connection was interrupted. The last confirmed state remains visible."}
+                : "Connection lost. Recent content stays visible."}
             </span>
             <button type="button" onClick={() => store.retryConnection()}>
               Retry now

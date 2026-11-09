@@ -171,7 +171,7 @@ function PdfPage({
             }
             hint={
               status === "error"
-                ? "Download the file to inspect it in another reader."
+                ? "Download to open in another reader."
                 : undefined
             }
           />
@@ -396,8 +396,8 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
       if (retired) return;
       setError(
         reason instanceof Error && reason.name === "PasswordException"
-          ? "This PDF needs a password. Download it to open in another reader."
-          : "The PDF could not be read. Download it to inspect the original file.",
+          ? "Password required. Download to open in another reader."
+          : "Download to open in another reader.",
       );
     });
     return () => {

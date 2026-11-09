@@ -651,7 +651,9 @@ describe("command discovery and preparation", () => {
     });
     expect(shortcuts).toHaveTextContent("Browse prompt history");
     expect(shortcuts).toHaveTextContent("Workbench shortcut mode");
-    expect(shortcuts).toHaveTextContent("IME composition");
+    expect(shortcuts).toHaveTextContent(
+      "Enter confirms text while you compose",
+    );
     fireEvent.keyDown(shortcuts, { key: "Escape" });
     await act(async () => {
       await store.runPaletteNativeCommand("/changelog");

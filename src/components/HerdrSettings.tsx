@@ -65,9 +65,7 @@ export function HerdrSettings({
       <div role="status">
         {error || issue ? (
           <div className="settings__field-status-block">
-            <span>
-              {error ? "Herdr status is unavailable on this Host." : issue}
-            </span>
+            <span>{error ? "Herdr status is unavailable." : issue}</span>
             {error || (status && !status.ready) ? (
               <button
                 type="button"
@@ -91,8 +89,8 @@ export function HerdrSettings({
           <div className="settings__field-status-block">
             <span>
               {saved
-                ? "Saved. Restart Host to turn on Herdr enhancement. "
-                : "Saved. Restart Host to turn off Herdr enhancement. "}
+                ? "Herdr will turn on after restart."
+                : "Herdr will turn off after restart."}
             </span>
             <button
               type="button"
@@ -111,7 +109,7 @@ export function HerdrSettings({
   return (
     <SettingField
       label="Herdr enhancement"
-      description="Use Herdr workspaces and tools in Pi sessions. Takes effect after restarting the Host."
+      description="Run Inspire's Pi sessions in Herdr. Requires a Host restart."
       status={statusNode}
     >
       <SettingsSwitch

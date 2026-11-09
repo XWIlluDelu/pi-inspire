@@ -622,10 +622,7 @@ test("running composer exposes steer, queue, and abort controls", async ({
   });
   await queue.click();
   await expect(queue).toHaveAttribute("aria-pressed", "true");
-  await expect(message).toHaveAttribute(
-    "placeholder",
-    "Add a follow-up for after this task…",
-  );
+  await expect(message).toHaveAttribute("placeholder", "Queue a follow-up…");
 
   const results = await new AxeBuilder({ page })
     .include(".topbar")

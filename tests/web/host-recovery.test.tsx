@@ -46,7 +46,9 @@ describe("portable Host recovery guidance", () => {
       screen.getByRole("heading", { name: "Pair this browser" }),
     ).toBeVisible();
     expect(
-      screen.getByText(/the URL printed by your Inspire launcher/),
+      screen.getByText(
+        /link from the Inspire launcher.*control your sessions, files and terminals/,
+      ),
     ).toBeVisible();
     expect(screen.queryByText("./inspire")).toBeNull();
   });

@@ -94,10 +94,7 @@ describe("composer-adjacent status and queued controls", () => {
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
-    expect(textarea).toHaveAttribute(
-      "placeholder",
-      "Add direction to the running task…",
-    );
+    expect(textarea).toHaveAttribute("placeholder", "Guide the current task…");
     expect(screen.getByRole("button", { name: "Steer" })).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -117,10 +114,7 @@ describe("composer-adjacent status and queued controls", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Queue" }));
-    expect(textarea).toHaveAttribute(
-      "placeholder",
-      "Add a follow-up for after this task…",
-    );
+    expect(textarea).toHaveAttribute("placeholder", "Queue a follow-up…");
     typeDraft("follow up queued work");
     fireEvent.click(
       screen.getByRole("button", { name: "Queue after current task" }),
@@ -211,10 +205,7 @@ describe("composer-adjacent status and queued controls", () => {
 
     render(<Composer />);
     const textarea = screen.getByLabelText("Message");
-    expect(textarea).toHaveAttribute(
-      "placeholder",
-      "Add direction to the running task…",
-    );
+    expect(textarea).toHaveAttribute("placeholder", "Guide the current task…");
     expect(
       screen.getByRole("group", { name: "Message delivery" }),
     ).toBeInTheDocument();

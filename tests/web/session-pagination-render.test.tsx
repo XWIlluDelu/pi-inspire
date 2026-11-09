@@ -102,12 +102,10 @@ describe("session pagination control", () => {
     );
     try {
       expect(screen.queryByText("No sessions yet")).not.toBeInTheDocument();
-      await user.click(
-        screen.getByText("Some session sources are unavailable"),
-      );
+      await user.click(screen.getByText("Some sessions may be missing"));
       expect(screen.getByText("/offline/project/sessions")).toBeVisible();
       expect(
-        screen.getByRole("button", { name: "Retry unavailable sources" }),
+        screen.getByRole("button", { name: "Retry loading sessions" }),
       ).toBeEnabled();
     } finally {
       view.unmount();

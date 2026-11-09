@@ -59,7 +59,7 @@ describe("Herdr Settings", () => {
       />,
     );
     expect(screen.getByRole("status").textContent).toMatch(
-      /Restart Host to turn on/,
+      /Herdr will turn on after restart/,
     );
     expect(
       screen.getByRole("button", { name: "Review Host restart" }),

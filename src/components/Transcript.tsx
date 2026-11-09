@@ -686,9 +686,7 @@ export const Transcript = memo(function Transcript({
               <div className="transcript__column">
                 <div className="empty-state empty-state--conversation">
                   <p className="empty-state__title">Empty session</p>
-                  <p className="empty-state__hint">
-                    Send a message below to start working with Pi.
-                  </p>
+                  <p className="empty-state__hint">Send a message to start.</p>
                 </div>
               </div>
             ) : viewport.virtualize ? (

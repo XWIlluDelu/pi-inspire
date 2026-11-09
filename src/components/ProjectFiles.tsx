@@ -286,7 +286,7 @@ export function ProjectFilePicker({
       </div>
       {truncated ? (
         <div className="picker__empty" role="status">
-          Partial search results; browse the folder for more files.
+          Partial results. Browse for more files.
         </div>
       ) : null}
       <div

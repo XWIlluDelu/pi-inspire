@@ -158,9 +158,9 @@ export class ApiTransportError extends Error {
   ) {
     super(
       outcomeUnknown
-        ? "INSΠRE could not confirm this operation's outcome. It may still complete. Inspect the current state before trying again."
+        ? "INSΠRE could not confirm the result. This action may still complete. Check before trying again."
         : timedOut
-          ? "The INSΠRE response deadline expired. Try the read again."
+          ? "The request timed out. Try again."
           : phase === "request"
             ? "The INSΠRE address did not return a response"
             : "The INSΠRE address returned an invalid response",

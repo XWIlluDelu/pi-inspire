@@ -897,9 +897,7 @@ describe("explicit History actions", () => {
         screen.getByRole("button", { name: "Clone through here" }),
       ).toBeEnabled();
       expect(
-        screen.getByText(
-          "Wait until the current task finishes before changing this conversation",
-        ),
+        screen.getByText("Wait for the current task to finish."),
       ).toBeVisible();
     },
   );
@@ -1166,9 +1164,7 @@ describe("explicit History actions", () => {
     await store.init("token");
     await store.loadBranchTree();
     render(<EarlierBranchBanner />);
-    expect(
-      screen.getByText("Continuing from earlier history"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Earlier branch")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clone from here" }));
     await waitFor(() => expect(store.getState().sessionId).toBe("cloned"));
     expect(

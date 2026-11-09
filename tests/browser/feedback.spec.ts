@@ -48,7 +48,7 @@ for (const [width, theme] of [
     transport.send({ type: "runtime_ready", sessionId });
     const banner = page.getByRole("main").locator(".banner");
     await expect(banner).toContainText(
-      "The conversation could not be synchronized. Showing the last confirmed state.",
+      "Could not refresh this conversation. Showing the last loaded version.",
     );
     await expect(
       banner.getByRole("button", { name: "Retry", exact: true }),
@@ -75,7 +75,7 @@ for (const [width, theme] of [
     const notice = page.locator(".notices .notice--warning");
     await expect(notice).toContainText("provider is temporarily unavailable");
     await expect(banner).toContainText(
-      "The conversation could not be synchronized. Showing the last confirmed state.",
+      "Could not refresh this conversation. Showing the last loaded version.",
     );
     await expect(input).toHaveValue("Keep this draft after a failed send.");
     expect(

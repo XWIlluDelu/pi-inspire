@@ -115,11 +115,11 @@ function RequestFields({
       <>
         <h2 className="dialog__title">{title}</h2>
         <p className="dialog__message">
-          This extension requested the unsupported interactive method{" "}
-          <code>{request.method}</code>. It cannot be completed in Inspire.
+          Inspire can't handle this extension request.
         </p>
         <details className="dialog__details">
-          <summary>Inspect request</summary>
+          <summary>Request details</summary>
+          <code>{request.method}</code>
           <pre className="card__mono">
             {JSON.stringify(request.payload, null, 2)}
           </pre>
@@ -133,7 +133,7 @@ function RequestFields({
             disabled={responding}
             onClick={cancel}
           >
-            Close and cancel request
+            Cancel request
           </button>
         </div>
       </>

@@ -708,7 +708,7 @@ test.describe("touch History navigation", () => {
       .getByRole("button", { name: "Continue here", exact: true })
       .click();
     await expect(
-      page.getByText("Continuing from earlier history", { exact: true }),
+      page.getByText("Earlier branch", { exact: true }),
     ).toBeVisible();
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     await expect(
@@ -718,18 +718,18 @@ test.describe("touch History navigation", () => {
       .getByRole("button", { name: "Clone from here", exact: true })
       .click();
     await expect(composer).toHaveValue("");
-    await expect(
-      page.getByText("Continuing from earlier history", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.getByText("Earlier branch", { exact: true })).toHaveCount(
+      0,
+    );
     expect(calls.at(-1)?.path).toBe("/api/branches/clone");
     await chooseSource(page);
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     await page
       .getByRole("button", { name: "Back to latest", exact: true })
       .click();
-    await expect(
-      page.getByText("Continuing from earlier history", { exact: true }),
-    ).toHaveCount(0);
+    await expect(page.getByText("Earlier branch", { exact: true })).toHaveCount(
+      0,
+    );
     await page.getByRole("button", { name: /^Session actions:/ }).click();
     const cloneButton = page.getByRole("menuitem", {
       name: "Clone current branch",

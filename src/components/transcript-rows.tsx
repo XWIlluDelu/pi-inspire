@@ -715,7 +715,7 @@ export function PendingQueueGroups({
             type="button"
             className="icon-button pending-group__control"
             aria-label="Return all Pending input to composer"
-            title="Return Pending text and images to your draft without stopping"
+            title="Return text and images to your draft. Pi keeps working."
             disabled={busy}
             onClick={() => void returnToComposer()}
           >

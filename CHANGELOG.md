@@ -31,6 +31,8 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
   to clear the reading controls, and the composer offers **Expand** when the editor can grow.
 - Activity headers use the mono face. Expanded groups summarize their steps, tools and failed
   calls in one line.
+- Shorter confirmation and settings text puts deletion, restart and recovery consequences next
+  to the action.
 - The Carbon & Silicon palette adds a monochrome option in light and dark. Structural labels use
   IBM Plex Sans SC in sentence case.
 

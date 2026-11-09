@@ -20,7 +20,7 @@ describe("AppErrorBoundary", () => {
 
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "This view could not be rendered" }),
+      screen.getByRole("heading", { name: "The workbench hit an error" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Reload page" }),

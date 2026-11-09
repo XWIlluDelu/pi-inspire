@@ -250,9 +250,7 @@ function NotebookOutputView({
     : "lazy";
   if (output.kind === "unsupported")
     return (
-      <div className="notebook-preview__unsupported">
-        This output is available in Source.
-      </div>
+      <div className="notebook-preview__unsupported">See output in Source.</div>
     );
   return (
     <div
@@ -362,8 +360,7 @@ export function NotebookPreview({ text }: { text: string }) {
       ))}
       {notebook.clipped ? (
         <div className="notebook-preview__more" role="status">
-          Showing a bounded preview of {notebook.totalCells} cells. Open Source
-          for the complete file.
+          Partial preview of {notebook.totalCells} cells. See Source for all.
         </div>
       ) : null}
     </div>

@@ -44,12 +44,14 @@ function RestartConfirmation({
         </h2>
         <p className="dialog__message" id="host-restart-description">
           {interruptWork
-            ? scope === "all"
-              ? "This will stop all active Pi work, discard Pending messages, close project terminals in the installed service, and briefly disconnect the page."
-              : "This will stop all active Pi work, discard Pending messages, and briefly disconnect the page. Project terminals keep running."
-            : scope === "all"
-              ? "This will close project terminals in the installed service and briefly disconnect the page."
-              : "Taken-over terminal Pi processes reload their settings. The page will briefly disconnect."}
+            ? "Stop active Pi work in Inspire and discard Pending messages. "
+            : null}
+          {scope === "all"
+            ? "This Host's project terminals will close."
+            : interruptWork
+              ? "Project terminals keep running."
+              : "Terminal Pi sessions you've taken over will reload."}{" "}
+          The page will briefly disconnect.
         </p>
         <div className="host-restart__actions">
           <button
@@ -134,7 +136,7 @@ export function HostRestartSettings({
     <div id="settings-host-restart" className="host-restart">
       <SettingField
         label="Restart Host"
-        description="Restart Inspire and reload the Pi it works with."
+        description="Reload Pi. Project terminals keep running."
       >
         {canStopAndRestart && !hostDisabled && operation?.scope === "host" ? (
           <button
@@ -174,7 +176,7 @@ export function HostRestartSettings({
         description={
           state.status && !state.status.allAvailable
             ? state.status.allReason
-            : "Restart Inspire and Pi. Close project terminals in the installed service."
+            : "Also close this Host's project terminals."
         }
       >
         {canStopAndRestart && !allDisabled && operation?.scope === "all" ? (
@@ -237,7 +239,7 @@ export function HostRestartSettings({
                 onClick={() => {
                   if (
                     window.confirm(
-                      "Reset this browser's invalid restart recovery record? This does not cancel a restart already sent. Check the Host status before starting another restart.",
+                      "Clear this browser's restart record? Any restart already requested can still run. Recheck Host status before another restart.",
                     )
                   )
                     void hostRestartClient.clearRecovery();
