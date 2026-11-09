@@ -7,7 +7,6 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { createInspireServer } from "../../server/app.js";
-import { hostServices } from "../fixtures/host-services.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
 import { dispatchTerminalMutation } from "../../server/terminal-operation-dispatch.js";
@@ -26,6 +25,7 @@ import type {
   TerminalServiceSettings,
 } from "../../shared/terminal-contracts.js";
 import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
+import { hostServices } from "../fixtures/host-services.js";
 import { pairedBrowser, socketAdmission } from "./fixtures/host-api.js";
 import { closeWithoutPeerAck, rawWebSocket } from "./fixtures/raw-websocket.js";
 
@@ -148,7 +148,7 @@ describe("terminal HTTP and WebSocket transport", () => {
       resources: new ResourceStore(),
       git: {
         status: async () => ({ kind: "not-repository" }),
-        diff: async (_cwd, path, side) => ({
+        diff: async (_cwd, path) => ({
           kind: "empty",
           path: {
             id: path,
@@ -156,7 +156,6 @@ describe("terminal HTTP and WebSocket transport", () => {
             utf8Path: path,
             workspacePath: path,
           },
-          side,
           reason: "no-changes",
         }),
       },

@@ -8,6 +8,10 @@ const staticWebTests = [
 export default defineConfig({
   test: {
     globalSetup: ["tests/global-setup.ts"],
+    // Many suites start real Pi, Host and terminal processes beside each
+    // worker. Half the cores keeps full-run time unchanged (measured 41-43s on
+    // 32 cores) while halving the run queue that starved short wait budgets.
+    maxWorkers: "50%",
     env: {
       NODE_ENV: "development",
       INSPIRE_PI_COMMAND: testPiCommand,

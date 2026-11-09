@@ -3,7 +3,10 @@ import { emptyToolPresentationConfiguration } from "../../shared/tool-presentati
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import { openEventSession } from "./support/host-events";
 
-test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
+test.use({
+  serviceWorkers: "block",
+  contextOptions: { reducedMotion: "reduce" },
+});
 
 for (const touch of [false, true]) {
   test.describe(

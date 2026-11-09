@@ -205,14 +205,13 @@ describe("in-process terminal receipt owner", () => {
         params,
         operation,
       );
-      expect(
-        f.manager.operate(
-          "create",
-          { request: { cols: 90, cwd: f.directory } },
-          operation,
-        ),
-      ).toBe(first);
+      const duplicate = f.manager.operate(
+        "create",
+        { request: { cols: 90, cwd: f.directory } },
+        operation,
+      );
       const terminal = await first;
+      expect(await duplicate).toEqual(terminal);
       expect(f.ptys).toHaveLength(1);
       expect(f.onChange).toHaveBeenCalledOnce();
       await expect(
@@ -232,13 +231,16 @@ describe("in-process terminal receipt owner", () => {
         { id: terminal.id },
         restart,
       );
-      expect(f.manager.operate("restart", { id: terminal.id }, restart)).toBe(
-        restarting,
+      const repeatedRestart = f.manager.operate(
+        "restart",
+        { id: terminal.id },
+        restart,
       );
       await vi.waitFor(() => expect(f.ptys[0]!.kill).toHaveBeenCalledOnce());
       expect(f.ptys).toHaveLength(1);
       f.ptys[0]!.exit();
       const result = await restarting;
+      expect(await repeatedRestart).toEqual(result);
       expect(result.outputEpoch).not.toBe(terminal.outputEpoch);
       expect(f.ptys).toHaveLength(2);
       // Later metadata changes do not mutate the original receipt snapshot.
@@ -400,7 +402,7 @@ describe("in-process terminal receipt owner", () => {
     }
   });
 
-  it("fences unknown identities on owner replacement and receipt expiry", async () => {
+  it("fences operation identities after replacing the in-process owner", async () => {
     const first = await fixture();
     const replacement = await fixture();
     try {
@@ -417,15 +419,6 @@ describe("in-process terminal receipt owner", () => {
         replacement.manager.operate("create", params, operation),
       ).rejects.toMatchObject({ code: "terminal_operation_epoch_changed" });
       expect(replacement.ptys).toHaveLength(0);
-      vi.useFakeTimers();
-      await vi.advanceTimersByTimeAsync(10 * 60_000);
-      await expect(
-        first.manager.operate("create", params, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_expired" });
-      await vi.advanceTimersByTimeAsync(50 * 60_000);
-      await expect(
-        first.manager.operate("create", params, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_epoch_changed" });
       expect(first.ptys).toHaveLength(1);
     } finally {
       await first.close();

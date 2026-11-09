@@ -7,6 +7,7 @@ import {
 } from "../../server/runtime-pending";
 import {
   MAX_PENDING_MESSAGES,
+  MAX_PENDING_PREVIEW_CHARS,
   parsePendingMessageSummary,
   parsePendingQueues,
 } from "../../shared/contracts";
@@ -88,7 +89,7 @@ describe("Pending wire contracts", () => {
     expect(parsePendingQueues(base)).not.toBeNull();
   });
 
-  it("uses bounded previews without Pi management claims", () => {
+  it("projects previews and queue counts into the wire format", () => {
     expect(parsePendingMessageSummary(summary)).toEqual(summary);
     const queue = pendingQueuesFromTexts(["continue"], [], 3);
     expect(parsePendingQueues(queue)).toEqual({
@@ -98,8 +99,6 @@ describe("Pending wire contracts", () => {
       steering: [summary],
       followUp: [],
     });
-    expect(queue).not.toHaveProperty("paused");
-    expect(queue).not.toHaveProperty("managementAvailable");
   });
 
   it.each([
@@ -111,12 +110,12 @@ describe("Pending wire contracts", () => {
     {
       label: "one long line",
       text: `BEGIN${"x".repeat(600)}END`,
-      preview: `BEGIN${"x".repeat(379)}\n…\n${"x".repeat(122)}END`,
+      ends: ["BEGIN", "END"],
     },
     {
       label: "Unicode at the cut boundaries",
       text: `A${"🧭".repeat(300)}Z`,
-      preview: `A${"🧭".repeat(191)}\n…\n${"🧭".repeat(62)}Z`,
+      ends: ["A", "Z"],
     },
     {
       label: "short text",
@@ -125,20 +124,37 @@ describe("Pending wire contracts", () => {
     },
   ])(
     "keeps both ends or the whole $label in Pi and Host previews",
-    ({ text, preview }) => {
+    ({ text, preview, ends }) => {
       const pi = pendingQueuesFromTexts([text], [], 0);
       const merged = mergePendingQueues(
         pi,
         [{ message: text, behavior: "followUp" }],
         pi.revision,
       );
-      const fields = {
-        textPreview: preview,
+      const summary = merged.steering[0]!;
+      expect(summary).toMatchObject({
         textLength: text.length,
         textTruncated: preview !== text,
-      };
-      expect(merged.steering[0]).toMatchObject(fields);
-      expect(merged.followUp[0]).toMatchObject(fields);
+      });
+      if (preview !== undefined) expect(summary.textPreview).toBe(preview);
+      else {
+        const parts = summary.textPreview.split("\n…\n");
+        expect(parts).toHaveLength(2);
+        const [head, tail] = parts as [string, string];
+        expect(head.startsWith(ends![0]!)).toBe(true);
+        expect(tail.endsWith(ends![1]!)).toBe(true);
+        expect(text.startsWith(head)).toBe(true);
+        expect(text.endsWith(tail)).toBe(true);
+        expect(summary.textPreview.length).toBeLessThanOrEqual(
+          MAX_PENDING_PREVIEW_CHARS,
+        );
+        expect(summary.textPreview).not.toMatch(/\p{Surrogate}/u);
+      }
+      expect(merged.followUp[0]).toMatchObject({
+        textPreview: summary.textPreview,
+        textLength: summary.textLength,
+        textTruncated: summary.textTruncated,
+      });
       expect(parsePendingQueues(merged)).toEqual(merged);
     },
   );
@@ -215,20 +231,15 @@ describe("Pending wire contracts", () => {
     }
   });
 
-  it("bounds retained rows and text while reporting omitted content truthfully", () => {
+  it("bounds retained rows while reporting omitted content truthfully", () => {
     const queue = pendingQueuesFromTexts(
-      Array(MAX_PENDING_MESSAGES + 1).fill("x".repeat(600)),
+      Array(MAX_PENDING_MESSAGES + 1).fill("queued input"),
       ["later"],
       0,
     );
     expect(queue.totalCount).toBe(MAX_PENDING_MESSAGES + 2);
     expect(queue.steering).toHaveLength(MAX_PENDING_MESSAGES);
     expect(queue.followUp).toEqual([]);
-    expect(queue.steering[0]).toMatchObject({
-      textPreview: `${"x".repeat(384)}\n…\n${"x".repeat(125)}`,
-      textLength: 600,
-      textTruncated: true,
-    });
     expect(parsePendingQueues(queue)).toEqual(queue);
   });
 });

@@ -35,17 +35,16 @@ independent project shells in [[terminal]].
   earlier-width position.
 
   Search and navigation controls occupy the reading measure without reserving a toolbar row on
-  desktop or narrow screens. Conversation search opens on demand from the header; nothing rests
-  over conversation text. [[conversation]] owns search, the narrow Prompt Map launcher and
+  desktop or narrow screens. Desktop conversation search stays in the top-right reading rail
+  and sizes to the actual reader width. [[conversation]] owns search, Prompt Map and
   floating `Jump to latest` behavior. The transcript scroll thumb is separate from Prompt Map: its
   complete grab band fits the trailing reading gutter without covering content, and its travel stays
   inside the scrollport even in short windows. Native reading width, wheel and keyboard scrolling
   are unchanged.
 
-  On a narrow workbench the floating rail is removed. A top-right Prompt Map launcher floats over
-  Transcript without reserving layout height or a shared backdrop. When active, the rotated Prompt
-  Map gets a surface background in that same zone and keeps its complete temporary directory.
-  Search, opened from the header, uses the same zone and is mutually exclusive with the Prompt Map.
+  On a narrow workbench, Search and Prompt Map have launchers at the top-right of the transcript.
+  The active tool uses that same zone without reserving layout height. The tools expand one at a
+  time. The rotated Prompt Map keeps its complete temporary directory.
   [[conversation]] owns interaction details.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
@@ -184,39 +183,51 @@ completion behavior are unchanged.
   outcome visibility when navigation hides the list, using text rather than color alone.
 
   Session title, project, Git and extension status form one left-aligned cluster with consistent
-  spacing and a shared text baseline across the sans title and mono metadata/status; icons
-  and global action buttons remain centered independently. The project and Git identifiers form
-  a tighter workspace subgroup beside the title,
-  and global controls remain on the right. Workspace identifiers have no resting background or frame;
-  hover strengthens their text and keyboard focus retains its outline. The text-only title opens
-  the session menu on both desktop and phones, with no chevron or separate More control.
-  Its hover feedback and keyboard focus outline retain the interactive affordance.
-  Rename opens the inline editor and is first in the default order. Extension text uses the available
-  space at every width, with full statuses
-  available by click, tap or keyboard when truncated. No status takes no space. Secondary project and
-  Git details yield before the title and primary navigation. Narrow layouts retain Settings in the
-  header; detailed Git status remains in Changes. The session menu sits below the title button with a
-  compact 216px width, limited by available space rather than title length. The inline rename
-  input shares the title's leading edge, not the menu's width: it starts at 240px, grows with the
-  displayed title up to 560px, and fits the available header space. On narrow bars it fills the
-  remaining width while auxiliary header controls yield.
-  Enter, the save control, or moving focus outside the editor saves the name; Escape cancels.
-  Blank and unchanged edits exit without a write. Saving after focus leaves does not take focus back.
-  Rename editing is owned by the session whose heading opened it; a switch cancels that editor, the
-  submit carries the explicit session id rather than reading a newer visible selection, and a
-  rejected rename leaves the current identity intact while emitting a non-blocking warning notice.
+  spacing and a shared text baseline across the sans title and mono metadata/status; icons and
+  global action buttons are centered independently. The project and Git identifiers form a tighter
+  workspace subgroup beside the title. They have no resting background or frame; hover strengthens
+  their text and keyboard focus keeps its outline. When the status slot is empty, identity can use
+  the remaining header width instead of truncating beside unused reserved space; empty status takes
+  no space. Nonempty status keeps its existing budget. Extension text uses the available space at
+  every width, with full statuses available by click, tap or keyboard when truncated. Secondary
+  project and Git details yield before the title and primary navigation. Trailing actions and
+  inline rename keep their own layout.
 
-  The title menu defaults to Rename, Copy session ID, Clone, Use in terminal, and Export, with order
-  configurable in Settings under Behavior. It initially shows the first three actions; More actions
-  reveals the rest in the same menu, and Fewer actions collapses them. Reopening starts compact.
-  Expansion focuses the first enabled newly revealed action; the full menu remains bounded and
-  scrollable within the viewport. The menu opens with its first enabled action focused; arrows,
-  Home/End, Enter and Escape operate it, and keyboard dismissal returns focus to the title.
-  Each action has a right-side drag handle, including actions unavailable for execution. A mouse
-  or touch drag previews the order and automatically reveals overflow; dropping inside the menu
-  saves the same preference used by Settings. Escape, pointer cancellation or a drop outside the
-  menu discards the preview. Grabbing or moving a handle never runs its session action.
-  Handles remain keyboard-reachable; Alt+Up/Down moves the focused action and retains its focus.
+  Global controls stay on the right. Header actions are the command palette, Settings (desktop
+  only) and the contextual pane toggle. Conversation search stays with its reading surface under
+  [[conversation]], rather than adding a global header launcher. Narrow
+  layouts reach Settings from the navigation drawer header and the palette, giving that width to
+  session identity. Detailed Git status remains in Changes.
+
+  The text-only title opens the session menu on desktop and phones, with no chevron or separate
+  More control; hover feedback and a keyboard focus outline keep the interactive affordance. The
+  menu sits below the title button with a compact 216px width, limited by available space rather
+  than title length. Rename opens the inline editor and is first in the default order. The inline
+  rename input shares the title's leading edge, not the menu's width: it starts at 240px, grows with
+  the displayed title up to 560px, and fits the available header space. On narrow bars it fills the
+  remaining width while auxiliary header controls yield. Enter, the save control, or moving focus
+  outside the editor saves the name; Escape cancels. Blank and unchanged edits exit without a write.
+  Saving after focus leaves does not take focus back. The session whose heading opened the editor
+  owns it: a session switch cancels it, the submit carries the explicit session id rather than
+  reading a newer visible selection, and a rejected rename leaves the current identity intact while
+  emitting a non-blocking warning notice.
+
+  A fixed **Switch branch…** item heads the title menu. It lists up to 30 most recent branch ends
+  as radio items (latest user-message excerpt, relative age, Default marker, check for the viewed
+  branch) behind a Back item, notes when History holds more, and is disabled with one branch.
+  Choosing one applies [[session-persistence]] admission to it. The reorderable actions default to
+  Rename, Copy session ID, Clone, Copy resume command, and Export; the order
+  is configurable in Settings under Behavior. It initially shows the first three actions. More
+  actions reveals the rest in the same menu and Fewer actions collapses them; reopening starts
+  compact. The menu opens with its first enabled action focused, and expansion focuses the first
+  enabled newly revealed action. The full menu stays bounded and scrollable within the viewport.
+  Arrows, Home/End, Enter and Escape operate it, and keyboard dismissal returns focus to the title.
+
+  Each action, including one unavailable for execution, has a right-side drag handle. A mouse or
+  touch drag previews the order and automatically reveals overflow; dropping inside the menu saves
+  the same preference Settings uses. Escape, pointer cancellation or a drop outside the menu
+  discards the preview. Grabbing or moving a handle never runs its session action. Handles are
+  keyboard-reachable; Alt+Up/Down moves the focused action and keeps its focus.
 
   Copy session ID writes the complete selected Pi session ID, including for read-only history.
   Success shows ID copied in place; failure uses the existing copy-error notice and allows retry.
@@ -232,10 +243,10 @@ completion behavior are unchanged.
 - Git status and diff observations share a bounded scheduler and the workbench's snapshot
   authority. Selecting a Git path and opening its session-bound resource preview form one
   cross-domain transition; Git keeps no parallel browser store. While Changes is visible, status
-  observations also refresh its selected file and side. Polling, Pi tool completion, terminal
+  observations also refresh its selected file. Polling, Pi tool completion, terminal
   command completion and explicit Refresh share that inspection path. One active read and one
   queued refresh coalesce repeated hints; slow reads do not overlap polling. The previous source
-  stays readable until its replacement is ready, the selected path/side and reader offsets are
+  stays readable until its replacement is ready, the selected path and reader offsets are
   preserved, and unchanged results are reused. A failed refresh keeps the source with a visible
   stale-result notice; a successful read clears it.
 

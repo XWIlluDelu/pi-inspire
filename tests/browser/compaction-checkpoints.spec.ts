@@ -1,6 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  openConversationSearch,
+} from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 async function openFixture(page: Page) {
@@ -14,9 +18,7 @@ test("search opens the actual retained summary and can reopen the same match", a
   await pairedPage(page);
   await openFixture(page);
   const toggle = page.locator(".context-checkpoint__toggle");
-  await expect(
-    page.getByRole("searchbox", { name: "Search conversation", exact: true }),
-  ).toBeVisible();
+  await openConversationSearch(page);
   const search = page.getByRole("searchbox", {
     name: "Search conversation",
   });

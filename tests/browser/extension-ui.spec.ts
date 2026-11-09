@@ -10,7 +10,7 @@ import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
-import { pairedPage } from "./support/navigation";
+import { pairedPage, openSettings } from "./support/navigation";
 
 // Audit settled dialog colors, not intermediate entrance-animation opacity.
 test.use({
@@ -193,7 +193,7 @@ test("phone Back cancels the active extension question, not the Settings behind 
   const inspireUrl = page.url();
   const draft = page.getByRole("textbox", { name: "Message", exact: true });
   await draft.fill("Keep this draft through the question");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(settings).toBeVisible();
   demo.question({
@@ -328,7 +328,7 @@ for (const touch of [false, true]) {
         )
           writes.push(request.postData() ?? "");
       });
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await openSettings(page);
       const settings = page.getByRole("dialog", {
         name: "Settings",
         exact: true,
@@ -401,7 +401,9 @@ for (const touch of [false, true]) {
       await page.keyboard.press("Escape");
       await expect(settings).toHaveCount(0);
       await expect(
-        page.getByRole("button", { name: "Settings", exact: true }),
+        page.viewportSize()!.width <= 900
+          ? page.locator(".topbar__nav-toggle")
+          : page.getByRole("button", { name: "Settings", exact: true }),
       ).toBeFocused();
       expect(fixture.responses).toMatchObject([
         { id: "interrupt-settings", value: "Continue" },
@@ -739,7 +741,6 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
   const status = "Code review ready: Shared interaction";
   publishDisplays(fixture, status);
   await expect(page.locator(".topbar__extension-status")).toHaveText(status);
-  await expect(page.locator(".extension-status")).toBeHidden();
   const above = page.getByRole("region", {
     name: "Extension content above composer",
   });
@@ -756,13 +757,10 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
   await expect(message.locator(".custom-message__body strong")).toHaveText(
     "Code review:",
   );
-  await expect(message.locator(".custom-message__type")).toHaveCount(0);
 
   clearDisplays(fixture);
   await expect(
-    page.locator(
-      ".topbar__extension-status, .extension-status, .extension-dock",
-    ),
+    page.locator(".topbar__extension-status, .extension-dock"),
   ).toHaveCount(0);
   await expect(message).toBeVisible();
   expect(errors).toEqual([]);
@@ -781,48 +779,93 @@ test.describe("short touch workbench", () => {
     await input.fill(draft);
     for (const [width, height] of [
       [901, 390],
+      [844, 390],
       [568, 320],
     ]) {
       await page.setViewportSize({ width, height });
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const bounds = (selector: string) =>
-              document.querySelector(selector)!.getBoundingClientRect();
-            const stage = bounds(".reading-stage");
-            const transcript = bounds(".transcript");
-            const above = bounds(".extension-dock--above");
-            const composer = bounds(".composer");
-            const below = bounds(".extension-dock--below");
-            return (
-              transcript.bottom <= above.top &&
-              above.bottom <= composer.top &&
-              composer.bottom <= below.top &&
-              below.bottom <= stage.bottom &&
-              transcript.height >= 48 &&
-              above.height >= 20 &&
-              below.height >= 20
-            );
-          }),
-        )
-        .toBe(true);
-      await expect(input).toHaveValue(draft);
-      await page
-        .getByRole("button", { name: "Send message", exact: true })
-        .click({ trial: true });
-      for (const placement of ["above", "below"]) {
-        const widget = page.getByRole("region", {
-          name: `Extension content ${placement} composer`,
-        });
-        await widget.focus();
-        await widget.press("End");
+      for (const lines of [
+        ["Review ready"],
+        Array.from({ length: 8 }, (_, index) => `Review detail ${index + 1}`),
+      ]) {
+        for (const placement of ["above", "below"] as const) {
+          fixture.display({
+            id: `${placement}-${lines.length}`,
+            method: "setWidget",
+            widgetKey:
+              placement === "above" ? "example.ui-summary" : "example.ui-notes",
+            widgetLines: lines,
+            widgetPlacement:
+              placement === "above" ? "aboveEditor" : "belowEditor",
+          });
+        }
+        await expect(page.locator(".extension-display__text")).toHaveText([
+          lines.join("\n"),
+          lines.join("\n"),
+        ]);
         await expect
-          .poll(() => widget.evaluate((el) => el.scrollTop))
-          .toBeGreaterThan(0);
-        const lineHeight = await widget
-          .locator("pre")
-          .evaluate((el) => getComputedStyle(el).lineHeight);
-        expect(Number.parseFloat(lineHeight)).toBeGreaterThanOrEqual(18);
+          .poll(() =>
+            page.evaluate(() => {
+              const bounds = (selector: string) =>
+                document.querySelector(selector)!.getBoundingClientRect();
+              const stage = bounds(".reading-stage");
+              const transcript = bounds(".transcript");
+              const above = bounds(".extension-dock--above");
+              const composer = bounds(".composer");
+              const below = bounds(".extension-dock--below");
+              return (
+                transcript.bottom <= above.top &&
+                above.bottom <= composer.top &&
+                composer.bottom <= below.top &&
+                below.bottom <= stage.bottom &&
+                transcript.height >= 48
+              );
+            }),
+          )
+          .toBe(true);
+        await expect(input).toHaveValue(draft);
+        await page
+          .getByRole("button", { name: "Send message", exact: true })
+          .click({ trial: true });
+        for (const placement of ["above", "below"]) {
+          const widget = page.getByRole("region", {
+            name: `Extension content ${placement} composer`,
+          });
+          await widget.focus();
+          await widget.press("Home");
+          const copy = widget.getByRole("button", {
+            name: "Copy extension widget",
+            exact: true,
+          });
+          await expect
+            .poll(() =>
+              copy.evaluate((button) => {
+                const box = button.getBoundingClientRect();
+                return (
+                  box.width >= 32 &&
+                  box.height >= 32 &&
+                  [
+                    [box.left + box.width / 2, box.top + 2],
+                    [box.left + box.width / 2, box.bottom - 2],
+                    [box.left + 2, box.top + box.height / 2],
+                    [box.right - 2, box.top + box.height / 2],
+                  ].every(([x, y]) =>
+                    button.contains(document.elementFromPoint(x, y)),
+                  )
+                );
+              }),
+            )
+            .toBe(true);
+          if (lines.length > 1) {
+            await widget.press("End");
+            await expect
+              .poll(() => widget.evaluate((el) => el.scrollTop))
+              .toBeGreaterThan(0);
+          }
+          const lineHeight = await widget
+            .locator("pre")
+            .evaluate((el) => getComputedStyle(el).lineHeight);
+          expect(Number.parseFloat(lineHeight)).toBeGreaterThanOrEqual(18);
+        }
       }
     }
     // Larger windows restore the complete headings and natural content heights.

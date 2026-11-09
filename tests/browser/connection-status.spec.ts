@@ -1,7 +1,10 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
-test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
+test.use({
+  serviceWorkers: "block",
+  contextOptions: { reducedMotion: "reduce" },
+});
 
 for (const width of [1440, 390]) {
   test(`initial workspace loading avoids duplicate connection feedback at ${width}px`, async ({

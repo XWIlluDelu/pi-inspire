@@ -31,7 +31,7 @@ covers:
   - tests/web/app.test.tsx
   - tests/web/overlay-and-palette.test.tsx
   - tests/web/theme-init.test.ts
-  - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,theme-colors}.spec.ts
+  - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,responsive-inputs,theme-colors}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
   - tests/browser/icon-controls.spec.ts
@@ -91,12 +91,12 @@ checks cover the default state, activation, focus, dismissal and responsive cont
   leaving a 9.375% transparent inset on each side (48px on the 512px master).
   This keeps launcher size comparable to neighboring desktop icons. Maskable
   and Apple touch assets use an opaque, full-bleed porcelain master and rely
-  on the operating system's own mask. Versioned icon URLs allow installed
-  browsers to discover revised assets.
-  The transparent browser-tab favicon is also palette-independent: it keeps its
+  on the operating system's own mask. Icon URLs are versioned so installed
+  browsers discover revised assets.
+- The transparent browser-tab favicon is also palette-independent: it keeps its
   pixel geometry and ink/white brackets, with neutral quartz-gray `#63676C` ticks
-  in light browser chrome and silver `#B9C0C7` ticks in dark browser chrome.
-  It adds no background or opacity change. In-app identity retains its accents.
+  in light browser chrome and silver `#B9C0C7` ticks in dark browser chrome,
+  and no background or opacity change. In-app identity keeps its accents.
 
 ### Installed windows
 
@@ -108,19 +108,20 @@ drawers and focused terminals stay below it.
 The uninterrupted strip uses `--bg-rail`, without subdivisions, bottom rule, gradient or shadow;
 the navigation divider stops below it. Its `theme-color` follows palette and resolved luminosity
 before first paint and after Host bootstrap, including system-theme and Overlay-mode changes.
-Modal backgrounds also dim the entire installed titlebar, including its wordmark and decoration,
-with the same palette scrim and stacking depth. Its opaque `theme-color` hint follows that composite
-so browser-owned controls do not retain a bright patch. Closing the last modal restores the frame;
-window drag and native controls remain available. This applies to dialogs and narrow modal drawers.
-Ordinary tabs and standalone fallback use neutral `#F4F5F6` / `#14171A` page hints. The manifest omits
-`theme_color`: Chrome Android WebAPK can otherwise keep that installed color on the system navigation
-bar even when the page changes theme. Omitting it removes that custom override; it does not guarantee
-that the native bar follows the page or system theme. Chrome can retain a native bar or make it
-transparent in its edge-to-edge path, where native window and inset handling also affect the visible
-background. The manifest retains neutral light `background_color` for native startup/window use;
-its presence alone does not establish the cause of a persistent navigation-area color.
-Browser/OS support determines native controls and installed metadata update timing; page reload
-alone does not update a WebAPK. Actual installed appearance requires device verification.
+Modal dialogs and narrow modal drawers also dim the entire installed titlebar, including its
+wordmark and decoration, with the same palette scrim and stacking depth. The opaque `theme-color`
+hint follows that composite so browser-owned controls keep no bright patch. Closing the last modal
+restores the frame; window drag and native controls stay available throughout.
+
+Ordinary tabs and standalone fallback use neutral `#F4F5F6` / `#14171A` page hints. The manifest
+omits `theme_color`, because Chrome Android WebAPK can otherwise keep that installed color on the
+system navigation bar after the page changes theme. Omitting it only removes that override; it does
+not guarantee the native bar follows the page or system theme. Chrome can keep a native bar or make
+it transparent in its edge-to-edge path, where native window and inset handling also affect the
+visible background. The manifest keeps a neutral light `background_color` for native startup/window
+use; its presence alone does not explain a persistent navigation-area color. Browser/OS support
+determines native controls and installed-metadata update timing; page reload alone does not update a
+WebAPK. Actual installed appearance requires device verification.
 
 A small INSΠRE wordmark centers over the whole window within the browser-reported safe rectangle,
 independent of navigation resize/collapse. INS and RE use quartz-gray/silver, Π the brand accent,
@@ -255,16 +256,16 @@ enabled state; disabled styling takes precedence over local action styles.
   marks and accessible state: working uses Π in the warning role, completion uses success,
   failure uses error, and recovery has its own visible treatment. Color alone never carries state.
 
-## Neutral stroke colors
+### Neutral strokes
 
 - `--line` supplies ordinary structural dividers and resting boundaries. `--line-strong`
   supplies emphasized neutral edges, including stronger control boundaries and hover states.
   Stroke widths are separate. Classic Jade and Amber use ink-with-transparency strokes.
-- `--hairline` and `--hairline-strong` alias those roles in every palette/luminosity combination.
+- `--hairline` and `--hairline-strong` alias those roles in every palette/luminosity combination;
+  `--line-subtle` aliases `--line`.
 - Botanical strokes follow their paper temperature: light Wisteria `#DAD6E4`,
   Hydrangea `#D6DDD4`, Lycoris `#E0D6D2`, Chimonanthus `#DFDAD0`, with individually
-  tinted dark counterparts. `--line-subtle` aliases `--line`; `--line-strong` supplies
-  stronger boundaries. Focus and semantic status retain their own roles.
+  tinted dark counterparts. Focus and semantic status keep their own roles.
 
 ## Type, geometry, and spatial hierarchy
 
@@ -484,74 +485,68 @@ remain distinct attributed forms with directly selectable options.
 
 ## Feedback and notices
 
-- Choose feedback by the user's task, not by the number of internal states. Where ordinary selections
-  or saves need feedback, use the existing control's busy/disabled state. Do not append progress
-  sentences or reserve empty rows for routine internal work. Keep useful option guidance visible while waiting.
-  Distinguish internal request and execution phases only when that distinction changes the user's
-  available action or understanding of the outcome. Reading an action's availability must not animate
-  that action as if the user had started it.
-- Retain usable content during background work. An empty initial view or a materially blocked task
-  may need concise loading feedback; a populated picker, provider list or update result does not need
-  a second progress announcement. Keep unrelated actions, such as copying the known result, usable.
+- Choose feedback by the user's task, not by the number of internal states. Where ordinary
+  selections or saves need feedback, use the existing control's busy/disabled state; do not append
+  progress sentences or reserve empty rows for routine internal work. Keep useful option guidance
+  visible while waiting. Distinguish internal request and execution phases only when that changes
+  the user's available action or understanding of the outcome. Reading an action's availability must
+  not animate that action as if the user had started it.
+- Keep usable content during background work. An empty initial view or a materially blocked task
+  may need concise loading feedback; a populated picker, provider list or update result needs no
+  second progress announcement. Keep unrelated actions, such as copying the known result, usable.
   Preserve actionable errors, consequential confirmations, genuine task progress and notices that a
   saved change needs a reload or restart.
 
 - Session and usage use the shared Info command receipt: the information icon, command/INFO heading
-  and subtle semantic tint remain consistent with other informational results. Only message count,
-  total tokens, cost and context occupancy appear as compact inline label/value pairs, wrapping with
-  the available width. Project, model, session name and raw JSONL path are omitted, without a
-  secondary disclosure. There is no separate panel title, divider, metric grid, highlighted cost or
-  duplicate progress bar. Long values remain readable. Repeating the query updates the same card
-  in place without increasing dock height or restarting an entrance animation. The bounded,
-  focusable dock retains keyboard/touch scrolling when distinct results need it; a single readout
-  does not stack merely because it is queried again.
-  When usage is unavailable, the result says so rather than rendering an empty Info receipt.
-- Feedback expires by meaning and ordinary text volume, not by Info tint alone. Short INFO
-  confirmations and bare Name normally have a 3-second reading dwell; one- or two-sentence guidance
-  such as Quit has 5 seconds; denser INFO and the four-field Session & usage readout have 8 seconds.
-  General notices use compact icon/message/action rows instead of repeating a visible severity
-  heading. Severity remains announced and extension attribution stays in the message. Short messages
-  size to their content within the stack's width; diagnostics wrap without losing Copy/dismiss.
-  Those actions keep 24px mouse or 32px touch targets, aligned with the message's first line.
-  Embedded resource errors and richer update cards retain their contextual presentation.
-  Non-modal notices sit below active modal dialogs rather than covering their content or controls.
-  Navigation and resource drawers also own modal interaction on narrow layouts: notices sit
-  below the drawers and any scrim, retaining their contents and returning to the normal layer
-  on dismissal.
-  Bound the stack below the workspace header/current banners and above the bottom safe inset.
-  Welcome and conversation views share one floating feedback owner and presentation; a page
-  transition does not move notices into page flow or expand them to the start composer's width.
-  Anchor notices at the top-right at every width, below the header and any overlapping transcript
-  search or mobile tool row. Editor height does not move this anchor; its top edge only limits the
-  scrollable stack when their horizontal ranges overlap. Follow toolbar, editor, banner and pane
-  resizing. Empty space beside content-sized cards does not intercept input.
-  Only an overflowing stack scrolls, without compressing cards or discarding diagnostic text;
-  fitting stacks retain their normal width, shadows and placement. Additional notices preserve
-  an existing reading position. Copy, dismiss and keyboard scrolling remain reachable.
-  Exact repeated notices coalesce in place and renew their dwell. Hover, focus within, an active
-  pointer press and a hidden document pause the clock. Reading time starts only when at least half
-  of the card is in view and pauses when it scrolls out of that range; resuming keeps the remaining
-  time with at least 3 seconds to finish reading. Expiry uses only a standard 150ms opacity fade, omitted
-  for reduced motion. Manual dismissal remains immediate. Errors, warnings, export actions and
-  update availability do not expire on these timers. State-owned progress, extension widgets and
-  retained transcript content keep their own lifecycles. [[composer]] owns query/session boundaries
-  and command outcome handling.
-- Attachment file chips put filenames and state ahead of technical metadata. Pending's visual
-  emphasis follows [Action-button presentation](#action-button-presentation); [[composer]] owns
-  bounded summaries and action semantics.
-
+  and subtle semantic tint match other informational results. Only message count, total tokens,
+  cost and context occupancy appear, as compact inline label/value pairs that wrap with the
+  available width. Project, model, session name and raw JSONL path are omitted, with no secondary
+  disclosure. There is no separate panel title, divider, metric grid, highlighted cost or duplicate
+  progress bar. Long values stay readable. Repeating the query updates the same card in place
+  without increasing dock height or restarting an entrance animation; a single readout does not
+  stack. The bounded, focusable dock keeps keyboard/touch scrolling when distinct results need it.
+  When usage is unavailable, the result says so instead of rendering an empty Info receipt.
+- General notices use compact icon/message/action rows without a visible severity heading.
+  Severity is still announced, and extension attribution stays in the message. Short messages size
+  to their content within the stack's width; diagnostics wrap without losing Copy/dismiss. Those
+  actions keep 24px mouse or 32px touch targets, aligned with the message's first line. Embedded
+  resource errors and richer update cards keep their contextual presentation.
+- Placement: Welcome and conversation views share one floating feedback owner and presentation; a
+  page transition does not move notices into page flow or widen them to the start composer's width.
+  Notices anchor at the top-right at every width, below the header, current banners and any
+  overlapping transcript search or mobile tool row, and the stack stays above the bottom safe inset.
+  Editor height does not move this anchor; the editor's top edge only limits the scrollable stack
+  when their horizontal ranges overlap. Placement follows toolbar, editor, banner and pane resizing.
+  Empty space beside content-sized cards does not intercept input. Non-modal notices sit below
+  active modal dialogs instead of covering their content or controls. On narrow layouts, navigation
+  and resource drawers also own modal interaction: notices sit below the drawers and any scrim, keep
+  their contents, and return to the normal layer on dismissal.
+- Overflow: only an overflowing stack scrolls, without compressing cards or discarding diagnostic
+  text; fitting stacks keep their normal width, shadows and placement. Additional notices preserve
+  an existing reading position. Copy, dismiss and keyboard scrolling stay reachable.
+- Expiry follows meaning and ordinary text volume, not Info tint alone. Short INFO confirmations and
+  bare Name normally have a 3-second reading dwell; one- or two-sentence guidance such as Quit has 5
+  seconds; denser INFO and the four-field Session & usage readout have 8 seconds. Exact repeated
+  notices coalesce in place and renew their dwell. Hover, focus within, an active pointer press and
+  a hidden document pause the clock. Reading time starts only when at least half of the card is in
+  view and pauses when it scrolls out of that range; resuming keeps the remaining time, with at least
+  3 seconds to finish reading. Expiry uses only a standard 150ms opacity fade, omitted for reduced
+  motion. Manual dismissal is immediate. Errors, warnings, export actions and update availability do
+  not expire on these timers. State-owned progress, extension widgets and retained transcript
+  content keep their own lifecycles. [[composer]] owns query/session boundaries and command outcome
+  handling.
 ## File and path labels
 
 Workspace, Changes, project-file pickers, inline completion and uploaded/sent file tags share the
 filename-based monochrome file-category icons; unknown types use a neutral document. Compact file
-rows and completion use 13px icons. Image attachments retain their thumbnails. Pickers and search
-results separate filename from parent directory, omit empty root-level captions, and retain the exact
+rows and completion use 13px icons. Image attachments keep their thumbnails. Pickers and search
+results separate filename from parent directory, omit empty root-level captions, and keep the exact
 path in titles and accessible names. Literal query-term emphasis uses weight 600, inherited ink and
 no background; feature specs define matching and row layout.
 
-Semantic path labels retain one exact value for assistive text, tooltip, Copy and navigation. A
-fitting path stays complete; actual container overflow elides the parent before the filename, without
-breakpoint or percentage quotas. Ordinary titles and bare filenames keep their own text treatment.
+Semantic path labels keep one exact value for assistive text, tooltip, Copy and navigation. A
+fitting path stays complete; only actual container overflow elides it, parent before filename, with
+no breakpoint or percentage quotas. Ordinary titles and bare filenames keep their own text treatment.
 
 ## Shared labels and controls
 
@@ -576,13 +571,6 @@ breakpoint or percentage quotas. Ordinary titles and bare filenames keep their o
   dismissing the panel or blurring its search field. Checkmarks and `aria-selected` identify committed
   values independently of that candidate highlight. Settings model search stays neutral until keyboard
   navigation or an explicit row action.
-- Command Palette uses a 580px desktop maximum width, bounded by the viewport. Search text,
-  group titles and result titles share a 20px content edge; candidate highlights retain their own
-  outer inset. Groups use compact overline headings and neutral bottom rules without full-width
-  shaded bands, with tighter spacing between sections. Default groups distinguish `Actions`, `Workspace` and `Sessions`.
-  Long titles use up to two lines; project/age metadata stays secondary and moves below titles on
-  narrow screens. Omit redundant action descriptions without removing useful search aliases.
-  The accent-tinted candidate remains the action highlight; shortcut hints stay separate.
 ## Overlays and deferred surfaces
 
 Modal overlays use the shared radius, hairline, elevation, restrained scrim, 2px backdrop blur and
@@ -674,14 +662,16 @@ label keep the full provider name. Settings provider headings also use transpare
 their own typography. Recent, Router and No thinking labels use muted, normal-weight text without a
 filled badge.
 
-## Session and command search presentation
+## Search presentation
 
 Session, workspace and History search share an explicit clear control. It remains available while
 search is loading, restores input focus and does not add a second native clear button. Loading uses
-the leading icon slot without displacing Clear. Each search retains its own query, Escape, navigation
-and IME semantics, surface geometry and loading announcements. Narrow inputs use 16px text to avoid
-focus zoom; the sidebar keeps its compact 14px navigation labels with the WebKit editing exception
-defined above. Other search surfaces retain themed native clearing and their own keyboard rules.
+the leading icon slot without displacing Clear. Each search keeps its own query, Escape, navigation
+and IME semantics, surface geometry and loading announcements. Files and History inputs retain
+`--text-sm` (12.5px) text and 13px leading icons at every width, including placeholders and editing;
+narrow layouts enlarge their control height, not their type. The sidebar keeps its compact 14px
+navigation labels with the localized WebKit editing exception defined above. Other search surfaces
+keep themed native clearing and their own keyboard rules.
 
 Session titles and visible project names/context emphasize matching text at weight 600, without
 changing colors, backgrounds, ellipsis or direct Pin/Hide controls. Visible token emphasis uses Pi's
@@ -733,7 +723,7 @@ Copy availability follows the content, not a text-only projection. Image-only us
 image-bearing tool/custom content keep their established Copy action; the shared image viewer
 also offers a constant Copy for an inspected saved or attached image. Its Copy, Download and Close
 actions share the viewer's icon scale, including Copy's loading and success feedback. Text-only copies
-retain their existing plain-text payloads. Copy does not recover Pending entries, transfer image
+keep their existing plain-text payloads. Copy does not recover Pending entries, transfer image
 ownership, or alter the draft.
 
 Browsers accept PNG clipboard images, not a general list of image files. PNG is copied directly;
@@ -751,7 +741,7 @@ before Host reads or image conversion can outlive that gesture. Every required s
 validate before any promised format resolves or success is reported. Unsupported formats, unavailable
 source images, changed format metadata or clipboard denial report a warning instead of success or
 silent text-only fallback. Large tool/custom text stays lazy until Copy is activated.
-Source reads retain their existing authority: saved conversation images resolve exact content
+Source reads keep their existing authority: saved conversation images resolve exact content
 coordinates, History images resolve the selected entry, and Pending images use the queue's
 existing retained attachment handles. Unmount, source/view/transport retirement and Pending
 revision changes cancel delayed copying before it can write or report success for another source.
@@ -830,14 +820,15 @@ layout space. Presentation follows the action's role:
 
 | Role | Treatment |
 | --- | --- |
-| Subordinate exit/navigation | Quiet: form/pre-execution Cancel, Palette Back and Dismiss after login. Compact links and icon-close actions retain their unframed form. |
-| Content/read recovery | Quiet, including Host status recheck. A retry that executes a restart retains execution styling. |
+| Subordinate exit/navigation | Quiet: form/pre-execution Cancel, Palette Back and Dismiss after login. Compact links and icon-close actions keep their unframed form. |
+| Content/read recovery | Quiet, including Host status recheck. A retry that executes a restart keeps execution styling. |
 | Secondary history/navigation | Quiet: History pagination/Fork/Clone, earlier-branch Clone and directory-root shortcuts; root shortcuts keep compact mono text. |
-| Primary/preferred execution or navigation | Emphasized: Save/Submit, Add/Reset, branch continuation and Back to latest. Response choices, active Cancel login and dangerous execution retain ordinary/primary/danger variants. |
+| Primary/preferred execution or navigation | Emphasized: Save/Submit, Add/Reset, branch continuation and Back to latest. Response choices, active Cancel login and dangerous execution keep ordinary/primary/danger variants. |
 
 The directory picker's editable path shares Welcome's canvas fill, line border, small radius and
 inset focus mark, with mono text, soft wrapping and content-sized height above the bordered directory
-list. Quiet styling preserves action availability, sizing and keyboard behavior. Copy availability
+list. Its title stays on the leading edge and its visibility action aligns with the trailing content
+edge. Quiet styling preserves action availability, sizing and keyboard behavior. Copy availability
 follows [Content copying](#content-copying), independently of presentation type.
 
 ## Responsive, motion, and accessibility
@@ -852,27 +843,29 @@ follows [Content copying](#content-copying), independently of presentation type.
   theme's darkening overlay token; the full-width context pane has no redundant scrim. Narrow
   Settings enters with an opaque 8px rise while only its backdrop fades. Dismissal is immediate,
   and reduced motion removes entry animation.
-- Motion explains a transient surface, disclosure, or live work. Shared durations are
-  90ms micro, 150ms standard, and 180ms panel. Indeterminate loading/execution uses a seven-point
-  square Π (11.6×11.6 in a 16×16 viewBox) inside the existing square icon slot. Row/column sweeps,
-  outline tracing, breathing, outward propagation, side relay and gathering remain available;
-  every complete 2.4-second animation cycle independently selects the next pattern with equal
-  probability; repeats are allowed. Rerenders and status-label updates neither reselect nor interrupt
-  the current cycle.
-  Reduced motion displays a static Π. Sidebar working states use it; unread completion/failure use matching linked-dot check/cross.
-  Tool rows and nested calls use the same settled glyphs. Not-executed and missing-result tools,
-  and cancelled/unfinished child calls, use a static eight-point perimeter with an empty center
-  in `--muted`; their distinct labels remain intact, without implying work, success or failure.
-  Point cells and resting glyph footprints are square (1:1); light links keep a three-point check
-  readable at 12/14px. Success/error
-  colors and attention remain distinct, and reading still clears unread terminal cues. Generating, queued and executing tools keep one mounted glyph and
-  uninterrupted cycle; tool status follows the name in both parent and nested rows. Refresh controls
-  retain directional arrows at rest and replace them with Π while refreshing. Settings checks and
-  terminal connection/initialization use Π only while work is actually pending; offline/passive
-  connection markers remain static, and determinate progress is not replaced by this animation.
-  [Composer presentation](#composer-presentation) defines its state halo. Short card/palette entrance
-  and disclosure transforms are permitted. Reduced motion removes nonessential animation and collapses transitions to a
-  negligible duration; each live-state surface retains a static indication.
+- Motion explains a transient surface, disclosure, or live work. Shared durations are 90ms micro,
+  150ms standard, and 180ms panel. Short card/palette entrance and disclosure transforms are
+  permitted. [Composer presentation](#composer-presentation) defines its state halo. Reduced motion
+  removes nonessential animation and collapses transitions to a negligible duration; each live-state
+  surface keeps a static indication.
+  - Indeterminate loading/execution uses a seven-point square Π (11.6×11.6 in a 16×16 viewBox)
+    inside the existing square icon slot. Patterns are row/column sweeps, outline tracing,
+    breathing, outward propagation, side relay and gathering. Every complete 2.4-second cycle
+    independently selects the next pattern with equal probability; repeats are allowed. Rerenders
+    and status-label updates neither reselect nor interrupt the current cycle. Reduced motion shows
+    a static Π.
+  - Sidebar working states use Π; unread completion/failure use matching linked-dot check/cross.
+    Tool rows and nested calls use the same settled glyphs. Not-executed and missing-result tools,
+    and cancelled/unfinished child calls, use a static eight-point perimeter with an empty center in
+    `--muted`; their distinct labels stay intact, without implying work, success or failure.
+  - Point cells and resting glyph footprints are square (1:1); light links keep a three-point check
+    readable at 12/14px. Success/error colors and attention stay distinct, and reading still clears
+    unread terminal cues.
+  - Generating, queued and executing tools keep one mounted glyph and an uninterrupted cycle; tool
+    status follows the name in both parent and nested rows.
+  - Refresh controls show directional arrows at rest and Π while refreshing. Settings checks and
+    terminal connection/initialization use Π only while work is actually pending; offline/passive
+    connection markers stay static, and determinate progress is not replaced by this animation.
 - Text meets WCAG AA contrast, and graphical focus/status cues meet their UI
   contrast threshold. `:focus-visible` uses the shared 2px accent outline;
   clipped headers and file-path columns keep it inside the target without growing controls,
@@ -884,7 +877,7 @@ follows [Content copying](#content-copying), independently of presentation type.
 ## Checks
 
 - `tests/web/styles-contract.test.ts` checks that project CSS variable references have declarations.
-- Theme bootstrap and overlay ownership have focused web tests; mock-host
+- Theme bootstrap and overlay ownership have focused web tests; isolated
   browser coverage checks desktop and narrow workbench behavior, including the
   320px and 390px controls, drawer dismissal, and keyboard/accessibility paths.
 - Check affected visual roles in both luminosities and every palette where they appear, using actual

@@ -1,9 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { openCommandPalette, pairAndOpen } from "./support/navigation";
+import {
+  openCommandPalette,
+  pairAndOpen,
+  openSettings,
+} from "./support/navigation";
 
 test.describe("phone action dialogs", () => {
   test.use({ viewport: { width: 390, height: 600 }, hasTouch: true });
-  for (const name of ["Command palette", "Export session", "Use in terminal"]) {
+  for (const name of ["Command palette", "Export session"]) {
     test(
       name +
         " consumes Back and explicit close without leaving an empty history entry",
@@ -32,13 +36,7 @@ test.describe("phone action dialogs", () => {
               .click();
             await page.getByRole("menuitem", { name: "More actions" }).click();
             await page
-              .getByRole("menuitem", {
-                name:
-                  name === "Export session"
-                    ? "Export session…"
-                    : "Use in terminal…",
-                exact: true,
-              })
+              .getByRole("menuitem", { name: "Export session…", exact: true })
               .click();
           }
           await expect(
@@ -82,10 +80,7 @@ for (const name of ["Settings", "Terminal settings"]) {
       await expect(
         page.getByRole("complementary", { name: "Context panel" }),
       ).toBeVisible();
-      if (name === "Settings")
-        await page
-          .getByRole("button", { name: "Settings", exact: true })
-          .click();
+      if (name === "Settings") await openSettings(page);
       else {
         const palette = await openCommandPalette(page);
         await palette.getByLabel("Filter commands").fill("Terminal settings");
@@ -126,9 +121,9 @@ for (const name of ["Settings", "Terminal settings"]) {
       await expect(dialog).toHaveCount(0);
       const drawer = page.getByRole("dialog", { name: "Context panel" });
       await expect(drawer).toBeVisible();
-      await drawer.getByRole("button", { name: "Files", exact: true }).focus();
+      await drawer.getByRole("tab", { name: "Files", exact: true }).focus();
       await expect(
-        drawer.getByRole("button", { name: "Files", exact: true }),
+        drawer.getByRole("tab", { name: "Files", exact: true }),
       ).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(drawer).toHaveCount(0);

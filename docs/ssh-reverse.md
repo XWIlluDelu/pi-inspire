@@ -1,11 +1,9 @@
 # SSH reverse connection
 
-This optional module targets Linux hosts with systemd user services. The core
-INSΠRE Host and browser workbench support macOS and Windows independently; the
-connection dispatcher rejects this module explicitly on those systems. Local
-lifecycle commands require `flock` (normally provided by Linux's `util-linux`).
-
-The `ssh-reverse` connection module exposes one local INSΠRE host through a server you control without binding INSΠRE to a public interface. INSΠRE and Pi remain on the local machine; the module owns only the local SSH tunnel.
+The optional `ssh-reverse` module exposes one local INSΠRE Host through a server you control,
+without binding INSΠRE to a public interface. INSΠRE and Pi stay on the local machine; the module
+owns only the SSH tunnel. It requires Linux with systemd user services and `flock` (from
+`util-linux`); the Host itself also runs on macOS and Windows, where this module is unavailable.
 
 ```text
 local INSΠRE host 127.0.0.1:4587

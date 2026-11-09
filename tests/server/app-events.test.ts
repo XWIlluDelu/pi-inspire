@@ -697,16 +697,6 @@ describe("WebSocket observation and transport limits", () => {
       );
       expect(deltaBytes).toBeLessThan(48_000);
       expect(cumulativeBytes).toBeGreaterThan(deltaBytes * 30);
-      console.info(
-        "Large-write WebSocket JSON bytes (before optional compression):",
-        {
-          sourceBytes: Buffer.byteLength(source),
-          previewCharacters: parser.characters,
-          batches: batches.length,
-          deltaBytes,
-          cumulativeBytes,
-        },
-      );
     } finally {
       detail.close();
       background.close();

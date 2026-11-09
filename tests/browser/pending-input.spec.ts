@@ -6,7 +6,11 @@ import { pendingTextSummary } from "../../shared/pending-preview";
 import { clipboardLines } from "./support/clipboard";
 import { hostRequest } from "./support/host-request";
 import { routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  openSettings,
+} from "./support/navigation";
 
 const token = "inspire-browser-test-token";
 const pixel = Buffer.from(
@@ -408,7 +412,7 @@ test("Pending copies complete text and returns mixed input; Stop and Escape rest
   await composer.getByRole("button", { name: "Send as steer" }).click();
   await expect(pending).toContainText("Escape pending");
   await input.fill("Escape draft");
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("dialog", { name: "Settings", exact: true }),

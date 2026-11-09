@@ -43,10 +43,9 @@ describe("POSIX spelling/normalization identity contracts (not native APFS evide
     async (base, path, ancestor, within) => {
       native.stat.mockResolvedValue(directory(7n));
       expect(await filesystemRelativePath(base, path)).toBe(within);
-      expect(native.stat.mock.calls).toEqual([
-        [base, { bigint: true }],
-        [ancestor, { bigint: true }],
-      ]);
+      expect(native.stat).toHaveBeenCalledTimes(2);
+      expect(native.stat).toHaveBeenCalledWith(base, { bigint: true });
+      expect(native.stat).toHaveBeenCalledWith(ancestor, { bigint: true });
     },
   );
 

@@ -315,7 +315,7 @@ test("aligns purpose-based palette group headings with result rows and bounds lo
       };
     });
     expect(hierarchy.groupBorderBottom).toBeGreaterThan(0);
-    expect(hierarchy.groupTransform).toBe("uppercase");
+    expect(hierarchy.groupTransform).toBe("none");
     expect(Math.abs(hierarchy.rowIndentDelta)).toBeLessThanOrEqual(0.5);
 
     const layout = await longSession.evaluate((row) => {

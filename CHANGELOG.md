@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Sessions shared with terminal Pi
+
+- Terminal Pi and Inspire can use the same session at the same time. The single-writer fence,
+  **Use in terminal…** and **Continue in Inspire** are gone; **Copy resume command** copies
+  `pi --session …` without changing anything.
+- The new generic [attach-control](extensions/attach-control.ts) extension replaces the session
+  bridge (old install paths keep loading it). It reports each live Pi's session, branch and
+  activity, and accepts control over a private local socket in any terminal, Herdr or not.
+- A session a live Pi is running on the viewed branch opens read-only with its progress and
+  **Take over**, which attaches to that same Pi; the terminal keeps working. Otherwise Inspire
+  continues directly. If the attached Pi exits or moves elsewhere, Inspire continues the view with
+  its own Pi.
+- Appends from other Pi processes are accepted; a session you work on in Inspire keeps its branch,
+  and a read-only view follows the branch it opened on. **Switch branch…** in the title menu, and
+  History for read-only sessions, switch branches by the same rule.
+- **Restart Host** now also reloads taken-over Pi so they apply current settings; the new
+  **Restart Host only** keeps every Pi process and its running work, including Inspire's own
+  workers, which afterwards appear as live Pi with **Take over**. `inspire restart` and
+  `inspire restart --host-only` follow the same scopes.
+
+### Workbench
+
+- Conversation search stays in the desktop reading rail and shares a tool row with Prompt Map
+  on narrow layouts. The All, User and Model scopes fit when the side panes narrow the reader.
+- On narrow layouts the navigation toggle shows how many other sessions finished, failed or
+  need attention, and Settings moves into the navigation drawer.
+- A navigation row's age takes its session's runtime state colour, and the working mark is yellow.
+- Activity headers use the mono face; expanded groups summarize their steps, tools and failed
+  calls in one line.
+- Structural labels use IBM Plex Sans SC in sentence case; the Rajdhani face is removed.
+
+### Extensions
+
+- A declared status control's machine-readable state no longer needs a `hiddenStatuses` entry
+  to stay out of the header.
+- `INSPIRE_HERDR_ENV_EXCLUDE` lists extension environment prefixes kept out of the shared Herdr
+  server; no extension prefix is excluded by default.
+
 ## 0.6.5 — 2026-10-26
 
 Changes since [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0).
@@ -64,7 +104,7 @@ Changes since [v0.6.0](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.0).
   compatibility baseline remains Pi **1.3.0**.
 - Restart the Host to load updated server code. A Host-only restart preserves terminals and
   does not upgrade their daemon; apply terminal-service changes separately after its work ends.
-- Install the updated [Inspire session bridge](docs/extensions.md#control-the-same-herdr-pi-terminal)
+- Install the updated [Inspire session bridge](docs/extensions.md#share-sessions-with-terminal-pi)
   and reload it in each original idle Pi terminal. Host restart does not reload external Pi.
 - Enable background notifications separately on each browser or installed app. Android
   background-task/click and iOS/iPadOS delivery still have outstanding physical-device acceptance.

@@ -54,7 +54,6 @@ covers:
   - src/components/TerminalSettingsDialog.tsx
   - src/components/TerminalView.tsx
   - src/terminal-actions.ts
-  - src/components/ContextSplitBody.tsx
   - src/components/FilesPane.tsx
   - src/components/FilePreview.tsx
   - src/components/ChangesPane.tsx
@@ -299,38 +298,43 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   local process; Pi/session capability still requires the loopback host and its authenticated API.
 
 - The welcome page host-deselects any visible session before presenting the
-  first-message/project-directory composer, so the prior session no longer owns topbar status,
-  resources, attention acknowledgement, Escape, or delete protection even if its idle worker remains
-  warm. A collapsible recent-session list appears only when navigation is unavailable or collapsed;
-  expanded desktop navigation already owns that route and is not duplicated. Recent sessions exclude
-  hidden sessions/folders and show up to six entries in activity order. A missing project
-  directory offers the explicit creation path in [[session-continuity]]. An invalid or inaccessible
-  directory instead shows its own retryable error and blocks Start, including when a model was
-  chosen manually. Failed open/create operations remain in the navigation and start surfaces
-  without replacing a transcript integrity error.
+  first-message/project-directory composer. The prior session then no longer owns topbar status,
+  resources, attention acknowledgement, Escape, or delete protection, even if its idle worker
+  stays warm. A collapsible recent-session list appears only when navigation is unavailable or
+  collapsed, since expanded desktop navigation already owns that route. Recent sessions exclude
+  hidden sessions/folders and show up to six entries in activity order. Recent and Hidden
+  disclosure choices share the browser-tab-local navigation metadata store, initialized before
+  first render; F5 and returning home preserve explicit choices. Search may temporarily reveal
+  Hidden without overwriting that choice.
 
-- The project directory can be typed or chosen through a host-side directory picker: the host
-  process lists its own filesystem (`GET /api/host/dirs`, authenticated,
-  session-independent), so over SSH forwards or remote deployments the browsed tree is always the
-  machine sessions run on, and entry paths arrive joined with the host's own separators. Root
-  discovery is host-owned too: POSIX exposes `/`, while Windows enumerates assigned drive names
-  without filesystem availability probes, so a user can cross from `C:\` to `D:\` without inventing
-  a nonexistent common parent. Availability is checked when the user enters a drive. Drive discovery
-  loads independently of the current directory: a disconnected mapping, slow native query or failed
-  root request cannot withhold a valid local listing or confirmation. Failure offers typed-path
-  guidance without turning a successful directory load into an error; late discovery belongs to
-  the dialog lifetime, not a superseded directory request.
+  A missing project directory offers the explicit creation path in [[session-continuity]]. An
+  invalid or inaccessible directory instead shows its own retryable error and blocks Start, even
+  when a model was chosen manually. Failed open/create operations stay in the navigation and start
+  surfaces without replacing a transcript integrity error.
+
+- The project directory can be typed or chosen through a host-side directory picker. The host
+  process lists its own filesystem (`GET /api/host/dirs`, authenticated, session-independent), so
+  over SSH forwards or remote deployments the browsed tree is always the machine sessions run on,
+  and entry paths arrive joined with the host's own separators. Root discovery is host-owned:
+  POSIX exposes `/`, while Windows enumerates assigned drive names without filesystem availability
+  probes, so a user can cross from `C:\` to `D:\` without a nonexistent common parent.
+  Availability is checked when the user enters a drive. Drive discovery loads independently of the
+  current directory: a disconnected mapping, slow native query or failed root request cannot
+  withhold a valid local listing or confirmation. Discovery failure offers typed-path guidance
+  without turning a successful directory load into an error; late discovery belongs to the dialog
+  lifetime, not a superseded directory request.
+
   A missing or relative starting point falls back to the host home. The picker path is editable,
-  automatically wraps long text and grows/shrinks with content and available width. Typed project
-  paths expand Host-native `~`/`~/` (also `~\` on Windows) before browsing, model/file observations,
-  explicit creation and session start. This never expands the browser machine's home, environment
-  variables, globs or other users' homes. Enter browses the typed path without selecting it.
-  Use this directory validates an edited path
-  against the Host before selection instead of choosing the old listing. Errors retain the draft;
-  editing clears the error for retry. While browsing, the path is temporarily read-only but retains
-  keyboard focus, and stale or dismissed requests cannot select a directory. Navigation withdraws
-  the old listing immediately. If list focus was displaced by loading, completion focuses the first
-  available folder (or list container) only while no newer control owns focus.
+  wraps long text and grows/shrinks with content and available width. Typed project paths expand
+  Host-native `~`/`~/` (also `~\` on Windows) before browsing, model/file observations, explicit
+  creation and session start. The browser machine's home, environment variables, globs and other
+  users' homes are never expanded. Enter browses the typed path without selecting it. Use this
+  directory validates an edited path against the Host before selection instead of choosing the old
+  listing. Errors keep the draft; editing clears the error for retry. While browsing, the path is
+  temporarily read-only but keeps keyboard focus, and stale or dismissed requests cannot select a
+  directory. Navigation withdraws the old listing immediately. If loading displaced list focus,
+  completion focuses the first available folder (or list container) only while no newer control
+  owns focus.
 
 - The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
   the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`
@@ -355,46 +359,50 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 - Recover internal read state automatically while keeping confirmed content. Catalog backfill,
   History revalidation, snapshot refresh and file probes use bounded, ownership-checked retry;
   branch commands and prompts with uncertain acceptance are never automatically replayed.
-- Top banners describe a condition that affects the workspace: persistent loss of synchronization,
-  an unavailable address, projection failure, or a recoverable ownership conflict. A normal stream
-  interruption starts with the existing topbar reconnect status; it gains a banner only after ten
-  seconds. A more specific reachability diagnosis may appear immediately. A single transient
-  background snapshot failure does not become a global warning; persistent failure can do so after
-  bounded automatic recovery. Banner actions retry the relevant read, reconnect, or recover that
-  condition. A successful authoritative observation clears a refresh warning; a cached-state acknowledgement does so only when no projection
-  problem remains. An unrelated successful operation does not clear a synchronization warning.
-- Operation failures belong beside an available retry surface, such as deletion confirmation,
-  an extension question, a form, or a resource pane. Otherwise they use the existing notification
+- Top banners describe a condition that affects the workspace: persistent loss of
+  synchronization, an unavailable address, projection failure, or a recoverable ownership
+  conflict. A normal stream interruption starts with the existing topbar reconnect status and gains
+  a banner only after ten seconds; a more specific reachability diagnosis may appear immediately.
+  A single transient background snapshot failure does not become a global warning; persistent
+  failure can after bounded automatic recovery. Banner actions retry the relevant read, reconnect,
+  or recover that condition. A successful authoritative observation clears a refresh warning; a
+  cached-state acknowledgement does so only when no projection problem remains. An unrelated
+  successful operation does not clear a synchronization warning.
+- Operation failures belong beside an available retry surface, such as deletion confirmation, an
+  extension question, a form, or a resource pane. Otherwise they use the existing notification
   stack: send, Stop, Pending clear, and prompt-history failures do not overwrite the workspace
-  banner. Location expresses scope, not severity. An extension reply error remains inside the
-  same request's dialog, with entered content and retry/cancel controls intact; expiry, a newer
-  request, selection, or transport replacement cannot inherit it.
+  banner. Location expresses scope, not severity. An extension reply error stays inside the same
+  request's dialog, with entered content and retry/cancel controls intact; expiry, a newer request,
+  selection, or transport replacement cannot inherit it.
 - Expected lifecycle transitions do not report obsolete background reads as failures.
   [[session-deletion]] owns the deletion boundary; real deletion failure and authentication loss
-  remain visible. [[design-system]] owns the shared floating notice stack, placement, scrolling and
+  stay visible. [[design-system]] owns the shared floating notice stack, placement, scrolling and
   dwell across Welcome and conversation views.
 
 ## Session-owned controls and command palette
 
-- [[composer]] owns delivery states, per-session drafts and prompt-result ownership. A session switch
-  restores its draft and closes session-owned transient surfaces — project-file picker, drop state, model/thinking
-  popovers, and completions — before the new owner paints.
+- [[composer]] owns delivery states, per-session drafts and prompt-result ownership. A session
+  switch restores its draft and closes session-owned transient surfaces — project-file picker, drop
+  state, model/thinking popovers, and completions — before the new owner paints.
 
-- Visible controls make core operations discoverable while keyboard shortcuts and a command
-  interface accelerate the same operations instead of replacing them. The optional command palette
-  opens from the topbar or Ctrl/Command+K at every width, without a duplicate sidebar entry. It
-  starts with a compact set of useful actions and recent sessions, not the full preference/command
-  inventory. Search reaches existing Files, Changes, History, Terminal, terminal creation/control,
-  return-to-latest-branch, navigation, lifecycle, and preference actions. Exact titles and aliases
-  rank before prefixes and fuzzy matches across categories; descriptions add relevance without
-  overwhelming command-name matches. Aliases share one destination, including built-in navigation
-  names, and terminal-only entries identify their limitation before selection. Session-bound actions
-  require a selected session rather than implying first-message support.
+- Visible controls make core operations discoverable; keyboard shortcuts and a command interface
+  accelerate the same operations without replacing them. Visible, keyboard and palette actions
+  share each operation's eligibility and execution path.
 
-  Find a session and `/resume` focus the existing full Host catalog search in navigation, not the
-  palette's already-loaded session subset. The destination expands desktop navigation or opens its
-  narrow drawer, works from the start surface, and preserves both active and start drafts. Recent
-  session shortcuts remain direct palette actions.
+  The optional command palette opens from the topbar or Ctrl/Command+K at every width, with no
+  duplicate sidebar entry. It starts with a compact set of useful actions and recent sessions, not
+  the full preference/command inventory. Search reaches existing Files, Changes, History, Terminal,
+  terminal creation/control, return-to-latest-branch, navigation, lifecycle, and preference
+  actions. Exact titles and aliases rank before prefixes and fuzzy matches across categories;
+  descriptions add relevance without overwhelming command-name matches. Aliases, including
+  built-in navigation names, share one destination, and terminal-only entries identify their
+  limitation before selection. Session-bound actions require a selected session rather than
+  implying first-message support.
+
+  Find a session and `/resume` focus the full Host catalog search in navigation, not the palette's
+  already-loaded session subset. The destination expands desktop navigation or opens its narrow
+  drawer, works from the start surface, and preserves both active and start drafts. Recent session
+  shortcuts remain direct palette actions.
 
   On a narrow workbench, action dialogs and extension questions share the existing transient
   inspection history owner. Browser Back cancels the active extension question before closing the
@@ -404,14 +412,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
   Existing graphical actions open their own controls. Commands needing prompt review or arguments
   use the transient preparation boundary in [[composer]], not a second persistent editor or queue.
-  The palette does not create a second queue-inspection surface for immutable Pi-owned queued input.
-  Its command filter and session
-  rename value are independent: entering rename pre-fills the current presentation title, Escape
-  returns to the original filter, and an unedited Enter never promotes a fallback title into Pi
-  metadata. Renames are latest-request-wins per session, and an older completion cannot close a
-  subsequently reopened rename editor.
-
-  Visible, keyboard and palette actions share each operation's eligibility and execution path.
+  The palette does not create a second queue-inspection surface for immutable Pi-owned queued
+  input. Its command filter and session rename value are independent: entering rename pre-fills
+  the current presentation title, Escape returns to the original filter, and an unedited Enter
+  never promotes a fallback title into Pi metadata. Renames are latest-request-wins per session,
+  and an older completion cannot close a subsequently reopened rename editor.
 
 - Keyboard shortcuts open one focus-contained, scrollable browser help dialog. It reflects the
   chosen desktop send chord, touch-first Return and IME boundaries, completion/history, palette and
@@ -420,12 +425,14 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   modifier substitution; different action keys never share an internal slash (`C/V`, `M/P`, etc.).
   Paired operations have separate complete keycaps in the same row. Navigation followed by
   confirmation uses explicit chord groups separated by a middle dot. Keycaps wrap at group/chord
-  boundaries as space permits and use conventional `Esc` and `PgUp/PgDn` key names.
-  Model/thinking cycling uses the browser-platform bindings in [[model-settings]]; Option text,
-  IME and AltGraph remain native. Primary K/B/period shortcuts require exactly Ctrl or Command,
-  without Alt/Shift, leaving shifted browser chords available. Keycap styling, grouping and
-  send-key preferences remain unchanged. `/changelog` opens that
-  help surface in release-note mode, showing the installed Pi version's shipped changelog entry
-  with loading, failure, and retry states. It is not an update/settings destination and performs no
-  network lookup. Markdown follows the existing deferred safe renderer; documentation links are
-  explicitly current upstream links, not arbitrary Host-file navigation.
+  boundaries as space permits and use conventional `Esc` and `PgUp/PgDn` key names. Keycap
+  styling, grouping and send-key preferences are unchanged.
+
+  Model/thinking cycling uses the browser-platform bindings in [[model-settings]]; Option text, IME
+  and AltGraph remain native. Primary K/B/period shortcuts require exactly Ctrl or Command, without
+  Alt/Shift, leaving shifted browser chords available.
+
+  `/changelog` opens the help surface in release-note mode, showing the installed Pi version's
+  shipped changelog entry with loading, failure, and retry states. It is not an update/settings
+  destination and performs no network lookup. Markdown uses the existing deferred safe renderer;
+  documentation links are explicitly current upstream links, not arbitrary Host-file navigation.
