@@ -184,6 +184,12 @@ for (const mode of ["Files", "Changes"] as const) {
   test(`${mode} preview errors scroll inside the reader and keep Retry reachable in short windows`, {
     tag: "@cross-browser",
   }, async ({ page }) => {
+    if (mode === "Changes") {
+      // Keep periodic Git reads from clearing the error before explicit Retry.
+      const time = Date.now();
+      await page.clock.install({ time });
+      await page.clock.pauseAt(time + 60_000);
+    }
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await pairedPage(page);
