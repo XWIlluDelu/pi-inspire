@@ -41,7 +41,8 @@
   --content-max: var(--reading-width-max);
   --composer-max: var(--reading-width-max);
   --font-sans: "IBM Plex Sans SC", system-ui, sans-serif;
-  --font-label: "Rajdhani", var(--font-sans);
+  /* Structural labels share the interface face: two type voices only. */
+  --font-label: var(--font-sans);
   --font-mono: "Flux Mono SC", ui-monospace, monospace;
   --text-xs: 11.5px;
   --text-sm: 12.5px;
@@ -60,7 +61,7 @@
   --text-display: 32px;
   --text-wordmark: 24px;
   --leading-ui: 1.45;
-  /* Compact Plex labels need a small optical correction inside centred UI rows. */
+  /* Optical correction for large dialog headings. */
   --ui-text-offset: 1px;
   --leading-reading: 1.7;
   --leading-mono: 1.6;
@@ -1332,8 +1333,7 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--body);
-  padding: calc(var(--space-2) + var(--ui-text-offset)) 14px
-    calc(var(--space-2) - var(--ui-text-offset));
+  padding: var(--space-2) 14px;
   font-size: var(--text-base);
   font-weight: 500;
   transition:
@@ -1357,18 +1357,11 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   visibility: hidden;
 }
 
-/* Skew padding without changing its total, then keep icons on the row centre.
-   Independent translate leaves spinning icons' rotation untouched. */
+/* Text and icons share the same centered row, including reserved state labels.
+   Avoid text-only offsets and compensating padding that local sizes can undo. */
 .button > svg,
 .button > .copy-feedback {
   flex-shrink: 0;
-  translate: 0 calc(-1 * var(--ui-text-offset));
-}
-
-/* Atomic control labels, not prose or mixed-font reading content. */
-.segmented__item > span,
-.dropdown__value {
-  translate: 0 var(--ui-text-offset);
 }
 
 .button:hover {

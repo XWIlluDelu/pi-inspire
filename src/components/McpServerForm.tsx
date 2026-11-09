@@ -13,6 +13,7 @@ import {
   mcpOAuthError,
 } from "../../shared/mcp";
 import { ButtonLabel } from "./ButtonLabel";
+import { ConfigurationFormBody } from "./ConfigurationFormBody";
 import { DetailSummary } from "./DetailSummary";
 import { Dropdown } from "./Dropdown";
 import { SettingsSwitch } from "./SettingsControls";
@@ -351,7 +352,7 @@ export function McpServerForm({
         onSave(scope, name.trim(), values);
       }}
     >
-      <div className="models-form__body">
+      <ConfigurationFormBody>
         <div className="models-form__grid">
           {entry || policyName ? (
             <p className="models-status models-form__wide">
@@ -899,7 +900,7 @@ export function McpServerForm({
             {oauthError ?? connectionError ?? error ?? file.error}
           </p>
         ) : null}
-      </div>
+      </ConfigurationFormBody>
       <div className="models-actions models-form__actions">
         <button
           type="submit"

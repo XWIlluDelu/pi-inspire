@@ -1,7 +1,11 @@
 import { expect, type Page, type Route, test } from "@playwright/test";
 import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
 import { modelSettingsScenario } from "./fixtures/model-settings";
-import { openCommandPalette, pairAndOpen } from "./support/navigation";
+import {
+  openCommandPalette,
+  pairAndOpen,
+  openSettings,
+} from "./support/navigation";
 
 function receiptHeaders(route: Route): Record<string, string> {
   const identity = route.request().headers()["x-terminal-operation"];
@@ -34,7 +38,7 @@ for (const width of [1280, 390, 320]) {
         }),
       );
       await pairAndOpen(page);
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await openSettings(page);
       const sharedInsets = await page
         .getByRole("dialog", { name: "Settings", exact: true })
         .evaluate((el) =>

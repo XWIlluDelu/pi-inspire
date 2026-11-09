@@ -232,6 +232,23 @@ export function HostRestartSettings({
                 {message}
               </p>
             ) : null}
+            {state.error && state.recoveryInvalid ? (
+              <button
+                type="button"
+                className="button button--quiet"
+                disabled={state.sending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Reset this browser's invalid restart recovery record? This does not cancel a restart already sent. Check the Host status before starting another restart.",
+                    )
+                  )
+                    void hostRestartClient.clearRecovery();
+                }}
+              >
+                Reset restart recovery…
+              </button>
+            ) : null}
             {unobserved ? (
               <p className="settings__field-help">
                 Restart request not confirmed.
@@ -247,23 +264,6 @@ export function HostRestartSettings({
               >
                 Recheck status
               </button>
-              {state.blocked || state.pending ? (
-                <button
-                  type="button"
-                  className="button button--quiet"
-                  disabled={state.sending}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Clear this browser's restart recovery record? This does not cancel a restart already sent. Check the Host status before starting another restart.",
-                      )
-                    )
-                      void hostRestartClient.clearRecovery();
-                  }}
-                >
-                  Clear local restart record…
-                </button>
-              ) : null}
               {unobserved ? (
                 <button
                   type="button"

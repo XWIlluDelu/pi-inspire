@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  openSettings,
+  pairedPage,
+} from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
 
 for (const width of [1440, 768, 390, 320]) {
@@ -18,12 +22,12 @@ for (const width of [1440, 768, 390, 320]) {
     await pairedPage(page);
     await openFixtureSession(page, /Formula rendering and spectral analysis/);
     const activity = page.locator(".activity-fold__disclosure").first();
-    await expect(activity).toHaveCSS("text-transform", "uppercase");
-    await expect(activity).toHaveCSS("font-family", /Rajdhani/);
+    await expect(activity).toHaveCSS("text-transform", "none");
+    await expect(activity).toHaveCSS("font-family", /Flux Mono SC/);
     await activity.click();
     const collapse = page.locator(".activity-fold__boundary--lower").first();
-    await expect(collapse).toHaveCSS("font-family", /Rajdhani/);
-    await expect(collapse).toHaveCSS("text-transform", "uppercase");
+    await expect(collapse).toHaveCSS("font-family", /Flux Mono SC/);
+    await expect(collapse).toHaveCSS("text-transform", "none");
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const modes = page.locator(".ctx__modes");
     await expect(modes).toBeVisible();
@@ -79,8 +83,21 @@ for (const width of [1440, 768, 390, 320]) {
     expect(toolsAfterScroll.x).toBeCloseTo(toolsBeforeScroll.x, 1);
     expect(toolsAfterScroll.width).toBeCloseTo(toolsBeforeScroll.width, 1);
     const filesBox = (await fileTabs.boundingBox())!;
-    expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(toolsAfterScroll.x);
-    for (const name of ["Files", "Changes", "History", "Terminal"]) {
+    if (filesBox.y + filesBox.height > toolsAfterScroll.y + 0.5)
+      expect(filesBox.x + filesBox.width).toBeLessThanOrEqual(
+        toolsAfterScroll.x + 0.5,
+      );
+    else
+      expect(filesBox.y + filesBox.height).toBeLessThanOrEqual(
+        toolsAfterScroll.y + 0.5,
+      );
+    const terminal = modes.getByRole("button", {
+      name: "New terminal",
+      exact: true,
+    });
+    await expect(terminal).toBeEnabled();
+    await expect(terminal).toHaveAttribute("title", "New terminal");
+    for (const name of ["Files", "Changes", "History"]) {
       const tab = modes.getByRole("tab", { name, exact: true });
       await expect(tab).toHaveAttribute(
         "title",
@@ -91,7 +108,7 @@ for (const width of [1440, 768, 390, 320]) {
       await expect(
         page.getByRole("tabpanel", { name, exact: true }),
       ).toBeVisible();
-      const items = await modes.getByRole("tab").evaluateAll((elements) =>
+      const items = await modes.locator("button").evaluateAll((elements) =>
         elements.map((button) => {
           const box = button.getBoundingClientRect();
           const icon = button.querySelector("svg")!.getBoundingClientRect();
@@ -126,23 +143,24 @@ for (const width of [1440, 768, 390, 320]) {
     if (width <= 900) {
       await page.locator(".ctx__close").click();
     }
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const dialog = page.getByRole("dialog", { name: "Settings" });
     await dialog.getByRole("button", { name: "Display", exact: true }).click();
     const section = dialog.getByRole("heading", {
       name: "Display",
       exact: true,
     });
-    await expect(section).toHaveCSS("font-family", /Rajdhani/);
+    await expect(section).toHaveCSS("font-family", /IBM Plex Sans SC/);
     const offsets = await section.locator("..").evaluate(textMarkOffsets, {
       label: ".settings__section-title",
       marks: ".settings__section-icon",
     });
     expect(offsets).toHaveLength(1);
     expect(Math.abs(offsets[0]!)).toBeLessThan(0.5);
-    await expect(
-      dialog.locator(".settings__field-label").first(),
-    ).not.toHaveCSS("font-family", /Rajdhani/);
+    await expect(dialog.locator(".settings__field-label").first()).toHaveCSS(
+      "font-family",
+      /IBM Plex Sans SC/,
+    );
     await expect
       .poll(() => dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1))
       .toBe(true);
@@ -205,4 +223,5 @@ test("resource count capsules center their numerals beside the Changes icon", as
       expect(box.width).toBeGreaterThanOrEqual(box.height);
     }
   }
+  await page.unrouteAll({ behavior: "wait" });
 });

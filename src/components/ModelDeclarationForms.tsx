@@ -5,6 +5,7 @@ import type {
   ModelDeclaration,
   ProviderDeclaration,
 } from "../../shared/model-settings";
+import { ConfigurationFormBody } from "./ConfigurationFormBody";
 import { DetailSummary } from "./DetailSummary";
 
 export function ProviderForm({
@@ -41,7 +42,7 @@ export function ProviderForm({
   };
   return (
     <form className="models-form" onSubmit={(event) => void submit(event)}>
-      <div className="models-form__body">
+      <ConfigurationFormBody>
         <div className="models-form__grid">
           <label>
             Provider ID
@@ -128,7 +129,7 @@ export function ProviderForm({
             {error}
           </p>
         ) : null}
-      </div>
+      </ConfigurationFormBody>
       <div className="models-actions models-form__actions">
         <button
           className="button button--primary"
@@ -203,7 +204,7 @@ export function ModelForm({
   };
   return (
     <form className="models-form" onSubmit={(event) => void submit(event)}>
-      <div className="models-form__body">
+      <ConfigurationFormBody>
         <div className="models-form__grid">
           <label>
             Model ID
@@ -331,7 +332,7 @@ export function ModelForm({
             {error}
           </p>
         ) : null}
-      </div>
+      </ConfigurationFormBody>
       <div className="models-actions models-form__actions">
         <button
           className="button button--primary"

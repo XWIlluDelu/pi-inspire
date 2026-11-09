@@ -537,10 +537,6 @@ body.srail-dragging {
     padding: var(--space-5);
   }
 
-  .token-gate input {
-    font-size: 16px;
-  }
-
   .token-gate form .button {
     flex: 0 0 auto;
     min-height: 44px;
@@ -624,18 +620,7 @@ body.srail-dragging {
   }
 
   .composer__input {
-    font-size: max(16px, var(--text-reading));
     line-height: 1.45;
-  }
-
-  .picker__input,
-  .model-picker__search input,
-  .palette__input,
-  .transcript-search input,
-  .dialog__input,
-  .dialog__editor,
-  .topbar__rename input {
-    font-size: 16px;
   }
 
   .composer__spacer {
@@ -681,11 +666,6 @@ body.srail-dragging {
     max-width: none;
   }
 
-  .completion__option {
-    grid-template-columns: minmax(120px, 150px) minmax(0, 1fr);
-    gap: var(--space-2);
-  }
-
   .composer__meta .icon-button,
   .composer__send {
     flex-shrink: 0;
@@ -703,10 +683,6 @@ body.srail-dragging {
     justify-content: flex-start;
     padding: var(--space-6) max(var(--space-3), var(--safe-right))
       var(--space-6) max(var(--space-3), var(--safe-left));
-  }
-
-  .welcome__dir {
-    font-size: 16px;
   }
 
   .welcome__row {
@@ -736,21 +712,15 @@ body.srail-dragging {
   }
 
   .overlay {
-    padding: max(var(--space-2), var(--safe-top))
-      max(var(--space-2), var(--safe-right))
-      max(var(--space-2), var(--safe-bottom))
-      max(var(--space-2), var(--safe-left));
+    --overlay-space-top: var(--space-2);
+    --overlay-space-inline: var(--space-2);
+    --overlay-space-bottom: var(--space-2);
   }
 
   .dialog.settings,
   .dialog.terminal-settings {
     width: 100%;
-    height: calc(
-      var(--app-height) - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-2)
-    );
-    max-height: calc(
-      var(--app-height) - var(--safe-top) - var(--safe-bottom) - 2 * var(--space-2)
-    );
+    height: 100%;
     border-radius: var(--radius-md);
   }
 
@@ -834,29 +804,12 @@ body.srail-dragging {
   }
 
   .settings__footer {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
   }
 
   .settings__footer-status {
     min-height: 20px;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .settings__install {
-    margin-left: auto;
-  }
-
-  .settings__footer-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
   }
 
   .palette {
@@ -865,10 +818,6 @@ body.srail-dragging {
       var(--app-height) - max(var(--space-2), var(--safe-top)) -
         max(var(--space-2), var(--safe-bottom))
     );
-  }
-
-  .palette__input {
-    font-size: 16px;
   }
 
   .palette__row {
@@ -913,8 +862,28 @@ body.srail-dragging {
   }
 
   .composer__meta .model-picker {
-    flex: 0 1 auto;
     max-width: none;
+  }
+}
+
+/* Keep all footer utilities on one line when installation adds another item. */
+@media (max-width: 380px) {
+  .settings__footer:has(.settings__install, .settings__installed) {
+    gap: var(--space-1);
+    padding-inline: var(--space-2);
+  }
+
+  .settings__footer:has(.settings__install, .settings__installed) .settings__footer-status {
+    gap: 2px;
+    font-family: var(--font-sans);
+  }
+
+  .settings__footer:has(.settings__install, .settings__installed) .settings__version-dot {
+    display: none;
+  }
+
+  .settings__footer:has(.settings__install, .settings__installed) .settings__utility {
+    padding-inline: var(--space-1);
   }
 }
 
@@ -934,9 +903,8 @@ body.srail-dragging {
       min-width: 0;
     }
 
-    .composer__meta .model-picker {
-      flex: 0 1 auto;
-      max-width: none;
+    .composer__selectors > .dropdown {
+      flex-shrink: 0;
     }
   }
 }

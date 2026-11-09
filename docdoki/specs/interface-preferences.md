@@ -21,9 +21,9 @@ Keep persistent preferences easy to find and save each change without overwritin
 
 ## Settings organization
 
-Settings opens from the topbar as a modal, leaving session navigation in place. Display, Conversation,
-Behavior, Models, MCP, Adapters and System are separate category views. Only the selected category is visible,
-focusable and exposed to assistive technology. Category navigation starts its content at the top;
+Settings opens from the topbar as a modal, leaving session navigation in place. Display,
+Conversation, Behavior, Models, MCP, Adapters and System are separate category views; only the
+selected category is visible, focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
 login attempts remain intact across category switches. Model and credential destinations reveal their
 owning category before locating the requested section.
@@ -33,7 +33,7 @@ presentation. These rules also apply to Terminal settings.
 
 | Category | Controls |
 | --- | --- |
-| Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls rather than combined under a location-based heading. |
+| Display | One field group: `Theme`, `Color palette`, `Content text size`, `Reading width`, `Project location`, then `Titlebar needles`. The workbench header and installed-window title bar have distinct scopes, explained beside their controls, not combined under a location-based heading. |
 | Conversation | One field group: activity visibility (`Reasoning detail`, `Tool activity`, `Activity groups`), then `Send key`. |
 | Behavior | App behavior (`On launch`, `Task alerts`), `Session actions` ordering, then `Pi session settings` (`Steering delivery`, `Follow-up delivery`, `Automatic context compaction`, `Automatic retry`). |
 | Models | Pi defaults, common scope/cycling, graphical model/provider configuration, and nearby login/logout under [[model-settings]]. |
@@ -64,23 +64,24 @@ runtime settings, models, credentials, MCP servers, update observations, navigat
 state, and other direct work state unchanged.
 
 Terminal settings uses the same category navigation for Appearance, Interaction and Saved output
-under [[terminal]]. Category and subsection
-navigation scroll only dialog content, keeping the header, navigation and utility footer in place.
-Offscreen categories remain reachable in the narrow horizontal strip. Resizing keeps the selected
-category and its label visible, clear of the fading edges, without resetting page scroll or snapping
-back a deliberately browsed strip. Unknown runtime values show Unavailable rather than a confirmed state.
+under [[terminal]]. Category and subsection navigation scroll only dialog content; the header,
+navigation and utility footer stay in place. Offscreen categories remain reachable in the narrow
+horizontal strip. Resizing keeps the selected category and its label visible, clear of the fading
+edges, without resetting page scroll or snapping back a deliberately browsed strip. Unknown runtime
+values show Unavailable, not a confirmed state.
 
 ## Session action order
 
 Behavior includes an ordered list of the session title menu's actions, with a drag handle on
-the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts preserve the focused
+the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts keep focus on the
 action while it moves. Clicking or keyboard-activating a Settings handle opens move options
-(up and down); Escape closes those options and restores the handle without closing
+(up and down); Escape closes those options and restores focus to the handle without closing
 Settings. Starting a drag dismisses the move options.
+
 A disclosure boundary separates the first three actions, shown immediately in the compact menu,
 from the remainder revealed by More actions. Behavior settings use quiet, unboxed ordinal numbers
 and a sentence-case boundary hint between thin rules, without a shaded strip or stacked row borders.
-Row and drag-handle targets retain their existing sizes. Both surfaces edit the same saved order.
+Row and drag-handle targets keep their existing sizes. Both surfaces edit the same saved order.
 Ordering changes only presentation, not action eligibility or execution.
 
 The order is a Host-persisted interface preference, saved through the existing field-owned write
@@ -98,13 +99,13 @@ a fresh resource scan and package update results cannot establish current-worker
 ## Modal focus
 
 - The active modal traps Tab, suppresses background shell shortcuts, and restores its exact opener
-  on close. Nested modals retain this ownership even when they close out of order. Anchored portaled
+  on close. Nested modals keep this ownership even when they close out of order. Anchored portaled
   controls belong to their containing modal's stacking, focus and logical tab order.
 - A nested menu consumes Escape before its containing modal. Otherwise, Escape belongs to the
   topmost modal; an attributed extension request yields it only for projection-conflict recovery.
 - Settings and Command Palette are mutually exclusive. An extension request takes modal ownership
   and suspends Settings together with its subordinate confirmations, preserving the selected page,
-  project owner and unsaved forms. An open Palette stays mounted but hidden and inactive, retaining
+  project owner and unsaved forms. An open Palette stays mounted but hidden and inactive, keeping
   preparation text and rejection feedback. The suspended surface resumes after the question closes
   without implicitly saving configuration or restarting the Host.
 

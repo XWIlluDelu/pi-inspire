@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { modelSettingsSnapshot } from "../web/fixtures/model-settings";
 import { modelSettingsScenario } from "./fixtures/model-settings";
-import { pairAndOpen } from "./support/navigation";
+import { expectConfigurationField } from "./support/configuration-form";
+import { pairAndOpen, openSettings } from "./support/navigation";
 
 test.use({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
 
@@ -71,7 +72,7 @@ test("Manage models carries New's prospective project only for its Settings visi
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
   settingsOwner = undefined;
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   await page
     .getByRole("dialog", { name: "Settings", exact: true })
     .getByRole("button", { name: "Models", exact: true })
@@ -94,7 +95,7 @@ test("model search and refresh preserve defaults and browsing position", async (
     })),
   );
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", {
     name: "Settings",
     exact: true,
@@ -182,9 +183,23 @@ test("Common and Default choices navigate unmounted rows without losing saved fo
       writes.push(request.postDataJSON());
   });
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Models", exact: true }).click();
+  await page.evaluate(() => document.fonts.ready);
+  const choices = await settings
+    .locator(".models-choice")
+    .evaluateAll((labels) =>
+      labels.map((label) => {
+        const input = label.querySelector("input")!.getBoundingClientRect();
+        const text = label.querySelector("span")!.getBoundingClientRect();
+        return Math.abs(
+          text.top + text.height / 2 - input.top - input.height / 2,
+        );
+      }),
+    );
+  expect(choices.length).toBeGreaterThan(0);
+  expect(choices.every((offset) => offset <= 0.5)).toBe(true);
   const firstDefault = settings.getByRole("radio", {
     name: "Default: Claude Haiku",
   });
@@ -256,7 +271,7 @@ test.describe("scalar default rows", () => {
   }) => {
     const scenario = await modelSettingsScenario(page);
     await pairAndOpen(page);
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
@@ -375,7 +390,7 @@ test.describe("touch model editor", () => {
       })),
     );
     await pairAndOpen(page);
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,
@@ -423,10 +438,11 @@ test.describe("touch model editor", () => {
     await expect(
       editor.getByRole("button", { name: "Cancel", exact: true }),
     ).toBeInViewport();
-    await body.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
-    await expect(editor.getByLabel("Base URL override")).toBeInViewport();
+    await editor.getByLabel("Base URL override").focus();
+    await expectConfigurationField(editor.getByLabel("Base URL override"));
+    await editor
+      .getByRole("button", { name: "Back to models" })
+      .scrollIntoViewIfNeeded();
     await expect(
       editor.getByRole("button", { name: "Back to models" }),
     ).toBeInViewport();
