@@ -3,7 +3,10 @@ import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HerdrClient } from "../../server/herdr-client.js";
+import {
+  HerdrClient,
+  herdrExcludedEnvironmentPrefixes,
+} from "../../server/herdr-client.js";
 import { HerdrControl } from "../../server/herdr-control.js";
 
 const fixture = String.raw`#!/usr/bin/env node
@@ -192,6 +195,20 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   for (const client of clients.splice(0)) client.close();
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+});
+
+describe("herdrExcludedEnvironmentPrefixes", () => {
+  it("excludes only configured prefixes", () => {
+    expect(herdrExcludedEnvironmentPrefixes({})).toEqual([]);
+    expect(
+      herdrExcludedEnvironmentPrefixes({
+        INSPIRE_HERDR_ENV_EXCLUDE: " MY_EXT_ , OTHER_,bad-prefix",
+      }),
+    ).toEqual(["MY_EXT_", "OTHER_"]);
+    expect(
+      herdrExcludedEnvironmentPrefixes({ INSPIRE_HERDR_ENV_EXCLUDE: "" }),
+    ).toEqual([]);
+  });
 });
 
 describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
@@ -405,12 +422,6 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
     const before = requests.length;
     await expect(
       client.createWorkerPane("/repo", "stale workspace", ["pi"]),
-    ).rejects.toMatchObject({ code: "HERDR_SERVER_CHANGED" });
-    await expect(
-      client.nativeAgentRequest(old.serverId, old.paneId, "agent.get"),
-    ).rejects.toMatchObject({ code: "HERDR_SERVER_CHANGED" });
-    await expect(
-      client.nativeAgentRequest(old.serverId, old.paneId, "agent.get"),
     ).rejects.toMatchObject({ code: "HERDR_SERVER_CHANGED" });
     const recovered = new HerdrClient({ binary, environment });
     clients.push(recovered);

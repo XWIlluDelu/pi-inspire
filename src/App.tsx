@@ -37,10 +37,6 @@ import { Notices } from "./components/Notices";
 import { PaneResizeHandle } from "./components/PaneResizeHandle";
 import { PiLoader } from "./components/PiLoader";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
-import {
-  SessionTerminalDialog,
-  TerminalSessionNotice,
-} from "./components/SessionTerminalDialog";
 import type { SettingsCategoryId } from "./components/Settings";
 import { SettingsDialog, SettingsLoading } from "./components/SettingsDialog";
 import { Transcript, type TranscriptNavigation } from "./components/Transcript";
@@ -432,18 +428,13 @@ const ConversationStage = memo(function ConversationStage({
               <dd>{thinkingLevelLabel(state.thinkingLevel)}</dd>
             </div>
           </dl>
-          {state.readOnlyReason === "terminal" ? (
-            <TerminalSessionNotice
-              key={state.sessionId}
-              sessionId={state.sessionId}
-            />
+          {state.readOnlyReason === "external-active" && state.sessionId ? (
+            <TakeOverNotice key={state.sessionId} sessionId={state.sessionId} />
           ) : (
             <p role="status">
               {state.readOnlyReason === "workspace-unavailable"
                 ? "Project folder unavailable. This session is read-only."
-                : state.readOnlyReason === "external-active"
-                  ? "Open in another Pi. Writing will resume automatically when it releases the session."
-                  : "Pi connection unavailable. History remains readable while Inspire checks for recovery."}
+                : "Pi connection unavailable. History remains readable while Inspire checks for recovery."}
             </p>
           )}
         </div>
@@ -463,6 +454,38 @@ const ConversationStage = memo(function ConversationStage({
     </section>
   );
 });
+
+/** Another Pi is running this branch: watch here, or take it over. Taking
+ * over attaches to that Pi; its terminal keeps working alongside Inspire. */
+function TakeOverNotice({ sessionId }: { sessionId: string }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const takeOver = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      await store.takeOverSession(sessionId);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Take over failed");
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <div role="status">
+      <p>Running in another Pi. Its progress shows here.</p>
+      <button
+        type="button"
+        className="button button--quiet"
+        disabled={pending}
+        onClick={() => void takeOver()}
+      >
+        {pending ? "Taking over…" : "Take over"}
+      </button>
+      {error ? <p role="alert">{error}</p> : null}
+    </div>
+  );
+}
 
 function focusedTerminalLaunchRequested(): boolean {
   const params = new URLSearchParams(window.location.search);
@@ -520,9 +543,6 @@ export function App() {
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [terminalSessionId, setTerminalSessionId] = useState<string | null>(
-    null,
-  );
   const [exportSessionId, setExportSessionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [commandHelp, setCommandHelp] = useState<
@@ -598,7 +618,6 @@ export function App() {
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
     setExportSessionId(null);
-    setTerminalSessionId(null);
   }, [state.sessionId]);
 
   const closeMobileNavigation = useCallback(() => {
@@ -622,7 +641,6 @@ export function App() {
     ...(settingsOpen ? ["settings"] : []),
     ...(paletteOpen ? ["palette"] : []),
     ...(exportSessionId ? ["export"] : []),
-    ...(terminalSessionId ? ["terminal-handoff"] : []),
     ...(extensionOverlayOpen ? ["extension"] : []),
   ];
   useInspectionHistory(
@@ -631,7 +649,6 @@ export function App() {
       const remaining = inspectionLayers.slice(0, depth);
       if (!remaining.includes("extension"))
         extensionDialogRef.current?.cancel();
-      if (!remaining.includes("terminal-handoff")) setTerminalSessionId(null);
       if (!remaining.includes("export")) setExportSessionId(null);
       if (!remaining.includes("palette")) setPaletteOpen(false);
       if (!remaining.includes("settings")) setSettingsOpen(false);
@@ -991,7 +1008,6 @@ export function App() {
           onToggleNavigation={toggleNavigation}
           onOpenCommandPalette={openCommandPalette}
           onExportSession={openExport}
-          onTerminalSession={() => setTerminalSessionId(state.sessionId)}
           onToggleSettings={toggleSettings}
           onToggleResources={toggleResources}
         />
@@ -1095,14 +1111,6 @@ export function App() {
           modelDestination={modelDestination}
           workspaceOwner={settingsOwner}
           onClose={closeSettings}
-        />
-      ) : null}
-      {terminalSessionId ? (
-        <SessionTerminalDialog
-          key={terminalSessionId}
-          sessionId={terminalSessionId}
-          active={!extensionOverlayOpen}
-          onClose={() => setTerminalSessionId(null)}
         />
       ) : null}
       {exportSessionId && exportSessionId === state.sessionId ? (

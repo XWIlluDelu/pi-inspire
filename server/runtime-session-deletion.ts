@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import {
   type HiddenClearResponse,
-  isBusyRunState,
   type SessionDeleteResponse,
 } from "../shared/contracts.js";
 import { requestError } from "./request-error.js";
@@ -23,10 +22,12 @@ interface RuntimeSessionDeletionHost {
   hasProvisionalReservation(sessionId: string, path?: string): boolean;
   hasForkReservation(sessionId: string, path: string): boolean;
   slot(sessionId: string): RuntimeSlot | undefined;
-  isExternal(slot: RuntimeSlot): boolean;
   removeSlot(sessionId: string, expected: RuntimeSlot): void;
   mutateSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
-  stopWriter(slot: RuntimeSlot): Promise<void>;
+  stopInstances(
+    session: SessionRecord,
+    slot: RuntimeSlot | undefined,
+  ): Promise<void>;
   catalogGet(sessionId: string): Promise<SessionRecord | undefined>;
   catalogRefresh(force?: boolean): Promise<readonly SessionRecord[]>;
   invalidateCatalog(): void;
@@ -88,19 +89,6 @@ export class RuntimeSessionDeletionController {
     );
   }
 
-  private hasDeletionBlockingState(slot: RuntimeSlot): boolean {
-    return (
-      (!this.host.isExternal(slot) && isBusyRunState(slot.runState)) ||
-      slot.pendingExtensionUiRequests.size > 0 ||
-      slot.pendingQueues.totalCount > 0 ||
-      slot.persistenceExpectations.length > 0 ||
-      Boolean(slot.pendingPartialPersistence) ||
-      Boolean(slot.pendingBranchBridge) ||
-      Boolean(slot.conflict) ||
-      Boolean(slot.navigationLease)
-    );
-  }
-
   private async deleteSessionInside(
     sessionId: string,
     authorizedSession?: SessionRecord,
@@ -140,25 +128,16 @@ export class RuntimeSessionDeletionController {
     const slot = this.host.slot(sessionId);
     let projection: RuntimeSlot["projection"] = null;
     try {
+      // Closing Pi settles commands waiting on a turn or a dialog. Do this
+      // before entering its mutation lane, which may be waiting on that Pi.
+      await this.host.stopInstances(initial, slot);
       if (slot) {
-        if (slot.stopping) await slot.stopping;
-        if (slot.activeOperations > 0 || this.hasDeletionBlockingState(slot))
-          throw requestError(
-            "Wait for the session's active work or interaction to finish before deleting it",
-            409,
-          );
         projection = await this.host.mutateSlot(slot, async () => {
           if (this.host.slot(sessionId) !== slot)
             throw requestError(
               "The session changed while deletion was being prepared",
               409,
             );
-          if (slot.activeOperations > 1 || this.hasDeletionBlockingState(slot))
-            throw requestError(
-              "Wait for the session to finish active work or interaction before deleting it",
-              409,
-            );
-          await this.host.stopWriter(slot);
           await slot.eventTail;
           await slot.projectionTail;
           // Suspend reads/watchers and drain their file handles without losing
@@ -174,11 +153,11 @@ export class RuntimeSessionDeletionController {
           "The session changed while deletion was being prepared",
           409,
         );
-      // Single deletion pins the current file version after writer retirement;
-      // Hidden keeps the version authorized by its complete-set preflight.
+      // Identity is pinned by the catalog; version is pinned after every Pi
+      // exits, including legitimate final appends from shutdown hooks.
       const disposition = await this.host.deleteSessionRecord(
         initial,
-        authorizedSession ? "catalog" : "current",
+        "current",
       );
       if (slot) {
         slot.projection = null;
@@ -271,18 +250,6 @@ export class RuntimeSessionDeletionController {
           409,
         );
       }
-      const slot = this.host.slot(sessionId);
-      if (
-        slot &&
-        (slot.stopping ||
-          slot.activeOperations > 0 ||
-          this.hasDeletionBlockingState(slot))
-      ) {
-        throw requestError(
-          "Wait for every session in Hidden to finish active work or interaction before clearing it",
-          409,
-        );
-      }
     }
   }
 
@@ -328,9 +295,8 @@ export class RuntimeSessionDeletionController {
     for (const session of records) this.hiddenDeletionIds.add(session.id);
     const deleted: HiddenClearResponse["deleted"] = [];
     try {
-      // Admission is all-or-nothing. Once every identity is reserved, a
-      // pre-existing active/open/mutation operation rejects the whole batch
-      // before any session can be moved to Trash.
+      // Reserve and validate the complete reviewed set before ending Pi or
+      // moving files. Session creation/fork operations must settle first.
       this.assertHiddenClearReady(records);
       // Validate the complete reviewed set before moving the first file. Each
       // delete validates again at its commit boundary because files may still

@@ -174,6 +174,11 @@ export interface SessionProjectionView {
   selectedModel(virtualModels: readonly ModelOption[]): unknown;
   readonly thinkingLevel: string;
   readonly leafId: string | null;
+  /** Whether `other` is an ancestor of `leafId`, `leafId` itself, or one of
+   * its continuations in the saved tree. */
+  onSameLine(leafId: string | null, other: string | null): boolean;
+  /** The most recently saved entry continuing `leafId`, or `leafId`. */
+  latestContinuation(leafId: string | null): string | null;
   readonly tailEntryId: string | null;
   /** Stable only while the projection still addresses the same filesystem object. */
   readonly sourceIdentity: string | null;
@@ -1189,6 +1194,36 @@ export class SessionProjection
   }
   get uncommittedFingerprint(): string | null {
     return this.currentUncommittedFingerprint;
+  }
+
+  latestContinuation(leafId: string | null): string | null {
+    const entries = this.currentEntries;
+    const position = new Map(entries.map((entry, index) => [entry.id, index]));
+    // Saved entries follow their parents: nothing before the viewed leaf
+    // can continue it.
+    const floor = leafId === null ? -1 : (position.get(leafId) ?? Infinity);
+    for (let index = entries.length - 1; index > floor; index -= 1) {
+      let id: string | null = entries[index]!.id;
+      while (id !== null && (position.get(id) ?? -1) > floor)
+        id = this.currentEntriesById.get(id)?.parentId ?? null;
+      if (id === leafId) return entries[index]!.id;
+    }
+    return leafId;
+  }
+
+  onSameLine(leafId: string | null, other: string | null): boolean {
+    if (leafId === other) return true;
+    const reaches = (from: string | null, target: string | null) => {
+      const seen = new Set<string>();
+      let id = from;
+      while (id !== null && !seen.has(id)) {
+        if (id === target) return true;
+        seen.add(id);
+        id = this.currentEntriesById.get(id)?.parentId ?? null;
+      }
+      return target === null;
+    };
+    return reaches(leafId, other) || reaches(other, leafId);
   }
 
   hasActiveEntryType(type: string): boolean {

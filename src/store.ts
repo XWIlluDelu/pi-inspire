@@ -97,11 +97,7 @@ import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import { controlState } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import type { ResourceFileTab } from "./resource-preview";
-import {
-  isExternalSession,
-  modelControlsSupported,
-  NATIVE_MODEL_GUIDANCE,
-} from "./session-controls";
+import { isExternalSession } from "./session-controls";
 import {
   sessionDraft,
   sessionDraftRevision,
@@ -1951,19 +1947,6 @@ export class AppStore {
     }
 
     if (
-      (command.name === "model" || command.name === "thinking") &&
-      !modelControlsSupported(this.state)
-    ) {
-      this.presentCommandActivity(
-        sessionId,
-        input,
-        command.name,
-        "warning",
-        NATIVE_MODEL_GUIDANCE,
-      );
-      return ACCEPTED_NATIVE_COMMAND;
-    }
-    if (
       (command.name === "compact" || command.name === "reload") &&
       isExternalSession(this.state)
     ) {
@@ -2623,22 +2606,33 @@ export class AppStore {
     }
   };
 
-  setSessionExecution = async (
-    sessionId: string,
-    target: "terminal" | "inspire",
-    interrupt = false,
-  ): Promise<string> => {
+  /** Attach to the other Pi showing this branch, or continue here. */
+  takeOverSession = async (sessionId: string): Promise<void> => {
     const api = this.api;
     const generation = this.selectionGeneration;
     if (!api) throw new Error("The Host is not connected");
-    const result = await api.setSessionExecution(sessionId, target, interrupt);
+    const snapshot = await api.takeOverSession(sessionId);
     if (
       this.api === api &&
       this.state.sessionId === sessionId &&
       this.selectionGeneration === generation
     )
-      this.applySnapshot(result.snapshot);
-    return result.command;
+      this.applySnapshot(snapshot);
+  };
+
+  /** Copies a command that resumes this session in a terminal Pi. */
+  copyResumeCommand = async (sessionId: string): Promise<boolean> => {
+    try {
+      const api = this.api;
+      if (!api) throw new Error("The Host is not connected");
+      const { command } = await api.resumeCommand(sessionId);
+      await navigator.clipboard.writeText(command);
+      this.notify("info", "Resume command copied");
+      return true;
+    } catch {
+      this.reportCopyError("Could not copy the resume command");
+      return false;
+    }
   };
 
   setModel = async (provider: string, modelId: string): Promise<boolean> => {
@@ -2666,8 +2660,6 @@ export class AppStore {
       this.api === api && this.transportGeneration === transportGeneration;
     if (!api || !sessionId) return { status: "stale" };
     try {
-      if (!modelControlsSupported(this.state))
-        return { status: "error", message: NATIVE_MODEL_GUIDANCE };
       const selection = await api.setModel(sessionId, provider, modelId);
       if (!ownsTransport()) return { status: "stale" };
       // Recency records only successful runtime changes. Keep unavailable
@@ -2714,8 +2706,6 @@ export class AppStore {
     const ownsTransport = (): boolean =>
       this.api === api && this.transportGeneration === transportGeneration;
     if (!api || !sessionId) return { status: "stale" };
-    if (!modelControlsSupported(this.state))
-      return { status: "error", message: NATIVE_MODEL_GUIDANCE };
     const previous = this.state.thinkingLevel;
     const snapshotGeneration = this.snapshotGeneration;
     const request = ++this.thinkingLevelRequest;

@@ -1,52 +1,16 @@
-import { realpath } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
 import { isBusyRunState } from "../shared/contracts.js";
 import type {
   HerdrClient,
-  HerdrPaneProcessInfo,
-  HerdrSessionReference,
   HerdrWorkerPane,
   HerdrWorkerState,
 } from "./herdr-client.js";
-import { requestError } from "./request-error.js";
-import type { HerdrProcessIdentity } from "./herdr-process-group.js";
 import type { RuntimeWorkerStatus } from "./runtime.js";
 
-interface ObserverClient
-  extends Pick<
-    HerdrClient,
-    "reportWorker" | "inspectSessions" | "inspectPaneProcess"
-  > {}
+interface ObserverClient extends Pick<HerdrClient, "reportWorker"> {}
 
 interface HerdrWorkerObserverOptions {
   client: ObserverClient;
   onError?: (error: unknown) => void;
-}
-
-async function canonicalPath(value: string): Promise<string> {
-  const path = resolve(value);
-  try {
-    return await realpath(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return path;
-    throw error;
-  }
-}
-
-function nativePiReference(
-  reference: HerdrSessionReference | null,
-): reference is HerdrSessionReference {
-  // Inspire's bridge reports a separate custom agent; it must never be
-  // mistaken for an external native Pi TUI or Herdr's resumable Pi agent.
-  return reference?.agent === "pi" && reference.source === "herdr:pi";
-}
-
-export interface HerdrNativeWriter {
-  /** Captured before connection publication, never inferred from a later reused PID. */
-  processIdentity?: HerdrProcessIdentity;
-  serverId: string;
-  paneId: string;
-  pid: number;
 }
 
 export interface HerdrWorkerProjection {
@@ -131,97 +95,5 @@ export class HerdrWorkerObserver {
         return disposed;
       },
     };
-  }
-
-  /** A native Pi reference or first-party RPC token is only a candidate.
-   * Herdr's live foreground process must independently show Pi in that pane
-   * and server incarnation; stale historical metadata cannot block a writer.
-   */
-  async assertWritable(
-    sessionId: string | undefined,
-    sessionFile: string,
-  ): Promise<void> {
-    if (!isAbsolute(sessionFile))
-      throw new Error("Existing Pi session file must be an absolute path");
-    const observed = await this.options.client.inspectSessions();
-    if (!observed) return;
-    const sessionPath = await canonicalPath(sessionFile);
-    for (const pane of observed.panes) {
-      const ref = pane.session;
-      const native =
-        pane.agent === "pi" &&
-        nativePiReference(ref) &&
-        (ref.kind === "id"
-          ? Boolean(sessionId && ref.value === sessionId)
-          : isAbsolute(ref.value) &&
-            (await canonicalPath(ref.value)) === sessionPath);
-      const inspire =
-        pane.agent === "inspire-rpc" &&
-        Boolean(sessionId && pane.inspireSessionId === sessionId);
-      if (!native && !inspire) continue;
-      const info = await this.options.client.inspectPaneProcess(
-        observed.serverId,
-        pane.paneId,
-      );
-      if (this.liveForegroundPi(info)) {
-        throw requestError(
-          "This Pi session is already running elsewhere. Stop that process before continuing it in Inspire",
-          409,
-          { code: "EXTERNAL_PI_WRITER_ACTIVE" },
-        );
-      }
-    }
-  }
-
-  /** Locate a native terminal owner without acquiring its process lifetime. */
-  async findNativeWriter(
-    sessionId: string,
-    sessionFile: string,
-  ): Promise<HerdrNativeWriter | null> {
-    const observed = await this.options.client.inspectSessions();
-    if (!observed) return null;
-    const sessionPath = await canonicalPath(sessionFile);
-    const matches: HerdrNativeWriter[] = [];
-    for (const pane of observed.panes) {
-      const ref = pane.session;
-      if (pane.agent !== "pi" || !nativePiReference(ref)) continue;
-      if (
-        ref.kind === "id"
-          ? ref.value !== sessionId
-          : !isAbsolute(ref.value) ||
-            (await canonicalPath(ref.value)) !== sessionPath
-      )
-        continue;
-      const info = await this.options.client.inspectPaneProcess(
-        observed.serverId,
-        pane.paneId,
-      );
-      if (!this.liveForegroundPi(info)) continue;
-      const process = info.foregroundProcesses.find(
-        (item) => item.name === "pi" && item.argv?.[0] === "pi",
-      )!;
-      matches.push({
-        serverId: observed.serverId,
-        paneId: pane.paneId,
-        pid: process.pid,
-      });
-    }
-    if (matches.length > 1)
-      throw requestError(
-        "This session is open in more than one Pi terminal. Close the duplicate before sending a message.",
-        409,
-      );
-    return matches[0] ?? null;
-  }
-
-  private liveForegroundPi(info: HerdrPaneProcessInfo): boolean {
-    if (!info.foregroundProcessGroupId) return false;
-    // Pi sets process.title='pi' and erases its original node/CLI argv, even
-    // for RPC. The identity above comes from Herdr's native Pi report or the
-    // separate Inspire reporter; this checks a current Pi process, not a name
-    // or cwd guess used to discover sessions.
-    return info.foregroundProcesses.some(
-      (process) => process.name === "pi" && process.argv?.[0] === "pi",
-    );
   }
 }

@@ -159,11 +159,9 @@ function GitSummary() {
 const SessionIdent = memo(function SessionIdent({
   show,
   onExport,
-  onTerminal,
 }: {
   show: boolean;
   onExport: () => void;
-  onTerminal?: () => void;
 }) {
   const {
     sessionId,
@@ -175,7 +173,6 @@ const SessionIdent = memo(function SessionIdent({
     sessionActionOrder,
     cloneDisabled,
     readOnlyReason,
-    externallyOwned,
   } = useAppState((state) => {
     const catalogTitle = state.sessions.find(
       (session) => session.id === state.sessionId,
@@ -195,9 +192,6 @@ const SessionIdent = memo(function SessionIdent({
       sessionActionOrder: state.prefs.sessionActionOrder,
       cloneDisabled: branchCopiesBlocked(state),
       readOnlyReason: state.readOnlyReason,
-      externallyOwned: Boolean(
-        state.sessionId && state.sessionStatuses[state.sessionId]?.external,
-      ),
     };
   }, shallowEqual);
   const [editing, setEditing] = useState(false);
@@ -362,18 +356,6 @@ const SessionIdent = memo(function SessionIdent({
                   titleRef.current?.focus({ preventScroll: true });
               });
             }}
-            onTerminal={
-              onTerminal
-                ? () => {
-                    closeMenu();
-                    onTerminal();
-                  }
-                : undefined
-            }
-            terminalDisabled={
-              externallyOwned ||
-              Boolean(readOnlyReason && readOnlyReason !== "terminal")
-            }
             onExport={() => {
               closeMenu();
               titleRef.current?.focus({ preventScroll: true });
@@ -418,7 +400,6 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation,
   onOpenCommandPalette,
   onExportSession,
-  onTerminalSession,
   onToggleSettings,
   onToggleResources,
 }: {
@@ -428,7 +409,6 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
   onExportSession: () => void;
-  onTerminalSession?: () => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -473,7 +453,6 @@ export const AppTopbar = memo(function AppTopbar({
         key={state.sessionId}
         show={Boolean(state.sessionId)}
         onExport={onExportSession}
-        onTerminal={onTerminalSession}
       />
       <div className="topbar__status" aria-live="polite">
         <StateChip

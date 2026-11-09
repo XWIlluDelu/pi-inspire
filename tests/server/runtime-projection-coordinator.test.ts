@@ -133,6 +133,7 @@ async function fixture() {
     stopWriter: vi.fn(async (current) => {
       current.process = null;
     }),
+    projectionSettled: vi.fn(async () => {}),
     renewView: vi.fn(),
     emitSlotEvent: vi.fn(),
     logRuntimeError: vi.fn(),
@@ -428,7 +429,7 @@ describe("runtime projection reconciliation ownership", () => {
     expect(f.host.stopWriter).not.toHaveBeenCalled();
   });
 
-  it.each(["replacement", "changed-bytes", "foreign-append"])(
+  it.each(["replacement", "changed-bytes"])(
     "still fences %s",
     async (change) => {
       const f = await fixture();
@@ -436,15 +437,10 @@ describe("runtime projection reconciliation ownership", () => {
       if (change === "replacement") {
         await writeFile(`${f.path}.replacement`, bytes);
         await rename(`${f.path}.replacement`, f.path);
-      } else if (change === "changed-bytes") {
+      } else {
         await writeFile(
           f.path,
           bytes.replace('"customType":"synthetic"', '"customType":"different"'),
-        );
-      } else {
-        await appendFile(
-          f.path,
-          `${JSON.stringify(entry("foreign", "base"))}\n`,
         );
       }
       await f.coordinator.reconcile(f.slot, true);
@@ -452,6 +448,17 @@ describe("runtime projection reconciliation ownership", () => {
       expect(f.host.stopWriter).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("accepts another Pi's append and keeps the busy writer", async () => {
+    const f = await fixture();
+    await appendFile(f.path, `${JSON.stringify(entry("foreign", "base"))}\n`);
+    await f.coordinator.reconcile(f.slot, true);
+    expect(f.slot.conflict).toBeNull();
+    expect(f.slot.process).toBe(f.worker);
+    expect(f.host.stopWriter).not.toHaveBeenCalled();
+    expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
+    expect(f.host.projectionSettled).toHaveBeenCalledWith(f.slot, true, "base");
+  });
 
   it("leaves source-version movement for the startup attestor instead of refreshing its baseline", async () => {
     const f = await fixture();

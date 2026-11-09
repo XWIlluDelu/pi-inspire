@@ -48,10 +48,8 @@ function Harness({
           onCopyError={onCopyError}
           renameDisabled={readOnly}
           cloneDisabled={readOnly}
-          terminalDisabled={readOnly}
           onRename={vi.fn()}
           onClone={vi.fn()}
-          onTerminal={vi.fn()}
           onExport={onExport}
           onClose={() => setOpen(false)}
         />
@@ -139,7 +137,7 @@ describe("Session actions", () => {
     const more = screen.getByRole("menuitem", { name: "Fewer actions" });
     expect(more).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("menuitem", { name: "Use in terminal…" }),
+      screen.getByRole("menuitem", { name: "Copy resume command" }),
     ).toHaveFocus();
     await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
     expect(onExport).toHaveBeenCalledOnce();
@@ -207,7 +205,7 @@ describe("Session actions", () => {
       "Copy session ID",
       "Clone current branch",
       "Export session…",
-      "Use in terminal…",
+      "Copy resume command",
     ]);
     fireEvent.click(exportHandle);
     await user.click(
@@ -218,10 +216,10 @@ describe("Session actions", () => {
       screen.getByRole("menuitem", { name: "Export session…" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("menuitem", { name: "Use in terminal…" }),
+      screen.queryByRole("menuitem", { name: "Copy resume command" }),
     ).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-    const terminal = screen.getByRole("menuitem", { name: "Use in terminal…" });
+    const terminal = screen.getByRole("menuitem", { name: "Copy resume command" });
     expect(terminal).toBeEnabled();
     fireEvent.keyDown(terminal, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

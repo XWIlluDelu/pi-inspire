@@ -46,8 +46,12 @@ import {
   piInstallation,
   SettingsManager,
 } from "./pi-runtime.js";
+import {
+  AttachControlConnection,
+  AttachControlRegistry,
+  preferredInstance,
+} from "./attach-control.js";
 import { PiSessionActivity } from "./pi-session-activity.js";
-import { PiSessionOccupancy } from "./pi-session-occupancy.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
 import {
@@ -170,8 +174,8 @@ void herdr.initialize();
 const attachments = new AttachmentStore();
 const catalog = createHostSessionCatalog(process.cwd(), preferences);
 const modelMetadata = new ModelMetadataCatalog();
-const sessionOccupancy = new PiSessionOccupancy();
-const runtime = new RuntimeController(
+const attachControl = new AttachControlRegistry();
+const runtime: RuntimeController = new RuntimeController(
   catalog,
   attachments,
   (options) => herdr.createProcess(options),
@@ -181,23 +185,31 @@ const runtime = new RuntimeController(
   undefined,
   diagnostics,
 )
-  .setTerminalSessionStore({
-    has: async (id) =>
-      (await preferences.read()).terminalSessionIds.includes(id),
-    set: (id, terminal) => preferences.setTerminalSession(id, terminal),
-  })
   .setModelMetadataCatalog(modelMetadata)
-  .setExternalSessionConnector((sessionId, sessionFile) =>
-    herdr.connectExternalSession(sessionId, sessionFile, sessionOccupancy),
+  .setExternalSessionConnector(async (sessionId, sessionFile, accepts) => {
+    const instance = preferredInstance(
+      (await attachControl.forSession(sessionId, sessionFile)).filter(
+        (record) => record.endpoint && accepts(record.leafId),
+      ),
+    );
+    return instance
+      ? new AttachControlConnection(attachControl, instance)
+      : null;
+  })
+  .setExternalSessionTerminator((sessionId, sessionFile) =>
+    attachControl.stopSession(sessionId, sessionFile),
   )
-  .setExternalSessionGuard((sessionId, sessionFile) =>
-    sessionOccupancy.assertWritable(sessionId, sessionFile),
+  .setExternalSessionPresence(async (sessionId, sessionFile) =>
+    (
+      await attachControl.forSession(sessionId, sessionFile, { observe: true })
+    ).map((record) => record.leafId),
   )
   .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
     herdr.updateWorkerStatus(rpc, status);
   });
 const sessionActivity = new PiSessionActivity({
   catalog,
+  registry: attachControl,
   publish: (activities) => {
     runtime.emit("event", {
       type: "external_session_activity",

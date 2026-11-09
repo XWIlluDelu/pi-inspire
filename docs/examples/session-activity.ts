@@ -1,2 +1,2 @@
-/** Compatibility entry point for existing Pi installations. */
-export { default } from "../../extensions/inspire-session-bridge.js";
+/** Former path of attach-control, kept so existing installations still load. */
+export { default } from "../../extensions/attach-control.js";

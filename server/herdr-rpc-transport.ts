@@ -36,7 +36,6 @@ interface HerdrRpcTransportOptions {
   client: Pick<HerdrClient, "createWorkerPane" | "closePane">;
   registry: HerdrWorkerRegistry;
   label: string;
-  assertWritable?: () => Promise<void>;
   assertScopesAvailable?: () => Promise<void>;
 }
 
@@ -161,8 +160,6 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
       this.assertStarting();
       await (this.options.assertScopesAvailable?.() ??
         assertHerdrWorkerScopesAvailable(this.launch.env));
-      this.assertStarting();
-      await this.options.assertWritable?.();
       this.assertStarting();
       this.directory = await mkdtemp(join(tmpdir(), "inspire-herdr-"));
       this.assertStarting();

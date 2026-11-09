@@ -86,7 +86,13 @@ describe("preference persistence", () => {
   it("persists session action order as its own preference field", async () => {
     const store = new AppStore();
     await store.init("token");
-    const order = ["copy-id", "export", "rename", "clone", "terminal"] as const;
+    const order = [
+      "copy-id",
+      "export",
+      "rename",
+      "clone",
+      "resume-command",
+    ] as const;
     store.setSessionActionOrder([...order]);
     expect(store.getState().prefs.sessionActionOrder).toEqual(order);
     await vi.waitFor(() =>

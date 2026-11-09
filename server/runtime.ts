@@ -294,11 +294,8 @@ export interface RuntimeLike {
    * the host's current selection. */
   sessionCwd(sessionId: string): string | null;
   openSession(id: string): Promise<ActiveSnapshot>;
-  setSessionExecution(
-    sessionId: string,
-    target: "terminal" | "inspire",
-    interrupt?: boolean,
-  ): Promise<ActiveSnapshot>;
+  /** Attach to the live external Pi continuing the viewed branch. */
+  takeOverSession(sessionId: string): Promise<ActiveSnapshot>;
   deselectSession(): Promise<ActiveSnapshot>;
   newSession(
     cwdInput: string,
@@ -441,29 +438,38 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     Promise<void>
   >();
 
-  private terminalSessions = new Set<string>();
-  private terminalSessionStore?: {
-    has(sessionId: string): Promise<boolean>;
-    set(sessionId: string, terminal: boolean): Promise<void>;
-  };
-
-  setTerminalSessionStore(
-    store: NonNullable<RuntimeController["terminalSessionStore"]>,
-  ): this {
-    this.terminalSessionStore = store;
-    return this;
-  }
+  /** Sessions worked on through Inspire since this Host started. Their
+   * position survives idle reclamation and navigation without a new
+   * read-only check; a Host restart returns them to ordinary admission. */
+  private workingSessions = new Set<string>();
 
   private externalSessions: RuntimeExternalSessions | null = null;
-  private externalSessionGuard?: (
+  private externalLeaves?: (
+    sessionId: string,
+    sessionFile: string,
+  ) => Promise<(string | null)[]>;
+
+  private stopExternalSession?: (
     sessionId: string,
     sessionFile: string,
   ) => Promise<void>;
 
-  setExternalSessionGuard(
-    guard: (sessionId: string, sessionFile: string) => Promise<void>,
+  /** Explicit deletion ends every discovered instance using the file. */
+  setExternalSessionTerminator(
+    stop: (sessionId: string, sessionFile: string) => Promise<void>,
   ): this {
-    this.externalSessionGuard = guard;
+    this.stopExternalSession = stop;
+    return this;
+  }
+
+  /** Current branch leaves of live external Pi instances of a session. */
+  setExternalSessionPresence(
+    leaves: (
+      sessionId: string,
+      sessionFile: string,
+    ) => Promise<(string | null)[]>,
+  ): this {
+    this.externalLeaves = leaves;
     return this;
   }
 
@@ -475,7 +481,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         current: (slot) => !this.closing && this.slots.get(slot.id) === slot,
         emit: (slot, event) => this.emitSlotEvent(slot, event),
         reconcile: (slot, force) => this.reconcileSlot(slot, force),
-        released: (slot) => this.recoverExternalSession(slot),
+        released: (slot) => {
+          // The attached Pi left this branch, exited or stayed unreachable:
+          // keep working here with Inspire's own Pi.
+          this.workingSessions.add(slot.id);
+          if (
+            !this.closing &&
+            this.slots.get(slot.id) === slot &&
+            this.sessionViewObservers.has(slot.id) &&
+            !this.deletions.isDeleting(slot.id)
+          )
+            void this.withMaintenanceOperation(() =>
+              this.ensureProcess(slot),
+            ).catch(() => undefined);
+        },
+        corresponds: (slot, leafId) => this.leafContinuesView(slot, leafId),
+        syncUi: (slot, requests, owner) =>
+          this.extensionUi.synchronize(slot, requests, owner),
         assertUsable: (slot) => {
           if (this.deletions.isDeleting(slot.id))
             throw requestError("That session is being deleted", 409);
@@ -593,19 +615,31 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.forkReservationsById.has(sessionId) ||
         this.forkReservationsByPath.has(path),
       slot: (sessionId) => this.slots.get(sessionId),
-      isExternal: (slot) => this.externalSessions?.has(slot) === true,
       removeSlot: (sessionId, expected) => {
         this.externalSessions?.detach(expected);
         if (this.slots.get(sessionId) === expected)
           this.slots.delete(sessionId);
+        this.workingSessions.delete(sessionId);
       },
-      mutateSlot: (slot, operation) => this.mutateSlot(slot, operation),
-      stopWriter: (slot) => this.stopWriter(slot),
+      mutateSlot: (slot, operation) =>
+        this.queueSlotOperation(slot, slot.mutationQueue, operation, true),
+      stopInstances: async (session, slot) => {
+        if (slot) slot.inputStopEpoch += 1;
+        await Promise.all([
+          slot ? this.stopWriter(slot) : undefined,
+          this.stopExternalSession?.(session.id, session.path),
+        ]);
+        if (slot) {
+          this.externalSessions?.detach(slot);
+          slot.runState = slot.conflict ? "conflict" : "idle";
+        }
+      },
       catalogGet: (sessionId) => this.catalog.get(sessionId),
       catalogRefresh: (force) =>
         this.catalog.refresh(force, { requireComplete: true }),
       invalidateCatalog: () => this.catalog.invalidate(),
-      validateSessionRecord: (session) => this.validateSessionRecord(session),
+      validateSessionRecord: (session) =>
+        this.validateSessionRecord(session, "current"),
       deleteSessionRecord: (session, version) =>
         this.deleteSessionRecord(session, version),
     });
@@ -618,6 +652,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       throwIfConflicted: (slot) => this.throwIfConflicted(slot),
       processOwner: (process) => this.processRegistry.ownerOf(process),
+      externalOwner: (slot) => this.externalSessions?.connection(slot),
       failUnknown: (slot, error) => this.failUnknownRpcOutcome(slot, error),
       emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
       scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
@@ -710,6 +745,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         setProjectionConflict: (slot, kind, message, diagnosticFields) =>
           this.setProjectionConflict(slot, kind, message, diagnosticFields),
         stopWriter: (slot) => this.stopWriter(slot),
+        projectionSettled: (slot, external, previousLeafId) =>
+          this.followView(slot, external, previousLeafId),
         renewView: (slot) => this.renewView(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
         logRuntimeError: (sessionId, error, event) =>
@@ -757,6 +794,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       isClosing: () => this.closing,
       selectedSessionId: () => this.selectedSessionId,
       isObserved: (sessionId) => this.sessionViewObservers.has(sessionId),
+      isExternal: (slot) => this.externalSessions?.has(slot) === true,
       slots: () => this.slots.values(),
       isOpening: (sessionId) => this.opening.has(sessionId),
       isLoading: (sessionId) => this.loadingSlots.has(sessionId),
@@ -880,7 +918,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.activeOperations > 0 ||
         slot.stopping !== null ||
         slot.startupPhase === "starting" ||
-        slot.navigationLease !== null ||
         slot.pendingBranchBridge !== null ||
         slot.pendingPartialPersistence !== null ||
         slot.persistenceExpectations.length > 0,
@@ -967,6 +1004,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       diagnostic: (level, event, fields) =>
         this.diagnostics.record(level, event, fields),
       env: {
+        // Inspire already controls its own workers; they are not external
+        // instances to attach to.
+        PI_ATTACH_CONTROL: "0",
         INSPIRE_BRANCH_COMMAND: bridge.command,
         INSPIRE_BRANCH_STATUS_KEY: bridge.statusKey,
         INSPIRE_BRANCH_WORKER_ID: bridge.workerId,
@@ -975,9 +1015,93 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private effectiveLeaf(slot: RuntimeSlot): string | null {
-    return slot.navigationLease
-      ? slot.navigationLease.effectiveLeafId
-      : (slot.projection?.leafId ?? null);
+    if (slot.navigationLease) return slot.navigationLease.effectiveLeafId;
+    const view = slot.viewLeafId;
+    if (
+      !slot.process &&
+      view !== undefined &&
+      (view === null || slot.projection?.entry(view))
+    )
+      return view;
+    return slot.projection?.leafId ?? null;
+  }
+
+  /** Keep each view on its own branch as the saved tree grows: a worker's
+   * actual leaf, an attached Pi's reported leaf, or else the latest
+   * continuation of the branch being viewed. */
+  private async followView(
+    slot: RuntimeSlot,
+    external: boolean,
+    previousLeafId: string | null | undefined,
+  ): Promise<void> {
+    const projection = slot.projection;
+    if (!projection) return;
+    const before = this.effectiveLeaf(slot);
+    const rpc = slot.process;
+    if (rpc && slot.ready) {
+      if (!external || slot.pendingBranchBridge) return;
+      // Only use a cursor that this worker has seen. The new file tail may
+      // belong to another Pi and is absent from this worker's in-memory tree.
+      const cursor = slot.navigationLease
+        ? slot.navigationLease.effectiveLeafId
+        : previousLeafId;
+      const leaf = await rpc
+        .request<{ leafId?: unknown }>({
+          type: "get_entries",
+          ...(cursor ? { since: cursor } : {}),
+        })
+        .then(
+          (response) =>
+            typeof response.leafId === "string" || response.leafId === null
+              ? response.leafId
+              : cursor,
+          (error) => {
+            this.logRuntimeError(slot.id, error, "worker_branch_read");
+            return cursor;
+          },
+        );
+      if (
+        leaf === undefined ||
+        slot.process !== rpc ||
+        slot.projection !== projection ||
+        !slot.bridge
+      )
+        return;
+      slot.navigationLease =
+        leaf === projection.leafId
+          ? null
+          : {
+              workerId: slot.bridge.workerId,
+              sourceRevision: projection.revision,
+              durableLeafId: projection.leafId,
+              effectiveLeafId: leaf,
+              targetId: leaf ?? "",
+              mode: "switch",
+            };
+    } else if (!rpc && slot.viewLeafId !== undefined) {
+      const reported = this.externalSessions?.reportedLeaf(slot);
+      slot.viewLeafId =
+        reported !== undefined &&
+        (reported === null || projection.entry(reported))
+          ? reported
+          : projection.latestContinuation(slot.viewLeafId);
+    }
+    const after = this.effectiveLeaf(slot);
+    if (after === before) return;
+    // Growth of the same branch is an ordinary append, not a new view.
+    for (
+      let id = after;
+      id !== null;
+      id = projection.entry(id)?.parentId ?? null
+    )
+      if (id === before) return;
+    slot.branchRevision += 1;
+    this.renewView(slot);
+    this.emitSlotEvent(slot, {
+      type: "branch_changed",
+      revision: slot.branchRevision,
+      effectiveLeafId: after,
+    });
   }
 
   private renewView(slot: RuntimeSlot): void {
@@ -1076,9 +1200,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot: RuntimeSlot,
     queue: RuntimeOperationQueue,
     operation: () => Promise<T>,
+    allowDeleting = false,
   ): Promise<T> {
     const guarded = () => {
       if (this.closing) throw requestError("Runtime is closing", 503);
+      if (!allowDeleting && this.deletions.isDeleting(slot.id))
+        throw requestError("That session is being deleted", 409);
       return operation();
     };
     slot.activeOperations += 1;
@@ -1389,33 +1516,20 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   private requireWorkspace(slot: RuntimeSlot, externalChecked = false): void {
-    if (this.terminalSessions.has(slot.id))
-      throw requestError(
-        "This session was handed to the terminal. Choose Continue in Inspire to check its owner.",
-        409,
-      );
     if (
       slot.readOnlyReason &&
-      !(
-        externalChecked &&
-        (slot.readOnlyReason === "external-active" ||
-          slot.readOnlyReason === "external-unavailable")
-      )
+      !(externalChecked && slot.readOnlyReason === "external-active")
     )
       throw requestError(
         slot.readOnlyReason === "workspace-unavailable"
           ? "This session is read-only because its project folder is unavailable"
-          : slot.readOnlyReason === "external-active"
-            ? "This session is open in another Pi. Writing is unavailable until it releases the session."
-            : "The external Pi owner is unavailable; its release has not been confirmed.",
+          : "This session is open in another Pi. Take over to continue it here.",
         409,
         {
           code:
             slot.readOnlyReason === "workspace-unavailable"
               ? "SESSION_WORKSPACE_UNAVAILABLE"
-              : slot.readOnlyReason === "external-active"
-                ? "EXTERNAL_PI_WRITER_ACTIVE"
-                : "SESSION_OWNER_UNAVAILABLE",
+              : "EXTERNAL_PI_WRITER_ACTIVE",
         },
       );
   }
@@ -1431,10 +1545,24 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.connectExternalSession(slot);
     if (this.externalSessions?.has(slot))
       throw requestError(
-        "Use the original Pi host for this action while this session is running there.",
+        "This action needs Inspire's own Pi. It is unavailable while this session is attached to another Pi.",
         409,
       );
-    return this.workerLifecycle.ensureFreshWriter(slot);
+    const writer = await this.workerLifecycle.ensureFreshWriter(slot);
+    // Pi opens at the saved default; continue from the branch being viewed.
+    const target = slot.viewLeafId;
+    slot.viewLeafId = undefined;
+    const entry = target ? slot.projection?.entry(target) : undefined;
+    if (entry && target !== slot.projection?.leafId)
+      await this.navigateInsideGate(slot, {
+        sessionId: slot.id,
+        targetId: target!,
+        mode: isBranchEditTarget(entry) ? "edit" : "switch",
+        revision: slot.branchRevision,
+      }).catch((error: unknown) =>
+        this.logRuntimeError(slot.id, error, "view_restore"),
+      );
+    return writer;
   }
 
   private async failUnknownRpcOutcome(
@@ -1659,12 +1787,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       runState: slot.runState,
       ...(indicator ? { indicator } : {}),
       ...(needsInput ? { needsInput: true } : {}),
-      ...(this.externalSessions?.has(slot)
-        ? {
-            external: true,
-            nativeModelControls: this.externalSessions.supportsModels(slot),
-          }
-        : {}),
+      ...(this.externalSessions?.has(slot) ? { external: true } : {}),
     };
   }
 
@@ -1895,8 +2018,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (
         !this.closing &&
         !slot.readOnlyReason &&
-        slot.availableModels === null &&
-        this.externalSessions.supportsModels(slot)
+        slot.availableModels === null
       )
         return this.externalSessions.models(slot).then(
           () => undefined,
@@ -2135,9 +2257,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           const root = await this.resolveWorkspaceRoot(session.cwd);
           if (!root || !slot.readOnlyReason) return;
           slot.cwd = root;
-          slot.readOnlyReason = this.terminalSessions.has(slot.id)
-            ? "terminal"
-            : null;
+          slot.readOnlyReason = null;
           if (slot.preview) slot.preview = { ...slot.preview, cwd: root };
           this.renewView(slot);
         });
@@ -2170,13 +2290,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const loading = (async () => {
       const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd);
       const cwd = workspaceRoot ?? session.cwd;
-      if (await this.terminalSessionStore?.has(session.id))
-        this.terminalSessions.add(session.id);
-      const readOnlyReason = !workspaceRoot
-        ? "workspace-unavailable"
-        : this.terminalSessions.has(session.id)
-          ? "terminal"
-          : null;
+      const readOnlyReason = !workspaceRoot ? "workspace-unavailable" : null;
       const { projection, preview } = await this.openProjection(session, cwd);
       if (this.closing) {
         await projection.close();
@@ -2264,12 +2378,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       this.sessionViewObservers.has(slot.id) &&
       !slot.process &&
       !slot.conflict &&
-      // An established native connection already observes its owner, including
-      // temporary outages. Once it confirms retirement it detaches and hands
-      // recovery back to ordinary writer admission.
+      // An attachment observes its own Pi and continues here on release.
       !this.externalSessions?.has(slot) &&
-      (slot.readOnlyReason === "external-active" ||
-        slot.readOnlyReason === "external-unavailable")
+      slot.readOnlyReason === "external-active"
     );
   }
 
@@ -2310,51 +2421,78 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.externalRecoveryTimer.unref?.();
   }
 
-  private markExternalUnavailable(slot: RuntimeSlot, error: unknown): void {
-    const reason =
-      (error as { code?: string }).code === "EXTERNAL_PI_WRITER_ACTIVE"
-        ? "external-active"
-        : "external-unavailable";
-    if (slot.readOnlyReason === reason) return;
-    slot.readOnlyReason = reason;
+  private markExternalActive(slot: RuntimeSlot): void {
+    if (slot.readOnlyReason === "external-active") return;
+    slot.readOnlyReason = "external-active";
+    // Read-only viewing follows the branch it entered on.
+    if (slot.viewLeafId === undefined && slot.projection)
+      slot.viewLeafId = slot.projection.leafId;
     this.emitSlotEvent(slot, { type: "runtime_ready" });
   }
 
+  /** A leaf on this view's root-to-leaf line: an ancestor of the displayed
+   * leaf (a report may lag one append) or a continuation of it. */
+  private leafContinuesView(slot: RuntimeSlot, leafId: string | null): boolean {
+    const view = this.effectiveLeaf(slot);
+    if (leafId === view) return true;
+    if (!slot.projection) return false;
+    return slot.projection.onSameLine(view, leafId);
+  }
+
+  /** Viewing stays read-only while a live external Pi continues the displayed
+   * branch, unless this session is already being worked on in Inspire.
+   * Presence is observed each time; nothing is fenced in advance. */
   private async assertExternalWriterAvailable(
     slot: RuntimeSlot,
   ): Promise<void> {
-    try {
-      if (slot.sessionPath)
-        await this.externalSessionGuard?.(slot.id, slot.sessionPath);
-    } catch (error) {
-      this.markExternalUnavailable(slot, error);
-      throw error;
-    }
+    if (!slot.sessionPath || !this.externalLeaves) return;
+    if (this.workingSessions.has(slot.id)) return;
+    const leaves = await this.externalLeaves(slot.id, slot.sessionPath).catch(
+      () => [],
+    );
+    if (!leaves.some((leaf) => this.leafContinuesView(slot, leaf))) return;
+    this.markExternalActive(slot);
+    throw requestError(
+      "This session is open in another Pi. Take over to continue it here.",
+      409,
+      { code: "EXTERNAL_PI_WRITER_ACTIVE" },
+    );
   }
 
+  /** True when attached to an external Pi; otherwise checks presence. */
   private async connectExternalSession(slot: RuntimeSlot): Promise<boolean> {
-    try {
-      const connected = (await this.externalSessions?.connect(slot)) === true;
-      if (!connected) await this.assertExternalWriterAvailable(slot);
-      // A free occupancy check admits startup; only a connected native owner
-      // or a fully attested local writer clears the read-only boundary.
-      return connected;
-    } catch (error) {
-      // An unavailable observer is not evidence that nobody owns this file.
-      // Keep history usable and make the execution boundary visible.
-      this.markExternalUnavailable(slot, error);
-      throw error;
-    }
+    if (this.externalSessions?.has(slot))
+      return this.externalSessions.connect(slot, (leaf) =>
+        this.leafContinuesView(slot, leaf),
+      );
+    await this.assertExternalWriterAvailable(slot);
+    return false;
+  }
+
+  /** Attach to the preferred live Pi continuing this view's branch. With
+   * none left, continue directly with Inspire's own Pi. */
+  async takeOverSession(sessionId: string): Promise<ActiveSnapshot> {
+    return this.withMaintenanceOperation(async () => {
+      const slot = await this.prepareCatalogSlot(sessionId);
+      return this.mutateSlot(slot, async () => {
+        this.requireWorkspace(slot, true);
+        if (!slot.process && !this.externalSessions?.has(slot)) {
+          const connected = await this.externalSessions?.connect(slot, (leaf) =>
+            this.leafContinuesView(slot, leaf),
+          );
+          this.workingSessions.add(slot.id);
+          if (!connected) await this.ensureFreshWriterInsideGate(slot, true);
+        }
+        return this.snapshotSlot(slot);
+      });
+    });
   }
 
   private async ensureProcess(
     slot: RuntimeSlot,
     observedOnly = false,
   ): Promise<RuntimeSlot> {
-    if (
-      slot.readOnlyReason === "workspace-unavailable" ||
-      this.terminalSessions.has(slot.id)
-    )
+    if (slot.readOnlyReason === "workspace-unavailable")
       this.requireWorkspace(slot);
     if (
       slot.process &&
@@ -2411,6 +2549,36 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     );
     try {
       const slot = await this.prepareCatalogSlot(id);
+      // Entering a session shows its saved default, as a new Pi would, unless
+      // it is already being worked on here.
+      if (
+        !this.workingSessions.has(slot.id) &&
+        !slot.process &&
+        !this.externalSessions?.has(slot)
+      )
+        slot.viewLeafId =
+          slot.readOnlyReason === "external-active"
+            ? (slot.projection?.leafId ?? null)
+            : undefined;
+      // A worker warmed by an earlier visit does not exempt a session that was
+      // only viewed: entering applies the live-instance rule again.
+      // Checked behind the slot's operations, never delaying selection.
+      if (
+        this.externalLeaves &&
+        !this.workingSessions.has(slot.id) &&
+        slot.process &&
+        slot.ready &&
+        !isBusyRunState(slot.runState) &&
+        !slot.navigationLease
+      )
+        void this.mutateSlot(slot, async () => {
+          if (this.workingSessions.has(slot.id) || !slot.process) return;
+          try {
+            await this.assertExternalWriterAvailable(slot);
+          } catch {
+            await this.stopWriter(slot);
+          }
+        }).catch(() => undefined);
       const ready = Boolean(slot.process && slot.ready);
       const snapshot = await this.snapshotSlot(slot);
       if (selection === this.selectionSequence) {
@@ -2428,11 +2596,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         });
         this.scheduleIdleWorkerEviction();
       }
-      if (
-        !ready &&
-        slot.readOnlyReason !== "workspace-unavailable" &&
-        !this.terminalSessions.has(slot.id)
-      )
+      if (!ready && slot.readOnlyReason !== "workspace-unavailable")
         void this.ensureProcess(slot).catch(() => undefined);
       return snapshot;
     } finally {
@@ -2441,74 +2605,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       else this.selectionReservations.delete(id);
       this.scheduleIdleWorkerEviction();
     }
-  }
-
-  async setSessionExecution(
-    sessionId: string,
-    target: "terminal" | "inspire",
-    interrupt = false,
-  ): Promise<ActiveSnapshot> {
-    return this.withMaintenanceOperation(async () => {
-      const slot = await this.prepareCatalogSlot(sessionId);
-      return this.mutateSlot(slot, async () => {
-        if (target === "inspire") {
-          await this.terminalSessionStore?.set(sessionId, false);
-          this.terminalSessions.delete(sessionId);
-          if (slot.readOnlyReason === "terminal") slot.readOnlyReason = null;
-          try {
-            if (!slot.process && !(await this.connectExternalSession(slot)))
-              await this.ensureFreshWriterInsideGate(slot, true);
-          } catch (error) {
-            if (!slot.readOnlyReason) throw error;
-          }
-          return this.snapshotSlot(slot);
-        }
-        if (
-          this.externalSessions?.has(slot) ||
-          (slot.readOnlyReason && slot.readOnlyReason !== "terminal")
-        )
-          throw requestError("This session is not owned by Inspire.", 409);
-        if (slot.conflict || slot.navigationLease)
-          throw requestError(
-            "Return to the saved branch and resolve any conflict before using this session in the terminal.",
-            409,
-          );
-        if (
-          slot.pendingQueues.totalCount > 0 ||
-          slot.pendingPrompt ||
-          slot.deferredPrompts.length > 0
-        )
-          throw requestError(
-            "Stop and recover Pending input before handing this session to the terminal.",
-            409,
-          );
-        const busy =
-          isBusyRunState(slot.runState) ||
-          slot.nativeBash ||
-          slot.pendingExtensionUiRequests.size > 0;
-        if (busy && !interrupt)
-          throw requestError(
-            "This session became busy. Stop it before handing it to the terminal.",
-            409,
-          );
-        if (slot.stoppingInput)
-          throw requestError("Stop is still in progress", 409);
-        slot.stoppingInput = true;
-        slot.inputStopEpoch += 1;
-        try {
-          await this.terminalSessionStore?.set(sessionId, true);
-          this.terminalSessions.add(sessionId);
-          slot.readOnlyReason = "terminal";
-          await this.stopWriter(slot);
-          await this.reconcileSlot(slot, true);
-          slot.runState = slot.conflict ? "conflict" : "idle";
-          this.emitSlotEvent(slot, { type: "runtime_ready" });
-          return this.snapshotSlot(slot);
-        } finally {
-          slot.stoppingInput = false;
-        }
-      });
-    });
   }
 
   async deselectSession(): Promise<ActiveSnapshot> {
@@ -2838,6 +2934,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<ComposerHistoryEntry | null> {
     const slot = this.requireSlot(request.sessionId);
     const stopEpoch = slot.inputStopEpoch;
+    // Sending makes this an Inspire working session; viewing alone does not.
+    if (!slot.readOnlyReason) this.workingSessions.add(slot.id);
     if (this.externalSessions && !slot.process) {
       await this.ensureProcess(slot);
       if (this.externalSessions.has(slot))
@@ -3524,225 +3622,230 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     request: BranchNavigateRequest,
   ): Promise<BranchNavigateResponse> {
     const slot = this.requireSlot(request.sessionId);
-    return this.mutateSlot(slot, async () => {
-      this.requireIdleBranchSlot(slot, request.revision);
-      const ready = await this.ensureFreshWriterInsideGate(slot);
-      this.requireIdleBranchSlot(slot, request.revision);
-      const rpc = ready.process;
-      const projection = ready.projection;
-      const bridge = ready.bridge;
-      if (!projection || !bridge)
-        throw requestError("Branch navigation bridge is unavailable", 503);
-      const target = projection.entry(request.targetId);
-      if (!target) throw requestError("Branch target does not exist", 404);
+    return this.mutateSlot(slot, () => this.navigateInsideGate(slot, request));
+  }
 
-      const editable = isBranchEditTarget(target);
-      if (editable !== (request.mode === "edit"))
-        throw requestError(
-          editable
-            ? "Use Edit from here for this message"
-            : "This point continues after the selected entry",
-          409,
-        );
-      const editorText = editable
-        ? projection.editableText(request.targetId, MAX_PROMPT_CHARS)
-        : undefined;
-      const beforeLeaf = this.effectiveLeaf(slot);
-      const navigationTarget = nativeNavigationLeaf(target, beforeLeaf);
-      if (request.targetId === beforeLeaf)
-        return {
-          snapshot: await this.snapshotSlot(slot),
-          ...(editorText ? { editorText } : {}),
-        };
-      const tail = projection.tailEntryId;
-      const sourceProjectionRevision = projection.revision;
-      const sourceProjectionFingerprint = projection.fingerprint;
-      if (!tail)
-        throw requestError("An empty session cannot change branches", 409);
-      if (slot.pendingBranchBridge)
-        throw requestError("A branch operation is already pending", 409);
+  /** Branch navigation of the slot's own worker; caller holds the slot gate. */
+  private async navigateInsideGate(
+    slot: RuntimeSlot,
+    request: BranchNavigateRequest,
+  ): Promise<BranchNavigateResponse> {
+    this.requireIdleBranchSlot(slot, request.revision);
+    const ready = await this.ensureFreshWriterInsideGate(slot);
+    this.requireIdleBranchSlot(slot, request.revision);
+    const rpc = ready.process;
+    const projection = ready.projection;
+    const bridge = ready.bridge;
+    if (!projection || !bridge)
+      throw requestError("Branch navigation bridge is unavailable", 503);
+    const target = projection.entry(request.targetId);
+    if (!target) throw requestError("Branch target does not exist", 404);
 
-      const pending = this.makePendingBranch(slot, bridge);
-      pending.navigationParentId = navigationTarget;
-      pending.beforeLeafId = beforeLeaf;
-      pending.summarize = request.summarize ?? false;
-      const bridgeRequest: BranchBridgeRequest = {
-        v: BRANCH_BRIDGE_VERSION,
-        nonce: pending.nonce,
-        workerId: bridge.workerId,
-        sessionId: slot.id,
-        operation: "navigate",
-        targetId: request.targetId,
-        summarize: request.summarize ?? false,
-        ...(request.customInstructions
-          ? { customInstructions: request.customInstructions }
-          : {}),
-      };
-      const payload = encodeBranchBridgeJson(
-        bridgeRequest,
-        BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+    const editable = isBranchEditTarget(target);
+    if (editable !== (request.mode === "edit"))
+      throw requestError(
+        editable
+          ? "Use Edit from here for this message"
+          : "This point continues after the selected entry",
+        409,
       );
-      const promptFence = rpc
-        .request(
-          { type: "prompt", message: `/${bridge.command} ${payload}` },
-          this.branchBridgeTimeoutMs,
-        )
-        .then(
-          () => {
-            // For this registered command, the response fences the finished handler.
-            if (!pending.settled) {
-              pending.settled = true;
-              pending.reject(
-                new Error("Pi completed the branch command without its result"),
-              );
-            }
-          },
-          (error: unknown) => {
-            if (!pending.settled) {
-              pending.settled = true;
-              pending.reject(
-                error instanceof Error ? error : new Error(String(error)),
-              );
-            }
-            throw error;
-          },
-        );
-      pending.finished = promptFence;
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const resultFence = Promise.race([
-        pending.result,
-        new Promise<BranchBridgeResult>((_resolve, reject) => {
-          if (this.branchBridgeTimeoutMs === null) return;
-          timeout = setTimeout(
-            () =>
-              reject(new Error("Timed out waiting for branch bridge result")),
-            this.branchBridgeTimeoutMs,
-          );
-          timeout.unref();
-        }),
-      ]);
-      const [resultOutcome, promptOutcome] = await Promise.allSettled([
-        resultFence,
-        promptFence,
-      ]);
-      if (timeout) clearTimeout(timeout);
-      if (
-        promptOutcome.status === "rejected" &&
-        !isPiRpcOutcomeUnknown(promptOutcome.reason) &&
-        resultOutcome.status === "rejected"
-      )
-        throw promptOutcome.reason;
-      if (
-        pending.duplicate ||
-        resultOutcome.status === "rejected" ||
-        promptOutcome.status === "rejected"
-      ) {
-        return this.failUnknownBranchOutcome(
-          slot,
-          "Branch navigation outcome is unknown; the worker was stopped and disk state reconciled",
-        );
-      }
-      const result = resultOutcome.value;
-      let verified: { entries?: unknown[]; leafId?: unknown };
-      try {
-        verified = await rpc.request({
-          type: "get_entries",
-          since: tail,
-        });
-      } catch {
-        return this.failUnknownBranchOutcome(
-          slot,
-          "Branch navigation could not be verified; the worker was stopped and disk state reconciled",
-        );
-      }
-      if (
-        !Array.isArray(verified.entries) ||
-        verified.entries.length > 100 ||
-        Buffer.byteLength(JSON.stringify(verified)) > 1024 * 1024
-      ) {
-        return this.failUnknownBranchOutcome(
-          slot,
-          "Branch navigation verification exceeded its bound; the worker was stopped",
-        );
-      }
-      const delta = verified.entries as SessionEntry[];
-      const validDelta =
-        (!result.summaryId || request.summarize) &&
-        branchDeltaMatches(result, delta, navigationTarget, beforeLeaf);
-      await this.reconcileSlot(slot, true);
-      if (
-        slot.conflict ||
-        (delta.length === 0
-          ? projection.revision !== sourceProjectionRevision ||
-            projection.fingerprint !== sourceProjectionFingerprint
-          : !validDelta ||
-            !delta.every((entry) => projection.persistedEntryMatches(entry))) ||
-        verified.leafId !== result.effectiveLeaf ||
-        result.beforeLeaf !== beforeLeaf
-      )
-        return this.failUnknownBranchOutcome(
-          slot,
-          "Branch navigation verification failed; the worker was stopped and disk state reconciled",
-        );
-      // Stop and process exit retire this worker outside the mutation lane.
-      // Reconciliation must not let its finished handler recreate that lease.
-      if (
-        slot.process !== rpc ||
-        slot.bridge !== bridge ||
-        slot.pendingBranchBridge !== pending
-      )
-        throw requestError(
-          "Branch navigation worker stopped before the result could be applied",
-          409,
-        );
-      slot.pendingBranchBridge = null;
-      if (result.cancelled) {
-        if (result.effectiveLeaf !== beforeLeaf)
-          return this.failUnknownBranchOutcome(
-            slot,
-            "Cancelled branch navigation changed the effective leaf",
-          );
-        return { snapshot: await this.snapshotSlot(slot), cancelled: true };
-      }
-      if (!result.ok || result.error) {
-        if (result.effectiveLeaf !== beforeLeaf)
-          return this.failUnknownBranchOutcome(
-            slot,
-            "Failed branch navigation changed the effective leaf",
-          );
-        throw requestError(result.error ?? "Branch navigation failed", 409);
-      }
-      if (!validDelta) {
-        return this.failUnknownBranchOutcome(
-          slot,
-          "Branch navigation reached an unexpected leaf; the worker was stopped",
-        );
-      }
-      slot.branchRevision += 1;
-      slot.deliveryNavigationEpoch += 1;
-      this.renewView(slot);
-      if (result.effectiveLeaf === projection.leafId) {
-        slot.navigationLease = null;
-      } else {
-        slot.navigationLease = {
-          workerId: bridge.workerId,
-          sourceRevision: projection.revision,
-          durableLeafId: projection.leafId,
-          effectiveLeafId: result.effectiveLeaf,
-          targetId: request.targetId,
-          mode: request.mode,
-        };
-      }
-      this.emitSlotEvent(slot, {
-        type: "branch_changed",
-        revision: slot.branchRevision,
-        effectiveLeafId: result.effectiveLeaf,
-      });
+    const editorText = editable
+      ? projection.editableText(request.targetId, MAX_PROMPT_CHARS)
+      : undefined;
+    const beforeLeaf = this.effectiveLeaf(slot);
+    const navigationTarget = nativeNavigationLeaf(target, beforeLeaf);
+    if (request.targetId === beforeLeaf)
       return {
         snapshot: await this.snapshotSlot(slot),
-        ...(editorText !== undefined ? { editorText } : {}),
+        ...(editorText ? { editorText } : {}),
       };
+    const tail = projection.tailEntryId;
+    const sourceProjectionRevision = projection.revision;
+    const sourceProjectionFingerprint = projection.fingerprint;
+    if (!tail)
+      throw requestError("An empty session cannot change branches", 409);
+    if (slot.pendingBranchBridge)
+      throw requestError("A branch operation is already pending", 409);
+
+    const pending = this.makePendingBranch(slot, bridge);
+    pending.navigationParentId = navigationTarget;
+    pending.beforeLeafId = beforeLeaf;
+    pending.summarize = request.summarize ?? false;
+    const bridgeRequest: BranchBridgeRequest = {
+      v: BRANCH_BRIDGE_VERSION,
+      nonce: pending.nonce,
+      workerId: bridge.workerId,
+      sessionId: slot.id,
+      operation: "navigate",
+      targetId: request.targetId,
+      summarize: request.summarize ?? false,
+      ...(request.customInstructions
+        ? { customInstructions: request.customInstructions }
+        : {}),
+    };
+    const payload = encodeBranchBridgeJson(
+      bridgeRequest,
+      BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
+    );
+    const promptFence = rpc
+      .request(
+        { type: "prompt", message: `/${bridge.command} ${payload}` },
+        this.branchBridgeTimeoutMs,
+      )
+      .then(
+        () => {
+          // For this registered command, the response fences the finished handler.
+          if (!pending.settled) {
+            pending.settled = true;
+            pending.reject(
+              new Error("Pi completed the branch command without its result"),
+            );
+          }
+        },
+        (error: unknown) => {
+          if (!pending.settled) {
+            pending.settled = true;
+            pending.reject(
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          }
+          throw error;
+        },
+      );
+    pending.finished = promptFence;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const resultFence = Promise.race([
+      pending.result,
+      new Promise<BranchBridgeResult>((_resolve, reject) => {
+        if (this.branchBridgeTimeoutMs === null) return;
+        timeout = setTimeout(
+          () => reject(new Error("Timed out waiting for branch bridge result")),
+          this.branchBridgeTimeoutMs,
+        );
+        timeout.unref();
+      }),
+    ]);
+    const [resultOutcome, promptOutcome] = await Promise.allSettled([
+      resultFence,
+      promptFence,
+    ]);
+    if (timeout) clearTimeout(timeout);
+    if (
+      promptOutcome.status === "rejected" &&
+      !isPiRpcOutcomeUnknown(promptOutcome.reason) &&
+      resultOutcome.status === "rejected"
+    )
+      throw promptOutcome.reason;
+    if (
+      pending.duplicate ||
+      resultOutcome.status === "rejected" ||
+      promptOutcome.status === "rejected"
+    ) {
+      return this.failUnknownBranchOutcome(
+        slot,
+        "Branch navigation outcome is unknown; the worker was stopped and disk state reconciled",
+      );
+    }
+    const result = resultOutcome.value;
+    let verified: { entries?: unknown[]; leafId?: unknown };
+    try {
+      verified = await rpc.request({
+        type: "get_entries",
+        since: tail,
+      });
+    } catch {
+      return this.failUnknownBranchOutcome(
+        slot,
+        "Branch navigation could not be verified; the worker was stopped and disk state reconciled",
+      );
+    }
+    if (
+      !Array.isArray(verified.entries) ||
+      verified.entries.length > 100 ||
+      Buffer.byteLength(JSON.stringify(verified)) > 1024 * 1024
+    ) {
+      return this.failUnknownBranchOutcome(
+        slot,
+        "Branch navigation verification exceeded its bound; the worker was stopped",
+      );
+    }
+    const delta = verified.entries as SessionEntry[];
+    const validDelta =
+      (!result.summaryId || request.summarize) &&
+      branchDeltaMatches(result, delta, navigationTarget, beforeLeaf);
+    await this.reconcileSlot(slot, true);
+    if (
+      slot.conflict ||
+      (delta.length === 0
+        ? projection.revision !== sourceProjectionRevision ||
+          projection.fingerprint !== sourceProjectionFingerprint
+        : !validDelta ||
+          !delta.every((entry) => projection.persistedEntryMatches(entry))) ||
+      verified.leafId !== result.effectiveLeaf ||
+      result.beforeLeaf !== beforeLeaf
+    )
+      return this.failUnknownBranchOutcome(
+        slot,
+        "Branch navigation verification failed; the worker was stopped and disk state reconciled",
+      );
+    // Stop and process exit retire this worker outside the mutation lane.
+    // Reconciliation must not let its finished handler recreate that lease.
+    if (
+      slot.process !== rpc ||
+      slot.bridge !== bridge ||
+      slot.pendingBranchBridge !== pending
+    )
+      throw requestError(
+        "Branch navigation worker stopped before the result could be applied",
+        409,
+      );
+    slot.pendingBranchBridge = null;
+    if (result.cancelled) {
+      if (result.effectiveLeaf !== beforeLeaf)
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Cancelled branch navigation changed the effective leaf",
+        );
+      return { snapshot: await this.snapshotSlot(slot), cancelled: true };
+    }
+    if (!result.ok || result.error) {
+      if (result.effectiveLeaf !== beforeLeaf)
+        return this.failUnknownBranchOutcome(
+          slot,
+          "Failed branch navigation changed the effective leaf",
+        );
+      throw requestError(result.error ?? "Branch navigation failed", 409);
+    }
+    if (!validDelta) {
+      return this.failUnknownBranchOutcome(
+        slot,
+        "Branch navigation reached an unexpected leaf; the worker was stopped",
+      );
+    }
+    slot.branchRevision += 1;
+    slot.deliveryNavigationEpoch += 1;
+    this.renewView(slot);
+    if (result.effectiveLeaf === projection.leafId) {
+      slot.navigationLease = null;
+    } else {
+      slot.navigationLease = {
+        workerId: bridge.workerId,
+        sourceRevision: projection.revision,
+        durableLeafId: projection.leafId,
+        effectiveLeafId: result.effectiveLeaf,
+        targetId: request.targetId,
+        mode: request.mode,
+      };
+    }
+    this.emitSlotEvent(slot, {
+      type: "branch_changed",
+      revision: slot.branchRevision,
+      effectiveLeafId: result.effectiveLeaf,
     });
+    return {
+      snapshot: await this.snapshotSlot(slot),
+      ...(editorText !== undefined ? { editorText } : {}),
+    };
   }
 
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {
@@ -4232,14 +4335,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async abortInside(sessionId: string): Promise<PendingRecovery> {
     const externalSlot = this.requireSlot(sessionId);
     if (this.externalSessions?.has(externalSlot)) {
-      const interruptionScope = await this.useSlot(externalSlot, () =>
+      await this.useSlot(externalSlot, () =>
         this.externalSessions!.abort(externalSlot),
       );
-      return {
-        steering: [],
-        followUp: [],
-        ...(interruptionScope ? { interruptionScope } : {}),
-      };
+      // The attached Pi interrupts agent work, not its own shell commands.
+      return { steering: [], followUp: [], interruptionScope: "agent" };
     }
     const initialSlot = this.requireSlot(sessionId);
     if (initialSlot.conflict) {
