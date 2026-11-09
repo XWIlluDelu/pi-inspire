@@ -24,6 +24,7 @@ import {
   resourceReferenceLine,
 } from "../../shared/resource-references";
 import { formatBytes } from "../format";
+import type { FileSourceJump } from "../resource-preview";
 import { store } from "../store";
 import { highlightSource, languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
@@ -70,11 +71,6 @@ function hasSourceAndPreview(
   );
 }
 
-interface LineJump {
-  line: number;
-  request: number;
-}
-
 interface SourceReadingPosition {
   current: { top: number; left: number } | null;
   save?: () => void;
@@ -89,12 +85,13 @@ function SourceCodePreview({
 }: {
   text: string;
   language: string;
-  jump: LineJump | null;
+  jump: FileSourceJump | null;
   readingPosition?: SourceReadingPosition;
   truncated?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const lines = useMemo(() => text.split("\n"), [text]);
+  const targetLine = jump ? Math.min(lines.length, jump.line) : null;
   const lineNumbers = useMemo(
     () => lines.map((_, index) => index + 1).join("\n"),
     [lines],
@@ -114,7 +111,7 @@ function SourceCodePreview({
     }
     root.scrollTop = 0;
     root.scrollLeft = 0;
-    if (!jump) return;
+    if (targetLine === null) return;
     const lineHeight = Number.parseFloat(getComputedStyle(root).lineHeight);
     const source = root.querySelector<HTMLElement>(".source-view__pre");
     const paddingTop = source
@@ -123,11 +120,11 @@ function SourceCodePreview({
     if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
     root.scrollTop = Math.max(
       0,
-      (jump.line - 1) * lineHeight +
+      (targetLine - 1) * lineHeight +
         (Number.isFinite(paddingTop) ? paddingTop : 0) -
         root.clientHeight / 3,
     );
-  }, [jump, readingPosition]);
+  }, [jump, readingPosition, targetLine]);
   return (
     <div
       className="source-view source-reader"
@@ -217,7 +214,7 @@ function ReadyResource({
   interactiveUrl,
 }: {
   state: ContextPaneView;
-  jump: LineJump | null;
+  jump: FileSourceJump | null;
   viewMode: FileViewMode;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
@@ -342,7 +339,7 @@ function ResourcePreviewContent({
   interactiveUrl,
 }: {
   state: ContextPaneView;
-  jump?: LineJump | null;
+  jump?: FileSourceJump | null;
   viewMode?: FileViewMode;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
@@ -388,7 +385,7 @@ function ResourcePreviewContent({
     );
   if (preview.status === "error") {
     const invalid =
-      state.resourceAvailability[preview.reference]?.availability === "invalid";
+      state.resourceStanding[preview.reference]?.availability === "invalid";
     return (
       <ContextPaneState
         icon={<AlertTriangle size={17} aria-hidden />}
@@ -448,7 +445,6 @@ export function FilePreview({
     (/^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
       ? reference
       : resourceReferenceLabel(reference));
-  const [jump, setJump] = useState<LineJump | null>(null);
   // Reading choices belong to the selected file, not its renewable handle.
   // Open tabs supply their own reading state; standalone previews keep a local lifetime.
   const readingPosition = useMemo<SourceReadingPosition>(
@@ -464,6 +460,7 @@ export function FilePreview({
   const [fileView, setFileView] = useState<{
     owner: SourceReadingPosition;
     mode: FileViewMode;
+    jump?: FileSourceJump;
   } | null>(null);
   const canToggle = Boolean(
     descriptor &&
@@ -484,10 +481,27 @@ export function FilePreview({
         );
   const defaultView: FileViewMode =
     sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
+  const activeView = fileView?.owner === readingPosition ? fileView : null;
   const viewMode =
-    descriptor && fileView?.owner === readingPosition
-      ? fileView.mode
+    descriptor && activeView
+      ? activeView.mode
       : (readingState?.mode ?? defaultView);
+  const fallbackJump = useMemo(
+    () => (referencedLine ? { line: referencedLine } : null),
+    [referencedLine],
+  );
+  const jump = activeView?.jump ?? fallbackJump;
+  const sourceJump = preview?.status === "ready" ? preview.sourceJump : null;
+  useLayoutEffect(() => {
+    if (!sourceJump || !store.consumeFileSourceJump(sourceJump)) return;
+    if (!sourceOnly && !canToggle) return;
+    readingPosition.current = null;
+    if (readingState) {
+      readingState.mode = "source";
+      readingState.save?.();
+    }
+    setFileView({ owner: readingPosition, mode: "source", jump: sourceJump });
+  }, [sourceJump, sourceOnly, canToggle, readingPosition, readingState]);
   const [actionsExpanded, setActionsExpanded] = useState(true);
   const actionsRef = useRef<HTMLDivElement>(null);
   const actionsToggleRef = useRef<HTMLButtonElement>(null);
@@ -591,20 +605,6 @@ export function FilePreview({
       });
     }
   };
-  const lineCount =
-    preview?.status === "ready" && preview.text !== undefined
-      ? preview.text.split("\n").length
-      : 0;
-  useEffect(() => {
-    if (!referencedLine || lineCount === 0) {
-      setJump(null);
-      return;
-    }
-    setJump((previous) => ({
-      line: Math.min(lineCount, referencedLine),
-      request: (previous?.request ?? 0) + 1,
-    }));
-  }, [descriptor?.id, lineCount, referencedLine]);
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const root = contentRef.current;

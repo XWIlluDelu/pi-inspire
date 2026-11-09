@@ -292,9 +292,7 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Preflight standing for the bounded Files-pane references. A textual
    * mention stays unverified until the host classifies it for this branch
    * view; only a successful resolve grants a separate content handle. */
-  resourceAvailability: Record<string, ResourceProbeResult>;
-  /** Canonical workspace identity for successfully resolved references. */
-  resourceWorkspacePaths: Record<string, string>;
+  resourceStanding: Record<string, ResourceProbeResult>;
   error: string | null;
 }
 
@@ -305,8 +303,7 @@ export function emptyResourceInspectionState(): Pick<
   | "selectedResourceWorkspacePath"
   | "resourcePreview"
   | "resourceTabs"
-  | "resourceAvailability"
-  | "resourceWorkspacePaths"
+  | "resourceStanding"
 > {
   return {
     fileBrowserView: "browse",
@@ -314,8 +311,7 @@ export function emptyResourceInspectionState(): Pick<
     selectedResourceWorkspacePath: null,
     resourcePreview: null,
     resourceTabs: [],
-    resourceAvailability: {},
-    resourceWorkspacePaths: {},
+    resourceStanding: {},
   };
 }
 

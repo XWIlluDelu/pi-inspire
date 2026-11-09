@@ -7,9 +7,9 @@ import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
+  openSettings,
   pairAndOpen,
   pairedPage,
-  openSettings,
 } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
 
@@ -528,32 +528,30 @@ test("settings dropdown escapes a clipped scroller and keeps pointer hover separ
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 460 });
-  await modelSettingsScenario(page);
-  await pairAndOpen(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
   await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await settings.getByRole("button", { name: "Behavior", exact: true }).click();
+  await page.evaluate(() => document.fonts.ready);
   const trigger = settings.getByRole("combobox", {
-    name: "Steering delivery",
+    name: "On launch",
     exact: true,
   });
   const content = settings.locator(".settings__content");
   // Leave viewport room beyond the scroller so the menu must escape its clip.
-  await content.evaluate((el) => {
-    el.style.maxHeight = "180px";
+  await trigger.evaluate((el) => {
+    const content = el.closest<HTMLElement>(".settings__content")!;
+    const height =
+      el.getBoundingClientRect().bottom - content.getBoundingClientRect().top;
+    content.style.maxHeight = `${height + 12}px`;
   });
   expect(
     await content.evaluate((el) => el.scrollHeight > el.clientHeight),
   ).toBe(true);
-  await trigger.evaluate((el) => {
-    const content = el.closest(".settings__content")!;
-    const row = el.getBoundingClientRect();
-    content.scrollTop +=
-      row.bottom - (content.getBoundingClientRect().bottom - 12);
-  });
   await trigger.click();
   const menu = page.getByRole("listbox", {
-    name: "Steering delivery",
+    name: "On launch",
     exact: true,
   });
   const last = menu.getByRole("option").last();
@@ -592,6 +590,35 @@ test("settings dropdown escapes a clipped scroller and keeps pointer hover separ
 
   await trigger.press("Escape");
   await expect(menu).toHaveCount(0);
+});
+
+test("settings dropdown follows its trigger until scrolling clips it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 460 });
+  await pairedPage(page);
+  await openSettings(page);
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings.getByRole("button", { name: "Behavior", exact: true }).click();
+  const trigger = settings.getByRole("combobox", { name: "On launch" });
+  const menu = page.getByRole("listbox", { name: "On launch" });
+  const content = settings.locator(".settings__content");
+  const scrollTop = () => content.evaluate((el) => el.scrollTop);
+  const bounds = (await content.boundingBox())!;
+
+  await trigger.click();
+  await expect(menu).toBeVisible();
+  await page.mouse.move(bounds.x + 72, bounds.y + 206);
+  await page.mouse.wheel(0, 40);
+  await expect.poll(scrollTop).toBe(40);
+  await expect(menu).toBeVisible();
+
+  await page.mouse.wheel(0, 85);
+  await expect.poll(scrollTop).toBe(125);
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(trigger).toBeFocused();
+  expect(await scrollTop()).toBe(125);
 });
 
 test("category switches retain model browsing, provider drafts and a login arriving while hidden", async ({

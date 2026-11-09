@@ -321,8 +321,15 @@ function AuthenticationPanel({
   const available = filtered.filter((provider) => !provider.stored);
   useEffect(() => {
     if (!discovering || attempt) return;
-    if (selected) backRef.current?.focus();
-    else searchRef.current?.focus();
+    if (selected) {
+      backRef.current?.focus();
+      return;
+    }
+    const search = searchRef.current;
+    const section = search?.closest(".settings__section");
+    search?.focus({ preventScroll: Boolean(section) });
+    if (section && document.activeElement === search)
+      section.scrollIntoView({ block: "start", behavior: "instant" });
   }, [discovering, selected, attempt]);
   const providerRow = (
     provider: ProviderLoginOption,

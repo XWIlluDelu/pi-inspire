@@ -543,6 +543,12 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
     "Open Git changes: fixture/analysis, 1234 changes",
   );
   await page.evaluate(() => document.fonts.ready);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const branch = page.locator(".topbar__git-branch");
+  await expect(branch).toBeVisible();
+  expect(
+    await branch.evaluate((label) => label.scrollWidth - label.clientWidth),
+  ).toBeLessThanOrEqual(1);
 
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -589,7 +595,7 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
   await expect(
     history.getByRole("tab", { name: "Changes", exact: true }),
   ).toHaveAttribute("title", "Changes (1234 changes)");
-  await expect(history.locator(".ctx__mode-badge")).toHaveText("99+");
+  await expect(history.locator(".ctx__mode-count")).toHaveText("99+");
   const headerSpacing = await history.locator(".ctx__header").evaluate((el) => {
     const header = el.getBoundingClientRect();
     const tabs = el.querySelector(".ctx__modes")!.getBoundingClientRect();
@@ -614,11 +620,22 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
     );
   expect(Math.min(...iconInsets)).toBeGreaterThanOrEqual(0);
 
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  const badge = page.locator(".ctx__mode-badge");
-  await expect(badge).toBeVisible();
-  await expect(badge).toHaveText("99+");
-  await expect(
-    page.getByRole("tab", { name: "Changes", exact: true }),
-  ).toHaveAttribute("title", "Changes (1234 changes)");
+  const changes = page.getByRole("tab", { name: "Changes", exact: true });
+  await changes.click();
+  const count = page.locator(".ctx__mode-count");
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(changes).toHaveAttribute("aria-selected", "true");
+    await expect(changes).toHaveAttribute("title", "Changes (1234 changes)");
+    await expect(count).toBeVisible();
+    await expect(count).toHaveText("99+");
+    expect(
+      await count.evaluate((el) => {
+        const tab = el.closest("button")!.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        return Math.min(box.top - tab.top, tab.right - box.right);
+      }),
+    ).toBeGreaterThanOrEqual(0);
+  }
+  await page.unrouteAll({ behavior: "wait" });
 });

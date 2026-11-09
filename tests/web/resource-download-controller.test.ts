@@ -32,8 +32,7 @@ function fixture() {
       descriptor,
     },
     resourceTabs: [],
-    resourceAvailability: {},
-    resourceWorkspacePaths: {},
+    resourceStanding: {},
   };
   const pending = deferred<{ ticket: string; expiresAt: number }>();
   const api = { resourceDownloadTicket: vi.fn(() => pending.promise) };

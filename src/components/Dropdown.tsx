@@ -146,7 +146,8 @@ export function Dropdown({
   ]);
 
   useEffect(() => {
-    if (!open) return;
+    const trigger = triggerRef.current;
+    if (!open || !trigger) return;
     const onOutside = (event: Event) => {
       const target = event.target as Node;
       if (
@@ -155,9 +156,18 @@ export function Dropdown({
       )
         setOpen(false);
     };
+    // The portaled menu can stay visible after scrolling clips its trigger.
+    const visibility = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) return;
+      if (listRef.current?.contains(document.activeElement))
+        trigger.focus({ preventScroll: true });
+      setOpen(false);
+    });
+    visibility.observe(trigger);
     window.addEventListener("pointerdown", onOutside);
     window.addEventListener("focusin", onOutside);
     return () => {
+      visibility.disconnect();
       window.removeEventListener("pointerdown", onOutside);
       window.removeEventListener("focusin", onOutside);
     };

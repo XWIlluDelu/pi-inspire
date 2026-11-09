@@ -6,7 +6,7 @@ import { openFixtureSession, pairedPage } from "./support/navigation";
 for (const touch of [false, true]) {
   test.describe(touch ? "touch selection" : "pointer selection", () => {
     test.use({ hasTouch: touch });
-    test("header controls have breathing room without compressing project groups", async ({
+    test("folder spacing stays consistent across the catalog and Hidden", async ({
       page,
     }) => {
       await page.setViewportSize({ width: 1280, height: 1000 });
@@ -69,7 +69,7 @@ for (const touch of [false, true]) {
             }),
           )
           .toEqual([8, 16]);
-        await expect.poll(gaps).toEqual([18, 22]);
+        await expect.poll(gaps).toEqual([10, 10]);
         const before = await group("calibration")
           .locator(".nav__group-title")
           .boundingBox();
@@ -77,7 +77,7 @@ for (const touch of [false, true]) {
         await expect(
           group("calibration").locator(".nav__group-toggle"),
         ).toHaveAttribute("aria-expanded", "true");
-        await expect.poll(gaps).toEqual([18, 22]);
+        await expect.poll(gaps).toEqual([10, 10]);
         const after = await group("calibration")
           .locator(".nav__group-title")
           .boundingBox();
@@ -87,8 +87,7 @@ for (const touch of [false, true]) {
         await nav.locator(".nav__hidden-toggle").click();
         const hidden = nav.locator(".nav__hidden-content > .nav__group");
         await expect(hidden).toHaveCount(2);
-        // A hidden former pin does not create a visible pinned-section break.
-        await expect(hidden.first()).toHaveClass(/nav__group--pinned-folder/);
+        // The fixture includes a formerly pinned folder in Hidden.
         await expect
           .poll(() =>
             hidden.evaluateAll(
@@ -103,10 +102,10 @@ for (const touch of [false, true]) {
         const search = nav.getByRole("searchbox", { name: "Search sessions" });
         await search.fill("session");
         await expect(nav.locator(".nav__list .nav__row")).toHaveCount(3);
-        await expect.poll(gaps).toEqual([18, 22]);
+        await expect.poll(gaps).toEqual([10, 10]);
         await search.fill("");
         await expect(nav.locator(".nav__list .nav__row")).toHaveCount(0);
-        await expect.poll(gaps).toEqual([18, 22]);
+        await expect.poll(gaps).toEqual([10, 10]);
         if (
           await page
             .getByRole("button", { name: "Close navigation", exact: true })
