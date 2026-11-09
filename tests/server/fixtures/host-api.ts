@@ -190,7 +190,6 @@ export async function hostApiFixture(
       }),
     },
     bootstrapModels: () => [fixtureModel],
-    availableModels: async () => [fixtureModel],
     modelMetadata: async (cwd) => ({
       models: [fixtureModel],
       virtualModels: [],

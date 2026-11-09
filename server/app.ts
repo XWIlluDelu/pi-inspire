@@ -458,10 +458,6 @@ interface AppDependencies {
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   /** Already-known picker metadata; bootstrap never starts model discovery. */
   bootstrapModels?: () => BootstrapResponse["availableModels"];
-  availableModels?: (
-    refresh?: boolean,
-    cwd?: string,
-  ) => Promise<BootstrapResponse["availableModels"]>;
   modelMetadata?: (
     cwd: string,
     refresh?: boolean,
@@ -1228,15 +1224,13 @@ export function createInspireServer(deps: AppDependencies): {
       })
       .parse(request.query);
     const cwd = sessionId
-      ? deps.runtime.sessionCwd(sessionId)
+      ? undefined
       : requestedCwd
         ? await resolveProjectDirectory(requestedCwd)
         : process.cwd();
     const result = sessionId
       ? await deps.runtime.refreshModels(sessionId, inherit === "1")
-      : deps.modelMetadata
-        ? await deps.modelMetadata(cwd!, true)
-        : { models: (await deps.availableModels?.(true, cwd!)) ?? [] };
+      : ((await deps.modelMetadata?.(cwd!, true)) ?? { models: [] });
     const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
     const commonModels =
       deps.modelSettings && catalogCwd

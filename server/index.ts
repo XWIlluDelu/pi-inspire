@@ -249,9 +249,6 @@ const modelRuntime = await ModelRuntime.create({
   );
   return null;
 });
-const readAvailableModels = async (refresh = false, cwd = process.cwd()) => {
-  return (await modelMetadata.read(cwd, refresh)).models;
-};
 const maintenanceRestart = new MaintenanceRestartController({
   runtime,
   root,
@@ -315,7 +312,6 @@ const application = createInspireServer({
   ),
   updateCoordinator,
   bootstrapModels: () => modelMetadata.peek(process.cwd())?.models ?? [],
-  availableModels: readAvailableModels,
   invalidateModels: () => modelMetadata.invalidate(),
   modelMetadata: (cwd: string, refresh?: boolean) =>
     modelMetadata.read(cwd, refresh),

@@ -4,6 +4,7 @@ import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
 import type { ModelConfigEdit } from "../shared/model-settings.js";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge.js";
 import { modelOption } from "./model-catalog.js";
+import type { ModelMetadataCatalog } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { resolveProjectDirectory } from "./paths.js";
 import type { ProviderAuthService } from "./provider-auth.js";
@@ -93,10 +94,7 @@ export function registerModelSettingsRoutes(
     modelSettings?: ModelSettingsService;
     providerAuth?: ProviderAuthService;
     invalidateModels?: () => void;
-    availableModels?: (
-      refresh?: boolean,
-      cwd?: string,
-    ) => Promise<ModelOption[]>;
+    modelMetadata?: ModelMetadataCatalog["read"];
   },
 ): void {
   async function context(query: unknown) {
@@ -117,7 +115,8 @@ export function registerModelSettingsRoutes(
     try {
       if (!owner.sessionId) {
         return {
-          models: (await deps.availableModels?.(refresh, owner.cwd)) ?? [],
+          models:
+            (await deps.modelMetadata?.(owner.cwd, refresh))?.models ?? [],
         };
       }
       if (refresh) {
