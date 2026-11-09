@@ -12,114 +12,89 @@ scope:
 
 ## Objective
 
-Keep native Pi ownership, asynchronous operation lifetimes and responsive reading behavior
-consistent with [[northstar]]. The lasting contracts live in [[notifications]],
-[[activity-presentation]], [[terminal]], [[composer]], [[interface-preferences]] and
-[[state-ownership]].
+Keep native Pi ownership, asynchronous operation lifetimes and responsive reading consistent
+with [[northstar]]. Current contracts live in [[session-persistence]], [[session-transport]],
+[[pi-integration]], [[notifications]], [[terminal]] and [[composer]].
 
-## Implemented
+## Current state
 
-- Core navigation starts independently of notification enrollment. Device intent, Host settings,
-  receiver replacement and worker delivery have separate ownership boundaries.
-- Model catalogs settle their own read state without replacing newer session observations.
-  Explicit new-session choices survive refreshes and failed writes remain retryable.
-- Pending recovery waits for operation receipts and transcript convergence, including reconnects.
-  Recovery completes the originating caller without replaying the submitted mutation.
-- Compact activity bounds mounted children while preserving deliberate disclosure, selection and
-  reading offsets. Desktop conversation search remains visible; narrow screens use launchers.
-- Terminal observer disconnects, failed attaches, refreshes and title updates preserve the active
-  control lease and its geometry. Optional notification failures do not kill the daemon.
-- Shutdown rejects new work and native-dialog enqueueing. Late observer creation is retired with
-  its slot, and extension failures stay inside the owning request or shutdown boundary.
-- Native MCP configuration accepts a UTF-8 BOM. Source-build freshness records the revision
-  sampled before compilation rather than an edit that arrived during the build.
-- Documentation distinguishes durable delivered uploads from unclaimed staging, explains public
-  extension-state contracts, and gives first-use, pairing and lifecycle instructions in order.
+- Navigation starts independently of notification enrollment. Device intent, Host settings,
+  receiver replacement and delivery have separate owners.
+- Model reads cannot replace newer session choices. Pending recovery waits for receipts and
+  transcript convergence without replaying a mutation whose acceptance is unknown.
+- Worker startup, branch navigation and retirement recheck their original owner after asynchronous
+  reconciliation. Shutdown rejects new work and drains admitted operations.
+- External Pi remains outside Host process ownership. Terminal observer failures preserve the
+  control lease, geometry and independently running process.
+- Direct native Bash persistence uses the same verified append boundary as other native entries.
+  Zsh command/cwd markers round-trip percent signs and control characters.
+- Worker-witnessed appends reconcile ordinary message identities across interleaved metadata and
+  disk-before-completion observation, retiring their live overlays without coalescing repeated input.
+  Completion claims share identity with their queued presentation, including when lifecycle
+  reconciliation observes persistence before the live overlay exists.
+- Compact activity bounds mounted children while preserving disclosure and reading positions.
+  Delayed Prompt Map seeks lose scroll authority after newer reading intent.
+- Source builds stamp their sampled inputs. Source inspection drains started Git children and
+  retains unknown identity on failure. Linux direct launch is available when offline inspection
+  establishes that no service authority exists.
+- The Host discovers managed Pi launchers and symlink aliases, resolves the selected release
+  afresh, and loads its SDK and RPC CLI together. A broken managed selection fails explicitly
+  rather than falling through to an older global installation.
+- Native MCP edits preserve implicit OAuth registration defaults and protected values, and accept
+  a UTF-8 BOM. Model metadata honors saved/inherited project-trust refusals.
+- Models and MCP share one revision-checked file transaction; cleanup failure cannot strand its
+  locks. Six Host state stores share private-file publication while retaining their directory,
+  lease and write-order ownership. Frontend reads share one bounded retry loop while retaining
+  caller-owned scope and results.
+- Production and browser acceptance use the same Host/Runtime path. Browser fixtures supply
+  isolated native session files and an offline provider; no simulated production runtime remains.
 
-## Evidence and delivery boundary
+[[state-ownership]] explains the shared ownership patterns. [[dependency-boundaries]] owns installed
+Pi discovery; [[platform-compatibility]] separates portable and native-platform evidence.
 
-Focused unit and Chromium regressions cover these contracts, including delayed replies,
-disconnected send/recovery, ownership races, bounded activity, desktop/narrow search and reading
-position. Build-source verification changes a source input during a blocked build and confirms
-that the resulting artifact remains stale. Local integration also passes typechecking, lint,
-formatting, unused-code checks, isolated web/server compilation and the DocDoki privacy check.
-Browser color checks compare resolved colors rather than minifier-dependent CSS spelling.
-Physical-device evidence is tracked separately.
+## Verification
 
-Version 0.6.5 also passes a local Linux production-only installation check: package contents,
-external Pi startup, authenticated readiness/pairing, session recovery, PTY I/O, terminal
-maintenance and Host restart preserving the same terminal. The production dependency audit is
-clear after compatible request-parser, multipart-upload and schema-validation upgrades; focused
-API, configuration, upload and notification regressions pass. Cross-platform evidence is tracked
-in [[platform-compatibility]].
+- **Cross-platform baseline:** the
+  [review matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169) at
+  `2fe2dc7385e7d275c8f5f2a5fbe9139909aba4ff` passed all seven jobs: Linux quality, macOS and
+  Windows platform checks, three installed-package checks and the size report. The
+  [original v0.6.5 matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
+  failed separately; the later pass moved neither that tag nor `main`.
+- **Linux:** formatting, lint, unused-code and TypeScript checks, isolated builds, portable and
+  launcher checks and the full unit/integration suite pass locally. Local results do not replace
+  the cross-platform matrix.
+- **Regressions:** long-term tests cover delayed replies, unknown prompt acceptance, worker
+  retirement, branch leases, partial persistence, bounded activity, reading intent and terminal
+  ownership. The delayed-presentation, mixed-append ordering and managed-Pi resolver repairs each
+  carry regressions that fail against the prior implementation, including real-Pi cases.
+- **Browser:** Chromium and Firefox cases cover consolidated activity styles, Git file tabs,
+  refresh and retained reading positions on mouse and touch layouts. Local WebKit validation is
+  blocked by the missing system library `libicudata.so.76`.
+- **Installed package:** v0.6.5 passed a local Linux production-only installation check (package
+  contents, external Pi startup, readiness and pairing, session recovery, PTY I/O, terminal
+  maintenance, and a Host restart that keeps the same terminal), with a clear production
+  dependency audit.
 
-The 0.6.5 source, dependencies and browser build are staged in the local installation. The new
-entry and retained outgoing assets are served successfully, and the build stamp matches current
-inputs. The running Host and terminal daemon have not been restarted. Their activation remains
-with the operator; external Pi extensions need their own reload in the original idle process.
+Test infrastructure keeps runs independent of the developer's environment: each run gets its own
+`XDG_RUNTIME_DIR` (linking only the systemd user-manager entries that worker scopes need), the
+launcher lifecycle test builds in a disposable checkout copy instead of the shared `dist/`, and
+unit workers use half the cores. Full runs on 32 cores measured the same 41-43s at half the
+workers with half the run queue; the default oversubscription made short wait budgets fail in a
+different test each run.
 
-### CI follow-up
+## Delivery boundary
 
-The [original 0.6.5 matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
-passed all three installed-package checks but failed quality and Windows, while macOS exhausted
-its job budget after browser failures. The follow-up restores the sidebar's specified compact search
-font size after shared search styles overrode it, retaining WebKit's editing-size exception. It also
-repairs test contracts without changing the tag, deployed assets, native Pi or runtime deadlines.
-Large activity mounting and deliberate card
-choices have independent checks; native model edit scenarios retain real metadata validation
-without combining six cold worker starts into one test deadline. Native Bash logout is witnessed
-by its exact file side effect after exit, independently of bounded PTY tail delivery.
-
-Cross-platform fixtures use canonical temporary paths and apply POSIX permission assertions only
-where meaningful. Browser acceptance follows current action menus, addressed branch commands,
-model labels, recovery states and responsive layout. Held History-copy requests are scoped to the
-original entry so they cannot also block a newer response copy. Reading checks retain real scroll
-offsets, and clipboard checks assert the complete copied source.
-
-The complete Chromium run also exposed an asynchronous mobile history race: a delayed explicit
-close could dismiss a newly opened Settings panel. History ownership now waits for its own pending
-traversal before reconciling the latest UI intent. A controlled delayed-popstate regression and real
-login, modal Back, image-gallery and native-question flows cover the repair. Cancellation fixtures
-finish their in-flight mock request handlers before disposing the browser context.
-
-Reading scroll ownership retains an upward wheel across a queued layout scroll at latest instead
-of snapping back to the bottom. A gesture that cannot move the transcript still permits subsequent
-latest-follow. Native occupancy acceptance observes successful guard admission when the replacement
-worker is created, rather than installing a probe after automatic recovery may already have finished.
-
-The [first repair matrix](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40349199484)
-also measured 27.3 minutes for macOS Chromium, after successful core and launcher checks. Its
-40-minute job budget cancelled the following 38-case WebKit phase without a Safari assertion
-failure. The aggregate macOS budget is now 50 minutes; individual deadlines, one browser worker
-and one CI retry are unchanged.
-
-A later Windows run measured 3.35–4.65 seconds for single native configuration validations.
-Its five two-validation scenarios exhausted the unit runner's shared five-second default;
-those scenarios now have a 45-second integration budget, covering two existing 15-second
-request deadlines and Windows process retirement. Global and production deadlines are unchanged.
-
-Large argument-menu scrolling waits for the browser's asynchronous visibility observation before
-stopping wheel input; estimated virtual-row geometry can move after a synchronous rectangle read.
-Command fixtures finish each settled snapshot before starting the next simulated run and drain
-pending handlers before browser-context disposal. File-refresh acceptance waits for changed source
-content before checking retained mode and offsets, independently of concurrent workspace searching.
-Export-format geometry is sampled in one browser task so a viewport relayout cannot split
-measurements of a control and its containing row; the original alignment limits are retained.
-
-Local Linux follow-up evidence includes 3,957 passing unit/integration cases, 42 portable checks,
-and nine launcher checks (one platform skip), plus formatting, lint, types, unused-code checks and
-a fresh isolated browser build. Launcher checks run from a temporary source copy so validation
-cannot rebuild the staged deployment or control its instances. Cross-platform CI remains separate
-evidence from this local run.
+The CI repair at `c7f74095` was activated as Inspire 0.6.5 with operator authorization.
+The managed-installation rollout reported loaded and installed Pi 1.5.0 through authenticated
+bootstrap/update reads while retaining the terminal daemon process. The subsequent development
+outcomes are integrated into local `main`. The integration left the annotated release tag and
+the running deployment at their existing states.
 
 ## Remaining acceptance
 
 - On Android, verify background task outcomes, click-through and offscreen same-Pi prompting,
-  and inspect installed-window status/navigation bars in light and dark modes.
+  plus installed-window status/navigation bars in light and dark modes.
 - On iOS/iPadOS, verify Add-to-Home-Screen delivery, permission, badge and click-through.
-  [[follow-notifications-2026-10-22]] owns the notification acceptance boundary.
-- Android navigation-bar rendering remains browser/OS-owned; the application supplies native
-  theme inputs rather than fixed palette-independent color guarantees.
-
-No new product behavior is implied by these outstanding device checks. Persistent-writer
-continuity, external Pi ownership and manual service restart remain unchanged.
+  [[follow-notifications-2026-10-22]] owns notification device acceptance.
+- Native window chrome remains browser/OS-owned; inspect actual installed appearance rather than
+  infer it from page theme inputs.
