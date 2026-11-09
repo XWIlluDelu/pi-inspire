@@ -78,17 +78,19 @@ it.each([false, true])(
     const catalog = new SessionCatalog(f.cwd),
       attachments = new AttachmentStore(join(f.root, "uploads"));
     const commands: string[] = [];
-    const runtime = new RuntimeController(catalog, attachments, (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        args: [...(options.args ?? []), "-e", hook],
-      });
-      const request = worker.request.bind(worker);
-      worker.request = ((command, ...args) => {
-        commands.push(String(command.type));
-        return request(command, ...args);
-      }) as typeof worker.request;
-      return worker;
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          args: [...(options.args ?? []), "-e", hook],
+        });
+        const request = worker.request.bind(worker);
+        worker.request = ((command, ...args) => {
+          commands.push(String(command.type));
+          return request(command, ...args);
+        }) as typeof worker.request;
+        return worker;
+      },
     });
     let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined,
       store: AppStore | undefined;

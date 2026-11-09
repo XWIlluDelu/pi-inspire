@@ -17,7 +17,10 @@ import type {
   PiRpcProcess,
   PiRpcResponseFence,
 } from "../../server/pi-rpc.js";
-import { RuntimeController } from "../../server/runtime.js";
+import {
+  RuntimeController,
+  type RuntimeControllerOptions,
+} from "../../server/runtime.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import type {
   SessionCatalogLike,
@@ -311,7 +314,7 @@ function fakeStageFork(directory: string): StageSessionFork {
 
 async function setup(
   branchBridgeTimeoutMs = 15_000,
-  openForkProjection?: ConstructorParameters<typeof RuntimeController>[5],
+  openForkProjection?: RuntimeControllerOptions["openForkProjection"],
   stageFork?: StageSessionFork,
   userContent?: Parameters<typeof entry>[3],
   externallyOwned = false,
@@ -361,22 +364,16 @@ async function setup(
   stores.push(attachments);
   let worker!: BranchRpc;
   const workers: BranchRpc[] = [];
-  const runtime = new RuntimeController(
-    catalog,
-    attachments,
-    (options) => {
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
       worker = new BranchRpc(options);
       workers.push(worker);
       return worker as unknown as PiRpcProcess;
     },
-    undefined,
     branchBridgeTimeoutMs,
     openForkProjection,
-    undefined,
-    undefined,
-    undefined,
-    stageFork ?? fakeStageFork(directory),
-  );
+    stageFork: stageFork ?? fakeStageFork(directory),
+  });
   if (externallyOwned)
     // A live Pi at the session root continues every branch of it.
     runtime.setExternalSessionPresence(async (id) =>

@@ -82,24 +82,26 @@ describe("installed Pi startup retirement and idle restart", () => {
       };
       const attachments = new AttachmentStore(join(directory, "uploads"));
       let worker!: PiRpcProcess;
-      const runtime = new RuntimeController(catalog, attachments, (options) => {
-        worker = new PiRpcProcess({
-          ...options,
-          args: [
-            "--no-extensions",
-            "--session-dir",
-            sessionDir,
-            ...(options.args ?? []),
-            ...extraArgs,
-          ],
-          env: {
-            ...options.env,
-            PI_CODING_AGENT_DIR: config,
-            PI_CODING_AGENT_SESSION_DIR: sessionDir,
-            PI_OFFLINE: "1",
-          },
-        });
-        return worker;
+      const runtime = new RuntimeController(catalog, attachments, {
+        createProcess: (options) => {
+          worker = new PiRpcProcess({
+            ...options,
+            args: [
+              "--no-extensions",
+              "--session-dir",
+              sessionDir,
+              ...(options.args ?? []),
+              ...extraArgs,
+            ],
+            env: {
+              ...options.env,
+              PI_CODING_AGENT_DIR: config,
+              PI_CODING_AGENT_SESSION_DIR: sessionDir,
+              PI_OFFLINE: "1",
+            },
+          });
+          return worker;
+        },
       });
       try {
         await runtime.openSession(SESSION_ID);

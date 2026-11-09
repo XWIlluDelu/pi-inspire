@@ -373,40 +373,42 @@ export async function fixture(
   const workers: PiRpcProcess[] = [];
   const piEvents: ObservedEvent[] = [];
   const runtimeEvents: ObservedEvent[] = [];
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new PiRpcProcess({
-      ...options,
-      args: [
-        "--no-extensions",
-        "--no-skills",
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--no-tools",
-        "--no-approve",
-        "--session-dir",
-        sessions,
-        "--model",
-        `${PROVIDER}/${MODEL}`,
-        "--thinking",
-        "off",
-        "--system-prompt",
-        "You are a synthetic lifecycle fixture. Reply without tools.",
-        ...(options.args ?? []),
-        "--extension",
-        resolve("tests/fixtures/pi-operation-lifecycle-extension.ts"),
-      ],
-      env: isolatedTestEnvironment(directory, {
-        ...options.env,
-        ...environment,
-      }),
-    });
-    vi.spyOn(worker, "stop"); // Observe, never replace, real process teardown.
-    worker.on("event", (event) =>
-      piEvents.push({ ...event, at: performance.now() }),
-    );
-    workers.push(worker);
-    return worker;
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--no-context-files",
+          "--no-tools",
+          "--no-approve",
+          "--session-dir",
+          sessions,
+          "--model",
+          `${PROVIDER}/${MODEL}`,
+          "--thinking",
+          "off",
+          "--system-prompt",
+          "You are a synthetic lifecycle fixture. Reply without tools.",
+          ...(options.args ?? []),
+          "--extension",
+          resolve("tests/fixtures/pi-operation-lifecycle-extension.ts"),
+        ],
+        env: isolatedTestEnvironment(directory, {
+          ...options.env,
+          ...environment,
+        }),
+      });
+      vi.spyOn(worker, "stop"); // Observe, never replace, real process teardown.
+      worker.on("event", (event) =>
+        piEvents.push({ ...event, at: performance.now() }),
+      );
+      workers.push(worker);
+      return worker;
+    },
   });
   runtime.on("event", (event) =>
     runtimeEvents.push({ ...event, at: performance.now() }),

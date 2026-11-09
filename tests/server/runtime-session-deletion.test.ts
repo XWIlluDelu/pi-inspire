@@ -34,15 +34,11 @@ describe("runtime session deletion", () => {
       },
     });
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      source,
-      trackedAttachmentStore(),
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
-    );
+    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
+      openSessionProjection: preview,
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: remove,
+    });
     try {
       expect((await source.list()).sessions).toHaveLength(1);
       await expect(
@@ -62,11 +58,11 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
+      {
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
+      },
     ).setExternalSessionTerminator(async () => {
       throw new Error("Pi has not exited");
     });
@@ -87,15 +83,11 @@ describe("runtime session deletion", () => {
     source.refresh = vi.fn(source.refresh);
     source.invalidate = vi.fn();
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      source,
-      store,
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
-    );
+    const runtime = new RuntimeController(source, store, {
+      openSessionProjection: preview,
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: remove,
+    });
 
     await expect(runtime.deleteSession("a")).resolves.toEqual({
       sessionId: "a",
@@ -116,11 +108,11 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
+      {
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
+      },
     );
     const provisionalSlots = (
       runtime as unknown as {
@@ -159,15 +151,11 @@ describe("runtime session deletion", () => {
     ]);
     source.refresh = vi.fn(source.refresh);
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      source,
-      store,
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
-    );
+    const runtime = new RuntimeController(source, store, {
+      openSessionProjection: preview,
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: remove,
+    });
 
     await expect(
       runtime.clearHiddenSessions(["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
@@ -201,15 +189,11 @@ describe("runtime session deletion", () => {
       await persistedRecord("other", "/other"),
     ]);
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      source,
-      trackedAttachmentStore(),
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
-    );
+    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
+      openSessionProjection: preview,
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: remove,
+    });
     try {
       await expect(
         runtime.clearHiddenSessions(["b"], [], [HIDDEN_FOLDER_CWD]),
@@ -247,11 +231,7 @@ describe("runtime session deletion", () => {
       const runtime = new RuntimeController(
         catalog([first, second]),
         trackedAttachmentStore(),
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        remove,
+        { deleteSessionRecord: remove },
       );
       try {
         await expect(
@@ -282,11 +262,7 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      remove,
+      { deleteSessionRecord: remove },
     ).setExternalSessionTerminator(stop);
     try {
       await expect(
@@ -307,11 +283,11 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/loose"), record("b", "/folder")]),
       store,
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
+      {
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
+      },
     );
 
     await expect(
@@ -334,11 +310,13 @@ describe("runtime session deletion", () => {
         await persistedRecord("b", "/folder"),
       ]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-      15_000,
-      undefined,
-      remove,
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
+      },
     );
     await runtime.openSession("a");
     await waitForReady(runtime);
@@ -363,15 +341,16 @@ describe("runtime session deletion", () => {
         record("ordinary", "/ordinary"),
       ]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.set(worker.sessionId, worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.set(worker.sessionId, worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
       },
-      preview,
-      15_000,
-      undefined,
-      remove,
     );
 
     await runtime.openSession("a");
@@ -401,15 +380,11 @@ describe("runtime session deletion", () => {
       path: resolve("/sessions/copied-a.jsonl"),
     };
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([first, second]),
-      store,
-      undefined,
-      preview,
-      15_000,
-      undefined,
-      remove,
-    );
+    const runtime = new RuntimeController(catalog([first, second]), store, {
+      openSessionProjection: preview,
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: remove,
+    });
 
     await expect(runtime.deleteSession("a")).rejects.toMatchObject({
       message: "The session identity is ambiguous in the Pi catalog",
@@ -425,11 +400,13 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-      15_000,
-      undefined,
-      remove,
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
+      },
     );
 
     await runtime.openSession("a");
@@ -452,15 +429,15 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([await persistedRecord("a")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
       },
-      undefined,
-      15_000,
-      undefined,
-      remove,
     );
     try {
       await runtime.openSession("a");
@@ -489,17 +466,19 @@ describe("runtime session deletion", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/tmp"), record("b", "/tmp")]),
         trackedAttachmentStore(),
-        (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-        async (session) => {
-          if (session.id === "b" && phase === "in-flight") await previewGate;
-          return preview(session);
-        },
-        15_000,
-        undefined,
-        async () => {
-          deleteStarted();
-          await deleteGate;
-          return "trashed";
+        {
+          createProcess: (options) =>
+            new FakeRpc(options) as unknown as PiRpcProcess,
+          openSessionProjection: async (session) => {
+            if (session.id === "b" && phase === "in-flight") await previewGate;
+            return preview(session);
+          },
+          branchBridgeTimeoutMs: 15_000,
+          deleteSessionRecord: async () => {
+            deleteStarted();
+            await deleteGate;
+            return "trashed";
+          },
         },
       );
       try {
@@ -529,11 +508,13 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-      15_000,
-      undefined,
-      remove,
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
+      },
     );
 
     await runtime.openSession("a");
@@ -556,15 +537,16 @@ describe("runtime session deletion", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/tmp"), record("b", "/tmp")]),
         trackedAttachmentStore(),
-        (options) => {
-          const worker = new FakeRpc(options);
-          workers.set(worker.sessionId, worker);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            const worker = new FakeRpc(options);
+            workers.set(worker.sessionId, worker);
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
+          branchBridgeTimeoutMs: 15_000,
+          deleteSessionRecord: remove,
         },
-        preview,
-        15_000,
-        undefined,
-        remove,
       );
       try {
         await runtime.openSession("a");
@@ -595,15 +577,16 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.set(worker.sessionId, worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.set(worker.sessionId, worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: remove,
       },
-      preview,
-      15_000,
-      undefined,
-      remove,
     );
 
     await runtime.openSession("a");
@@ -640,15 +623,14 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        deleteSessionRecord: remove,
       },
-      undefined,
-      undefined,
-      undefined,
-      remove,
     );
     try {
       await runtime.openSession("a");
@@ -694,14 +676,16 @@ describe("runtime session deletion", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-      15_000,
-      undefined,
-      async () => {
-        entered = true;
-        await gate;
-        return "trashed";
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: async () => {
+          entered = true;
+          await gate;
+          return "trashed";
+        },
       },
     );
 

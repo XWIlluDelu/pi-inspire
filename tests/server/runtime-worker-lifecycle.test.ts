@@ -38,16 +38,14 @@ describe("worker startup and retirement", () => {
     source.rememberProjectCwds = remember;
     remember.mockRejectedValue(registrationError);
     const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      source,
-      attachments,
-      (options) => {
+    const runtime = new RuntimeController(source, attachments, {
+      createProcess: (options) => {
         const worker = new FakeRpc(options);
         workers.push(worker);
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     try {
       const opened = await runtime.openSession("a");
       expect(opened.active?.sessionId).toBe("a");
@@ -76,12 +74,14 @@ describe("worker startup and retirement", () => {
       const runtime = new RuntimeController(
         catalog([record("a", TEST_CWD)]),
         trackedAttachmentStore(),
-        async (options) => {
-          worker = new FakeRpc(options);
-          await gate.promise;
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: async (options) => {
+            worker = new FakeRpc(options);
+            await gate.promise;
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       const opening =
         kind === "existing"
@@ -113,12 +113,10 @@ describe("worker startup and retirement", () => {
       expect(existsSync(cwd)).toBe(true);
       return new FakeRpc(options) as unknown as PiRpcProcess;
     });
-    const runtime = new RuntimeController(
-      source,
-      trackedAttachmentStore(),
-      create,
-      preview,
-    );
+    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
+      createProcess: create,
+      openSessionProjection: preview,
+    });
     try {
       await expect(runtime.newSession(cwd)).rejects.toMatchObject({
         status: 400,
@@ -155,12 +153,14 @@ describe("worker startup and retirement", () => {
     const runtime = new RuntimeController(
       catalog([]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new FakeRpc(options);
-        worker.sessionPath = null;
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          worker.sessionPath = null;
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: openProjection,
       },
-      openProjection,
     );
     try {
       await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
@@ -198,12 +198,14 @@ describe("worker startup and retirement", () => {
       const runtime = new RuntimeController(
         catalog(ids.map((id) => record(id, "/tmp"))),
         trackedAttachmentStore(),
-        (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            const worker = new FakeRpc(options);
+            workers.push(worker);
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       try {
         await runtime.openSession("0");
@@ -266,12 +268,14 @@ describe("worker startup and retirement", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");
@@ -300,10 +304,8 @@ describe("worker startup and retirement", () => {
   it("fails promptly and attributes a response-bearing startup UI request", async () => {
     const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         worker = new FakeRpc(options);
         worker.startupEvent = {
           type: "extension_ui_request",
@@ -313,8 +315,8 @@ describe("worker startup and retirement", () => {
         };
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     try {
       const started = Date.now();
       await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
@@ -336,10 +338,8 @@ describe("worker startup and retirement", () => {
   it("allows fire-and-forget startup UI while rejecting no startup response", async () => {
     const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         worker = new FakeRpc(options);
         worker.startupEvent = {
           type: "extension_ui_request",
@@ -349,8 +349,8 @@ describe("worker startup and retirement", () => {
         };
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     try {
       const snapshot = await runtime.newSession(TEST_CWD);
       expect(snapshot.active?.sessionId).toBe("new-id");
@@ -365,10 +365,8 @@ describe("worker startup and retirement", () => {
     existing.path = resolve("/sessions/a.jsonl");
     const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog([existing]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([existing]), store, {
+      createProcess: (options) => {
         const worker = new FakeRpc(options);
         workers.push(worker);
         if (workers.length === 2) {
@@ -377,8 +375,8 @@ describe("worker startup and retirement", () => {
         }
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     try {
       await runtime.openSession("a");
       await vi.waitFor(() => expect(workers).toHaveLength(1));
@@ -399,11 +397,13 @@ describe("worker startup and retirement", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/tmp")]),
         trackedAttachmentStore(),
-        (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            worker = new FakeRpc(options);
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       try {
         if (mode === "resume") {
@@ -440,12 +440,11 @@ describe("worker startup and retirement", () => {
 
   it("does not perform a fallible authoritative snapshot after committing a new session", async () => {
     const store = trackedAttachmentStore();
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-    );
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) =>
+        new FakeRpc(options) as unknown as PiRpcProcess,
+      openSessionProjection: preview,
+    });
     const internals = runtime as unknown as {
       snapshotSlot(slot: unknown): Promise<unknown>;
     };
@@ -464,10 +463,8 @@ describe("worker startup and retirement", () => {
   it("starts a new Pi worker with the selected model and thinking level", async () => {
     const store = trackedAttachmentStore();
     let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         worker = new FakeRpc(options);
         // Match Pi's normal new-session behavior: it reserves a JSONL pathname
         // before the first prompt, but has not written a thinking-level entry.
@@ -487,8 +484,8 @@ describe("worker startup and retirement", () => {
         };
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     try {
       const snapshot = await runtime.newSession(TEST_CWD, {
         name: "  Tuned session  ",
@@ -586,10 +583,13 @@ describe("worker startup and retirement", () => {
         },
       },
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      async (session) => {
-        previewLoads += 1;
-        return preview(session);
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: async (session) => {
+          previewLoads += 1;
+          return preview(session);
+        },
       },
     );
 
@@ -623,11 +623,13 @@ describe("worker startup and retirement", () => {
     const runtime = new RuntimeController(
       catalog([record("a", TEST_CWD)]),
       trackedAttachmentStore(),
-      (options) => {
-        worker = new PiRpcProcess({ ...options, createTransport });
-        return worker;
+      {
+        createProcess: (options) => {
+          worker = new PiRpcProcess({ ...options, createTransport });
+          return worker;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     ).setExternalSessionPresence(async () => {
       await guard();
       return [];
@@ -653,16 +655,14 @@ describe("worker startup and retirement", () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const { promise: startGate, resolve: releaseStart } = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         worker = new FakeRpc(options);
         worker.startGate = startGate;
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     const creating = runtime.newSession(TEST_CWD);
     await vi.waitFor(() => expect(worker?.starts).toBe(1));
     const closing = runtime.close();
@@ -685,10 +685,8 @@ describe("worker startup and retirement", () => {
     const workers: FakeRpc[] = [];
     const { promise: identityGate, resolve: releaseIdentity } =
       deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         const worker = new FakeRpc(options);
         const request = worker.request.bind(worker);
         worker.request = async <T>(command: Record<string, unknown>) => {
@@ -699,8 +697,8 @@ describe("worker startup and retirement", () => {
         workers.push(worker);
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     const creating = runtime.newSession(TEST_CWD);
     await vi.waitFor(() =>
       expect(
@@ -743,26 +741,28 @@ describe("worker startup and retirement", () => {
       const runtime = new RuntimeController(
         sessions,
         trackedAttachmentStore(),
-        (options) => {
-          const worker = new FakeRpc(options);
-          if (workers.length === 0) {
-            worker.stop = () => {
-              worker.stops += 1;
-              stopping.resolve();
-              return stopped;
-            };
-            worker.responseOverrides.set(
-              reported ? "get_commands" : "get_state",
-              () => {
-                worker.emit("exit", disconnected);
-                throw disconnected;
-              },
-            );
-          }
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            const worker = new FakeRpc(options);
+            if (workers.length === 0) {
+              worker.stop = () => {
+                worker.stops += 1;
+                stopping.resolve();
+                return stopped;
+              };
+              worker.responseOverrides.set(
+                reported ? "get_commands" : "get_state",
+                () => {
+                  worker.emit("exit", disconnected);
+                  throw disconnected;
+                },
+              );
+            }
+            workers.push(worker);
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       const creating = runtime.newSession(TEST_CWD).catch((error) => error);
       await stopping.promise;
@@ -799,10 +799,8 @@ describe("worker startup and retirement", () => {
   it("unregisters and stops a provisional worker whose startup fails", async () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         worker = new FakeRpc(options);
         worker.start = async () => {
           worker.starts += 1;
@@ -810,8 +808,8 @@ describe("worker startup and retirement", () => {
         };
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
       /startup failed/,
     );
@@ -830,10 +828,8 @@ describe("worker startup and retirement", () => {
     const store = trackedAttachmentStore();
     let worker!: FakeRpc;
     const events: Array<Record<string, unknown>> = [];
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => {
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) => {
         worker = new FakeRpc(options);
         const request = worker.request.bind(worker);
         worker.request = async <T>(
@@ -854,8 +850,8 @@ describe("worker startup and retirement", () => {
         };
         return worker as unknown as PiRpcProcess;
       },
-      preview,
-    );
+      openSessionProjection: preview,
+    });
     runtime.on("event", (event) =>
       events.push(event as Record<string, unknown>),
     );
