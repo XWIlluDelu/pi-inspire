@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test";
+import type { InspirePreferences } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
-import { hostRequest } from "./support/host-request";
 import { routeSnapshots } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
-test.use({ reducedMotion: "reduce", serviceWorkers: "block" });
+test.use({
+  contextOptions: { reducedMotion: "reduce" },
+  serviceWorkers: "block",
+});
 
 test("deletes the visible idle session through one confirmation and returns to New session", async ({
   page,
@@ -38,9 +42,6 @@ test("deletes the visible idle session through one confirmation and returns to N
     ).ok(),
   ).toBe(true);
   await page.reload();
-  await expect(
-    page.getByRole("button", { name: /^Session actions:/ }),
-  ).toHaveText(name);
   const navigation = page.getByRole("button", {
     name: /^(Toggle|Expand|Collapse) navigation$/,
     exact: true,
@@ -53,6 +54,14 @@ test("deletes the visible idle session through one confirmation and returns to N
   const hidden = page.getByRole("button", { name: "Hidden", exact: true });
   if ((await hidden.getAttribute("aria-expanded")) !== "true")
     await hidden.click();
+  // API cloning does not replace this browser's selected session.
+  await page
+    .locator(".nav__group--hidden .nav__row-main")
+    .filter({ has: page.getByText(name, { exact: true }) })
+    .click();
+  await expect(
+    page.getByRole("button", { name: /^Session actions:/ }),
+  ).toHaveText(name);
   const remove = page.locator(".nav__group--hidden").getByRole("button", {
     name: `Delete "${name}"`,
     exact: true,
@@ -227,7 +236,7 @@ for (const touch of [false, true]) {
           pinnedProjectCwds: [],
           navCollapsedGroups: [otherCwd],
         };
-        let preferences: Record<string, unknown> = {};
+        let preferences: Partial<InspirePreferences> = {};
         // Browser projection owns hierarchy and the submitted scope. Real catalog
         // completeness, reservations and filesystem deletion are server regressions.
         let connected = false;
@@ -373,9 +382,9 @@ for (const touch of [false, true]) {
           if ((await folderToggle.getAttribute("aria-expanded")) !== "true")
             await folderToggle.click();
         };
-        for (const width of [1440, 390, 320]) {
+        for (const width of [1440, 768, 390, 320]) {
           await page.setViewportSize({ width, height: 1000 });
-          if (width < 768)
+          if (width <= 900)
             await page
               .getByRole("button", { name: "Toggle navigation", exact: true })
               .click();
@@ -405,6 +414,7 @@ for (const touch of [false, true]) {
               parseFloat(marker.left) +
               parseFloat(marker.width);
             return {
+              navLeft: element.closest(".nav")!.getBoundingClientRect().left,
               folderName: group
                 .querySelector(".nav__group-name")!
                 .getBoundingClientRect().left,
@@ -427,12 +437,18 @@ for (const touch of [false, true]) {
           expect(
             Math.abs(geometry.folderName - geometry.childName),
           ).toBeLessThanOrEqual(1);
-          expect(
-            geometry.childName - geometry.independentName,
-          ).toBeGreaterThanOrEqual(24);
-          expect(geometry.clearance).toBeGreaterThanOrEqual(3);
+          expect(geometry.folderName - geometry.navLeft).toBeCloseTo(40, 1);
+          expect(geometry.independentName).toBeCloseTo(geometry.childName, 1);
+          await expect(standalone.locator("..")).toHaveClass(
+            "nav__hidden-content",
+          );
+          expect(geometry.clearance).toBeGreaterThanOrEqual(1);
           expect(geometry.overflow).toBe(false);
           expect(geometry.folderActions).toHaveLength(2);
+          const trashBounds = (await trash.boundingBox())!;
+          const minimumTarget = touch || width <= 600 ? 36 : 24;
+          expect(trashBounds.width).toBeGreaterThanOrEqual(minimumTarget);
+          expect(trashBounds.height).toBeGreaterThanOrEqual(minimumTarget);
           for (let slot = 0; slot < 2; slot++) {
             expect(
               Math.abs(
@@ -446,7 +462,43 @@ for (const touch of [false, true]) {
               ),
             ).toBeLessThanOrEqual(1);
           }
-          if (width < 768)
+          const statusRows = [
+            target.locator(".nav__row").filter({ hasText: "Target one" }),
+            standalone,
+          ];
+          const measureTitle = (row: Element) => {
+            const main = row
+              .querySelector(".nav__row-main")!
+              .getBoundingClientRect();
+            const title = row
+              .querySelector(".nav__row-name")!
+              .getBoundingClientRect();
+            return { inset: title.left - main.left, width: title.width };
+          };
+          const idleTitles = await Promise.all(
+            statusRows.map((row) => row.evaluate(measureTitle)),
+          );
+          for (const activity of ["working", "blocked", "idle"] as const) {
+            transport.send({
+              type: "external_session_activity",
+              activities: { [first]: activity, [independent]: activity },
+            });
+            for (const [index, row] of statusRows.entries()) {
+              const mark = row.locator(
+                activity === "idle"
+                  ? ".nav__row-state, .nav__row-dot"
+                  : activity === "blocked"
+                    ? ".nav__row-dot"
+                    : ".nav__row-state",
+              );
+              if (activity === "idle") await expect(mark).toHaveCount(0);
+              else await expect(mark).toBeVisible();
+              const title = await row.evaluate(measureTitle);
+              expect(title.inset).toBeCloseTo(idleTitles[index]!.inset, 1);
+              expect(title.width).toBeCloseTo(idleTitles[index]!.width, 1);
+            }
+          }
+          if (width <= 900)
             await page
               .getByRole("button", { name: "Close navigation", exact: true })
               .click();

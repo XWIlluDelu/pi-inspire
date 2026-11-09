@@ -1,7 +1,32 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { navigationGroupsFixture } from "./fixtures/navigation-groups";
 import { focusRingClipping } from "./support/focus-bounds";
 import { openFixtureSession, pairedPage } from "./support/navigation";
+
+function navigationRowBounds(row: Locator) {
+  // Read one layout: opening or closing Hidden can move both scroll containers.
+  return row.evaluate((el) => {
+    const bounds = el.getBoundingClientRect();
+    const scrollport = el
+      .closest(".nav__hidden-content, .nav__list")!
+      .getBoundingClientRect();
+    const nav = el.closest(".nav")!;
+    const viewport = nav.getBoundingClientRect();
+    const style = getComputedStyle(nav);
+    return {
+      row: { top: bounds.top, bottom: bounds.bottom, height: bounds.height },
+      scrollport: {
+        top: scrollport.top,
+        bottom: scrollport.bottom,
+        height: scrollport.height,
+      },
+      viewport: {
+        top: viewport.top + Number.parseFloat(style.paddingTop),
+        bottom: viewport.bottom - Number.parseFloat(style.paddingBottom),
+      },
+    };
+  });
+}
 
 test("desktop sessions keep titles above metadata and preserve a saved width", async ({
   page,
@@ -58,9 +83,9 @@ test("desktop sessions keep titles above metadata and preserve a saved width", a
     .toBeCloseTo(360, 0);
 });
 
-test.describe("cross-project touch rows", () => {
+test.describe("touch session rows", () => {
   test.use({ hasTouch: true, isMobile: true });
-  test("Pinned retains a readable title above project and age", async ({
+  test("grouped and pinned sessions keep titles above metadata and clear of actions", async ({
     page,
   }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -79,28 +104,41 @@ test.describe("cross-project touch rows", () => {
     await page
       .getByRole("button", { name: "Toggle navigation", exact: true })
       .click();
-    const row = page.locator(".nav__group--pinned .nav__row").first();
-    await expect(row).toBeVisible();
+    const rows = [
+      page.locator(".nav__group--pinned .nav__row").first(),
+      page
+        .locator(".nav__row")
+        .filter({ hasText: "Formula rendering and spectral analysis" }),
+    ];
     for (const width of [390, 320]) {
       await page.setViewportSize({ width, height: 844 });
       await page.evaluate(() => document.fonts.ready);
       await expect
         .poll(async () => (await page.locator(".nav").boundingBox())!.width)
         .toBeLessThanOrEqual(width);
-      const title = (await row.locator(".nav__row-name").boundingBox())!;
-      const titleColumn = (await row.locator(".nav__row-title").boundingBox())!;
-      const meta = (await row.locator(".nav__row-meta").boundingBox())!;
-      const age = (await row.locator(".nav__row-age").boundingBox())!;
-      // The 320px drawer also reserves scrim and persistent touch actions.
-      // Long titles use their whole column, rather than sharing it with metadata.
-      expect(title.width).toBeCloseTo(titleColumn.width, 2);
-      expect(title.width).toBeGreaterThanOrEqual(width === 320 ? 120 : 150);
-      expect(meta.y).toBeGreaterThanOrEqual(title.y + title.height);
-      expect(age.width).toBeLessThan(40);
-      expect(await row.locator(".nav__row-actions button").count()).toBe(2);
-      expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
-        true,
-      );
+      for (const row of rows) {
+        await expect(row).toBeVisible();
+        const title = (await row.locator(".nav__row-name").boundingBox())!;
+        const meta = (await row.locator(".nav__row-meta").boundingBox())!;
+        const actions = row.locator(".nav__row-actions");
+        const actionsBox = (await actions.boundingBox())!;
+        // Both metadata types share the quieter second line. Touch actions
+        // retain their own hit areas rather than overlapping the title.
+        expect(title.width).toBeGreaterThanOrEqual(width === 320 ? 120 : 150);
+        expect(meta.y).toBeGreaterThanOrEqual(title.y + title.height);
+        expect(meta.x).toBeCloseTo(title.x, 1);
+        expect(title.x + title.width).toBeLessThanOrEqual(actionsBox.x);
+        expect(meta.x + meta.width).toBeLessThanOrEqual(actionsBox.x);
+        await expect(actions).toHaveCSS("opacity", "1");
+        for (const action of await actions.getByRole("button").all()) {
+          const box = (await action.boundingBox())!;
+          expect(box.width).toBeGreaterThanOrEqual(36);
+          expect(box.height).toBeGreaterThanOrEqual(36);
+        }
+        expect(
+          await row.evaluate((el) => el.scrollWidth <= el.clientWidth),
+        ).toBe(true);
+      }
     }
   });
 });
@@ -185,7 +223,7 @@ for (const touch of [false, true]) {
       viewport: { width: 1366, height: 900 },
       hasTouch: touch,
       deviceScaleFactor: touch ? 2 : 1,
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
       serviceWorkers: "block",
     });
 
@@ -220,40 +258,30 @@ for (const touch of [false, true]) {
         });
         await hidden.click();
         const body = nav.locator(".nav__hidden-content");
-        await expect
-          .poll(async () =>
-            body.evaluate((el) => {
-              const nav = el.closest(".nav")!;
-              return (
-                el.getBoundingClientRect().bottom -
-                (nav.getBoundingClientRect().bottom -
-                  Number.parseFloat(getComputedStyle(nav).paddingBottom))
-              );
-            }),
-          )
-          .toBeLessThanOrEqual(1);
         const row = body.getByRole("button", {
           name: "archived-b",
           exact: true,
         });
+        // Focus only after the expanded body can fit a row and is revealed.
+        // Its bottom can already be visible while flex layout still clips it.
+        await expect
+          .poll(async () => {
+            const bounds = await navigationRowBounds(row);
+            return {
+              rowFits: bounds.scrollport.height >= bounds.row.height,
+              bodyRevealed:
+                bounds.scrollport.bottom <= bounds.viewport.bottom + 1,
+            };
+          })
+          .toEqual({ rowFits: true, bodyRevealed: true });
         await row.focus();
         await expect(row).toBeFocused();
-        const bounds = await row.boundingBox();
-        const viewport = await nav.evaluate((el) => {
-          const bounds = el.getBoundingClientRect();
-          const style = getComputedStyle(el);
-          return {
-            top: bounds.top + Number.parseFloat(style.paddingTop),
-            bottom: bounds.bottom - Number.parseFloat(style.paddingBottom),
-          };
-        });
-        const scrollport = await body.boundingBox();
-        expect(bounds).not.toBeNull();
-        expect(bounds!.y).toBeGreaterThanOrEqual(
-          Math.max(viewport.top, scrollport!.y) - 1,
+        const bounds = await navigationRowBounds(row);
+        expect(bounds.row.top).toBeGreaterThanOrEqual(
+          Math.max(bounds.viewport.top, bounds.scrollport.top) - 1,
         );
-        expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(
-          Math.min(viewport.bottom, scrollport!.y + scrollport!.height) + 1,
+        expect(bounds.row.bottom).toBeLessThanOrEqual(
+          Math.min(bounds.viewport.bottom, bounds.scrollport.bottom) + 1,
         );
         if ((await row.getAttribute("aria-expanded")) !== "true")
           await row.press("Enter");
@@ -261,14 +289,15 @@ for (const touch of [false, true]) {
         const session = body.locator(".nav__row-main").last();
         await session.focus();
         await expect(session).toBeFocused();
-        const visible = await session.boundingBox();
-        const bodyBounds = await body.boundingBox();
-        expect(bodyBounds!.height).toBeGreaterThanOrEqual(visible!.height);
-        expect(visible!.y).toBeGreaterThanOrEqual(
-          Math.max(viewport.top, bodyBounds!.y) - 1,
+        const visible = await navigationRowBounds(session);
+        expect(visible.scrollport.height).toBeGreaterThanOrEqual(
+          visible.row.height,
         );
-        expect(visible!.y + visible!.height).toBeLessThanOrEqual(
-          Math.min(viewport.bottom, bodyBounds!.y + bodyBounds!.height) + 1,
+        expect(visible.row.top).toBeGreaterThanOrEqual(
+          Math.max(visible.viewport.top, visible.scrollport.top) - 1,
+        );
+        expect(visible.row.bottom).toBeLessThanOrEqual(
+          Math.min(visible.viewport.bottom, visible.scrollport.bottom) + 1,
         );
         // Closing keeps focus on its trigger and gives the catalog its space back.
         await hidden.focus();
@@ -286,16 +315,15 @@ for (const touch of [false, true]) {
         const catalogRow = catalog.locator(".nav__row-main").first();
         await catalogRow.focus();
         await expect(catalogRow).toBeFocused();
-        const catalogBounds = await catalog.boundingBox();
-        const catalogRowBounds = await catalogRow.boundingBox();
-        expect(catalogRowBounds!.y).toBeGreaterThanOrEqual(
-          catalogBounds!.y - 1,
+        const catalogBounds = await navigationRowBounds(catalogRow);
+        expect(catalogBounds.row.top).toBeGreaterThanOrEqual(
+          catalogBounds.scrollport.top - 1,
         );
-        expect(
-          catalogRowBounds!.y + catalogRowBounds!.height,
-        ).toBeLessThanOrEqual(
-          Math.min(catalogBounds!.y + catalogBounds!.height, viewport.bottom) +
-            1,
+        expect(catalogBounds.row.bottom).toBeLessThanOrEqual(
+          Math.min(
+            catalogBounds.scrollport.bottom,
+            catalogBounds.viewport.bottom,
+          ) + 1,
         );
         if (height === 900)
           expect(

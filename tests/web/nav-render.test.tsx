@@ -503,6 +503,137 @@ describe("session navigation controls", () => {
     expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
   });
 
+  it("keeps independent Hidden sessions above folders through disclosure and search navigation", async () => {
+    const user = userEvent.setup();
+    const sibling = sessionSummary({
+      ...alpha,
+      id: "alpha-sibling",
+      title: "Alpha sibling",
+      modified: "2026-07-23T10:00:00Z",
+    });
+    extraSessions = [gamma, sibling];
+    const onSelect = vi.fn();
+    render(
+      <Nav
+        collapsed={false}
+        onToggleNavigation={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={onSelect}
+      />,
+    );
+    await store.refreshSessions();
+    await screen.findByText("Gamma session");
+    fireEvent.click(list().getByRole("button", { name: "Hide folder alpha" }));
+    fireEvent.click(
+      list().getByRole("button", { name: 'Hide "Beta session"' }),
+    );
+    fireEvent.click(
+      list().getByRole("button", { name: 'Hide "Gamma session"' }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    const hidden = document.querySelector(
+      ".nav__hidden-content",
+    ) as HTMLElement;
+    const rowTitles = () =>
+      [...hidden.querySelectorAll(".nav__row-name")].map(
+        (node) => node.textContent,
+      );
+    expect(rowTitles()).toEqual([
+      "Beta session",
+      "Gamma session",
+      "Alpha sibling",
+      "Alpha session",
+    ]);
+    expect(hidden.children[0]).toHaveClass("nav__row");
+    expect(hidden.children[1]).toHaveClass("nav__row");
+    expect(hidden.children[2]).toHaveClass("nav__group--hidden-folder");
+    const folder = within(hidden).getByRole("button", { name: "alpha" });
+    fireEvent.click(folder);
+    expect(folder).toHaveAttribute("aria-expanded", "false");
+    expect(rowTitles()).toEqual(["Beta session", "Gamma session"]);
+    fireEvent.click(folder);
+    expect(rowTitles()).toEqual([
+      "Beta session",
+      "Gamma session",
+      "Alpha sibling",
+      "Alpha session",
+    ]);
+    const search = screen.getByRole("searchbox", { name: "Search sessions" });
+    await user.click(search);
+    await user.type(search, "session");
+    await waitFor(() =>
+      expect(
+        document.querySelector(
+          ".nav__hidden-content .nav__row--highlighted .nav__row-name",
+        ),
+      ).toHaveTextContent("Beta session"),
+    );
+    await user.keyboard("{Enter}");
+    expect(onSelect).toHaveBeenLastCalledWith("beta");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(onSelect).toHaveBeenLastCalledWith("gamma");
+  });
+
+  it("restores the Hidden disclosure without saving search's temporary expansion", async () => {
+    const props = {
+      collapsed: false,
+      onToggleNavigation: vi.fn(),
+      onNewSession: vi.fn(),
+      onSelectSession: vi.fn(),
+    };
+    let view = render(<Nav {...props} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: 'Hide "Alpha session"' }),
+    );
+    const toggle = await screen.findByRole("button", { name: "Hidden" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle);
+    view.unmount();
+
+    view = render(<Nav {...props} />);
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search sessions" }),
+      {
+        target: { value: "alpha" },
+      },
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Hidden" })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    view.unmount();
+
+    view = render(<Nav {...props} />);
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search sessions" }),
+      {
+        target: { value: "" },
+      },
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Hidden" })).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    view.unmount();
+
+    render(<Nav {...props} />);
+    expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
   it("restores a child from a hidden folder without revealing its other sessions", async () => {
     extraSessions = [
       { ...alpha, id: "alpha-sibling", title: "Other analysis" },

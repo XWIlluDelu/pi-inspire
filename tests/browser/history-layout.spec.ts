@@ -20,7 +20,7 @@ async function openHistory(page: Page) {
   });
   if ((await toggle.getAttribute("aria-expanded")) === "false")
     await toggle.click();
-  await page.getByRole("button", { name: "History", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   return page.getByRole("region", { name: "Conversation history" });
 }
 
@@ -80,113 +80,129 @@ test("History read errors wrap literal paths and leave preview retry reachable",
   ).toBeVisible();
 });
 
-test("History route labels keep first-line marks and metadata without shifting short touch rows", async ({
-  page,
-}) => {
-  const descriptions = [
-    "Compare the calibration residuals with the reference acquisition and retain the baseline correction before reviewing instrument repeatability.",
-    "比较校准残差与参考采集结果，并在复查仪器重复性之前保留基线修正，再检查不同批次测量之间的偏差。",
-  ];
-  let description = descriptions[0]!;
-  await page.route("**/api/branches/tree?**", async (route) => {
-    if (!new URL(route.request().url()).searchParams.has("parentId")) {
-      await route.continue();
-      return;
-    }
-    const response = await route.fetch();
-    const body: BranchTreeResponse = await response.json();
-    await route.fulfill({
-      response,
-      json: {
-        ...body,
-        nodes: body.nodes.map((node) => ({
-          ...node,
-          snippet: node.active ? description : "Saved calibration route",
-        })),
-      },
-    });
-  });
-  const history = await openHistory(page);
-  await history
-    .getByRole("button", { name: "Earlier conversation", exact: true })
-    .click();
-  const disclosure = history.getByRole("button", {
-    name: "Other routes",
-    exact: true,
-  });
-  await expect(disclosure).toBeVisible();
-  for (const width of [1280, 820, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    for (description of descriptions) {
-      await disclosure.click();
-      const routes = history.getByRole("group", {
-        name: "Routes from this point",
+for (const touch of [false, true]) {
+  test.describe(touch ? "touch History rows" : "pointer History rows", () => {
+    test.use({ hasTouch: touch });
+    test("History route labels keep first-line marks and metadata without shifting short touch rows", async ({
+      page,
+    }) => {
+      const descriptions = [
+        "Compare the calibration residuals with the reference acquisition and retain the baseline correction before reviewing instrument repeatability.",
+        "比较校准残差与参考采集结果，并在复查仪器重复性之前保留基线修正，再检查不同批次测量之间的偏差。",
+      ];
+      let description = descriptions[0]!;
+      await page.route("**/api/branches/tree?**", async (route) => {
+        if (!new URL(route.request().url()).searchParams.has("parentId")) {
+          await route.continue();
+          return;
+        }
+        const response = await route.fetch();
+        const body: BranchTreeResponse = await response.json();
+        await route.fulfill({
+          response,
+          json: {
+            ...body,
+            nodes: body.nodes.map((node) => ({
+              ...node,
+              snippet: node.active ? description : "Saved calibration route",
+            })),
+          },
+        });
       });
-      const current = routes
-        .locator(".history-route")
-        .filter({ has: page.locator("small") });
-      const short = routes.getByRole("button", {
-        name: "Saved calibration route",
+      const history = await openHistory(page);
+      await history
+        .getByRole("button", { name: "Earlier conversation", exact: true })
+        .click();
+      const disclosure = history.getByRole("button", {
+        name: "Other routes",
         exact: true,
       });
-      await expect(current.locator("span")).toHaveText(description);
-      await page.evaluate(() => document.fonts.ready);
-      for (const row of [current, short]) {
-        const geometry = await row.evaluate((el) => {
-          const box = el.getBoundingClientRect();
-          const label = el.querySelector("span")!;
-          const text = label.getBoundingClientRect();
-          const lineHeight = Number.parseFloat(
-            getComputedStyle(label).lineHeight,
-          );
-          const icon = el.querySelector("svg")!.getBoundingClientRect();
-          return {
-            iconOffset: icon.y + icon.height / 2 - (text.y + lineHeight / 2),
-            textCenter: text.y + text.height / 2 - (box.y + box.height / 2),
-            height: box.height,
-            lineHeight,
-            lines: text.height / lineHeight,
-            overflow: el.scrollWidth - el.clientWidth,
-            iconWidth: icon.width,
-            iconHeight: icon.height,
-          };
-        });
-        expect(Math.abs(geometry.iconOffset)).toBeLessThanOrEqual(0.5);
-        expect(geometry.overflow).toBeLessThanOrEqual(1);
-        expect(geometry.iconWidth).toBe(13);
-        expect(geometry.iconHeight).toBe(13);
-        if (row === short) {
-          expect(geometry.lines).toBe(1);
-          expect(Math.abs(geometry.textCenter)).toBeLessThanOrEqual(0.5);
-          expect(geometry.height).toBeCloseTo(
-            width <= 760 ? 44 : geometry.lineHeight + 16,
-            1,
-          );
+      await expect(disclosure).toBeVisible();
+      for (const width of [1280, 1024, 820, 390, 320]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(disclosure).toHaveCSS(
+          "min-height",
+          touch || width <= 760 ? "44px" : "30px",
+        );
+        if (touch) {
+          for (const prompt of await history.locator(".history-prompt").all())
+            expect((await prompt.boundingBox())!.height).toBeGreaterThanOrEqual(
+              44,
+            );
+        }
+        for (description of descriptions) {
+          await disclosure.click();
+          const routes = history.getByRole("group", {
+            name: "Routes from this point",
+          });
+          const current = routes
+            .locator(".history-route")
+            .filter({ has: page.locator("small") });
+          const short = routes.getByRole("button", {
+            name: "Saved calibration route",
+            exact: true,
+          });
+          await expect(current.locator("span")).toHaveText(description);
+          await page.evaluate(() => document.fonts.ready);
+          for (const row of [current, short]) {
+            const geometry = await row.evaluate((el) => {
+              const box = el.getBoundingClientRect();
+              const label = el.querySelector("span")!;
+              const text = label.getBoundingClientRect();
+              const lineHeight = Number.parseFloat(
+                getComputedStyle(label).lineHeight,
+              );
+              const icon = el.querySelector("svg")!.getBoundingClientRect();
+              return {
+                iconOffset:
+                  icon.y + icon.height / 2 - (text.y + lineHeight / 2),
+                textCenter: text.y + text.height / 2 - (box.y + box.height / 2),
+                height: box.height,
+                lineHeight,
+                lines: text.height / lineHeight,
+                overflow: el.scrollWidth - el.clientWidth,
+                iconWidth: icon.width,
+                iconHeight: icon.height,
+              };
+            });
+            expect(Math.abs(geometry.iconOffset)).toBeLessThanOrEqual(0.5);
+            expect(geometry.overflow).toBeLessThanOrEqual(1);
+            expect(geometry.iconWidth).toBe(13);
+            expect(geometry.iconHeight).toBe(13);
+            if (row === short) {
+              expect(geometry.lines).toBe(1);
+              expect(Math.abs(geometry.textCenter)).toBeLessThanOrEqual(0.5);
+              expect(geometry.height).toBeCloseTo(
+                touch || width <= 760 ? 44 : geometry.lineHeight + 16,
+                1,
+              );
+            }
+          }
+          const label = await current
+            .locator("span")
+            .evaluate(firstTextBaseline, ".history-route");
+          const metadata = await current
+            .locator("small")
+            .evaluate(firstTextBaseline, ".history-route");
+          expect(Math.abs(metadata! - label!)).toBeLessThanOrEqual(0.5);
+          await short.focus();
+          await expect(short).toBeFocused();
+          await disclosure.click();
         }
       }
-      const label = await current
-        .locator("span")
-        .evaluate(firstTextBaseline, ".history-route");
-      const metadata = await current
-        .locator("small")
-        .evaluate(firstTextBaseline, ".history-route");
-      expect(Math.abs(metadata! - label!)).toBeLessThanOrEqual(0.5);
-      await short.focus();
-      await expect(short).toBeFocused();
       await disclosure.click();
-    }
-  }
-  await disclosure.click();
-  await history
-    .getByRole("button", { name: "Saved calibration route", exact: true })
-    .click();
-  await expect(
-    history.getByText("Inspecting another route", { exact: true }),
-  ).toBeVisible();
-  await history
-    .getByRole("button", { name: "Current conversation", exact: true })
-    .click();
-  await expect(
-    history.getByText("Inspecting another route", { exact: true }),
-  ).toHaveCount(0);
-});
+      await history
+        .getByRole("button", { name: "Saved calibration route", exact: true })
+        .click();
+      await expect(
+        history.getByText("Inspecting another route", { exact: true }),
+      ).toBeVisible();
+      await history
+        .getByRole("button", { name: "Current conversation", exact: true })
+        .click();
+      await expect(
+        history.getByText("Inspecting another route", { exact: true }),
+      ).toHaveCount(0);
+    });
+  });
+}

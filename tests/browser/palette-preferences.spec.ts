@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { PALETTE_LABELS } from "../../src/preference-labels";
-import { pairAndOpen } from "./support/navigation";
+import { pairAndOpen, openSettings } from "./support/navigation";
 
 test("botanical swatches persist independently of luminosity and fit narrow Settings", async ({
   page,
 }) => {
   await pairAndOpen(page);
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const picker = settings.getByRole("group", {
     name: "Color palette",

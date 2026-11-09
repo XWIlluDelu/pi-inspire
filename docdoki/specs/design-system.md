@@ -324,6 +324,14 @@ padding, an 8px gap and `--text-xl`. Empty-state titles, including Terminal, use
 Git change-group counts use secondary monospace text at weight 400 without capsules; status marks
 and the repository summary keep their separate roles.
 
+The 44px topbar aligns the regions. Its 28px utility buttons form a compact 4px-gap group on
+fine-pointer desktop without changing the trailing anchor. Connecting/reconnecting uses a quiet,
+unboxed, accessibly named transport hint that disappears on recovery; offline and Host failures
+keep warning treatment. While the central workspace-loading state is visible, omit the transport
+hint but still show failures. Once loading settles, a status region without session identity is
+vertically centered in the topbar; a selected session keeps the shared text baseline between
+identity and status.
+
 The navigation header pairs a noninteractive reticle/wordmark with the sidebar-outline Collapse
 button. New session is a quiet full-width row above Search, with control-radius neutral hover and
 no resting box, shadow, badge or header divider. New/Search share height, font size, a 16px icon slot
@@ -331,8 +339,14 @@ and baseline; New has slightly heavier text and a neutral plus. Their gap is 8px
 before projects, including in the Overlay header. The collapsed rail's mark expands navigation and
 its separate plus starts New; both logo forms share size and icon axis.
 
-New, Search, folder and session labels share a text axis; counts/ages share the right column.
-Hidden folders add one indent, independent of workspace-tree nesting. Narrow/coarse-pointer
+New, Search, folder and session titles share a text axis. Status marks use the existing 16px
+folder icon slot at every width; working, completion, error and attention states never shift or
+narrow the title. Folder counts keep the right column; age occupies the quieter second
+line at every width. Desktop curation actions sit at its trailing edge; phone-width or touch
+drawers give persistent actions a separate column beside both lines. Session titles keep their
+first-line width on hover and focus. Folder and session actions share trailing columns on fine and
+coarse pointers. Hidden keeps the compact project geometry and lists independent sessions before folders, without
+an additional folder indent or a separate text axis for independent rows. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
 
@@ -368,10 +382,12 @@ hover. The row retains selection fill even when its select button is disabled. F
 use control-radius corners, a clear icon gutter beside the marker and a common text axis with their
 sessions. Folder, Workspace and Hidden keyboard outlines remain inset within clipping boundaries.
 
-Project spacing is 16px above the 2px catalog gap, and 20px after pinned sessions or the last pinned
-folder; collapse preserves it. Hidden keeps its compact drawer spacing regardless of previous pinning.
-Runtime status stays on each session's existing row rather than duplicating sessions in separate
-status groups, preserving project hierarchy and user curation.
+Fine-pointer desktop project spacing is 12px above the 2px catalog gap (other layouts retain 16px),
+and 20px after pinned sessions or the last pinned folder; collapse preserves it. Hidden keeps its
+compact drawer spacing regardless of previous pinning, including an 8px section margin before a
+folder following independent sessions.
+Runtime status stays on each session's existing row; sessions are not duplicated into separate
+status groups.
 
 ## Conversation surfaces
 

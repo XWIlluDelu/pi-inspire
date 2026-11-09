@@ -94,10 +94,18 @@
   padding: 0;
 }
 
-.nav__close {
+.nav__close,
+.nav__settings {
   flex: 0 0 36px;
   width: 36px;
   height: 36px;
+}
+
+.nav__header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .nav__brand-lockup {
@@ -193,6 +201,39 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
+/* Both navigation entrances retain background outcomes when the list is hidden.
+   The text count distinguishes attention without relying on color alone. */
+.navigation-toggle {
+  position: relative;
+}
+
+.navigation-toggle__attention {
+  position: absolute;
+  top: 4px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--success);
+  color: var(--on-accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.navigation-toggle__attention--urgent {
+  background: var(--error);
+}
+
+.nav__brand-rail .navigation-toggle__attention {
+  top: -2px;
+  right: -2px;
+}
+
 .nav__brand-icon--rail {
   width: 24px;
   height: 24px;
@@ -211,7 +252,8 @@
     min-height: 44px;
   }
 
-  .nav__close {
+  .nav__close,
+  .nav__settings {
     flex-basis: 44px;
     width: 44px;
     height: 44px;
@@ -290,19 +332,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  /* Folder rows reserve 8px for the active marker; compensate at the outer
-     gutter so their icon/text axes still match New and Search. */
+  /* Compact navigation keeps its original gutter. Desktop aligns row surfaces
+     with the controls while preserving their existing icon/text axes below. */
   padding: 0 var(--space-3) var(--space-3) var(--space-2);
 }
 
-/* Align sessions with folder labels, leaving the icon column as hierarchy. */
-.nav__group .nav__row-main {
-  padding-left: var(--nav-label-inset);
-}
-
-/* The row is a container: a main select button plus curation actions that
-   take over its right-hand meta column on hover or focus (nested buttons
-   would be invalid HTML). */
+/* Selection and curation are separate buttons within the same row. */
 .nav__row {
   position: relative;
   border-radius: var(--radius-sm);
@@ -322,19 +357,24 @@
   z-index: 1;
 }
 
-/* One dense line: title left, meta right. */
+/* Identity and metadata share two lines at every width. Age no longer competes
+   with the title, and curation retains its own space. */
 .nav__row-main {
   width: 100%;
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 18px 16px;
+  align-content: center;
   align-items: center;
-  gap: var(--space-2);
+  row-gap: 1px;
   text-align: left;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  padding: 5px var(--space-2);
-  min-height: 32px;
+  padding: 4px var(--space-2);
+  padding-inline-start: var(--nav-label-inset);
+  min-height: 44px;
   cursor: pointer;
   transition: background var(--dur-micro) var(--ease-standard);
 }
@@ -358,8 +398,7 @@
 .nav__row-actions {
   position: absolute;
   right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+  bottom: 1px;
   display: flex;
   align-items: center;
   gap: 1px;
@@ -374,14 +413,9 @@
   pointer-events: auto;
 }
 
-.nav__row-action,
-.nav__row-action-spacer {
-  width: 22px;
-  height: 22px;
-  display: inline-block;
-}
-
 .nav__row-action {
+  width: 24px;
+  height: 24px;
   padding: 0;
   display: inline-flex;
   align-items: center;
@@ -414,53 +448,10 @@
   opacity: 0.5;
 }
 
-@media (hover: none), (max-width: 600px) {
-  /* Touch and phone-width layouts reserve distinct grid columns for session
-     metadata and persistent actions, so age text cannot enter either action
-     hit area. */
-  .nav__row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) max-content;
-    align-items: center;
-    column-gap: var(--space-2);
-    min-height: 44px;
-  }
-
-  .nav__row-main {
-    width: auto;
-    min-width: 0;
-    min-height: 44px;
-  }
-
-  .nav__row-actions {
-    position: static;
-    flex: 0 0 auto;
-    transform: none;
-    gap: 2px;
-    margin-right: 4px;
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .nav__row-action,
-  .nav__row-action-spacer {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
-  }
-
-  .nav__row:hover .nav__row-meta,
-  .nav__row:has(:focus-visible) .nav__row-meta {
-    opacity: 1;
-  }
-}
-
+/* Identity owns one stable text column. Status uses the existing folder icon
+   slot, rather than inserting another item before the title when it appears. */
 .nav__row-title {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+  display: contents;
   font-size: var(--text-sm);
   font-weight: 400;
   color: var(--ink);
@@ -473,18 +464,30 @@
 }
 
 .nav__row-name {
+  grid-area: 1 / 1;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 18px;
 }
 
 .nav__row--active .nav__row-title {
   font-weight: 500;
 }
 
+.nav__row-title > :is(.nav__row-state, .nav__row-dot) {
+  grid-area: 1 / 1;
+  justify-self: start;
+  z-index: 1;
+}
+
 .nav__row-dot {
   flex: 0 0 auto;
+  margin-inline-start: calc(
+    -1 * (var(--space-4) + var(--space-2)) + var(--space-4) - 7px
+  );
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -494,11 +497,21 @@
 }
 
 .nav__row-state {
-  flex: 0 0 12px;
   display: inline-flex;
+  width: var(--space-4);
+  height: var(--space-4);
   align-items: center;
+  justify-content: flex-end;
+  margin-inline-start: calc(-1 * (var(--space-4) + var(--space-2)));
 }
-.nav__row-state--running { color: var(--brand-accent); }
+
+.nav__row-state > :is(.pi-loading, .pi-status) {
+  /* Render the 12px mark at 10px, anchored to its painted right edge
+     (13.8 / 16), while retaining its slot and vertical centre. */
+  transform-origin: 86.25% 50%;
+  transform: scale(0.8333333333);
+}
+.nav__row-state--running { color: var(--warning); }
 
 .nav__row-state--completed {
   color: var(--success);
@@ -513,33 +526,39 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 30%, transparent);
 }
 
-/* The row's right-hand column. The age sits in a fixed slot the width of the
-   two action buttons, so ages line up down the list and the actions can take
-   the same ground without moving anything. */
+/* Fine-pointer actions occupy the trailing end of this quieter second line. */
 .nav__row-meta {
-  flex: 0 0 auto;
+  grid-area: 2 / 1;
+  min-width: 0;
+  padding-inline-end: 52px;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   font-size: var(--text-xs);
+  line-height: 16px;
   color: var(--muted);
-  transition: opacity var(--dur-micro) var(--ease-standard);
-}
-
-/* The actions occupy this column; the meta yields rather than sitting under
-   them. */
-@media (hover: hover) and (min-width: 601px) {
-  .nav__row:hover .nav__row-meta,
-  .nav__row:has(:focus-visible) .nav__row-meta {
-    opacity: 0;
-  }
 }
 
 .nav__row-age {
-  flex: 0 0 46px;
-  text-align: right;
+  order: -1;
+  flex: 0 0 auto;
+  text-align: left;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* The age carries the row's runtime state colour beside its status mark. */
+.nav__row-age--running,
+.nav__row-age--attention {
+  color: var(--warning-ink);
+}
+
+.nav__row-age--completed {
+  color: var(--success-ink);
+}
+
+.nav__row-age--failed {
+  color: var(--error-ink);
 }
 
 /* Only where a section crosses folders; it yields width before the age does. */
@@ -552,6 +571,38 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-control);
   background: var(--bg-inset);
+}
+
+@media (hover: none), (max-width: 600px) {
+  /* Persistent touch actions own a separate column beside both text lines. */
+  .nav__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: center;
+    column-gap: var(--space-2);
+  }
+
+  .nav__row-main {
+    width: auto;
+  }
+
+  .nav__row-meta {
+    padding-inline-end: 0;
+  }
+
+  .nav__row-actions {
+    position: static;
+    gap: 2px;
+    margin-inline-end: var(--space-1);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .nav__row-action {
+    flex: 0 0 36px;
+    width: 36px;
+    height: 36px;
+  }
 }
 
 /* Compact empty-state stack for lists and search results.
@@ -628,21 +679,19 @@
   flex: 0 0 auto;
 }
 
+/* The eye-off, trash and chevron glyphs paint below their boxes' centres;
+   lift them so they sit on the label like the folder rows' marks do. */
+.nav__dock-toggle > svg,
+.nav__hidden-clear > svg {
+  transform: translateY(-1px);
+}
+
 .nav__dock-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Plex's ink sits slightly high in a geometrically centred line box.
-   Correct text only; icons and hit targets stay on the row centre. */
-.nav__dock-title,
-.nav__hidden-count,
-.nav__hidden-content .nav__row-name,
-.nav__hidden-content .nav__row-meta {
-  translate: 0 var(--ui-text-offset);
 }
 
 .nav__hidden-count {
@@ -666,6 +715,7 @@
 }
 
 .nav__hidden-content {
+  --nav-label-inset: calc(var(--space-1) + var(--space-4) + var(--space-2));
   min-height: 0;
   overflow-y: auto;
   display: flex;
@@ -674,18 +724,21 @@
   padding: 0 var(--space-3) var(--space-2);
 }
 
-.nav__hidden-content > .nav__group + .nav__group {
+.nav__hidden-content > .nav__group + .nav__group,
+.nav__hidden-content > .nav__row + .nav__group {
   margin-top: var(--space-2);
 }
 
-/* Independent Hidden sessions start shallower than folder contents, so a
-   preceding collapsed folder does not appear to own the following row. */
-.nav__hidden-content > .nav__row > .nav__row-main {
-  padding-left: var(--space-4);
+/* Hidden shares the desktop project axes at every width. Keep the icon's
+   16px slot while clearing the inset selection marker. */
+.nav__hidden-content .nav__group-toggle {
+  padding-inline-start: var(--space-1);
 }
 
-.nav__hidden-content > .nav__group > .nav__row > .nav__row-main {
-  padding-left: calc(var(--nav-label-inset) + var(--space-4));
+.nav__hidden-content .nav__group-toggle > svg {
+  width: 14px;
+  height: 14px;
+  margin-inline-start: 2px;
 }
 
 .nav__hidden-content .nav__row-project {
@@ -723,29 +776,50 @@
     height: 34px;
   }
 
-  /* Cross-project rows (Pinned, search and Hidden) need a second line when
-     actions stay visible: identity leads, with project and age beneath it. */
-  .nav__row--cross-project .nav__row-main {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 2px;
-    padding-block: 6px;
-  }
-
-  .nav__row--cross-project .nav__row-meta {
-    opacity: 1;
-  }
-
   .nav__row--cross-project .nav__row-project {
-    flex: 0 1 auto;
     max-width: none;
     color: var(--faint);
   }
+}
 
-  .nav__row-age {
-    /* Touch actions own a separate column; do not reserve their width twice. */
-    flex-basis: auto;
-    margin-left: auto;
+/* Desktop row surfaces align with New/Search while preserving the text axis. */
+@media (min-width: 901px) {
+  .nav__list {
+    --nav-label-inset: calc(var(--space-1) + var(--space-4) + var(--space-2));
+    padding-inline-start: var(--space-3);
+  }
+
+  .nav__list .nav__group-toggle,
+  .nav__list > .nav__group--pinned > .nav__group-title {
+    padding-inline-start: var(--space-1);
+  }
+
+  /* Keep the 16px slot and label origin; leave room beside the active marker. */
+  .nav__group-toggle > svg {
+    width: 14px;
+    height: 14px;
+    margin-inline-start: 2px;
+  }
+}
+
+@media (min-width: 901px) and (hover: none) {
+  .nav__row {
+    display: block;
+  }
+
+  .nav__row-main {
+    width: 100%;
+    min-height: 52px;
+  }
+
+  .nav__row-meta {
+    padding-inline-end: 78px;
+  }
+
+  .nav__row-actions {
+    position: absolute;
+    /* The trailing inset comes from right rather than the touch grid's margin. */
+    margin-inline-end: 0;
   }
 }
 
@@ -779,8 +853,8 @@
     color var(--dur-micro) var(--ease-standard);
 }
 
-/* Leaf rows reserve the same disclosure slot as sibling folders, not search results. */
-.workspace-tree__row--file:not(.workspace-tree__row--result)::before {
+/* Keep file icons in the same column as folders, including search results. */
+.workspace-tree__row--file::before {
   content: "";
   flex: 0 0 11px;
 }
@@ -842,11 +916,7 @@
   height: auto;
   min-height: 34px;
   padding-block: 4px;
-  align-items: flex-start;
-}
-
-.workspace-tree__row--result svg {
-  margin-top: 2px;
+  align-items: center;
 }
 
 .workspace-tree__status {
@@ -889,54 +959,6 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   padding-left: var(--space-2) !important;
 }
 
-.workspace-search {
-  display: flex;
-  min-width: 0;
-  height: 34px;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid color-mix(in srgb, var(--hairline) 75%, transparent);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  padding: 0 var(--space-3);
-  color: var(--muted);
-  box-shadow: none;
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.workspace-search:hover {
-  border-color: var(--line);
-  color: var(--ink);
-}
-
-.workspace-search:focus-within {
-  border-color: var(--accent-focus);
-  color: var(--ink);
-}
-
-.workspace-search svg {
-  flex: 0 0 auto;
-  color: inherit;
-}
-
-.workspace-search input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  padding: var(--space-2) 0;
-  color: var(--ink);
-  font: var(--text-sm)/var(--leading-ui) var(--font-sans);
-}
-
-.workspace-search input::placeholder {
-  color: var(--muted);
-  opacity: 1;
-}
-
 .git-rollup {
   width: 14px;
   height: 14px;
@@ -962,6 +984,13 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
 
 .nav__group + .nav__group {
   margin-top: var(--space-4);
+}
+
+@media (min-width: 901px) and (pointer: fine) {
+  /* Keep project boundaries lighter than the Pinned/category boundary. */
+  .nav__list > .nav__group:not(.nav__group--pinned, .nav__group--pinned-folder) + .nav__group {
+    margin-top: var(--space-3);
+  }
 }
 
 .nav__pagination {
@@ -1114,6 +1143,11 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   outline-offset: -2px;
 }
 
+.nav__group-actions .nav__row-action:focus-visible {
+  /* Keep the complete ring inside the same clipped folder heading. */
+  outline-offset: -2px;
+}
+
 .nav__group-toggle:disabled {
   cursor: default;
   opacity: 0.7;
@@ -1194,13 +1228,10 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   text-overflow: ellipsis;
 }
 
-.nav__group--hidden-folder > .nav__group-title {
-  margin-left: var(--space-4);
-}
-
 .nav__row-main:disabled {
   cursor: default;
-  opacity: 0.55;
+  /* Pending navigation must not flash the readable row into an inactive state. */
+  opacity: 1;
 }
 
 .nav__row-main:disabled:hover {

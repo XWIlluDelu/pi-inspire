@@ -32,7 +32,7 @@ import {
   availableStatusControls,
   usePresentationAdapters,
 } from "../presentation-adapters";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { RecoveryBackoff } from "../recovery-backoff";
 import {
   sessionDraft,
   setSessionDraft,
@@ -40,6 +40,10 @@ import {
   startDraft,
 } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
+import {
+  readNavigationDisclosure,
+  saveNavigationDisclosure,
+} from "../workbench-session";
 import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { ThinkingControl } from "./ComposerThinkingControl";
@@ -48,7 +52,7 @@ import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
-import { relativeTime } from "./transcript-rows";
+import { relativeTime } from "../format";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 const DIRECTORY_PREVIEW_DELAY_MS = 220;
@@ -155,7 +159,14 @@ export const Welcome = memo(function Welcome({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [dropActive, setDropActive] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(true);
+  const [recentOpen, setRecentOpen] = useState(() =>
+    readNavigationDisclosure("recentSessions"),
+  );
+  const toggleRecent = () => {
+    const open = !recentOpen;
+    setRecentOpen(open);
+    saveNavigationDisclosure("recentSessions", open);
+  };
   const [browsing, setBrowsing] = useState(false);
   const [modelKey, setModelKey] = useState(() =>
     inheritedModel ? modelIdentityKey(inheritedModel) : "",
@@ -266,24 +277,15 @@ export const Welcome = memo(function Welcome({
     const inputGeneration = thinkingInputGeneration.current;
     let result;
     try {
-      while (true) {
-        if (!owns()) return undefined;
-        try {
-          result = await store.readNewSessionModels(
+      result = await catalogRecovery.read(
+        () =>
+          store.readNewSessionModels(
             catalogSource,
             effectiveDirectory || undefined,
-          );
-          break;
-        } catch (error) {
-          if (!owns()) return undefined;
-          if (
-            !isTransientFailure(error) ||
-            !(await catalogRecovery.wait(request.signal))
-          )
-            throw error;
-          if (!owns()) return undefined;
-        }
-      }
+          ),
+        request.signal,
+        owns,
+      );
     } catch (error) {
       if (!owns()) return undefined;
       const missing =
@@ -456,35 +458,29 @@ export const Welcome = memo(function Welcome({
     setModelWarning(null);
     setModelStatus("loading");
     void (async () => {
-      while (owns()) {
-        try {
-          const level = await store.resolveNewSessionThinking(
-            effectiveDirectory,
-            pickedModel,
-            thinkingRef.current,
-          );
-          if (!owns()) return;
-          if (thinkingInputGeneration.current === inputGeneration)
-            setThinkingLevel(clampThinkingLevel(pickedModel, level));
-          setModelStatus("ready");
-          return;
-        } catch (error) {
-          if (!owns()) return;
-          if (
-            isTransientFailure(error) &&
-            (await recovery.wait(request.signal))
-          )
-            continue;
-          if (owns()) {
-            setModelWarning(
-              error instanceof Error
-                ? error.message
-                : "Thinking preview could not be loaded",
-            );
-            setModelStatus("error");
-          }
-          return;
-        }
+      try {
+        const level = await recovery.read(
+          () =>
+            store.resolveNewSessionThinking(
+              effectiveDirectory,
+              pickedModel,
+              thinkingRef.current,
+            ),
+          request.signal,
+          owns,
+        );
+        if (!owns()) return;
+        if (thinkingInputGeneration.current === inputGeneration)
+          setThinkingLevel(clampThinkingLevel(pickedModel, level));
+        setModelStatus("ready");
+      } catch (error) {
+        if (!owns()) return;
+        setModelWarning(
+          error instanceof Error
+            ? error.message
+            : "Thinking preview could not be loaded",
+        );
+        setModelStatus("error");
       }
     })();
     return () => {
@@ -513,39 +509,29 @@ export const Welcome = memo(function Welcome({
     setModelWarning(null);
     setModelStatus("loading");
     void (async () => {
-      while (owns()) {
-        try {
-          const result = await store.readNewSessionModels(
-            sessionId,
-            inheritance.cwd,
-            true,
-          );
-          if (!owns()) return;
-          if (!result.selection) {
-            setModelStatus("error");
-            return;
-          }
-          setResolvedInheritance({ sessionId, selection: result.selection });
-          setPickedModel(result.selection.model);
-          setModelWarning(result.warning ?? null);
-          setModelStatus(result.selection.model ? "ready" : "idle");
-          return;
-        } catch (error) {
-          if (!owns()) return;
-          if (
-            isTransientFailure(error) &&
-            (await recovery.wait(request.signal))
-          )
-            continue;
-          if (!owns()) return;
-          setModelWarning(
-            error instanceof Error
-              ? error.message
-              : "The source model is unavailable",
-          );
+      try {
+        const result = await recovery.read(
+          () => store.readNewSessionModels(sessionId, inheritance.cwd, true),
+          request.signal,
+          owns,
+        );
+        if (!owns()) return;
+        if (!result.selection) {
           setModelStatus("error");
           return;
         }
+        setResolvedInheritance({ sessionId, selection: result.selection });
+        setPickedModel(result.selection.model);
+        setModelWarning(result.warning ?? null);
+        setModelStatus(result.selection.model ? "ready" : "idle");
+      } catch (error) {
+        if (!owns()) return;
+        setModelWarning(
+          error instanceof Error
+            ? error.message
+            : "The source model is unavailable",
+        );
+        setModelStatus("error");
       }
     })();
     return () => {
@@ -834,6 +820,61 @@ export const Welcome = memo(function Welcome({
             event.target.value = "";
           }}
         />
+        {/* The required project choice leads, before what will be sent there. */}
+        <div className="welcome__directory">
+          <button
+            type="button"
+            className="icon-button welcome__directory-browse"
+            aria-label="Browse host directories"
+            title="Browse host directories"
+            disabled={starting}
+            onClick={() => setBrowsing(true)}
+          >
+            <FolderOpen size={14} aria-hidden />
+          </button>
+          <input
+            className="welcome__dir"
+            value={directory}
+            onChange={(event) => changeDirectory(event.target.value)}
+            placeholder="/path/to/project"
+            aria-label="Project directory"
+            spellCheck={false}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !isComposingKeyboardEvent(event.nativeEvent)
+              )
+                event.preventDefault();
+            }}
+            disabled={starting}
+          />
+        </div>
+        {directoryMissing ? (
+          <div
+            className="welcome__dir-action"
+            role="status"
+            aria-busy={starting}
+          >
+            <span>Folder does not exist yet.</span>
+            <button
+              type="button"
+              className="button welcome__dir-action-btn"
+              disabled={!canCreate}
+              aria-busy={starting || sourceUnresolved}
+              onClick={() => void start(true)}
+              title={
+                !hasInput ? "Add a message or attachment to start" : undefined
+              }
+            >
+              {starting || sourceUnresolved ? (
+                <PiLoader size={13} aria-hidden />
+              ) : null}
+              {starting
+                ? "Creating folder and starting…"
+                : "Create folder and start"}
+            </button>
+          </div>
+        ) : null}
         <AttachmentList
           sessionId={null}
           items={attachments}
@@ -1007,60 +1048,6 @@ export const Welcome = memo(function Welcome({
             )}
           </button>
         </div>
-        <div className="welcome__directory">
-          <button
-            type="button"
-            className="icon-button welcome__directory-browse"
-            aria-label="Browse host directories"
-            title="Browse host directories"
-            disabled={starting}
-            onClick={() => setBrowsing(true)}
-          >
-            <FolderOpen size={14} aria-hidden />
-          </button>
-          <input
-            className="welcome__dir"
-            value={directory}
-            onChange={(event) => changeDirectory(event.target.value)}
-            placeholder="/path/to/project"
-            aria-label="Project directory"
-            spellCheck={false}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                !isComposingKeyboardEvent(event.nativeEvent)
-              )
-                event.preventDefault();
-            }}
-            disabled={starting}
-          />
-        </div>
-        {directoryMissing ? (
-          <div
-            className="welcome__dir-action"
-            role="status"
-            aria-busy={starting}
-          >
-            <span>Folder does not exist yet.</span>
-            <button
-              type="button"
-              className="button welcome__dir-action-btn"
-              disabled={!canCreate}
-              aria-busy={starting || sourceUnresolved}
-              onClick={() => void start(true)}
-              title={
-                !hasInput ? "Add a message or attachment to start" : undefined
-              }
-            >
-              {starting || sourceUnresolved ? (
-                <PiLoader size={13} aria-hidden />
-              ) : null}
-              {starting
-                ? "Creating folder and starting…"
-                : "Create folder and start"}
-            </button>
-          </div>
-        ) : null}
         {startReadiness ? (
           <div
             className={`welcome__readiness ${directoryProblem || modelStatus === "error" ? "welcome__readiness--error" : ""}`}
@@ -1138,7 +1125,7 @@ export const Welcome = memo(function Welcome({
               type="button"
               className="welcome__recent-toggle"
               aria-expanded={recentOpen}
-              onClick={() => setRecentOpen((value) => !value)}
+              onClick={toggleRecent}
             >
               <ChevronRight
                 size={12}

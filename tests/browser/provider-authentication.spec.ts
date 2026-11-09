@@ -1,7 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 import { modelSettingsScenario } from "./fixtures/model-settings";
-import { openCommandPalette, pairAndOpen } from "./support/navigation";
+import {
+  openCommandPalette,
+  pairAndOpen,
+  openSettings,
+} from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 
 test.use({ serviceWorkers: "block" });
@@ -20,7 +24,7 @@ for (const [name, width, height, theme] of [
       await draft.fill("Keep my auth-task draft");
       const model = page.getByRole("button", { name: "Model", exact: true });
       const selected = await model.textContent();
-      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await openSettings(page);
       await page.getByRole("button", { name: "Models", exact: true }).click();
       const initialSettings = page.getByRole("dialog", {
         name: "Settings",
@@ -275,7 +279,7 @@ for (const kind of ["normal", "long", "CJK"] as const) {
       provider.name = "RegionalCalibrationReferenceDeviceAuthorizationProvider";
     if (kind === "CJK") provider.name = "区域标定参考模型服务（共享工作区）";
     await pairAndOpen(page);
-    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await openSettings(page);
     const settings = page.getByRole("dialog", {
       name: "Settings",
       exact: true,

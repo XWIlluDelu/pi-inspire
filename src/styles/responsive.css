@@ -709,14 +709,7 @@ body.srail-dragging {
 
   .welcome__row {
     min-height: 44px;
-    padding: 10px 14px;
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-1);
-  }
-
-  .welcome__row:active {
-    background: var(--bg-inset);
-    transform: scale(0.99);
+    padding: 10px 19px;
   }
 
   .nav__search input[type="search"] {

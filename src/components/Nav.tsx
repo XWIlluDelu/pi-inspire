@@ -6,6 +6,7 @@ import {
   Pin,
   Plus,
   SearchX,
+  Settings as SettingsIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -23,7 +24,12 @@ import { type SessionSummary } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import {
+  readNavigationDisclosure,
+  saveNavigationDisclosure,
+} from "../workbench-session";
 import { HiddenClearDialog } from "./HiddenClearDialog";
+import { NavigationToggle } from "./NavigationToggle";
 import { ProjectGroup, SessionRow } from "./NavSessions";
 import { hiddenDeletionBlockReason, splitNavSections } from "./nav-model";
 import { PiLoader } from "./PiLoader";
@@ -37,6 +43,7 @@ export const Nav = memo(function Nav({
   selectedSessionId,
   isModal = false,
   onClose,
+  onOpenSettings,
   onToggleNavigation,
   onNewSession,
   onSelectSession,
@@ -46,6 +53,8 @@ export const Nav = memo(function Nav({
   selectedSessionId?: string | null;
   isModal?: boolean;
   onClose?: () => void;
+  /** Narrow drawers own Settings so the header can favor session identity. */
+  onOpenSettings?: () => void;
   onToggleNavigation: () => void;
   onNewSession: () => void;
   onSelectSession: (id: string) => void;
@@ -110,7 +119,14 @@ export const Nav = memo(function Nav({
     "drawer",
   );
   const navRef = isModal ? modalNavRef : internalNavRef;
-  const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [hiddenOpen, setHiddenOpen] = useState(() =>
+    readNavigationDisclosure("hiddenSessions"),
+  );
+  const toggleHidden = () => {
+    const open = !hiddenOpen;
+    setHiddenOpen(open);
+    saveNavigationDisclosure("hiddenSessions", open);
+  };
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSelection, setSearchSelection] = useState<{
     query: string;
@@ -162,7 +178,7 @@ export const Nav = memo(function Nav({
       ...folderRows(sections.pinnedGroups),
       ...folderRows(sections.groups),
       ...(hiddenExpanded
-        ? [...folderRows(sections.hiddenGroups), ...sections.hidden]
+        ? [...sections.hidden, ...folderRows(sections.hiddenGroups)]
         : []),
     ];
   }, [sections, searching, hiddenExpanded, collapsedGroupCwds]);
@@ -207,9 +223,9 @@ export const Nav = memo(function Nav({
     return (
       <nav className="nav nav--rail" aria-label="Sessions">
         <div className="nav__header nav__header--rail">
-          <button
-            type="button"
+          <NavigationToggle
             className="nav__brand-rail nav__toggle"
+            selectedSessionId={visibleSessionId}
             onClick={onToggleNavigation}
             title="Expand navigation (Ctrl+B)"
             aria-label="Expand navigation"
@@ -221,7 +237,7 @@ export const Nav = memo(function Nav({
               className="nav__rail-toggle-icon"
               aria-hidden
             />
-          </button>
+          </NavigationToggle>
         </div>
         <button
           type="button"
@@ -301,15 +317,28 @@ export const Nav = memo(function Nav({
             <Wordmark />
           </div>
           {isModal && onClose ? (
-            <button
-              type="button"
-              className="icon-button nav__close"
-              aria-label="Close navigation"
-              title="Close navigation"
-              onClick={onClose}
-            >
-              <X size={15} aria-hidden />
-            </button>
+            <div className="nav__header-actions">
+              {onOpenSettings ? (
+                <button
+                  type="button"
+                  className="icon-button nav__settings"
+                  aria-label="Settings"
+                  title="Settings"
+                  onClick={onOpenSettings}
+                >
+                  <SettingsIcon size={15} aria-hidden />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="icon-button nav__close"
+                aria-label="Close navigation"
+                title="Close navigation"
+                onClick={onClose}
+              >
+                <X size={15} aria-hidden />
+              </button>
+            </div>
           ) : !isModal ? (
             <button
               type="button"
@@ -557,7 +586,7 @@ export const Nav = memo(function Nav({
               aria-expanded={hiddenExpanded}
               aria-controls={hiddenContentId}
               disabled={searching}
-              onClick={() => setHiddenOpen((value) => !value)}
+              onClick={toggleHidden}
             >
               <EyeOff size={16} aria-hidden />
               <span className="nav__group-name nav__dock-title">Hidden</span>
@@ -589,6 +618,18 @@ export const Nav = memo(function Nav({
           </h2>
           {hiddenExpanded ? (
             <div className="nav__hidden-content" id={hiddenContentId}>
+              {hidden.map((session) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  searchQuery={sessionQuery}
+                  selectedSessionId={visibleSessionId}
+                  highlightedSessionId={highlightedSessionId}
+                  showProject
+                  onSelect={onSelectSession}
+                  onDelete={setDeleteCandidate}
+                />
+              ))}
               {hiddenGroups.map((group, groupIndex) => (
                 <ProjectGroup
                   key={group.cwd}
@@ -612,18 +653,6 @@ export const Nav = memo(function Nav({
                     group.sessions,
                     deletionState,
                   )}
-                />
-              ))}
-              {hidden.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  searchQuery={sessionQuery}
-                  selectedSessionId={visibleSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  showProject
-                  onSelect={onSelectSession}
-                  onDelete={setDeleteCandidate}
                 />
               ))}
             </div>

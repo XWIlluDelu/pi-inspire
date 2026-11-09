@@ -42,7 +42,7 @@ import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
 import { visibleSessions } from "./nav-model";
 import { SearchMatchText } from "./SearchMatchText";
-import { relativeTime } from "./transcript-rows";
+import { relativeTime } from "../format";
 
 interface PaletteItem {
   id: string;
