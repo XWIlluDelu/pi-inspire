@@ -693,6 +693,23 @@ export class PiRpcProcess extends EventEmitter {
     return stopped;
   }
 
+  /** Leave Pi running beyond this Host; null when its placement cannot. */
+  detach(): Promise<void> | null {
+    const child = this.child;
+    if (!child?.detach || this.stopPromise) return null;
+    this.stopping = true;
+    const detached = child.detach();
+    this.child = null;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Pi RPC process detached"));
+    }
+    this.pending.clear();
+    this.retired.clear();
+    this.diagnostic("info", "worker_detached", { childPid: child.pid });
+    return detached;
+  }
+
   async stop(cancelledCommand?: string): Promise<void> {
     if (this.stopPromise) return this.stopPromise;
     const child = this.child;

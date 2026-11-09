@@ -1187,11 +1187,13 @@ for (const touch of [false, true]) {
               .evaluateAll((buttons) =>
                 buttons.map((button) => button.getBoundingClientRect().top),
               );
-            expect(restartTops).toHaveLength(2);
-            const separation = restartTops[1]! - restartTops[0]!;
-            expect(Math.abs(separation - Math.round(separation))).toBeLessThan(
-              0.02,
-            );
+            expect(restartTops).toHaveLength(3);
+            for (const [index, top] of restartTops.slice(1).entries()) {
+              const separation = top - restartTops[index]!;
+              expect(
+                Math.abs(separation - Math.round(separation)),
+              ).toBeLessThan(0.02);
+            }
             const before = await recheck.evaluate(geometry);
             // Delay this explicit recheck, not a guessed ordinal startup read.
             checksPaused = true;
