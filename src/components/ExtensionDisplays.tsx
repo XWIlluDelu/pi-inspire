@@ -13,7 +13,10 @@ import type {
   ExtensionWidgetDisplay,
 } from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
-import { usePresentationAdapters } from "../presentation-adapters";
+import {
+  controlState,
+  usePresentationAdapters,
+} from "../presentation-adapters";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, useAppState } from "../store";
 import {
@@ -60,9 +63,21 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
     (state) => ({ statuses: state.statuses, sessionId: state.sessionId }),
     shallowEqual,
   );
-  const hidden = usePresentationAdapters().configuration.hiddenStatuses ?? [];
+  const { configuration } = usePresentationAdapters();
+  const hidden = configuration.hiddenStatuses ?? [];
+  const controls = configuration.controls ?? [];
   const entries = Object.entries(statuses)
     .filter(([key]) => !hidden.includes(key))
+    // A declared control's machine-readable state is consumed by that
+    // control; it never needs a separate hiddenStatuses entry to stay out of
+    // the header. Human-readable text under the same key remains visible.
+    .filter(
+      ([key, text]) =>
+        !controls.some(
+          (control) =>
+            control.state.key === key && controlState(control, text) !== null,
+        ),
+    )
     .map(([key, text]) => [key, stripTerminalSequences(text)] as const)
     .filter(([, text]) => text.trim().length > 0)
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));

@@ -7,7 +7,11 @@ import type {
 } from "../../shared/tool-presentation-config";
 import { stripTerminalSequences } from "../ansi";
 import { toolResultText } from "../events";
-import { isToolImageMimeType, mergeSearchContext } from "./model";
+import {
+  isToolImageMimeType,
+  joinResourcePath,
+  mergeSearchContext,
+} from "./model";
 import type {
   ToolListItem,
   ToolPresentation,
@@ -305,12 +309,6 @@ function annotatedLine(line: string): { label: string; detail?: string } {
   return match
     ? { label: match[1].trim(), detail: match[2].trim() }
     : { label: line.trim() };
-}
-
-function joinResourcePath(root: string | undefined, child: string): string {
-  if (/^(?:\/|[A-Za-z]:[\\/])/.test(child)) return child;
-  if (!root || root === ".") return child;
-  return `${root.replace(/[\\/]$/, "")}/${child.replace(/^[\\/]/, "")}`;
 }
 
 function listBlocks(

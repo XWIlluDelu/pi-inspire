@@ -49,7 +49,7 @@ test("regex anchors stay prose beside genuine math across message surfaces", asy
       type: "message_end",
       message: {
         role: "custom",
-        customType: "intercom_message",
+        customType: "relay_message",
         content: text,
         display: true,
         details: {
@@ -123,7 +123,7 @@ test("literal syntax and wide formulas remain readable across message surfaces",
       selector: ".custom-message__body .rich-text",
       message: {
         role: "custom",
-        customType: "intercom_message",
+        customType: "relay_message",
         content: text,
         display: true,
         details: { from: { name: "Boundary review" }, bodyText: text },

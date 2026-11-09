@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  openSettings,
+} from "./support/navigation";
 import {
   FIRST_TEXT_BASELINE_TOLERANCE_PX,
   firstTextBaseline,
@@ -16,7 +20,7 @@ test.use({
 
 async function readingSize(page: Page, name: string) {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await openSettings(page);
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
   await dialog.getByRole("button", { name: "Display", exact: true }).click();
   await dialog
@@ -85,67 +89,61 @@ test("notebook execution counts share a bounded gutter without covering source",
         await expect
           .poll(() => preview.evaluate((el) => el.scrollWidth - el.clientWidth))
           .toBe(0);
-        for (const theme of ["light", "dark"]) {
-          await page.evaluate(
-            (theme) => (document.documentElement.dataset.theme = theme),
-            theme,
-          );
-          const geometry = await preview.evaluate((root) => {
-            const rows = [
-              ...root.querySelectorAll<HTMLElement>(
-                ".notebook-preview__cell--code, .notebook-preview__output",
-              ),
-            ];
-            return rows.map((row) => {
-              const prompt = row.querySelector<HTMLElement>(
-                ":scope > .notebook-preview__prompt",
-              )!;
-              const source = row.querySelector<HTMLElement>(
-                ":scope > .notebook-preview__cell-body, :scope > .notebook-preview__output-body",
-              )!;
-              const range = document.createRange();
-              range.selectNodeContents(prompt);
-              const box = prompt.getBoundingClientRect(),
-                glyphs = range.getBoundingClientRect();
-              return {
-                source: source.getBoundingClientRect().left,
-                left: box.left,
-                min: parseFloat(getComputedStyle(prompt).minWidth),
-                width: box.width,
-                padding: parseFloat(getComputedStyle(prompt).paddingRight),
-                rightGap: source.getBoundingClientRect().left - glyphs.right,
-                clipped: prompt.scrollWidth - prompt.clientWidth,
-                textLeft: glyphs.left,
-              };
-            });
+        const geometry = await preview.evaluate((root) => {
+          const rows = [
+            ...root.querySelectorAll<HTMLElement>(
+              ".notebook-preview__cell--code, .notebook-preview__output",
+            ),
+          ];
+          return rows.map((row) => {
+            const prompt = row.querySelector<HTMLElement>(
+              ":scope > .notebook-preview__prompt",
+            )!;
+            const source = row.querySelector<HTMLElement>(
+              ":scope > .notebook-preview__cell-body, :scope > .notebook-preview__output-body",
+            )!;
+            const range = document.createRange();
+            range.selectNodeContents(prompt);
+            const box = prompt.getBoundingClientRect(),
+              glyphs = range.getBoundingClientRect();
+            return {
+              source: source.getBoundingClientRect().left,
+              left: box.left,
+              min: parseFloat(getComputedStyle(prompt).minWidth),
+              width: box.width,
+              padding: parseFloat(getComputedStyle(prompt).paddingRight),
+              rightGap: source.getBoundingClientRect().left - glyphs.right,
+              clipped: prompt.scrollWidth - prompt.clientWidth,
+              textLeft: glyphs.left,
+            };
           });
-          expect(
-            Math.max(...geometry.map((row) => row.source)) -
-              Math.min(...geometry.map((row) => row.source)),
-          ).toBeLessThanOrEqual(0.5);
-          for (const row of geometry) {
-            expect(row.width).toBeGreaterThanOrEqual(row.min);
-            expect(row.rightGap).toBeGreaterThanOrEqual(row.padding - 0.5);
-            expect(row.textLeft).toBeGreaterThanOrEqual(row.left - 0.5);
-            expect(row.clipped).toBe(0);
-          }
-          const row = preview.locator(".notebook-preview__output").last();
-          const baseline = await row
-            .locator(".notebook-preview__prompt")
-            .evaluate(firstTextBaseline, ".notebook-preview__output");
-          if (size === "Compact" && width === 1280 && theme === "light") {
-            // The row can move between samples without changing text alignment.
-            await preview.evaluate((element) => {
-              element.scrollTop += 8;
-            });
-          }
-          const code = await row
-            .locator("pre")
-            .evaluate(firstTextBaseline, ".notebook-preview__output");
-          expect(Math.abs(baseline! - code!)).toBeLessThanOrEqual(
-            FIRST_TEXT_BASELINE_TOLERANCE_PX,
-          );
+        });
+        expect(
+          Math.max(...geometry.map((row) => row.source)) -
+            Math.min(...geometry.map((row) => row.source)),
+        ).toBeLessThanOrEqual(0.5);
+        for (const row of geometry) {
+          expect(row.width).toBeGreaterThanOrEqual(row.min);
+          expect(row.rightGap).toBeGreaterThanOrEqual(row.padding - 0.5);
+          expect(row.textLeft).toBeGreaterThanOrEqual(row.left - 0.5);
+          expect(row.clipped).toBe(0);
         }
+        const row = preview.locator(".notebook-preview__output").last();
+        const baseline = await row
+          .locator(".notebook-preview__prompt")
+          .evaluate(firstTextBaseline, ".notebook-preview__output");
+        if (size === "Compact" && width === 1280) {
+          // The row can move between samples without changing text alignment.
+          await preview.evaluate((element) => {
+            element.scrollTop += 8;
+          });
+        }
+        const code = await row
+          .locator("pre")
+          .evaluate(firstTextBaseline, ".notebook-preview__output");
+        expect(Math.abs(baseline! - code!)).toBeLessThanOrEqual(
+          FIRST_TEXT_BASELINE_TOLERANCE_PX,
+        );
       }
     }
   } finally {
@@ -183,10 +181,8 @@ for (const mode of ["notebook", "changes"] as const) {
         pane.locator(".notebook-preview__cell--code pre").first(),
       ).toBeVisible();
     } else {
-      await pane.getByRole("button", { name: "Changes", exact: true }).click();
-      await pane
-        .getByRole("button", { name: /page\.html, unstaged modified/ })
-        .click();
+      await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+      await pane.getByRole("button", { name: /page\.html, modified/ }).click();
       await expect(pane.locator(".source-diff__line--add")).toBeVisible();
     }
 

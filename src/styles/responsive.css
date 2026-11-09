@@ -612,10 +612,6 @@ body.srail-dragging {
     max-height: min(18dvh, 136px);
   }
 
-  .extension-display__detail {
-    display: none;
-  }
-
   .composer {
     --composer-content-inset: 7px;
     padding: 10px 12px;

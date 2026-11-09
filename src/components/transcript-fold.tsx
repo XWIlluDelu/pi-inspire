@@ -36,6 +36,10 @@ export type ActivityTelemetryItem = {
   id: string;
   kind: "thinking" | "tool";
   label?: string;
+  /** Tool name for the collapsed text summary. */
+  name?: string;
+  /** A settled tool result reported an error. */
+  failed?: boolean;
   live?: boolean;
   /** Deferred ranges describe omitted activity but do not correspond to a
    * mounted card until a bounded tail page has materialized. */
@@ -43,6 +47,39 @@ export type ActivityTelemetryItem = {
 };
 
 export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
+
+/**
+ * A collapsed group names what it did in words: the step count, the first
+ * distinct tools (with repeat counts) and any failures, so a reader does not
+ * have to expand a group just to learn whether something went wrong.
+ * Deferred ranges contribute presence only; their tools are not yet known.
+ */
+export function summarizeActivityText(
+  telemetry: readonly ActivityTelemetryItem[],
+): { steps: string; tools: string; failed: number } {
+  const total = telemetry.length;
+  const counts = new Map<string, number>();
+  let thinking = 0;
+  let failed = 0;
+  for (const item of telemetry) {
+    if (item.failed) failed += 1;
+    if (item.deferred) continue;
+    if (item.kind === "thinking") thinking += 1;
+    else if (item.name) counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
+  }
+  const names = [...counts].map(([name, count]) =>
+    count > 1 ? `${name} ×${count}` : name,
+  );
+  if (thinking > 0 && names.length < 3)
+    names.unshift(thinking > 1 ? `thinking ×${thinking}` : "thinking");
+  const shown = names.slice(0, 3);
+  const rest = names.length - shown.length;
+  return {
+    steps: total === 0 ? "" : total === 1 ? "1 step" : `${total} steps`,
+    tools: shown.join(" · ") + (rest > 0 ? ` +${rest}` : ""),
+    failed,
+  };
+}
 
 function ActivityFoldOmission({
   contentId,
@@ -198,6 +235,21 @@ export function ResponseActivityFold({
   );
 
   const latestMatrix = summarizeActivityMatrix(telemetry, lifecycleActive);
+  const textSummary = summarizeActivityText(telemetry);
+  // Expanded groups only: collapsed, the matrix already says enough.
+  const expandedSummary = textSummary.steps ? (
+    <span className="activity-fold__summary">
+      {[textSummary.steps, textSummary.tools].filter(Boolean).join(" · ")}
+      {textSummary.failed > 0 ? (
+        <>
+          {" · "}
+          <span className="activity-fold__summary-failed">
+            {textSummary.failed} failed
+          </span>
+        </>
+      ) : null}
+    </span>
+  ) : null;
   const matrixDescription = latestMatrix.description;
   const kindIndicators = (
     <ActivityMatrix {...latestMatrix} active={lifecycleActive} />
@@ -316,6 +368,7 @@ export function ResponseActivityFold({
         )}
         <span>{edge === "upper" ? "Activity" : `${action} activity`}</span>
         {edge === "upper" ? kindIndicators : null}
+        {edge === "upper" ? expandedSummary : null}
       </button>
     );
   };

@@ -13,6 +13,7 @@ import {
   emptyEventSlice,
   reduceEvent,
 } from "../../src/events";
+import { openTranscriptSearch } from "./helpers";
 
 function transcript(messages: ChatMessage[], streaming = false) {
   return (
@@ -20,7 +21,7 @@ function transcript(messages: ChatMessage[], streaming = false) {
       sessionId="errors"
       messages={messages}
       streaming={streaming}
-      thinkingVisibility="hidden"
+      thinkingVisibility="expanded"
       toolVisibility="hidden"
       activityFoldVisibility="collapsed"
     />
@@ -33,7 +34,10 @@ describe("Stopped assistant outcomes", () => {
   it("renders native cancellation as a stop glyph and label without diagnostics or actions", () => {
     const cancelled = {
       role: "assistant",
-      content: [{ type: "text", text: "Partial response kept before Stop." }],
+      content: [
+        { type: "thinking", thinking: "Activity before cancellation." },
+        { type: "text", text: "Partial response kept before Stop." },
+      ],
       stopReason: "aborted",
       errorMessage: "This operation was aborted",
       timestamp: 2,
@@ -41,7 +45,10 @@ describe("Stopped assistant outcomes", () => {
     const view = render(transcript([cancelled]));
     const stopped = screen.getByRole("group", { name: "Stopped" });
     expect(stopped).toBeVisible();
-    expect(stopped.closest(".response-activity-fold")).toBeNull();
+    expect(
+      view.container.querySelector("[data-activity-fold]"),
+    ).toHaveAttribute("data-activity-fold", "closed");
+    expect(stopped.closest("[data-activity-fold]")).toBeNull();
     expect(
       screen.getByText("Partial response kept before Stop."),
     ).toBeVisible();
@@ -59,9 +66,7 @@ describe("Stopped assistant outcomes", () => {
     expect(icon).toHaveAttribute("fill", "none");
     expect(screen.queryByText("This operation was aborted")).toBeNull();
 
-    const search = screen.getByRole("searchbox", {
-      name: "Search conversation",
-    });
+    const search = openTranscriptSearch();
     fireEvent.change(search, {
       target: { value: "This operation was aborted" },
     });
@@ -200,7 +205,11 @@ describe("Pi assistant errors", () => {
     expect(screen.getByText("partial last passage")).toBeVisible();
     const error = screen.getByRole("group", { name: "Pi error" });
     expect(error).toBeVisible();
-    expect(error.closest(".response-activity-fold")).toBeNull();
+    expect(container.querySelector("[data-activity-fold]")).toHaveAttribute(
+      "data-activity-fold",
+      "closed",
+    );
+    expect(error.closest("[data-activity-fold]")).toBeNull();
     expect(
       [...container.querySelectorAll("[data-transcript-row]")].at(-1),
     ).toContainElement(error);

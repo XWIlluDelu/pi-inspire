@@ -60,7 +60,7 @@ function CommandActivityItem({
     isCommandQuery(activity)
       ? activity.command === "session"
         ? 8_000
-        : readingDwellMs(activity.message ?? "")
+        : readingDwellMs(activity.message)
       : null,
     dismiss,
     dockRef,

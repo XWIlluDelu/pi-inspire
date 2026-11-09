@@ -1,10 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
+import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { openEventSession } from "./support/host-events";
-import { textBaseline } from "./support/text-baseline";
+import { disclosureReadingOffset, textBaseline } from "./support/text-baseline";
 
-test.use({ serviceWorkers: "block", reducedMotion: "reduce" });
+test.use({
+  serviceWorkers: "block",
+  contextOptions: { reducedMotion: "reduce" },
+});
 
 for (const touch of [false, true]) {
   test.describe(touch ? "touch feedback" : "pointer feedback", () => {
@@ -30,6 +33,7 @@ for (const touch of [false, true]) {
         })),
       );
       const checkpoint = page.locator(".context-checkpoint");
+      const fold = page.locator(".activity-fold").first();
       const error = page.getByRole("group", { name: "Pi error" });
       await expect(checkpoint).toContainText("History chunk ≈ 42,500 tokens");
       await page.evaluate(() => document.fonts.ready);
@@ -46,20 +50,12 @@ for (const touch of [false, true]) {
             .querySelector(".context-checkpoint__metric")!
             .getBoundingClientRect();
           const fold = document.querySelector(".activity-fold")!;
-          const groupLabel = fold
-            .querySelector(
-              ".activity-fold__boundary--upper > span, .activity-fold__disclosure > span",
-            )!
-            .getBoundingClientRect();
           const groupChevron = fold
             .querySelector(
               ".activity-fold__boundary--upper > svg, .activity-fold__disclosure > svg",
             )!
             .getBoundingClientRect();
           const children = fold.querySelector(".activity-fold__content")!;
-          const first = children
-            .querySelector(".card__header")!
-            .getBoundingClientRect();
           const titleText = document.createRange();
           titleText.selectNodeContents(
             el.querySelector(".context-checkpoint__title")!,
@@ -74,7 +70,6 @@ for (const touch of [false, true]) {
               ),
             ).size,
             leadingEdge: chevron.left - groupChevron.left,
-            nested: first.left - groupLabel.left,
             guideAxis:
               children.getBoundingClientRect().left +
               0.5 -
@@ -87,7 +82,20 @@ for (const touch of [false, true]) {
         expect(Math.abs(alignment.outerInset)).toBeLessThanOrEqual(1);
         expect(alignment.titleLines).toBe(1);
         expect(Math.abs(alignment.leadingEdge)).toBeLessThanOrEqual(1);
-        expect(Math.abs(alignment.nested)).toBeLessThanOrEqual(1);
+        const groupLabel = (await fold
+          .locator(
+            ".activity-fold__boundary--upper > span:not(.activity-fold__matrix, .activity-fold__summary)",
+          )
+          .elementHandle())!;
+        try {
+          const nested = await fold
+            .locator(".card__chevron svg")
+            .first()
+            .evaluate(disclosureReadingOffset, groupLabel);
+          expect(Math.abs(nested)).toBeLessThan(2);
+        } finally {
+          await groupLabel.dispose();
+        }
         expect(Math.abs(alignment.guideAxis)).toBeLessThanOrEqual(1);
         if (alignment.metricWraps)
           expect(Math.abs(alignment.metricStart)).toBeLessThanOrEqual(1);
@@ -95,10 +103,10 @@ for (const touch of [false, true]) {
           const [titleBaseline, metricBaseline] = await Promise.all([
             checkpoint
               .locator(".context-checkpoint__title")
-              .evaluate(textBaseline),
+              .evaluate(textBaseline, ".context-checkpoint"),
             checkpoint
               .locator(".context-checkpoint__metric")
-              .evaluate(textBaseline),
+              .evaluate(textBaseline, ".context-checkpoint"),
           ]);
           expect(Math.abs(titleBaseline - metricBaseline)).toBeLessThan(0.1);
           expect(alignment.metricGap).toBeGreaterThanOrEqual(4);

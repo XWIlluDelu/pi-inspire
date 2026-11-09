@@ -393,10 +393,10 @@ status groups.
 
 User messages are right-aligned, content-sized bubbles with 14px corners, a neutral border and no
 accent edge. Copy/Fork fit to the bubble's left with an 8px gap and bottom-aligned targets; otherwise
-they wrap below at the same right edge with a 4px gap. This content-driven rule covers text and
-image-only bubbles without shrinking or rewrapping them; bubbles and attachments stay within the
-reading width. Actions use centered 13px glyphs, 24px mouse
-or 32px narrow/touch targets and a 4px inter-action gap. Visibility follows
+they wrap below at the same right edge with a 4px gap. This rule covers text and image-only bubbles
+without shrinking or rewrapping them; bubbles and attachments stay within the reading width.
+Actions use centered 13px glyphs, 24px mouse or 32px narrow/touch targets and a 4px inter-action
+gap; assistant response Copy uses the same target sizes. Visibility follows
 [Action-button presentation](#action-button-presentation).
 
 Assistant prose and expanded Thinking use open reading flow. Activity headers are transparent
@@ -409,8 +409,8 @@ ink without a fill; keyboard focus uses a rounded outline.
 Custom messages use a bordered `--bg-surface` without a colored edge, a package/type header, readable
 Markdown and separately folded Details. Configured attribution and subdued source share a baseline;
 header, body and Details share a reading anchor, with Copy in its own column. They inherit neither
-tool status nor activity density. Pi errors use a compact neutral surface, subtle error border,
-semantic label and readable reason, with bounded inset diagnostics.
+tool status nor activity density. Pi errors use a compact neutral surface with a subtle error border and no
+shadow, a semantic label and readable reason, with bounded inset diagnostics.
 
 Error, extension and shell headers fit touch Copy targets within their padding without enlarging the
 text row. Shell sections own their inset without a second turn-layout gap. Pending Copy centers on
@@ -757,9 +757,9 @@ restored when actions recede. Keyboard focus is not forcibly blurred or restrict
 row; simultaneous hover and genuine keyboard focus may reveal both rows. Touch actions stay visible.
 
 Collapsible activity/context content mounts Copy only while expanded, without a closed-state gap
-or tab stop. Within that expanded state, Revealed actions retain layout space and keyboard access.
+or tab stop. Within that expanded state, Revealed actions keep layout space and keyboard access.
 On devices without hover they are visible at 0.75 opacity; focus reveals them fully. Message-footer
-actions also use 0.75 touch opacity. Icon colors retain their surface roles: full opacity does not
+actions also use 0.75 touch opacity. Icon colors keep their surface roles: full opacity does not
 replace the deliberately subdued glyph color.
 
 Pending uses 0.75 panel opacity, a transparent background and a quiet border at rest. Hover or focus

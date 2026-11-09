@@ -13,18 +13,6 @@
   color: var(--activity-think);
 }
 
-.card--thinking .card__body {
-  border: 0;
-  border-left: 2px solid color-mix(in srgb, var(--activity-think) 45%, transparent);
-  padding-inline: calc(var(--space-5) - 2px) var(--space-5);
-  border-radius: 0 var(--radius-control) var(--radius-control) 0;
-  background: var(--think-tint);
-  box-shadow: none;
-  color: var(--body);
-  font-size: var(--text-reading-small);
-  line-height: var(--leading-reading);
-}
-
 .card--tool .card__icon {
   color: var(--activity-tool);
 }
@@ -101,14 +89,6 @@
 .shell-execution__note {
   color: var(--muted);
 }
-.shell-execution__note .tool-notice__action {
-  min-height: 24px;
-}
-@media (pointer: coarse) {
-  .shell-execution__note .tool-notice__action {
-    min-height: 44px;
-  }
-}
 .shell-execution__error {
   color: var(--error-ink);
 }
@@ -132,7 +112,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  width: 100%;
+  /* Apply the same optical outdent within the group's title column. */
+  width: calc(100% + var(--disclosure-outdent));
+  margin-inline-start: calc(-1 * var(--disclosure-outdent));
   min-height: var(--activity-row-h);
   padding: 2px 4px 2px 0;
   border-radius: var(--radius-control);
@@ -143,6 +125,12 @@
   transition:
     color var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard);
+}
+
+@media (min-width: 901px) and (pointer: fine) {
+  .card__header {
+    min-height: 28px;
+  }
 }
 
 @media (hover: hover) {
@@ -254,7 +242,7 @@
   overflow: hidden;
   color: var(--ink);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -267,12 +255,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.activity-fold .card__label,
-.activity-fold .card__tool-name {
-  color: var(--ink);
-  font-weight: 500;
 }
 
 /* Separate identity/status from its summary without moving adjacent Copy. */
@@ -465,7 +447,10 @@
 /* Thinking summaries are prose, not machine data. Inline Markdown keeps its
    emphasis and math inside the one-line ellipsis contract. */
 .card__summary--prose {
+  max-width: none;
+  color: var(--body);
   font-family: var(--font-sans);
+  font-size: var(--text-sm);
 }
 
 .card__summary--prose .rich-text {
@@ -480,12 +465,7 @@
   font-size: 1em;
 }
 
-.activity-fold .card__summary--prose {
-  max-width: none;
-  color: var(--body);
-  font-size: var(--text-sm);
-}
-.activity-fold .card__summary--prose :is(strong, b) {
+.card__summary--prose :is(strong, b) {
   font-weight: 400;
 }
 
@@ -520,45 +500,34 @@
 
 .card__body {
   min-width: 0;
-  margin: var(--space-1) 0 var(--space-2) 24px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-surface);
-  background: color-mix(in srgb, var(--bg-surface) 75%, var(--bg-activity));
-  box-shadow: none;
-  /* The content starts under the header title: 24px margin + 20px inner inset. */
-  padding: var(--space-2) calc(var(--space-5) - 1px);
-  font-size: var(--text-reading-small);
-  animation: body-in var(--dur-standard) var(--ease-standard);
-}
-
-/* Only output owns a local surface in the active flow. The shared framed
-   defaults remain available to the preserved legacy presentation. */
-.activity-fold .card__body {
   margin: 0;
   /* Match the label after the leading chevron and identity icon. */
-  padding: var(--space-1) var(--space-3) var(--space-1) 44px;
+  padding: var(--space-1) var(--space-3) var(--space-1) calc(44px - var(--disclosure-outdent));
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--body);
   box-shadow: none;
+  font-size: var(--text-reading-small);
+  animation: body-in var(--dur-standard) var(--ease-standard);
 }
-.activity-fold .card--thinking .card__body {
+.card--thinking .card__body {
   padding-top: 0;
+  line-height: var(--leading-reading);
 }
-.activity-fold .card__body .rich-text--thinking {
+.card__body .rich-text--thinking {
   color: inherit;
 }
-.activity-fold .rich-text--thinking > p {
+.card__body .rich-text--thinking > p {
   margin-block: var(--space-1);
 }
-.activity-fold .rich-text--thinking > p:first-child {
+.card__body .rich-text--thinking > p:first-child {
   margin-top: 0;
 }
-.activity-fold .rich-text--thinking > p:last-child {
+.card__body .rich-text--thinking > p:last-child {
   margin-bottom: 0;
 }
-.activity-fold .card__body .rich-text :is(strong, b) {
+.card__body .rich-text :is(strong, b) {
   font-weight: 500;
 }
 
@@ -1188,8 +1157,11 @@ span.card__file-arg {
 }
 
 .codemode-duration {
-  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.codemode-summary > .tool-summary__separator {
+  color: inherit;
 }
 
 .tool-call-layout--codemode .child-calls {
@@ -1394,8 +1366,12 @@ span.card__file-arg {
 }
 
 .tool-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
   border-left: 2px solid var(--line-strong);
-  padding: var(--space-1) var(--space-2);
+  padding: 2px var(--space-2);
   color: var(--muted);
   font-size: var(--text-reading-small);
 }
@@ -1403,7 +1379,7 @@ span.card__file-arg {
 .tool-notice__action {
   display: inline-flex;
   align-items: center;
-  min-height: 44px;
+  min-height: 24px;
   margin-left: var(--space-2);
   padding: 0 var(--space-1);
   border: 0;
@@ -1413,6 +1389,16 @@ span.card__file-arg {
   text-decoration: underline;
   text-underline-offset: 3px;
   cursor: pointer;
+}
+
+.tool-notice > .tool-notice__action {
+  margin-left: 0;
+}
+
+@media (pointer: coarse) {
+  .tool-notice__action {
+    min-height: 44px;
+  }
 }
 
 .tool-notice--warning {
@@ -1480,6 +1466,17 @@ span.card__file-arg {
   margin: var(--space-2) 0;
 }
 
+/* Long-form answers and documents separate top-level blocks by about half a
+   line, so consecutive paragraphs read as distinct units. Headings keep their
+   larger lead; bubbles, Thinking and extension text keep the compact rhythm. */
+.rich-text--assistant > :is(p, ul, ol) {
+  margin-block: 0.75em;
+}
+
+.rich-text--assistant > :is(h1, h2, h3, h4, h5, h6) + :is(p, ul, ol) {
+  margin-top: var(--space-2);
+}
+
 .rich-text a {
   color: var(--accent-deep);
 }
@@ -1493,7 +1490,7 @@ span.card__file-arg {
 .rich-text table {
   border-collapse: collapse;
   margin: var(--space-3) 0;
-  font-size: var(--text-reading-small);
+  font-size: var(--text-reading-table);
   /* Numeric columns compare down the row rule; proportional figures wobble. */
   font-variant-numeric: tabular-nums;
   /* Preserve word-sized column minima; the table owns wide-content scrolling. */
@@ -1749,27 +1746,14 @@ span.card__file-arg {
   color: var(--activity-success);
 }
 
-/* KaTeX renders with its own fonts; the system only owns spacing. The inner
-   padding keeps tall ascenders clear of the scroll container's clip edge. */
+/* Inline KaTeX keeps its natural baseline and visible script/fraction extent.
+   Its internal zero-width helpers can overhang the intrinsic width, so making
+   every inline expression a scroll container creates false overflow. */
 .rich-text .katex {
   font-size: 1.05em;
 }
 
-/* Inline flex preserves the child's text baseline even when overflow is
-   scrollable; ordinary formulas stay inline, wide ones own their scroll area. */
-.rich-text .inline-math {
-  display: inline-flex;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  vertical-align: baseline;
-  padding: 2px 0;
-}
-
-.rich-text .inline-math > * {
-  flex: 0 0 auto;
-}
-
+/* Display math owns scrolling only when its complete expression is too wide. */
 .rich-text .katex-display {
   margin: var(--space-3) 0;
   padding: var(--space-1) 2px;

@@ -320,7 +320,7 @@ export function useTranscriptRows({
         typeof message.__inspireEntryId === "string"
           ? `entry:${message.__inspireEntryId}`
           : null;
-      const base = `${viewId ?? "current"}:${customEntryId ?? messageFallbackCorrelation(message) ?? fallback}`;
+      const base = `${viewId}:${customEntryId ?? messageFallbackCorrelation(message) ?? fallback}`;
       const occurrence = projectionKeyOccurrences.get(base) ?? 0;
       projectionKeyOccurrences.set(base, occurrence + 1);
       return `${base}:${occurrence}`;
@@ -744,6 +744,10 @@ export function useTranscriptRows({
                 id: activityItemIds[itemIndex]!,
                 kind: "tool",
                 label: call.name ? `Tool: ${call.name}` : "Tool call",
+                name: call.name || undefined,
+                failed:
+                  toolResults.get(call.id)?.isError === true ||
+                  phase === "error",
                 live:
                   runBusy &&
                   !toolResults.has(call.id) &&
@@ -829,6 +833,11 @@ export function useTranscriptRows({
               label: message.toolName
                 ? `Tool: ${message.toolName}`
                 : "Tool result",
+              name:
+                typeof message.toolName === "string"
+                  ? message.toolName
+                  : undefined,
+              failed: message.isError === true,
             },
           ];
           appendActivity(

@@ -20,7 +20,9 @@ import {
 import { App } from "../../src/App";
 import { ExtensionStatus } from "../../src/components/ExtensionDisplays";
 import { ExtensionUiDialog } from "../../src/components/ExtensionUiDialog";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 import { store } from "../../src/store";
+import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { sessionPage } from "./fixtures/session-catalog";
 import { mockTouchFirstDevice } from "./fixtures/touch-device";
 import {
@@ -596,6 +598,47 @@ describe("shared extension interaction", () => {
     );
     request({ id: "untimed", method: "input", title: "Untimed" });
     expect(screen.queryByText(/remaining/)).toBeNull();
+  });
+
+  it("keeps a declared control's machine state out of the header without hiddenStatuses", () => {
+    configurePresentationAdapters({
+      ...emptyToolPresentationConfiguration(),
+      controls: [
+        {
+          id: "user.example.tier",
+          slot: "thinking",
+          label: "Tier",
+          command: "/tier",
+          state: { key: "example:tier", value: "tier" },
+          options: [
+            { value: "standard", label: "Std" },
+            { value: "fast", label: "Fast" },
+          ],
+        },
+      ],
+    });
+    try {
+      const view = render(<ExtensionStatus />);
+      request({
+        id: "control-state",
+        method: "setStatus",
+        extensionStatuses: {
+          "example:tier": '{"tier":"fast"}',
+          usage: "5h 12%",
+        },
+      });
+      expect(view.container).toHaveTextContent("5h 12%");
+      expect(view.container).not.toHaveTextContent("tier");
+      // Human-readable text under the same key is not control state.
+      request({
+        id: "control-text",
+        method: "setStatus",
+        extensionStatuses: { "example:tier": "Fast tier", usage: "5h 12%" },
+      });
+      expect(view.container).toHaveTextContent("Fast tier · 5h 12%");
+    } finally {
+      configurePresentationAdapters(emptyToolPresentationConfiguration());
+    }
   });
 
   it("reads complete ordered status on demand, updates it, clears it and resets disclosure across sessions", () => {
