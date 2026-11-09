@@ -107,8 +107,9 @@ tabs are reachable through a trailing ellipsis that uses the existing dropdown's
 behavior. The selected tab stays visible, and selecting an overflow entry preserves the underlying
 order. Opening, closing, renaming and resizing recompute the visible subset without unmounting
 readers or terminal processes. Compact pane spacing leaves room for a full tab and the overflow
-trigger. Only drawers 360px or narrower put the tab strip on its own row, keeping a complete
-selected tab, overflow trigger and all tool and Close targets.
+trigger. Drawers up to 384px and desktop touch panes with up to 342px of content width put the
+tab strip on its own row, keeping the selected tab, overflow and tool targets complete. Fine-pointer
+desktop panes keep one row and tighten the tool widths at their minimum pane size.
 
 Files/Changes/History use the same content-connected selected-tab background, top corners and fine
 boundary as file/terminal tabs, with no additional accent underline. The Terminal shortcut remains
@@ -177,8 +178,9 @@ completion behavior are unchanged.
   The narrow-layout navigation toggle and collapsed desktop rail's expand button share a count of
   other sessions with an unseen completion, failure or attention state. Completions use success tone;
   any failure or attention state takes error tone. The visible count caps at `9+`, while its accessible
-  description retains the full count. The currently viewed session and running-only sessions are
-  excluded; consuming the last unseen state removes the badge. Expanded desktop navigation keeps
+  description retains the full count. The badge sits in the upper-right clearance of the navigation
+  entrance, clear of the icon at either count width. The currently viewed session and running-only
+  sessions are excluded. Consuming the last unseen state removes the badge. Expanded desktop navigation keeps
   its session-row indicators without a duplicate header badge. Both layouts preserve background
   outcome visibility when navigation hides the list, using text rather than color alone.
 
@@ -188,7 +190,8 @@ completion behavior are unchanged.
   workspace subgroup beside the title. They have no resting background or frame; hover strengthens
   their text and keyboard focus keeps its outline. When the status slot is empty, identity can use
   the remaining header width instead of truncating beside unused reserved space; empty status takes
-  no space. Nonempty status keeps its existing budget. Extension text uses the available space at
+  no space. The Git label's width cap follows the header's available width. Nonempty status keeps
+  its existing budget. Extension text uses the available space at
   every width, with full statuses available by click, tap or keyboard when truncated. Secondary
   project and Git details yield before the title and primary navigation. Trailing actions and
   inline rename keep their own layout.

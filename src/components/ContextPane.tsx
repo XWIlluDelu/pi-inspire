@@ -479,7 +479,7 @@ export const ContextPane = memo(function ContextPane({
                 >
                   <Icon size={16} aria-hidden />
                   {changesCount > 0 ? (
-                    <span className="ctx__mode-badge" aria-hidden="true">
+                    <span className="ctx__mode-count" aria-hidden="true">
                       {changesCount > 99 ? "99+" : changesCount}
                     </span>
                   ) : null}

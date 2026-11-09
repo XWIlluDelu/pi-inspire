@@ -1,6 +1,97 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { routeSnapshots } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
+
+test("navigation attention counts clear the glyph in the rail and drawer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  let detailSessionId: string | undefined;
+  const transport = await routeSnapshots(page, {
+    event(event) {
+      if (event.type === "snapshot") detailSessionId = event.detailSessionId;
+    },
+  });
+  await pairedPage(page);
+  await openFixtureSession(page, /Review extension event lifecycle/);
+  await expect.poll(() => detailSessionId).toBe("fixture-history");
+
+  const report = (id: string, completed: boolean) =>
+    transport.send({
+      type: "session_status",
+      sessionId: id,
+      sessionStatus: completed
+        ? { runState: "idle", indicator: "completed" }
+        : { runState: "idle" },
+    });
+  const check = async (toggle: Locator, count: string) => {
+    await expect(
+      toggle.locator(".navigation-toggle__attention > [aria-hidden]"),
+    ).toHaveText(count);
+    expect(
+      await toggle.evaluate((button) => {
+        const badge = button
+          .querySelector(".navigation-toggle__attention")!
+          .getBoundingClientRect();
+        const header = button
+          .closest("header, .nav__header")!
+          .getBoundingClientRect();
+        if (badge.top < header.top || badge.right > header.right)
+          return "clipped";
+
+        // The reticle has transparent space within its SVG viewBox. Check its
+        // painted geometry so placing a badge in that space is permitted.
+        const svg = [...button.querySelectorAll("svg")].find(
+          (icon) => icon.getBoundingClientRect().width > 0,
+        )!;
+        for (const shape of svg.querySelectorAll<SVGGeometryElement>(
+          "path, rect",
+        )) {
+          const matrix = shape.getScreenCTM()!.inverse();
+          const { stroke, fill } = getComputedStyle(shape);
+          for (let y = badge.top + 0.25; y < badge.bottom; y += 0.5) {
+            for (let x = badge.left + 0.25; x < badge.right; x += 0.5) {
+              const point = new DOMPoint(x, y).matrixTransform(matrix);
+              if (
+                (stroke !== "none" && shape.isPointInStroke(point)) ||
+                (fill !== "none" && shape.isPointInFill(point))
+              )
+                return "overlap";
+            }
+          }
+        }
+        return "clear";
+      }),
+    ).toBe("clear");
+  };
+
+  report("fixture-prompt-map", true);
+  await page
+    .getByRole("button", { name: "Collapse navigation", exact: true })
+    .click();
+  const rail = page.getByRole("button", {
+    name: "Expand navigation",
+    exact: true,
+  });
+  await check(rail, "1");
+  const additional = Array.from(
+    { length: 10 },
+    (_, index) => `unseen-${index}`,
+  );
+  for (const id of additional) report(id, true);
+  await check(rail, "9+");
+
+  await page.setViewportSize({ width: 390, height: 780 });
+  const narrow = page.getByRole("button", {
+    name: "Toggle navigation",
+    exact: true,
+  });
+  await check(narrow, "9+");
+  for (const id of additional) report(id, false);
+  await check(narrow, "1");
+  await page.unrouteAll({ behavior: "wait" });
+});
 
 test("sidebar work and unread outcomes share glyph geometry without animating attention", async ({
   page,

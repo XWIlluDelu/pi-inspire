@@ -31,7 +31,7 @@ for (const width of [1440, 768, 390, 320]) {
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const modes = page.locator(".ctx__modes");
     await expect(modes).toBeVisible();
-    await expect(modes.locator(".ctx__mode-badge")).toHaveText("99+");
+    await expect(modes.locator(".ctx__mode-count")).toHaveText("99+");
     await page.evaluate(() => document.fonts.ready);
     const fileTabs = page.locator(".ctx__file-tabs");
     for (const file of ["page.html", "document.md", "interactive.js"]) {
@@ -72,14 +72,18 @@ for (const width of [1440, 768, 390, 320]) {
         page.getByRole("complementary", { name: "Context panel", exact: true }),
       ).toBeVisible();
     }
-    const toolsBeforeScroll = (await modes.boundingBox())!;
-    await fileTabs.evaluate((element) => {
-      element.scrollLeft = 0;
-    });
-    await fileTabs.evaluate((element) => {
-      element.scrollLeft = element.scrollWidth;
-    });
-    const toolsAfterScroll = (await modes.boundingBox())!;
+    await expect(modes.locator(".ctx__mode-count")).toHaveText("99+");
+    const [toolsBeforeScroll, toolsAfterScroll] = await modes.evaluate(
+      (tools) => {
+        const strip = tools
+          .closest(".ctx__header")!
+          .querySelector(".ctx__file-tabs")!;
+        strip.scrollLeft = 0;
+        const before = tools.getBoundingClientRect().toJSON();
+        strip.scrollLeft = strip.scrollWidth;
+        return [before, tools.getBoundingClientRect().toJSON()];
+      },
+    );
     expect(toolsAfterScroll.x).toBeCloseTo(toolsBeforeScroll.x, 1);
     expect(toolsAfterScroll.width).toBeCloseTo(toolsBeforeScroll.width, 1);
     const filesBox = (await fileTabs.boundingBox())!;
@@ -112,6 +116,9 @@ for (const width of [1440, 768, 390, 320]) {
         elements.map((button) => {
           const box = button.getBoundingClientRect();
           const icon = button.querySelector("svg")!.getBoundingClientRect();
+          const count = button
+            .querySelector(".ctx__mode-count")
+            ?.getBoundingClientRect();
           return {
             label: button.getAttribute("aria-label"),
             width: box.width,
@@ -119,13 +126,15 @@ for (const width of [1440, 768, 390, 320]) {
             iconWidth: icon.width,
             iconHeight: icon.height,
             left: icon.left - box.left,
-            right: box.right - icon.right,
+            right: box.right - (count?.right ?? icon.right),
             center: icon.y + icon.height / 2 - box.y - box.height / 2,
           };
         }),
       );
       expect(items).toHaveLength(4);
-      const widths = items.map((item) => item.width);
+      const widths = items
+        .filter((item) => item.label !== "Changes")
+        .map((item) => item.width);
       expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(0.1);
       for (const item of items) {
         expect(item.left, JSON.stringify(item)).toBeGreaterThanOrEqual(2);
@@ -167,7 +176,7 @@ for (const width of [1440, 768, 390, 320]) {
   });
 }
 
-test("resource count capsules center their numerals beside the Changes icon", async ({
+test("Changes keeps the count readable beside its icon in both tab states", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -191,10 +200,16 @@ test("resource count capsules center their numerals beside the Changes icon", as
   const modes = page.locator(".ctx__modes");
   await modes.getByRole("tab", { name: "Changes", exact: true }).click();
   await page.evaluate(() => document.fonts.ready);
-  const count = modes.locator(".ctx__mode-badge");
-  for (const value of [1, 10, 123]) {
+  const count = modes.locator(".ctx__mode-count");
+  const changes = modes.getByRole("tab", { name: "Changes", exact: true });
+  for (const value of [0, 1, 36, 123]) {
     total = value;
     await page.getByRole("button", { name: "Refresh context pane" }).click();
+    if (!value) {
+      await expect(count).toHaveCount(0);
+      await expect(changes).toHaveAttribute("title", "Changes");
+      continue;
+    }
     await expect(count).toHaveText(value > 99 ? "99+" : String(value));
     for (const selected of ["Files", "Changes"]) {
       const mode = modes.getByRole("tab", { name: selected, exact: true });
@@ -202,25 +217,17 @@ test("resource count capsules center their numerals beside the Changes icon", as
       await expect(mode).toBeFocused();
       await mode.click();
       await expect(count).toBeVisible();
-      const parent = count.locator("..");
-      const offsets = await parent.evaluate(textMarkOffsets, {
-        label: ".ctx__mode-badge",
-        marks: ".ctx__mode-badge",
-      });
-      // Native digit ink can round by a pixel inside the small count capsule.
-      expect(Math.abs(offsets[0]!)).toBeLessThan(1);
-      await expect(parent).toHaveAttribute(
+      await expect(changes).toHaveAttribute(
         "title",
         `Changes (${value} ${value === 1 ? "change" : "changes"})`,
       );
-      const icon = (await parent.locator("svg").boundingBox())!;
-      const target = (await parent.boundingBox())!;
-      expect(icon.x + icon.width / 2).toBeCloseTo(
-        target.x + target.width / 2,
-        1,
-      );
+      const icon = (await changes.locator("svg").boundingBox())!;
+      const target = (await changes.boundingBox())!;
       const box = (await count.boundingBox())!;
-      expect(box.width).toBeGreaterThanOrEqual(box.height);
+      expect(box.x - icon.x - icon.width).toBeGreaterThanOrEqual(2);
+      expect(box.x + box.width).toBeLessThan(target.x + target.width);
+      const centerOffset = box.y + box.height / 2 - icon.y - icon.height / 2;
+      expect(Math.abs(centerOffset)).toBeLessThanOrEqual(1);
     }
   }
   await page.unrouteAll({ behavior: "wait" });
