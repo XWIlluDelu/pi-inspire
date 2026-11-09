@@ -12,7 +12,6 @@ import {
   TERMINAL_DAEMON_READY_TYPE,
   type TerminalDaemonAttachRequest,
   type TerminalDaemonLifecycleRequest,
-  type TerminalDaemonRpcMethod,
   type TerminalDaemonRpcRequest,
   type TerminalDaemonRpcResponse,
 } from "./terminal-daemon-protocol.js";
@@ -31,11 +30,7 @@ import {
   TerminalIpcDecoder,
   type TerminalIpcFrame,
 } from "./terminal-ipc.js";
-import {
-  dispatchTerminalMutation,
-  stringParam,
-} from "./terminal-operation-dispatch.js";
-import { TerminalOperationReceipts } from "./terminal-operation-receipts.js";
+import { stringParam } from "./terminal-operation-dispatch.js";
 import type {
   TerminalAttachment,
   TerminalAttachOptions,
@@ -104,7 +99,6 @@ function errorPayload(error: unknown): {
 }
 
 export class TerminalDaemonServer {
-  private readonly operations = new TerminalOperationReceipts();
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
   private readonly connections = new Set<Socket>();
@@ -353,20 +347,7 @@ export class TerminalDaemonServer {
             throw new Error("Unknown terminal lifecycle method");
         }
       } else {
-        const execute = () => this.dispatchRpc(request.method, request.params);
-        response.result = await ([
-          "ping",
-          "getCatalog",
-          "getGlobalCatalog",
-          "getSettings",
-        ].includes(request.method)
-          ? execute()
-          : this.operations.run(
-              request.operation,
-              request.method,
-              request.params,
-              execute,
-            ));
+        response.result = await this.dispatchRpc(request);
       }
       response.ok = true;
     } catch (error) {
@@ -375,32 +356,34 @@ export class TerminalDaemonServer {
     if (!socket.destroyed) socket.end(encodeTerminalIpcJson(response));
   }
 
-  private dispatchRpc(
-    method: TerminalDaemonRpcMethod,
-    params: unknown,
+  private async dispatchRpc(
+    request: TerminalDaemonRpcRequest,
   ): Promise<unknown> {
-    const values = asRecord(params);
-    switch (method) {
+    switch (request.method) {
       case "ping":
-        return Promise.resolve({
+        return {
           protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
-          operationEpoch: this.operations.getEpoch(),
-        });
+          operationEpoch: await this.terminals.operationEpoch(),
+        };
       case "getCatalog":
-        return Promise.resolve(
-          this.terminals.list(stringParam(values, "projectCwd")),
+        return this.terminals.list(
+          stringParam(asRecord(request.params), "projectCwd"),
         );
       case "getGlobalCatalog":
-        return Promise.resolve(this.terminals.list());
+        return this.terminals.list();
       case "getSettings":
-        return Promise.resolve(this.terminals.getSettings());
+        return this.terminals.getSettings();
       case "getDaemonInfo":
       case "shutdownDaemon":
         throw new Error(
           "Daemon lifecycle requires its independent control protocol",
         );
       default:
-        return dispatchTerminalMutation(this.terminals, method, values);
+        return this.terminals.operate(
+          request.method,
+          request.params,
+          request.operation,
+        );
     }
   }
 

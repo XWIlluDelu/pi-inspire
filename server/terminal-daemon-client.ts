@@ -4,15 +4,10 @@ import {
   encodeTerminalInputFrame,
   type TerminalCatalogResponse,
   type TerminalClientControlMessage,
-  type TerminalCreateRequest,
-  type TerminalDescriptor,
   type TerminalMutationMethod,
   type TerminalOperationIdentity,
-  type TerminalRemoveResponse,
-  type TerminalRenameRequest,
   type TerminalServerControlMessage,
   type TerminalServiceSettings,
-  type TerminalServiceSettingsPatch,
 } from "../shared/terminal-contracts.js";
 import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
@@ -153,57 +148,14 @@ export class TerminalDaemonClient implements TerminalService {
     return this.rpc(method, params, operation);
   }
 
-  private async mutation<Result>(
-    method: TerminalMutationMethod,
-    params: unknown,
-  ): Promise<Result> {
-    // Internal direct calls are new intents; HTTP retries retain their identity
-    // through operate().
-    const epoch = await this.operationEpoch();
-    return this.operate(method, params, { id: randomUUID(), epoch });
-  }
-
   list(projectCwd?: string): Promise<TerminalCatalogResponse> {
     return projectCwd === undefined
       ? this.rpc("getGlobalCatalog", {})
       : this.rpc("getCatalog", { projectCwd });
   }
 
-  create(request: TerminalCreateRequest): Promise<TerminalDescriptor> {
-    return this.mutation("create", { request });
-  }
-
-  rename(
-    id: string,
-    request: TerminalRenameRequest,
-  ): Promise<TerminalDescriptor> {
-    return this.mutation("rename", { id, title: request.title });
-  }
-
-  reorder(projectCwd: string, ids: string[]): Promise<TerminalCatalogResponse> {
-    return this.mutation("reorder", { projectCwd, ids });
-  }
-
-  restart(id: string): Promise<TerminalDescriptor> {
-    return this.mutation("restart", { id });
-  }
-
-  remove(id: string, force: boolean): Promise<TerminalRemoveResponse> {
-    return this.mutation("remove", { id, force });
-  }
-
   getSettings(): Promise<TerminalServiceSettings> {
     return this.rpc("getSettings", {});
-  }
-
-  updateSettings(
-    patch: TerminalServiceSettingsPatch,
-  ): Promise<TerminalServiceSettings> {
-    return this.mutation("updateSettings", { patch });
-  }
-
-  async clearHistory(): Promise<void> {
-    await this.mutation("clearHistory", {});
   }
 
   attach(

@@ -381,8 +381,7 @@ export class TerminalSessionManager implements TerminalService {
     params: unknown,
     operation: TerminalOperationIdentity,
   ): Promise<Result> {
-    // In-process Hosts own the PTYs and their receipts for the same lifetime.
-    // The daemon uses its own receipt owner around these ordinary methods.
+    // The PTY owner retains the receipts for the same lifetime in either mode.
     return this.operations.run(operation, method, params, () =>
       dispatchTerminalMutation(this, method, params),
     ) as Promise<Result>;
