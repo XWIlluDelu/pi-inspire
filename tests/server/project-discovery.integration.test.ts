@@ -58,10 +58,8 @@ function host(
   // curation nor a test provider supplies the new session's project directory.
   const preferences = new PreferencesStore(preferencesPath);
   const catalog = createHostSessionCatalog(startup, preferences);
-  const runtime = new RuntimeController(
-    catalog,
-    attachments,
-    (options) =>
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) =>
       new PiRpcProcess({
         ...options,
         args: [
@@ -73,7 +71,7 @@ function host(
         ],
         env: { ...options.env, PI_OFFLINE: "1" },
       }),
-  );
+  });
   const application = createInspireServer({
     token: "test",
     runtime,
@@ -302,7 +300,9 @@ describe("Host project discovery continuity", () => {
       });
       return rpc;
     });
-    const runtime = new RuntimeController(catalog, attachments, create);
+    const runtime = new RuntimeController(catalog, attachments, {
+      createProcess: create,
+    });
     try {
       await expect(runtime.newSession(project)).rejects.toThrow(
         "startup response lost",

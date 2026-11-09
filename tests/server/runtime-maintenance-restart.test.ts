@@ -28,12 +28,11 @@ describe("maintenance restart admission", () => {
   afterEach(() => vi.useRealTimers());
 
   function idleRuntime() {
-    return new RuntimeController(
-      catalog([]),
-      trackedAttachmentStore(),
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-    );
+    return new RuntimeController(catalog([]), trackedAttachmentStore(), {
+      createProcess: (options) =>
+        new FakeRpc(options) as unknown as PiRpcProcess,
+      openSessionProjection: preview,
+    });
   }
 
   it("detaches busy workers instead of stopping them after a Host-only restart", async () => {
@@ -41,14 +40,16 @@ describe("maintenance restart admission", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = Object.assign(new FakeRpc(options), {
-          detach: vi.fn(async () => {}),
-        });
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = Object.assign(new FakeRpc(options), {
+            detach: vi.fn(async () => {}),
+          });
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     await runtime.openSession("a");
     await waitForReady(runtime);
@@ -60,9 +61,8 @@ describe("maintenance restart admission", () => {
     const lease = runtime.reserveMaintenanceRestart(false, false, true);
     expect(lease.kind).toBe("ready");
     expect(
-      runtime.commitMaintenanceRestart(
-        (lease as { leaseId: string }).leaseId,
-      ).kind,
+      runtime.commitMaintenanceRestart((lease as { leaseId: string }).leaseId)
+        .kind,
     ).toBe("committed");
     await runtime.close();
     const worker = workers[0] as FakeRpc & { detach: () => Promise<void> };
@@ -78,30 +78,32 @@ describe("maintenance restart admission", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/tmp")]),
         trackedAttachmentStore(),
-        (options) => {
-          const worker = new FakeRpc(options);
-          worker.start = async () => {
-            if (failure === "startup-dialog") {
-              worker.emit("event", {
-                type: "extension_ui_request",
-                id: "startup-confirm",
-                method: "confirm",
-                title: "Startup confirmation",
-                message: "Confirm?",
-              });
-            } else {
-              const error = new Error("Pi failed during startup");
-              if (failure === "transport-exit") worker.emit("exit", error);
-              throw error;
-            }
-          };
-          worker.stop = async () => {
-            stopStarted.resolve();
-            await stopped.promise;
-          };
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            const worker = new FakeRpc(options);
+            worker.start = async () => {
+              if (failure === "startup-dialog") {
+                worker.emit("event", {
+                  type: "extension_ui_request",
+                  id: "startup-confirm",
+                  method: "confirm",
+                  title: "Startup confirmation",
+                  message: "Confirm?",
+                });
+              } else {
+                const error = new Error("Pi failed during startup");
+                if (failure === "transport-exit") worker.emit("exit", error);
+                throw error;
+              }
+            };
+            worker.stop = async () => {
+              stopStarted.resolve();
+              await stopped.promise;
+            };
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       const submit = vi.fn(async (_all: boolean, commit: () => boolean) => ({
         code: commit() ? 0 : 1,
@@ -174,8 +176,7 @@ describe("maintenance restart admission", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      createProcess,
-      preview,
+      { createProcess, openSessionProjection: preview },
     );
     try {
       await runtime.openSession("a");
@@ -271,12 +272,11 @@ describe("maintenance restart admission", () => {
 
   it("fences every new runtime command after an idle lease", async () => {
     const store = trackedAttachmentStore();
-    const runtime = new RuntimeController(
-      catalog([]),
-      store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
-    );
+    const runtime = new RuntimeController(catalog([]), store, {
+      createProcess: (options) =>
+        new FakeRpc(options) as unknown as PiRpcProcess,
+      openSessionProjection: preview,
+    });
 
     const decision = runtime.reserveMaintenanceRestart();
     expect(decision.kind).toBe("ready");
@@ -291,12 +291,14 @@ describe("maintenance restart admission", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.set(worker.sessionId, worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.set(worker.sessionId, worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     await runtime.openSession("a");
     await waitForReady(runtime);
@@ -331,12 +333,14 @@ describe("maintenance restart admission", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.set(worker.sessionId, worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.set(worker.sessionId, worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     await runtime.openSession("a");
     await waitForReady(runtime);
@@ -382,11 +386,14 @@ describe("maintenance restart admission", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      async (session) => {
-        entered();
-        await gate;
-        return preview(session);
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: async (session) => {
+          entered();
+          await gate;
+          return preview(session);
+        },
       },
     );
 

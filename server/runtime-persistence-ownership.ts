@@ -320,6 +320,14 @@ export class RuntimePersistenceOwnershipController {
     return projected;
   }
 
+  /** A replaced session view starts without live messages of its own. */
+  clearOverlay(slot: RuntimeSlot): void {
+    slot.overlay = [];
+    recountOverlay(slot);
+    slot.activeAssistantCorrelation = null;
+    slot.activeOverlayIds.clear();
+  }
+
   activeAssistantOverlayMessage(slot: RuntimeSlot): unknown {
     const correlation = slot.activeAssistantCorrelation;
     if (!correlation) return null;
@@ -620,19 +628,19 @@ export class RuntimePersistenceOwnershipController {
     if (result.kind !== "append") return { owned: false, reason: "not-append" };
     if (!result.appendedEntries)
       return { owned: false, reason: "entries-unavailable" };
-    if (slot.workerProjectionRevision !== result.previousRevision)
+    if (slot.writerBaseline.revision !== result.previousRevision)
       return { owned: false, reason: "revision-mismatch" };
-    if (slot.workerProjectionFingerprint !== result.previousFingerprint)
+    if (slot.writerBaseline.fingerprint !== result.previousFingerprint)
       return { owned: false, reason: "fingerprint-mismatch" };
     if (
       !slot.pendingPartialPersistence &&
-      slot.workerProjectionSourceVersion !== result.previousSourceVersion
+      slot.writerBaseline.sourceVersion !== result.previousSourceVersion
     ) {
       return { owned: false, reason: "source-version-mismatch" };
     }
     if (
       !initialMaterialization &&
-      slot.workerProjectionSourceIdentity !== result.sourceIdentity
+      slot.writerBaseline.sourceIdentity !== result.sourceIdentity
     ) {
       return { owned: false, reason: "source-identity-mismatch" };
     }

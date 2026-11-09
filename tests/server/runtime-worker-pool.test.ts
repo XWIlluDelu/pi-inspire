@@ -27,8 +27,7 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog(["a", "b"].map((id) => record(id, "/project"))),
       trackedAttachmentStore(),
-      spawn,
-      preview,
+      { createProcess: spawn, openSessionProjection: preview },
     );
     const first = runtime.retainSessionView("a");
     const second = runtime.retainSessionView("a");
@@ -77,12 +76,14 @@ describe("worker and projection retention", () => {
         ["a", "b", "c", "d", "e", "f"].map((id) => record(id, "/project")),
       ),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     const release = runtime.retainSessionView("a");
     try {
@@ -115,12 +116,14 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog(ids.map((id) => record(id, "/tmp"))),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     for (const id of ids.slice(0, 4)) await runtime.openSession(id);
     await runtime.prompt({
@@ -148,12 +151,14 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog(ids.map((id) => record(id, "/project"))),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     for (const id of ids.slice(0, 4)) await runtime.openSession(id);
     const workerA = workers.find((worker) => worker.sessionId === "a")!;
@@ -203,14 +208,16 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog(ids.map((id) => record(id, "/project"))),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
-        return preview(session);
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
+          return preview(session);
+        },
       },
     );
 
@@ -291,14 +298,16 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog(ids.map((id) => record(id, "/project"))),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
-        return preview(session);
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
+          return preview(session);
+        },
       },
     );
     for (const id of ids) await runtime.openSession(id);
@@ -345,12 +354,14 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog(ids.map((id) => record(id, "/tmp"))),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       type ReclaimSlot = {
@@ -404,12 +415,14 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     type InternalSlot = {
       projection: unknown;
@@ -466,11 +479,13 @@ describe("worker and projection retention", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     type InternalSlot = {
       conflict: {

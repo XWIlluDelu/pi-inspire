@@ -344,17 +344,15 @@ export function schedulingRuntime({
   configure?: (worker: FakeRpc) => void;
 } = {}) {
   const workers: FakeRpc[] = [];
-  const runtime = new RuntimeController(
-    catalog(sessions),
-    attachments,
-    (options) => {
+  const runtime = new RuntimeController(catalog(sessions), attachments, {
+    createProcess: (options) => {
       const worker = new FakeRpc(options);
       configure?.(worker);
       workers.push(worker);
       return worker as unknown as PiRpcProcess;
     },
-    preview,
-  );
+    openSessionProjection: preview,
+  });
   return {
     runtime,
     workers,

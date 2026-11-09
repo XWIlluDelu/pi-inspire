@@ -7,7 +7,10 @@ import type {
   ExternalSessionState,
 } from "../../server/external-session.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { RuntimeController } from "../../server/runtime.js";
+import {
+  RuntimeController,
+  type RuntimeControllerOptions,
+} from "../../server/runtime.js";
 import { RuntimeExternalSessions } from "../../server/runtime-external-sessions.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
@@ -136,15 +139,14 @@ async function nativeModelFixture() {
  * workers are refused unless a test supplies a factory. */
 function attachedRuntime(
   connect: ConnectExternalSession,
-  spawn: ConstructorParameters<typeof RuntimeController>[2] = () => {
+  spawn: RuntimeControllerOptions["createProcess"] = () => {
     throw new Error("must not launch Pi");
   },
 ) {
   return new RuntimeController(
     catalog([record("a", "/tmp")]),
     trackedAttachmentStore(),
-    spawn,
-    preview,
+    { createProcess: spawn, openSessionProjection: preview },
   )
     .setExternalSessionPresence(async () => [null])
     .setExternalSessionConnector(connect);
@@ -202,12 +204,14 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     )
       .setExternalSessionPresence(async () => live)
       .setExternalSessionConnector(async () => null);
@@ -490,12 +494,14 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     )
       .setExternalSessionPresence(async (id) => (id === "a" ? [null] : []))
       .setExternalSessionConnector(connect);
@@ -529,8 +535,10 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
       },
     )
       .setExternalSessionPresence(async () => [null])
@@ -579,10 +587,12 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      () => {
-        throw new Error("must not launch Pi");
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+        openSessionProjection: preview,
       },
-      preview,
     )
       .setExternalSessionPresence(async () => [null])
       .setExternalSessionConnector(async () => f.native);
@@ -616,10 +626,12 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      () => {
-        throw new Error("must not launch Pi");
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+        openSessionProjection: preview,
       },
-      preview,
     )
       .setExternalSessionPresence(async () => [null])
       .setExternalSessionConnector(async () => f.native);
@@ -697,14 +709,14 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+        openSessionProjection: preview,
+        branchBridgeTimeoutMs: 15_000,
+        diagnostics,
       },
-      preview,
-      15_000,
-      undefined,
-      undefined,
-      diagnostics,
     )
       .setExternalSessionPresence(async () => [null])
       .setExternalSessionConnector(async (id) =>
@@ -749,8 +761,10 @@ describe("continue an externally owned Pi", () => {
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
-      () => {
-        throw new Error("must not launch Pi");
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
       },
     )
       .setExternalSessionPresence(async () => [null])
@@ -793,13 +807,13 @@ describe("continue an externally owned Pi", () => {
       const runtime = new RuntimeController(
         catalog(sessions),
         trackedAttachmentStore(),
-        () => {
-          throw new Error("must not launch Pi");
+        {
+          createProcess: () => {
+            throw new Error("must not launch Pi");
+          },
+          branchBridgeTimeoutMs: 15_000,
+          deleteSessionRecord: remove,
         },
-        undefined,
-        15_000,
-        undefined,
-        remove,
       )
         .setExternalSessionPresence(async () => [null])
         .setExternalSessionConnector(
@@ -860,13 +874,13 @@ describe("continue an externally owned Pi", () => {
       const runtime = new RuntimeController(
         catalog([await persistedRecord("a")]),
         trackedAttachmentStore(),
-        () => {
-          throw new Error("must not launch Pi");
+        {
+          createProcess: () => {
+            throw new Error("must not launch Pi");
+          },
+          branchBridgeTimeoutMs: 15_000,
+          deleteSessionRecord: remove,
         },
-        undefined,
-        15_000,
-        undefined,
-        remove,
       )
         .setExternalSessionPresence(async () => [null])
         .setExternalSessionConnector(async () => f.native);

@@ -166,11 +166,13 @@ describe("RuntimeController compaction lifecycle", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/tmp")]),
         trackedAttachmentStore(),
-        (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            worker = new FakeRpc(options);
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       const events: Array<Record<string, unknown>> = [];
       runtime.on("event", (event) => events.push(event));

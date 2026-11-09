@@ -10,7 +10,12 @@ import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
 import type { RuntimeProcessRegistry } from "./runtime-process-registry.js";
 import type { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
-import type { BranchBridgeIdentity, RuntimeSlot } from "./runtime-slot.js";
+import {
+  type BranchBridgeIdentity,
+  clearPiQueueMirror,
+  clearWorkerPresentation,
+  type RuntimeSlot,
+} from "./runtime-slot.js";
 import type { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import type { ProjectionReconcileResult } from "./session-projection.js";
 
@@ -61,6 +66,27 @@ export class RuntimeWorkerLifecycle {
       bash: RuntimeBashController;
     },
   ) {}
+
+  /** Releases what the previous worker published for this session view and
+   * the input it held: dialogs, the Pi queue mirror, pending-image ownership,
+   * extension displays and tool activity. Everything is detached from the
+   * slot synchronously and only the detached resources are then disposed, so
+   * a replacement worker's new state can never be cleared by old cleanup. */
+  releaseWorkerView(
+    slot: RuntimeSlot,
+    reason: Parameters<RuntimeExtensionUiController["clear"]>[1],
+  ): Promise<void> {
+    this.collaborators.extensionUi.clear(slot, reason);
+    clearPiQueueMirror(slot);
+    const images = slot.pendingImages;
+    slot.pendingImages = null;
+    slot.pendingQueues = {
+      ...emptyPendingQueues(),
+      revision: slot.pendingQueues.revision + 1,
+    };
+    clearWorkerPresentation(slot);
+    return images?.dispose() ?? Promise.resolve();
+  }
 
   async stop(slot: RuntimeSlot, cancelledCommand?: string): Promise<void> {
     const rpc = slot.process;
@@ -120,9 +146,7 @@ export class RuntimeWorkerLifecycle {
     const stopping = rpc.stop(cancelledCommand);
     slot.stopping = stopping;
     this.collaborators.extensionUi.clear(slot, "stopped");
-    slot.extensionDisplays = [];
-    slot.extensionStatuses = {};
-    slot.toolActivity = {};
+    clearWorkerPresentation(slot);
     this.host.emitSlotEvent(slot, {
       type: "extension_runtime_stopped",
       extensionDisplays: [],
@@ -231,26 +255,16 @@ export class RuntimeWorkerLifecycle {
     slot.startupError = null;
     slot.bridge = bridge;
     slot.ready = false;
-    this.collaborators.extensionUi.clear(slot, "replaced");
-    slot.piPendingQueues = emptyPendingQueues();
-    slot.piPendingInput = { steering: [], followUp: [] };
+    const released = this.releaseWorkerView(slot, "replaced");
+    slot.availableModels = null;
+    slot.commands = null;
     let checkingWriterAvailability = false;
     let started = false;
     try {
-      await slot.pendingImages?.dispose();
+      await released;
       this.host.assertNotClosing();
       if (slot.process !== rpc)
         throw requestError("Pi runtime stopped before startup", 503);
-      slot.pendingImages = null;
-      slot.pendingQueues = {
-        ...emptyPendingQueues(),
-        revision: slot.pendingQueues.revision + 1,
-      };
-      slot.extensionDisplays = [];
-      slot.extensionStatuses = {};
-      slot.toolActivity = {};
-      slot.availableModels = null;
-      slot.commands = null;
       this.collaborators.processRegistry.attach(slot, rpc);
       await this.collaborators.startupAttestor.requireUnchangedPreStartBaseline(
         slot,

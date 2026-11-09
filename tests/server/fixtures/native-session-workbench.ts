@@ -196,33 +196,35 @@ export async function nativeSessionWorkbench(
   const attachments = new AttachmentStore(join(directory, "uploads"));
   const workers: PiRpcProcess[] = [];
   const preferences = new PreferencesStore(join(directory, "prefs.json"));
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new PiRpcProcess({
-      ...options,
-      args: [
-        "--no-extensions",
-        "--no-skills",
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--no-tools",
-        "--no-approve",
-        "--session-dir",
-        sessions,
-        "--model",
-        "export-fixture/offline",
-        "--thinking",
-        "off",
-        ...(options.args ?? []),
-        ...extraExtensions.flatMap((path) => ["--extension", path]),
-      ],
-      env: isolatedTestEnvironment(directory, {
-        ...options.env,
-        ...environment,
-      }),
-    });
-    workers.push(worker);
-    return worker;
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--no-context-files",
+          "--no-tools",
+          "--no-approve",
+          "--session-dir",
+          sessions,
+          "--model",
+          "export-fixture/offline",
+          "--thinking",
+          "off",
+          ...(options.args ?? []),
+          ...extraExtensions.flatMap((path) => ["--extension", path]),
+        ],
+        env: isolatedTestEnvironment(directory, {
+          ...options.env,
+          ...environment,
+        }),
+      });
+      workers.push(worker);
+      return worker;
+    },
   });
   const application = createInspireServer({
     token: "export-test-token",

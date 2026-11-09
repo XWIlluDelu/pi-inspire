@@ -92,12 +92,14 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([record("a", workspace)]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        worker.startGate = gate;
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          worker.startGate = gate;
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
 
     try {
@@ -227,8 +229,11 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: preview,
+      },
     );
     await runtime.openSession("a");
 
@@ -286,23 +291,25 @@ describe("prompt admission and artifact ownership", () => {
       const runtime = new RuntimeController(
         catalog([await persistedRecord("a")]),
         store,
-        (options) => {
-          worker = new FakeRpc(options);
-          const request = worker.request.bind(worker);
-          worker.request = async <T>(command: Record<string, unknown>) => {
-            if (command.type !== "prompt") return request<T>(command);
-            worker.commands.push(command);
-            const error = new PiRpcOutcomeUnknownError("prompt");
-            error.stopped = confirmed
-              ? Promise.resolve()
-              : Promise.reject(new Error("Worker exit unconfirmed"));
-            throw error;
-          };
-          if (!confirmed)
-            worker.stop = async () => {
-              throw new Error("Worker exit unconfirmed");
+        {
+          createProcess: (options) => {
+            worker = new FakeRpc(options);
+            const request = worker.request.bind(worker);
+            worker.request = async <T>(command: Record<string, unknown>) => {
+              if (command.type !== "prompt") return request<T>(command);
+              worker.commands.push(command);
+              const error = new PiRpcOutcomeUnknownError("prompt");
+              error.stopped = confirmed
+                ? Promise.resolve()
+                : Promise.reject(new Error("Worker exit unconfirmed"));
+              throw error;
             };
-          return worker as unknown as PiRpcProcess;
+            if (!confirmed)
+              worker.stop = async () => {
+                throw new Error("Worker exit unconfirmed");
+              };
+            return worker as unknown as PiRpcProcess;
+          },
         },
       );
       await runtime.openSession("a");
@@ -350,10 +357,12 @@ describe("prompt admission and artifact ownership", () => {
       const runtime = new RuntimeController(
         catalog([await persistedRecord("a")]),
         store,
-        (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            const worker = new FakeRpc(options);
+            workers.push(worker);
+            return worker as unknown as PiRpcProcess;
+          },
         },
       );
       await runtime.openSession("a");
@@ -493,9 +502,11 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([await persistedRecord("a")]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
       },
     );
     await runtime.openSession("a");
@@ -545,9 +556,11 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([await persistedRecord("a")]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
       },
     );
     await runtime.openSession("a");
@@ -596,9 +609,11 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([await persistedRecord("a")]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
       },
     );
     await runtime.openSession("a");
@@ -656,28 +671,30 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([record("a", workspace)]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        const value = await previewSnapshot(session);
-        return new PreviewProjection(session.id, {
-          ...value,
-          transcriptPage: {
-            ...value.transcriptPage,
-            messages: [
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: historicalText },
-                  { type: "image", data, mimeType: "image/png" },
-                ],
-                timestamp: 1,
-              },
-            ],
-          },
-        });
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          const value = await previewSnapshot(session);
+          return new PreviewProjection(session.id, {
+            ...value,
+            transcriptPage: {
+              ...value.transcriptPage,
+              messages: [
+                {
+                  role: "user",
+                  content: [
+                    { type: "text", text: historicalText },
+                    { type: "image", data, mimeType: "image/png" },
+                  ],
+                  timestamp: 1,
+                },
+              ],
+            },
+          });
+        },
       },
     );
     await runtime.openSession("a");
@@ -758,19 +775,23 @@ describe("prompt admission and artifact ownership", () => {
     const runtime = new RuntimeController(
       catalog([record("a", workspace)]),
       store,
-      (options) => {
-        worker = new FakeRpc(options);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        const value = await previewSnapshot(session);
-        return new PreviewProjection(session.id, {
-          ...value,
-          transcriptPage: {
-            ...value.transcriptPage,
-            messages: [{ role: "user", content: historicalText, timestamp: 1 }],
-          },
-        });
+      {
+        createProcess: (options) => {
+          worker = new FakeRpc(options);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          const value = await previewSnapshot(session);
+          return new PreviewProjection(session.id, {
+            ...value,
+            transcriptPage: {
+              ...value.transcriptPage,
+              messages: [
+                { role: "user", content: historicalText, timestamp: 1 },
+              ],
+            },
+          });
+        },
       },
     );
     await runtime.openSession("a");

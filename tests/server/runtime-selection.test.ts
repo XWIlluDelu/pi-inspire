@@ -35,12 +35,14 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     await runtime.openSession("a");
     await runtime.openSession("b");
@@ -79,10 +81,13 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      async (session) => {
-        if (session.id === "a") await gateA;
-        return preview(session);
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: async (session) => {
+          if (session.id === "a") await gateA;
+          return preview(session);
+        },
       },
     );
     const openingA = runtime.openSession("a");
@@ -106,12 +111,14 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     await runtime.openSession("a");
     const slots = (
@@ -145,12 +152,14 @@ describe("session selection and addressed reads", () => {
       const runtime = new RuntimeController(
         catalog([record("a", "/project"), record("b", "/project")]),
         store,
-        (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
+        {
+          createProcess: (options) => {
+            const worker = new FakeRpc(options);
+            workers.push(worker);
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
         },
-        preview,
       );
       const restored = await runtime.snapshot("a");
       expect(restored.active?.sessionId).toBe("a");
@@ -196,12 +205,14 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     try {
       await runtime.openSession("a");
@@ -258,27 +269,29 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", project), record("b", "/other")]),
       trackedAttachmentStore(),
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        const snapshot = await previewSnapshot(session);
-        snapshot.transcriptPage.messages = [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "[report](report.md)" },
-              {
-                type: "image",
-                mimeType: "image/png",
-                data: Buffer.from("pixels").toString("base64"),
-              },
-            ],
-          },
-        ];
-        return new PreviewProjection(session.id, snapshot);
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          const snapshot = await previewSnapshot(session);
+          snapshot.transcriptPage.messages = [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "[report](report.md)" },
+                {
+                  type: "image",
+                  mimeType: "image/png",
+                  data: Buffer.from("pixels").toString("base64"),
+                },
+              ],
+            },
+          ];
+          return new PreviewProjection(session.id, snapshot);
+        },
       },
     );
     try {
@@ -345,15 +358,17 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      async (session) => {
-        previewCalls += 1;
-        await previewGate;
-        return preview(session);
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: async (session) => {
+          previewCalls += 1;
+          await previewGate;
+          return preview(session);
+        },
       },
     );
 
@@ -380,12 +395,14 @@ describe("session selection and addressed reads", () => {
         record("c", "/project/two"),
       ]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
 
     await runtime.openSession("a");
@@ -413,8 +430,11 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/tmp"), record("b", "/tmp")]),
       store,
-      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
-      preview,
+      {
+        createProcess: (options) =>
+          new FakeRpc(options) as unknown as PiRpcProcess,
+        openSessionProjection: preview,
+      },
     );
     type InternalSlot = {
       conflict: {
@@ -468,12 +488,14 @@ describe("session selection and addressed reads", () => {
     const runtime = new RuntimeController(
       catalog([record("a", "/project"), record("b", "/project")]),
       store,
-      (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+        openSessionProjection: preview,
       },
-      preview,
     );
     runtime.on("event", (event) =>
       events.push(event as Record<string, unknown>),

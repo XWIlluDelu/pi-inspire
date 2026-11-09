@@ -66,7 +66,7 @@ it("keeps retained history and known models available when one startup extension
   const runtime = new RuntimeController(
     new SessionCatalog(f.trusted),
     new AttachmentStore(join(f.root, "uploads")),
-    factory,
+    { createProcess: factory },
   ).setModelMetadataCatalog(metadata);
   try {
     const snapshot = await runtime.snapshot(manager.getSessionId());
@@ -139,7 +139,7 @@ it("opens retained transcript before deferred metadata and resolves New inherita
   const runtime = new RuntimeController(
     new SessionCatalog(f.trusted),
     attachments,
-    factory,
+    { createProcess: factory },
   ).setModelMetadataCatalog(metadata);
   try {
     const opened = await runtime.openSession(id);
@@ -181,20 +181,22 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
   const metadata = new ModelMetadataCatalog();
   const workers: PiRpcProcess[] = [];
   const makeRuntime = () =>
-    new RuntimeController(catalog, attachments, (options) => {
-      const worker = new PiRpcProcess({
-        ...options,
-        args: [
-          "--no-tools",
-          "--no-skills",
-          "--no-context-files",
-          "--no-prompt-templates",
-          "--no-themes",
-          ...(options.args ?? []),
-        ],
-      });
-      workers.push(worker);
-      return worker;
+    new RuntimeController(catalog, attachments, {
+      createProcess: (options) => {
+        const worker = new PiRpcProcess({
+          ...options,
+          args: [
+            "--no-tools",
+            "--no-skills",
+            "--no-context-files",
+            "--no-prompt-templates",
+            "--no-themes",
+            ...(options.args ?? []),
+          ],
+        });
+        workers.push(worker);
+        return worker;
+      },
     }).setModelMetadataCatalog(metadata);
   let runtime = makeRuntime();
   const selected = { provider: "project-router", id: "auto", virtual: true };

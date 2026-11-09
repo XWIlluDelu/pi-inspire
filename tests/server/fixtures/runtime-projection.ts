@@ -252,10 +252,12 @@ export async function setupNewSession(
   const attachments = workerAttachmentStore(join(directory, "uploads"));
   stores.push(attachments);
   let worker!: NewSessionRpc;
-  const runtime = new RuntimeController(catalog([]), attachments, (options) => {
-    worker = new NewSessionRpc(options, path);
-    configure?.(worker);
-    return worker as unknown as PiRpcProcess;
+  const runtime = new RuntimeController(catalog([]), attachments, {
+    createProcess: (options) => {
+      worker = new NewSessionRpc(options, path);
+      configure?.(worker);
+      return worker as unknown as PiRpcProcess;
+    },
   });
   return {
     directory,
@@ -314,21 +316,15 @@ export async function setup(
   stores.push(attachments);
   const workers: ProjectionRpc[] = [];
   const sequence: string[] = [];
-  const runtime = new RuntimeController(
-    source,
-    attachments,
-    (options) => {
+  const runtime = new RuntimeController(source, attachments, {
+    createProcess: (options) => {
       const worker = new ProjectionRpc(options, sequence);
       configure?.(worker);
       workers.push(worker);
       return worker as unknown as PiRpcProcess;
     },
-    undefined,
-    undefined,
-    undefined,
-    undefined,
     diagnostics,
-  );
+  });
   const opened = await runtime.openSession("session-a");
   if (expectWorker) await vi.waitFor(() => expect(workers).toHaveLength(1));
   return { runtime, workers, sequence, path, opened };

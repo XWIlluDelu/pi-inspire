@@ -20,10 +20,8 @@ export function hostServices(
     options.attachments ?? new AttachmentStore(join(root, "uploads"));
   const catalog = new SessionCatalog(options.cwd ?? root);
   catalog.sessionDirectories = async () => [join(root, "sessions")];
-  const runtime = new RuntimeController(
-    catalog,
-    attachments,
-    options.createProcess,
-  );
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: options.createProcess,
+  });
   return { runtime, catalog, attachments };
 }

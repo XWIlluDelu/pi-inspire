@@ -399,7 +399,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
             invalidate() {},
           },
           attachments,
-          spawn,
+          { createProcess: spawn },
         )
           .setExternalSessionPresence(async () =>
             (await registry.forSession(id, sessionFile)).map(
@@ -533,28 +533,26 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         invalidate() {},
       },
       attachments,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      (target, version) =>
-        deleteSessionFile(
-          target,
-          async (payload) => {
-            expect(
-              await first.registry.forSession(first.id, first.sessionFile),
-            ).toEqual([]);
-            expect(
-              await first.registry.forSession(
-                unrelated.id,
-                unrelated.sessionFile,
-              ),
-            ).toHaveLength(1);
-            await rename(payload, trash);
-          },
-          undefined,
-          version,
-        ),
+      {
+        deleteSessionRecord: (target, version) =>
+          deleteSessionFile(
+            target,
+            async (payload) => {
+              expect(
+                await first.registry.forSession(first.id, first.sessionFile),
+              ).toEqual([]);
+              expect(
+                await first.registry.forSession(
+                  unrelated.id,
+                  unrelated.sessionFile,
+                ),
+              ).toHaveLength(1);
+              await rename(payload, trash);
+            },
+            undefined,
+            version,
+          ),
+      },
     ).setExternalSessionTerminator((id, path) =>
       first.registry.stopSession(id, path),
     );

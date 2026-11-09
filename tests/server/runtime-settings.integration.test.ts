@@ -139,21 +139,23 @@ async function fixture(trust: "always" | "never", enabled?: boolean) {
   };
   const attachments = new AttachmentStore(join(root, "uploads"));
   const workers: PiRpcProcess[] = [];
-  const runtime = new RuntimeController(catalog, attachments, (options) => {
-    const worker = new PiRpcProcess({
-      ...options,
-      args: [
-        "--no-extensions",
-        "--no-skills",
-        "--no-prompt-templates",
-        "--no-themes",
-        "--no-context-files",
-        "--no-tools",
-        ...(options.args ?? []),
-      ],
-    });
-    workers.push(worker);
-    return worker;
+  const runtime = new RuntimeController(catalog, attachments, {
+    createProcess: (options) => {
+      const worker = new PiRpcProcess({
+        ...options,
+        args: [
+          "--no-extensions",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--no-themes",
+          "--no-context-files",
+          "--no-tools",
+          ...(options.args ?? []),
+        ],
+      });
+      workers.push(worker);
+      return worker;
+    },
   });
   const events: Record<string, unknown>[] = [];
   runtime.on("event", (event) => events.push(event));

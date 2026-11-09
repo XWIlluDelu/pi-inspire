@@ -13,8 +13,8 @@ import {
   type RunState,
   type SessionReadOnlyReason,
 } from "../shared/contracts.js";
-import type { PiRpcProcess } from "./pi-rpc.js";
 import type { ExternalSessionConnection } from "./external-session.js";
+import type { PiRpcProcess } from "./pi-rpc.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
@@ -124,6 +124,49 @@ export function emptyCustomActivityOwnership(): CustomActivityOwnership {
   };
 }
 
+/** The projection an Inspire worker last confirmed as its own output; all
+ * null while no writer holds one. Session appends are attributed to the worker
+ * only when they continue exactly from it. Captured and cleared as a unit. */
+export interface WriterBaseline {
+  revision: number | null;
+  fingerprint: string | null;
+  sourceIdentity: string | null;
+  sourceVersion: string | null;
+  observedBytes: number | null;
+}
+
+export function emptyWriterBaseline(): WriterBaseline {
+  return {
+    revision: null,
+    fingerprint: null,
+    sourceIdentity: null,
+    sourceVersion: null,
+    observedBytes: null,
+  };
+}
+
+/** What the current Pi worker publishes about its extensions and tools.
+ * Discarded together whenever that worker stops or is replaced. */
+type WorkerPresentation = Pick<
+  RuntimeSlot,
+  "extensionDisplays" | "extensionStatuses" | "toolActivity"
+>;
+
+export function clearWorkerPresentation(slot: WorkerPresentation): void {
+  slot.extensionDisplays = [];
+  slot.extensionStatuses = {};
+  slot.toolActivity = {};
+}
+
+/** The worker's last reported Pi queue. A stop keeps it so Stop can report
+ * input the stopped worker still held; a replaced worker starts empty. */
+export function clearPiQueueMirror(
+  slot: Pick<RuntimeSlot, "piPendingQueues" | "piPendingInput">,
+): void {
+  slot.piPendingQueues = emptyPendingQueues();
+  slot.piPendingInput = { steering: [], followUp: [] };
+}
+
 export interface RuntimeOperationQueue {
   tail: Promise<void>;
   pending: number;
@@ -205,11 +248,7 @@ export interface RuntimeSlot {
   commands: unknown[] | null;
   lastUsed: number;
   activeOperations: number;
-  workerProjectionRevision: number | null;
-  workerProjectionFingerprint: string | null;
-  workerProjectionSourceIdentity: string | null;
-  workerProjectionSourceVersion: string | null;
-  workerProjectionObservedBytes: number | null;
+  writerBaseline: WriterBaseline;
   overlay: unknown[];
   /** Exact serialized bytes for each bounded overlay item. */
   overlayItemBytes: number[];
@@ -302,11 +341,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     commands: null,
     lastUsed: 0,
     activeOperations: 0,
-    workerProjectionRevision: null,
-    workerProjectionFingerprint: null,
-    workerProjectionSourceIdentity: null,
-    workerProjectionSourceVersion: null,
-    workerProjectionObservedBytes: null,
+    writerBaseline: emptyWriterBaseline(),
     overlay: [],
     overlayItemBytes: [],
     overlayBytes: 2,
