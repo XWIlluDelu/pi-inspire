@@ -5,9 +5,18 @@ the controls available once you are using the workbench. An **Inspire-owned sess
 worker started by the Host. A **connected native Pi** keeps running in its original Herdr terminal;
 some actions below therefore direct you back there. Project terminal tabs are separate shells.
 
-Use the Composer's `/` completion or the optional command palette, opened from the topbar or with Ctrl/⌘+K at any screen width. Inspire combines Pi's extension, prompt, and skill commands with browser adaptations of Pi's built-ins. The palette opens with a compact set of actions and recent sessions; search reaches the full inventory, including terminal-only guidance. Aliases such as `/settings`, `/new`, `/resume`, `/tree`, and `/hotkeys` lead to the same graphical destinations rather than duplicate entries.
+Use the Composer's `/` completion or the command palette (header button or Ctrl/⌘+K). Both list
+Pi's extension, prompt and skill commands alongside browser versions of Pi's built-ins. The palette
+opens with common actions and recent sessions; searching reaches everything, including
+terminal-only commands. Aliases such as `/settings`, `/new`, `/resume`, `/tree` and `/hotkeys` open
+the same graphical destinations.
 
-Graphical actions open their existing controls. Selecting an extension, template, or skill opens a temporary preparation step: review its arguments, then explicitly **Run command** or **Send prepared prompt**. Your message draft and attachments remain untouched. Extension handlers run immediately, including while Pi is busy; only templates and skills use the visible **Steer / Queue** choice during active work. Escape returns to palette search, then closes the palette. **Find a session** focuses the same full Host catalog search as `/resume`, including from the start surface; recent palette shortcuts remain direct jumps. It is not limited to already-loaded palette results.
+Selecting an extension command, template or skill opens a short preparation step where you review
+its arguments and choose **Run command** or **Send prepared prompt**; your draft and attachments are
+not touched. Extension handlers run immediately, even while Pi is busy; templates and skills follow
+the **Steer / Queue** choice during active work. Escape returns to palette search, then closes it.
+**Find a session** (like `/resume`) searches the full Host catalog, not just the palette's recent
+list.
 
 | Commands | Browser behavior |
 | --- | --- |
@@ -26,7 +35,10 @@ Graphical actions open their existing controls. Selecting an extension, template
 | `/session`, `/hotkeys`, `/quit` | Show session information, browser shortcuts, or guidance for leaving the client. |
 | `/share`, `/trust`, `/import`, `/bug` | Offer a copyable command and terminal guidance. |
 
-Native commands take precedence over an extension, prompt, or skill with the same name, matching Pi's interactive client. Use namespaced extension commands to avoid collisions. Typed native commands reject staged attachments and project-file references; palette actions do not borrow those artifacts. Unknown slash commands are reported rather than sent to the model.
+As in Pi's terminal client, native commands win over an extension, prompt or skill with the same
+name, so namespace extension commands. Typed native commands reject staged attachments and
+project-file references, and palette actions never use them. Unknown slash commands are reported
+instead of being sent to the model.
 
 ## New projects
 
@@ -56,10 +68,7 @@ position. **Current conversation** returns to the active conversation's outline,
   draft. **Clone current branch** in the title's action menu, `/clone`, and the palette share this action;
   the earlier-conversation notice offers **Clone from here**.
 
-Click the session title to open Rename, Clone and Export. Rename appears over the title, so another
-click at the same point opens the editor. Same-session continuation requires idle work and no pending
-input or dialogs. Fork and Clone can copy recorded history while the source runs; they leave its task,
-Pending input and saved draft intact. Neither sends a prompt.
+Click the session title for Rename, Clone and Export.
 
 ## Models and thinking
 
@@ -68,8 +77,8 @@ background without restarting Pi or interrupting its task and extension dialogs.
 current model and thinking level. If discovery fails, the picker keeps cached choices and reports
 that locally; `/reload` is not needed just to refresh model catalogs.
 
-Connected native Pi sessions use their own catalog and public model/thinking functions through the
-updated Inspire session bridge extension. The returned selection, including extension changes and supported
+A terminal Pi you have taken over uses its own catalog and public model/thinking functions through
+[attach-control](extensions.md#share-sessions-with-terminal-pi). The returned selection, including extension changes and supported
 effort adjustment, is authoritative. Busy state does not itself remove these capabilities. Native
 model cycling remains a terminal operation; use the model picker for explicit selection in Inspire.
 Settings for model files, defaults and credentials remain independent of live-control support.
@@ -244,8 +253,9 @@ updates after the next reply.
 
 For an idle Inspire-owned session, `/reload` replaces its worker to reload extensions, skills,
 prompts and context files, resetting worker-local extension state. Other sessions and the Host stay
-unchanged. A Host restart replaces all Inspire-owned workers and applies changed Host configuration;
-connected external Pi sessions keep their original processes.
+unchanged. **Restart Host** replaces all Inspire-owned workers, reloads taken-over terminal Pi
+processes, and applies changed Host configuration; **Restart Host only** keeps every Pi process,
+including Inspire's own workers, and its running work.
 
 <a id="updates"></a>
 
@@ -256,7 +266,7 @@ It reports available releases and installation commands; checking does not insta
 updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
 older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
 Extension **No updates** describes installation only; use `/reload` in an idle session to load changed
-resources. Connected external Pi sessions keep their own reload/restart lifecycle.
+resources. Terminal Pi sessions you have not taken over keep their own reload lifecycle.
 
 ## Sessions and terminal use
 
@@ -264,18 +274,12 @@ The History pane handles same-file navigation and independent Fork/Clone copies.
 create a separate session without replacing the source worker; extension authors should check the
 [lifecycle differences](extensions.md#session-lifecycle).
 
-Keep one writer per Pi session. Choose **Session actions → Use in terminal…** to release only
-this session's Inspire worker. If busy, **Stop and use in terminal** first restores Pending input
-to your browser draft. The command appears only after the worker has stopped; copy it into your
-terminal to resume in the original project. Other sessions keep running, and history and your
-browser draft remain available. Merely switching conversations does not release a cached worker.
-
-This handoff survives Host restart. Selecting the conversation does not start another Pi;
-**Continue in Inspire** explicitly checks the current owner. An observed native Pi can keep the
-session read-only until it exits or completes a verified replacement. With Herdr enhancement,
-Inspire can instead connect to that same native process: Composer, agent Stop and supported
-model/thinking controls reuse it; Reload, Compact and runtime behavior settings stay in its terminal.
-Project terminal tabs remain separate shells.
+A session can be open in Inspire and in terminal Pi at the same time. **Session actions → Copy
+resume command** copies `pi --session …` for the session's project; copying it changes nothing.
+When a terminal Pi is running the branch you open, Inspire shows its progress read-only and offers
+**Take over**, which continues that same Pi from the browser while the terminal keeps working (see
+[sharing sessions](extensions.md#share-sessions-with-terminal-pi)). Otherwise Inspire continues the
+session with its own Pi. Project terminal tabs remain separate shells.
 
 Terminal appearance and interaction preferences are saved in this browser for this origin, not in
 Pi settings. On macOS, **Option as Meta** is off by default to preserve native characters and accents;

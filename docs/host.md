@@ -34,7 +34,7 @@ Set overrides in the environment that launches the Host:
 | `INSPIRE_OPEN=0` | Do not open a browser automatically; the launcher still prints a local pairing link. |
 | `INSPIRE_PI_COMMAND` | A specific Pi executable, by name or path, instead of `pi` on PATH. It must resolve to the Pi package, not a shell command with arguments. |
 | `INSPIRE_STATE_PATH` | Private launcher instance-state file. Normally unset; if set, reuse it for that instance's status, stop and restart commands. |
-| `INSPIRE_HERDR_ENV_EXCLUDE` | Comma-separated environment prefixes kept out of the shared Herdr server; see [Herdr control](extensions.md#control-the-same-herdr-pi-terminal). |
+| `INSPIRE_HERDR_ENV_EXCLUDE` | Comma-separated environment prefixes kept out of the shared Herdr server; see [Herdr worker placement](#herdr-worker-placement). |
 
 Manage an instance with the same installation, address, port and state-path override that started
 it. The launcher reports an unrelated program on the port instead of terminating it. Services use
@@ -164,9 +164,9 @@ device. Pending alerts expire after 15 minutes. Notification state, including VA
 subscription secrets, is stored beside the preferences file as
 `<preferences-path>.notifications-<authority-namespace>.json`; do not publish it.
 
-Connected native Pi needs the current [Inspire session bridge extension](extensions.md#control-the-same-herdr-pi-terminal)
-to distinguish completion, failure and cancellation. After updating it, reload it in the original
-idle terminal; a Host restart does not reload an external Pi. Older bridges report **Task ended**.
+A terminal Pi reports completion, failure and cancellation through
+[attach-control](extensions.md#share-sessions-with-terminal-pi). After updating it, run `/reload` in
+that Pi; a Host-only restart does not reload it.
 
 ## Host and terminal maintenance
 
@@ -264,6 +264,19 @@ To start services before graphical login:
 ```bash
 sudo loginctl enable-linger "$USER"
 ```
+
+## Herdr worker placement
+
+Enable **Settings → System → Host → Herdr enhancement** to run Inspire's own Pi workers in Herdr
+panes. This optional mode requires Linux, Herdr, a systemd user manager, and writable cgroup v2
+scopes with `cgroup.kill`. Settings shows unavailable prerequisites; the saved choice takes effect
+after a Host restart. The default direct mode needs no Herdr, and terminal Pi sessions are shared
+through attach-control wherever they run.
+
+The shared Herdr server never inherits `INSPIRE_*` variables. If an extension keeps a per-process
+identity in environment variables that must not leak into other panes, list their prefixes in the
+Host environment as `INSPIRE_HERDR_ENV_EXCLUDE=PREFIX_A_,PREFIX_B_` and restart the Host. Nothing
+else is excluded by default.
 
 ## Recover a deleted session
 
@@ -383,7 +396,7 @@ The CLI authenticates the matching instance before reporting it ready. A Host wi
 needs one upgrade restart: `inspire restart` performs it when the Host already supports
 authenticated local shutdown; legacy Linux can use the exact-process signal fallback; older
 Windows/macOS Hosts must first be stopped through their service manager or inspected process
-controls. The [ownership contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#process-lock-and-service-ownership)
+controls. The [ownership contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#instances-and-local-control)
 defines the boundaries.
 
 ### Older terminal daemons

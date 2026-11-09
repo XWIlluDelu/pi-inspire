@@ -90,7 +90,10 @@ export type DeleteSessionRecord = (
   session: SessionRecord,
   version?: SessionDeletionVersion,
 ) => Promise<SessionDeleteDisposition>;
-export type ValidateSessionRecord = (session: SessionRecord) => Promise<void>;
+export type ValidateSessionRecord = (
+  session: SessionRecord,
+  version?: SessionDeletionVersion,
+) => Promise<void>;
 
 async function readFirstLine(handle: FileHandle): Promise<string> {
   const chunks: Buffer[] = [];
@@ -231,8 +234,9 @@ async function inspectSessionFile(
 
 export async function validateSessionFile(
   session: SessionRecord,
+  version: SessionDeletionVersion = "catalog",
 ): Promise<void> {
-  await inspectSessionFile(session);
+  await inspectSessionFile(session, version);
 }
 
 async function fileIdentityAt(

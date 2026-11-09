@@ -1,12 +1,9 @@
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
-import type { ExternalSessionConnection } from "./external-session.js";
 import { HerdrClient } from "./herdr-client.js";
-import { HerdrNativeSession } from "./herdr-native-session.js";
 import {
   assertHerdrWorkerScopesAvailable,
-  captureHerdrProcessIdentity,
   herdrProcessIsLive,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
@@ -18,7 +15,6 @@ import {
 import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
 import { installationKey } from "./installation-key.js";
 import { type PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
-import type { PiSessionOccupancy } from "./pi-session-occupancy.js";
 import { inspireStateDirectory } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
 import type { RuntimeWorkerStatus } from "./runtime.js";
@@ -164,26 +160,6 @@ export class HerdrEnhancement {
     return attempt;
   }
 
-  async connectExternalSession(
-    sessionId: string,
-    sessionFile: string,
-    occupancy?: PiSessionOccupancy,
-  ): Promise<ExternalSessionConnection | null> {
-    if (!this.options.enabled || process.platform !== "linux") return null;
-    if (this.closed) throw requestError("The Host is shutting down", 503);
-    const writer = await this.observer.findNativeWriter(sessionId, sessionFile);
-    if (!writer) return null;
-    const processIdentity = await captureHerdrProcessIdentity(writer.pid);
-    if (!processIdentity) return null;
-    return new HerdrNativeSession(
-      this.client,
-      { ...writer, processIdentity },
-      sessionId,
-      sessionFile,
-      await occupancy?.observeBinding(writer.pid, sessionId, sessionFile),
-    );
-  }
-
   async createProcess(options: PiRpcOptions): Promise<PiRpcProcess> {
     await this.initialize();
     if (this.closed) throw requestError("The Host is shutting down", 503);
@@ -192,9 +168,6 @@ export class HerdrEnhancement {
     if (process.platform !== "linux")
       throw requestError("Herdr enhancement currently requires Linux", 503);
 
-    const sessionIndex = options.args?.indexOf("--session") ?? -1;
-    const sessionFile =
-      sessionIndex >= 0 ? options.args?.[sessionIndex + 1] : undefined;
     let transport: HerdrRpcTransport | null = null;
     const rpc = new PiRpcProcess({
       ...options,
@@ -204,15 +177,6 @@ export class HerdrEnhancement {
           registry: this.options.registry,
           label: "Inspire Pi",
           assertScopesAvailable: () => this.checkWorkerScopes(),
-          ...(sessionFile
-            ? {
-                assertWritable: () =>
-                  this.observer.assertWritable(
-                    options.sessionId,
-                    resolve(options.cwd, sessionFile),
-                  ),
-              }
-            : {}),
         })),
     });
     const projection = this.observer.observe(

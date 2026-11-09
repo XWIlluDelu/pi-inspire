@@ -1,58 +1,18 @@
-import { lstat, readFile, readdir, rm } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
-import {
-  ACTIVITY_STALE_MS,
-  piActivityDirectory,
-  type PiActivityRecord,
-} from "../extensions/inspire-session-bridge.js";
+import { resolve } from "node:path";
+import { ATTACH_CONTROL_STALE_MS } from "../extensions/attach-control.js";
 import type {
   ExternalSessionActivities,
   ExternalSessionActivity,
 } from "../shared/session-activity.js";
+import type { AttachControlRegistry } from "./attach-control.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
 
 const POLL_MS = 2_000;
-const MAX_RECORD_BYTES = 16_384;
-const REPORT_NAME = /^[1-9]\d*-[0-9a-f-]{36}\.json$/;
 
 interface ObserverOptions {
   catalog: Pick<SessionCatalogLike, "refresh">;
+  registry: Pick<AttachControlRegistry, "observe">;
   publish(activities: ExternalSessionActivities): void;
-  directory?: string;
-}
-
-export function isPiActivityRecord(value: unknown): value is PiActivityRecord {
-  if (!value || typeof value !== "object") return false;
-  const record = value as Partial<PiActivityRecord>;
-  return (
-    record.version === 1 &&
-    (record.processIdentity === undefined ||
-      (typeof record.processIdentity === "string" &&
-        record.processIdentity.length > 0 &&
-        record.processIdentity.length <= 256)) &&
-    (record.inactive === undefined || typeof record.inactive === "boolean") &&
-    (record.released === undefined || typeof record.released === "boolean") &&
-    Number.isSafeInteger(record.pid) &&
-    record.pid! > 0 &&
-    typeof record.sessionId === "string" &&
-    record.sessionId.length > 0 &&
-    typeof record.sessionFile === "string" &&
-    isAbsolute(record.sessionFile) &&
-    (record.activity === "working" ||
-      record.activity === "blocked" ||
-      record.activity === "idle") &&
-    Number.isSafeInteger(record.updatedAt) &&
-    record.updatedAt! > 0
-  );
-}
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 /** Local observations only. Never starts, adopts, stops or writes a Pi session. */
@@ -61,11 +21,8 @@ export class PiSessionActivity {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private expiry: ReturnType<typeof setTimeout> | null = null;
   private pending: Promise<void> | null = null;
-  private readonly directory: string;
 
-  constructor(private readonly options: ObserverOptions) {
-    this.directory = options.directory ?? piActivityDirectory();
-  }
+  constructor(private readonly options: ObserverOptions) {}
 
   start(): void {
     if (this.stopped || this.timer || this.pending) return;
@@ -103,38 +60,12 @@ export class PiSessionActivity {
     this.expiry = setTimeout(() => {
       this.expiry = null;
       if (!this.stopped) this.options.publish({});
-    }, ACTIVITY_STALE_MS);
+    }, ATTACH_CONTROL_STALE_MS);
     this.expiry.unref();
   }
 
-  private async readRecord(name: string): Promise<PiActivityRecord | null> {
-    const path = join(this.directory, name);
-    try {
-      const stat = await lstat(path);
-      if (!stat.isFile() || stat.size > MAX_RECORD_BYTES) return null;
-      const record: unknown = JSON.parse(await readFile(path, "utf8"));
-      if (!isPiActivityRecord(record) || !name.startsWith(`${record.pid}-`))
-        return null;
-      if (!isAlive(record.pid)) {
-        // A crashed process cannot clean up its own ephemeral report.
-        await rm(path, { force: true });
-        return null;
-      }
-      if (record.inactive || record.released) return null;
-      const age = Date.now() - record.updatedAt;
-      return age >= 0 && age < ACTIVITY_STALE_MS ? record : null;
-    } catch {
-      return null;
-    }
-  }
-
   private async read(): Promise<ExternalSessionActivities> {
-    const names = (await readdir(this.directory)).filter((name) =>
-      REPORT_NAME.test(name),
-    );
-    const reports = (
-      await Promise.all(names.map((name) => this.readRecord(name)))
-    ).filter((record): record is PiActivityRecord => record !== null);
+    const reports = await this.options.registry.observe();
     if (this.stopped || reports.length === 0) return {};
 
     // Both native identity and file must match the existing discovery catalog.
@@ -152,11 +83,7 @@ export class PiSessionActivity {
     const result = new Map<string, ExternalSessionActivity>();
     for (const report of reports) {
       const record = byId.get(report.sessionId);
-      if (
-        !record ||
-        resolve(record.path) !== resolve(report.sessionFile) ||
-        Date.now() - report.updatedAt >= ACTIVITY_STALE_MS
-      )
+      if (!record || resolve(record.path) !== resolve(report.sessionFile))
         continue;
       const previous = result.get(record.id);
       if (!previous || priorities[report.activity] > priorities[previous])

@@ -266,8 +266,12 @@ export class RuntimeEventController {
           }
           // System/title attention arrives independently from the Host.
         }
-      } else if (event.type === "runtime_error") {
-        // Runtime death terminates every operation owned by this worker.
+      } else if (
+        event.type === "runtime_error" ||
+        event.type === "external_attachment_ended"
+      ) {
+        // Runtime death or a released attachment ends this browser's view of
+        // every operation it was following.
         this.observedRuns.delete(eventSessionId);
       }
     }

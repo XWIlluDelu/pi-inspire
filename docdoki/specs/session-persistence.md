@@ -1,11 +1,10 @@
 ---
-purpose: "Pi JSONL remains authoritative while previews, independent workers, startup reconciliation, and mutation admission retain one explicit writer boundary."
+purpose: "Pi JSONL remains authoritative while previews, independent workers, startup reconciliation, and shared use with other Pi processes keep each view on its own branch."
 covers:
   - server/runtime*.ts
   - server/external-session.ts
-  - server/pi-session-occupancy.ts
+  - server/attach-control.ts
   - extensions/inspire-session-bridge.ts
-  - tests/server/pi-session-occupancy*.test.ts
   - server/pi-rpc.ts
   - server/session-{projection,preview,jsonl}.ts
   - server/persisted-json.ts
@@ -34,7 +33,7 @@ for history reads or writer admission.
 Valid retained history remains readable when its project directory is missing, is not a directory,
 or cannot be resolved. The snapshot reports `readOnlyReason: workspace-unavailable`; neither a Pi
 worker nor project model discovery starts. Worker-backed mutations and independent Fork/Clone reject
-at admission. The history source must still be valid: missing or corrupt JSONL retains its own error.
+at admission. The history source must still be valid: missing or corrupt JSONL keeps its own error.
 
 For an available project, the independent worker warms outside the selection critical path.
 `runtime_ready` replaces the preview with authoritative RPC state only for the still-selected
@@ -57,19 +56,19 @@ lossy, so do not infer that two messages are the same from their rendered conten
 
 Pi reserves a path before creating JSONL, so model, thinking, name, extension state and the first
 message may exist only in the creating worker. Explicit model/thinking choices enter as startup
-arguments. Until disk records them, snapshots retain the explicit thinking choice rather than the
+arguments. Until disk records them, snapshots keep the explicit thinking choice instead of the
 empty projection's structural `off`; without an explicit choice, use live worker state.
 
 Only `newSession` may open a healthy empty projection for an absent path. Read the creating worker's
 bounded contiguous `get_entries` once, covering a file appearing during setup, then attest each
 observed complete-line prefix against that state. Header version, session ID, cwd, root parent,
 entry chain and physical append lineage must agree. Header-only and multi-write flushes keep this
-transition open until disk catches up. Disk-before-event entries retain correlation and consume
+transition open until disk catches up. Disk-before-event entries keep correlation and consume
 their exact matching event once. Mismatch stops the worker; existing-session open treats absent
 JSONL as an error. Once materialized, normal inode/version/append rules apply.
 
 An unselected, idle, never-materialized session has no catalog identity and may be abandoned by LRU;
-selected or running work retains its worker.
+selected or running work keeps its worker.
 
 ## Startup trust boundary
 
@@ -86,12 +85,12 @@ A retired worker cannot reset failure to idle or emit `runtime_ready`.
 
 RPC/disk disagreement, incorrect lineage or values, identity/path changes, incomplete entries and
 rewrites stop the worker. Legitimate extension persistence is allowed. Attestation proves state
-equivalence; public RPC cannot distinguish an exactly matching concurrent append after the second
-baseline, so the one-writer rule remains authoritative.
+equivalence at startup. Later appends by independent Pi instances follow the ordinary same-file
+prefix rules below.
 
 A response-bearing `extension_ui_request` before RPC startup completes is unsupported. Stop and
-clean the child immediately and return `PI_STARTUP_RESPONSE_UI_UNSUPPORTED`, rather than expose an
-unanswerable dialog or wait for timeout. One-way startup UI remains allowed.
+clean the child immediately and return `PI_STARTUP_RESPONSE_UI_UNSUPPORTED` instead of exposing an
+unanswerable dialog or waiting for timeout. One-way startup UI remains allowed.
 
 ## Persistence ownership
 
@@ -108,10 +107,9 @@ observes and proves it. Claims arriving during witness lookup are consumed only 
 prefix; later claims remain queued. Retire matched claims by identity, because an earlier claim may
 be cancelled while a later receipt is pending. Within a fully witnessed prefix, interleaved metadata
 must not block matching ordinary message claims and binding their live IDs. Retain witnessed
-ordinary messages whose completion events have not arrived so those events adopt the existing
-durable entries rather than create duplicate overlays or future claims. Legitimately repeated
-messages retain their distinct entry identities.
-The verified entry identity must also reach a completion event whose presentation is queued behind
+ordinary messages whose completion events have not arrived, so those events adopt the existing
+durable entries instead of creating duplicate overlays or future claims. Legitimately repeated
+messages keep their distinct entry identities. The verified entry identity must also reach a completion event whose presentation is queued behind
 earlier reconciliation; consuming its persistence claim must not lose that association before the
 live overlay exists.
 
@@ -138,7 +136,7 @@ committed bytes before parsing a suffix.
 Ordinary snapshots, History pages and lazy resource-message reads may reuse a healthy verified
 projection after a fresh non-following check of the regular file's device, inode, size, mtime and
 ctime. Changed or unhealthy sources undergo byte validation in the same FIFO. Forced startup,
-writer admission, Fork and explicit recovery retain their full validation. Lazy resource reads
+writer admission, Fork and explicit recovery keep their full validation. Lazy resource reads
 recheck slot, view and revision before and after reconciliation.
 
 A metadata-only observation may refresh the same worker's source version only after stable
@@ -149,10 +147,21 @@ browser view. An identical-byte in-place rewrite is indistinguishable from times
 and is treated as unchanged state, not attributed to a writer. Startup source-version checks and
 incomplete-tail continuation rules, including bounded new-file materialization, remain unchanged.
 
+### Appends from other Pi processes
+
+Other Pi processes may append to the same session at any time. Growth of the same file object, with
+the verified prefix intact, is valid session use even when the entries are not the worker's: the
+baseline advances and the worker keeps running. Diagnostics record the ownership decision without
+entry content. A worker whose actual leaf then differs from the saved default records it as its
+navigation lease, so its view, prompts and model context stay on its own branch. Query that worker
+from a cursor it has already seen, not another process's new file tail. A failed leaf read retains
+the last known worker position instead of silently adopting the saved default. Another process's
+incomplete line is not a conflict, but nothing is written after it until it completes.
+
 ### Conflicts and uncertain writes
 
-Duplicate identities, missing/forward parents, content or incomplete-tail rewrites, unmatched custom
-entries, replacements even with identical bytes, and worker/disk delta mismatches retain the last-good
+Duplicate identities, missing/forward parents, content or incomplete-tail rewrites, replacements
+even with identical bytes, and an owned partial line that is overwritten keep the last-good
 projection and block writing.
 
 After an RPC mutation frame is written, stream failure or child loss leaves acceptance unknown.
@@ -171,75 +180,69 @@ reconciliation; none keeps a parallel catalog, projection authority or persisten
 Unselected idle workers form a three-entry LRU warm cache and restart from Pi's file after reclamation.
 Reclamation also drops their reloadable transcript projections. Busy workers, accepted prompts
 awaiting lifecycle events, in-flight Host operations, and workers awaiting or consuming extension
-input are never reclaimed. Detail subscriptions retain views under [[session-transport]].
+input are never reclaimed. An attached live Pi connection is not part of the owned-worker LRU:
+leaving and returning to its session retains that binding while the instance still corresponds to
+the viewed branch. Detail subscriptions retain views under [[session-transport]].
 
-## Native external-session admission
+## Shared-session admission
 
-### Ownership evidence
+### Viewed position
 
-Every saved-file cold writer admission discovers native ownership inside the mutation gate,
-including writer-backed actions without selection warmup. Supported Herdr control stays on the
-original process; [[herdr-enhancement]] owns that public API integration.
+Entering a session shows its saved default branch, as a newly opened Pi would; a session already
+being worked on in Inspire since Host start keeps its position instead. Read-only viewing follows
+continuations of the branch it entered on, never jumping to another branch that becomes the saved
+default. A manually selected leaf is viewed the same way. Leaving and re-entering read-only viewing
+selects the then-current default again.
 
-When discovery supplies no controllable connection, check optional local Pi presence before process
-creation and again immediately before startup. A report matching native session identity and
-physical file from a live process incarnation fences all cold writer-backed actions, including
-settings, as `external-active`. Activity and heartbeat age do not release the fence.
+### Live instances
 
-Retain known presence through missing, malformed or unreadable reports. Release it only after a
-completed producer rebind or confirmed process retirement, including birth mismatch after PID reuse.
-Linux birth evidence includes boot identity; metadata-query failure is not retirement. Legacy
-reports without birth evidence remain fenced while their PID exists.
+Admission reads live [attach-control](../../docs/extensions.md#share-sessions-with-terminal-pi)
+records for each decision; nothing is fenced in advance. Admission and activity badges share one
+directory scan up to a second old, well inside a record's stale period; takeover, deletion and an
+attached Pi's own polls read fresh records, and waiting for a Pi to exit checks only its process. A record matching session id and physical file
+from a live process incarnation corresponds to the view when its leaf lies on the viewed
+root-to-leaf line: an ancestor (a report may lag one append) or a continuation.
 
-Neither activity-stop hints nor legacy `released` flags prove retirement: Pi emits `session_shutdown`
-before remaining handlers and disposal finish. Quit stays fenced until process retirement. Native
-new/resume/fork transfers a report only when fresh `session_start` metadata uniquely matches the
-outgoing reason, source and target files. Same-file replacement and ambiguous/failed transfers stay
-held; Reload preserves presence. An SDK host that disposes a session but keeps its process alive
-has no reporter-visible post-disposal drain signal, so the fence lasts until retirement or a
-confirmed native rebind.
+- No corresponding instance: the view is editable and Inspire's own worker starts directly. A
+  worker started for a non-default view first navigates to it, so displayed conversation and model
+  context agree.
+- One or more: the view is read-only (`external-active`) with that Pi's progress and **Take over**.
+- Unreadable or missing records are no instance; a delay between persistence and reporting never
+  becomes a lasting fence. Read-only views recheck about every two seconds and become editable as
+  soon as no instance corresponds.
 
-Retained presence survives Host replacement even if the source report disappears temporarily.
-Completed rebinds and retirement update it; manually deleting the entire presence cache removes
-that evidence. Within a Host, observations and retained-evidence updates share a FIFO so older
-cache commits cannot overwrite newer bindings.
+Sessions worked on in Inspire since Host start (input sent, a takeover, or a
+branch chosen to continue here) keep that continuity: idle reclamation, navigation and other
+processes' appends never return them to read-only viewing. A worker warmed by merely viewing a
+session grants none; entering such a session again applies the rule, stopping that idle worker if a
+live Pi runs the branch. A Host restart returns every session to this ordinary rule.
 
-Activity and presence neither grant control nor form a writer lease. They observe cooperating
-runtimes using the enabled extension or Herdr; process names cannot establish participation.
-Pre-start checks are not an atomic reservation against an uncoordinated simultaneous external launch.
-New owned sessions retain their ordinary lifecycle.
+### Takeover
 
-### Recovery and native control
+**Take over** attaches to the preferred corresponding instance: idle first, then the most recent
+activity. The binding is to that process incarnation and session file; every operation re-resolves
+its current endpoint, so reloads are transparent, and input and Stop stay addressed to it. The view
+follows the attached Pi's reported leaf. When the attached Pi exits, moves to another session or
+off the viewed branch, or stays unreachable for longer than a reload takes (the record's stale
+period), the binding ends and the view continues editable with Inspire's own worker at its position.
+Ending the attachment does not establish how a task the Pi was running turned out. The view says
+why it was released (the Pi exited, opened another session, moved off the branch or stopped
+responding) and claims no failure. Only an exit during work ends the task; it is reported as ended
+with an unknown outcome. A Pi that is still running may continue its work, so no task notification
+is sent for it.
+Shorter failures keep the binding and the view editable; an action sent meanwhile fails and can be
+retried. A takeover whose Pi cannot be read fails without changing the view. Pending input queued in that Pi is not observable; agent Stop does not interrupt its
+terminal shell; its dialogs stay in its terminal and block browser input. A receipt means Pi accepted
+the call. Host shutdown and idle reclamation leave attached Pi running.
 
-Discovery or observation failure preserves readable history and fences execution as
-`external-unavailable`. Connection loss alone does not prove release; `read() === null` requires
-confirmation that the owner no longer writes this session.
-
-External read-only sessions with browser detail subscriptions share automatic availability checks.
-The last subscriber leaving stops recovery observation; established native connections keep their
-owner polling. Recovery uses ordinary discovery, occupancy and mutation-gate admission, including
-any other holder. Clear read-only state only when native control reconnects or the local writer
-completes startup, not when an occupancy check passes.
-
-Observation and pre-start preparation failures remain retryable. Deletion reservations pause
-attempts. Once Pi startup begins, startup/attestation failure requires explicit retry so the loop
-cannot repeat extension startup hooks. A view abandoned during discovery stays read-only;
-resubscription resumes observation. Unchanged observations do not repeatedly refresh the page,
-and manual reselection requests an immediate check.
-
-Recovery preserves the transcript view, reading position, unsent draft and attachments. Pre-start
-cleanup alone preserves the view; history replacement invalidates it. A pre-start read-only refusal
-is not a failed Pi run. Recovery neither selects a session nor replays input or bypasses attestation.
-Explicit terminal handoff and missing-workspace states keep their own continuation rules.
-
-Native connections stay outside the owned-worker pool. Host shutdown detaches them and drains
-admitted deliveries without terminating external Pi. Input retains artifact validation, file-backed
-images and final Stop/session fences. Unsupported operations stay in the terminal, and uncertain
-admission is never automatically resent.
+Attached connections stay outside the owned-worker pool and are not reclaimed. Input keeps artifact
+validation, file-backed images and final Stop/session fences; uncertain admission is never resent.
+Actions that need Inspire's own worker (branch tools, settings that restart a worker) are
+unavailable while attached.
 
 ## Extension requests
 
 Background extension dialogs remain attached to their worker and reappear when its session is viewed.
 Responses carry session and request identity. A new-session worker has a Host-only provisional
 identity before startup, then atomically rebinds or unregisters. Shutdown stops and drains provisional
-workers; provisional ids never leave the Host, and early questions retain their owner.
+workers; provisional ids never leave the Host, and early questions keep their owner.

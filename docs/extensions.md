@@ -1,19 +1,31 @@
 # Adapting Pi extensions to Inspire
 
-Pi loads your extensions and owns their tools, commands, state, and lifecycle. Inspire presents their
-RPC-visible data in the browser. Install and enable an extension through Pi's normal configuration
-first; GUI presentation files and adapter toggles do not load Pi extensions. This guide helps extension
-authors choose a browser-compatible interface, then apply and verify it.
+Pi loads your extensions and owns their tools, commands, state and lifecycle; Inspire shows their
+RPC-visible data in the browser. Install extensions through Pi's normal configuration first:
+presentation files and adapter toggles change only how Inspire displays them.
 
-Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `grep`, `find`, and `ls`. Other tools get generic cards with arguments, output, images, and expandable structured details. Inspire also loads an internal GUI bridge for branch navigation, model-catalog refresh, effective retry settings, and authentication; it adds no model tools.
+Inspire ships native cards for `read`, `write`, `edit`, `bash`, `powershell`, `grep`, `find` and
+`ls`; other tools get generic cards with arguments, output, images and structured details. Inspire
+also loads an internal GUI bridge (branch navigation, model-catalog refresh, retry settings and
+authentication) that adds no model tools.
 
-The [native UI example](#try-the-native-ui-example) is a small starting point for dialogs and widgets.
-To connect an existing terminal session, use the optional [session bridge](#show-external-session-activity).
-See [Reload and verify](#reload-and-verify) when applying either extension or presentation changes.
+| I want to… | Use | Changes Inspire source? |
+| --- | --- | --- |
+| Ask the user a question or a permission | `ctx.ui.select` / `confirm` / `input` / `editor` ([recipes](#permission-and-question-recipes)) | No |
+| Show a short live fact (usage, mode) | `ctx.ui.setStatus` ([usage footer](#usage-footer)) | No |
+| Show a live list near the Composer | `ctx.ui.setWidget` ([Todo widget](#todo-widget)) | No |
+| Offer an occasional action | `registerCommand` (palette and `/` completion) | No |
+| Give a custom tool a readable card | [Tool-presentation rule](tool-presentations.md#example) | No (JSON) |
+| Add a Fast/Standard-style toggle | [Status control](tool-presentations.md#extension-adapters) | No (JSON) |
+| Add a dedicated panel or control | [Source DIY](#custom-cards-and-source-changes), e.g. the [task board](examples/task-board/README.md) | Yes |
+
+Start with the [native UI example](#try-the-native-ui-example). To share sessions with terminal
+Pi, install [attach-control](#share-sessions-with-terminal-pi). [Reload and verify](#reload-and-verify)
+explains how to apply each kind of change.
 
 ## Choose the smallest integration
 
-There are three distinct levels:
+There are three levels:
 
 1. **Native RPC, no frontend changes:** commands, standard dialogs, notices, status and text widgets.
 2. **Declarative presentation:** map stable tool/custom-message data to existing typed blocks, or
@@ -23,11 +35,9 @@ There are three distinct levels:
 3. **Source DIY:** add purpose-built React controls and a small adapter in a checkout. Pi extensions
    still own state and behavior; Inspire does not supply a scheduler or permission policy.
 
-The complete [source task-board example](https://github.com/XWIlluDelu/pi-inspire/blob/main/docs/examples/task-board/README.md) includes the Pi extension,
-shared data/actions, props-only list/detail UI, adapter, styles, mounting instructions, build/reload
-steps and session-cleanup checks. It uses cancellable demonstration timers rather than launching
-agents. Its Stop/Retry/Open notes actions require both extension-declared capability and the current
-loaded command inventory, and prepared commands preserve the browser's draft and attachments.
+The [task-board example](examples/task-board/README.md) is a complete source integration: the Pi
+extension, shared data and actions, a props-only list/detail UI, the adapter, styles, mounting and
+reload steps, and cleanup checks. It runs demonstration timers instead of launching agents.
 
 ## What works through RPC
 
@@ -88,7 +98,7 @@ or a persistent session. Register capabilities there; start processes, watchers 
 ## Session lifecycle
 
 Inspire-owned sessions use independent workers rather than switching one TUI process between every
-conversation. Connected external Pi retains its original process; see [native terminal control](#control-the-same-herdr-pi-terminal).
+conversation. A terminal Pi you take over keeps its own process; see [sharing sessions](#share-sessions-with-terminal-pi).
 
 | GUI action | Extension lifecycle |
 | --- | --- |
@@ -101,118 +111,61 @@ conversation. Connected external Pi retains its original process; see [native te
 
 Keep state scoped to its Pi session and reconstruct it from persisted entries during `session_start` where appropriate. An extension relying on source-runtime switch/fork hooks needs to account for these GUI actions separately.
 
-## Show external session activity
+## Share sessions with terminal Pi
 
-The optional [Inspire session bridge](../extensions/inspire-session-bridge.ts) connects external
-Pi sessions to Inspire: activity and presence reporting in all supported modes, plus native control
-in Herdr TUI sessions. It ships as a directly installable single file with Inspire.
-
-Activity reporting covers independent RPC hosts and terminal, JSON or print modes, showing busy,
-waiting-for-input and idle state. Waiting follows Pi’s aggregate `ui_prompt_start/end` events,
-so concurrent native dialogs keep the reporter blocked until all settle. Pi’s TUI dialog stack
-and Inspire’s browser RPC dialogs are separate implementations.
-
-Herdr and external execution connectors are not required:
-observing activity alone does not attach a controller or grant execution authority. The same extension
-reports process-bound session presence so Inspire can open an already-held session read-only
-instead of starting a second writer, even when the other Pi is idle.
-
-Enable the extension once through Pi's normal user configuration. From an Inspire checkout:
+[attach-control](../extensions/attach-control.ts) is a generic Pi extension that lets a local
+client attach to a live Pi and control it. Inspire uses it to show terminal Pi sessions and their
+activity, and to continue them. It is a single file that ships with Inspire:
 
 ```sh
-pi install /absolute/path/to/inspire/extensions/inspire-session-bridge.ts
+pi install /absolute/path/to/inspire/extensions/attach-control.ts
 ```
 
-Use its absolute path in a checkout or installed Inspire package, or copy this file into your Pi
-user extensions directory. New Pi sessions load it automatically. In an existing terminal
-session, run `/reload` when idle to activate it. An existing RPC session needs its original host's
-supported reload or a later normal restart; restarting Inspire does not reload an external Pi.
-Remove the configured file with `pi remove` (or remove your copied extension) and reload to disable
-the bridge.
+New Pi processes load it; run `/reload` in an idle terminal Pi to activate it there. Configurations
+that point to the former `extensions/inspire-session-bridge.ts` or
+`docs/examples/session-activity.ts` keep loading it.
 
-Existing installations pointing to `docs/examples/session-activity.ts` keep working through a
-forwarding entry in the same checkout/package. To move the configured path, replace the old entry:
+With attach-control installed:
 
-```sh
-pi remove /absolute/path/to/inspire/docs/examples/session-activity.ts
-pi install /absolute/path/to/inspire/extensions/inspire-session-bridge.ts
-```
+- A terminal Pi and Inspire can use the same session at the same time. There is no release or
+  handoff step; resume a session in a terminal whenever you like
+  (**Session actions → Copy resume command**).
+- Opening a session that a live Pi is continuing on the branch you see shows it read-only, with its
+  progress and **Take over**. If no live Pi shows that branch, Inspire continues it directly with
+  its own Pi.
+- **Take over** attaches to that Pi. The terminal keeps working, and both interfaces operate the
+  same context and work: input, Steer/Follow-up, Stop, rename, model and thinking go to it. With
+  several such Pi processes, Inspire picks an idle one, then the most recently active, and stays
+  with it.
+- If the attached Pi exits, moves to another session or branch, or stops answering for longer than a
+  reload takes, Inspire continues the same view with its own Pi and says which of these happened.
+  It does not claim a task failed: a Pi that moved or stopped answering may still be working, and
+  a task interrupted by an exit is reported as ended with an unknown outcome.
+- A read-only view follows the branch it opened on, even when another branch becomes the default.
+  Appends from other Pi processes are ordinary session use; a session you are
+  working on in Inspire keeps its branch.
 
-Then reload the original Pi as described above. If you previously copied the extension, replace that
-copy with the new bridge file; the forwarding entry depends on the package layout and is not a
-standalone copy. Keep one configured entry or copied file for the bridge.
+Limits of attaching to another Pi:
 
-Reporting adds no tools, model prompts or session entries and makes no network requests. It writes
-small, private records into the local user's Inspire cache. Busy indicators expire after
-about eight seconds without a heartbeat. Session presence does not: idle, a stalled heartbeat
-or a missing previously observed report is not proof of release, including across Host restart.
-Inspire retains that positive admission evidence privately. Shutdown stops activity observation,
-not writer protection: other shutdown callbacks can still write. Native new/resume/fork releases
-the outgoing file only after the replacement starts and uniquely matches the old and new files.
-Reload preserves presence; same-file replacement stays protected. Quit, failed/ambiguous replacement,
-and SDK disposal without a completed native rebind remain protected until process exit is verified.
+- Input queued in that Pi is not listed in Inspire's Pending; Pi has no public queue interface.
+- Stop interrupts agent work. A `!` shell started in the terminal is interrupted there.
+- A terminal Pi's native dialogs are answered there.
+- A receipt means Pi accepted the call, not that the work completed. Pi reports later errors itself.
+- A Pi without attach-control is invisible to Inspire; both can still append to the same session.
 
-A long-lived SDK host disposing just one session has no reporter-visible post-disposal write-drain
-signal, so that file can remain read-only while the process lives. Older reporters' `released`
-markers are also activity hints, not proof of release; legacy teardown records may therefore
-remain protected until their Pi process normally exits. Do not delete the cache to bypass this.
-
-Only persisted sessions discoverable in Inspire's configured Pi storage can appear; reporting
-does not change those storage roots. Sessions that explicitly disable extensions do not report. Inspire-managed RPC workers
-continue to use their existing runtime status: the reporter recognizes the loaded internal GUI bridge,
-not RPC mode or inherited environment alone. Each session counts once in the titlebar animation.
-
-To activate an updated implementation, update/restart the Inspire Host **and** reload or normally
-restart each external Pi through its own host. They load code independently. An external Pi that
-never loaded the reporter has no presence record to inspect; the extension does not discover
-arbitrary uninstrumented processes or take control of them. Do not clear the cache to bypass a
-live-holder warning. A session being viewed in Inspire automatically becomes writable after
-confirmed release; switching sessions or reloading the page is not required.
-
-### Control the same Herdr Pi terminal
-
-First install and enable the [session bridge](#show-external-session-activity) in the Pi terminal
-you want to connect.
-
-Enable **Settings → System → Host → Herdr enhancement** to place Inspire workers in Herdr and
-connect to existing Herdr Pi terminals. This optional mode requires Linux, Herdr, a systemd user
-manager, and writable cgroup v2 scopes with `cgroup.kill`. Settings shows unavailable prerequisites;
-the saved choice takes effect after a Host restart. The default direct mode needs no Herdr.
-
-In a Herdr TUI, this same extension also handles Inspire input, Steer, Follow-up, agent Stop, rename,
-and model/thinking selection through Pi's public functions. No additional extension is needed. It reuses Herdr's existing terminal
-control permission, not your shortcut bindings or screen layout; it adds no service listener or
-credentials. Temporary action payloads use the same private cache. Presence reports by themselves
-are not a control channel, and an ordinary Pi outside Herdr remains observation-only.
-
-Reload the updated file with `/reload` in the original idle Pi terminal, or start Pi normally next time.
-Inspire connects to that process; returning to the original terminal continues the same instance.
-The reporter also retains bounded, receiver-bound task results so Inspire can distinguish normal
-completion, errors and confirmed cancellation, including a short run between polls. It does not
-replay old results when the Host first attaches. Older reporters may show **Task ended** rather
-than claim success; reload the updated extension for precise task notifications.
-The Composer's model picker reads this Pi's own available catalog, including its extension-defined
-models. Model changes await Pi's model-select callbacks; both setters return the effective model and
-thinking they read afterward, and leave saved startup defaults unchanged. If the installed reporter does
-not advertise these controls, Inspire disables them and asks you to load the updated file with native
-`/reload`. Configuration and credential editing in Settings remain available. Reload and Compact for
-an existing TUI are guided back to that terminal, not attempted through an Inspire-owned worker.
-
-Browser input preserves an unsent terminal draft, including queued input Pi restores there after Stop.
-An unanswered native dialog still blocks new browser input until answered in the original terminal.
-A call receipt means Pi's public function returned, not that a message ran or work completed;
-extensions can handle input without a model turn, and native asynchronous errors remain in Pi.
-
-Images are delivered as Pi image content, not paths appended to prompt text. The Host validates the
-usual attachment budgets and passes managed file references through the small action payload; the
-updated receiver loads those bytes before calling `sendUserMessage`. Reload the original terminal
-extension after updating Inspire to enable image delivery. Ordinary files and project references
-remain textual file context.
-
-Shell `!`/`!!` and interactive built-ins must run in the original terminal or their existing Inspire
-command surface, not as model prompts. Extension commands and prompt templates still use native
-dispatch. Agent Stop requests `ctx.abort()`, including Pi's native queued-message restoration. It
-does **not** cancel a shell started in the terminal; interrupt that shell in the original terminal.
+**Protocol.** Each live session context writes a record (session ID and file, current branch
+leaf, activity, model, process identity, endpoint and token) to `pi-attach-control` under
+`$XDG_RUNTIME_DIR` (else `~/.cache`), `~/Library/Caches` on macOS or `%LOCALAPPDATA%` on Windows.
+The endpoint is a private local socket (a named pipe on Windows). A client sends one JSON line,
+`{"token": …, "op": …}`, and reads one reply. Operations are `state`, `prompt`, `abort`,
+`rename`, `models`, `set_model`, `set_thinking`, `reload`, `shutdown` and
+`ui_response` (for a retained RPC UI channel). Requests can include `sessionFile` and
+`expectedLeafId`; input and Stop reject a changed session or a live position outside the expected
+branch. Session deletion uses `shutdown` across all discovered branches, then waits for exit.
+`PI_ATTACH_CONTROL=0` disables the extension for one process. `PI_ATTACH_CONTROL_TAG` adds a
+client label to the record: Inspire loads attach-control into its own workers with their worker
+tag, ignores those records while it owns the workers, and finds them again like any other Pi after
+**Restart Host only**.
 
 ## Try the native UI example
 
@@ -307,6 +260,53 @@ function publishUsage(ctx: ExtensionContext, usage: Usage) {
 
 Register `/usage` to toggle `usageDetailsOpen`. Fetching, caching, and calculations stay in the extension.
 
+## Permission and question recipes
+
+Inspire renders Pi's standard dialogs with keyboard, pointer and touch support, so these need no
+Inspire changes. Keep the policy in your extension.
+
+### Permission prompt
+
+Block a tool call until the user decides, remembering "always" for the session:
+
+```ts
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  const allowed = new Set<string>();
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "bash" || allowed.has("bash")) return;
+    if (!ctx.hasUI) return { block: true, reason: "No UI to ask for permission" };
+    const choice = await ctx.ui.select(
+      `Run: ${event.input.command}`,
+      ["Allow once", "Always allow bash this session", "Deny"],
+      { timeout: 60_000 },
+    );
+    if (choice === "Always allow bash this session") allowed.add("bash");
+    else if (choice !== "Allow once")
+      return { block: true, reason: "Denied by the user" };
+  });
+}
+```
+
+A timeout or dismissal returns `undefined`, which this example treats as Deny. Stop sends
+`cancelled` to pending dialogs, so the same branch handles it.
+
+### Several questions
+
+Pi's RPC dialogs ask one question at a time. Chain them, stop on the first `undefined`, and show
+the collected answers in a widget so the user can see what was chosen:
+
+```ts
+const scope = await ctx.ui.select("Scope", ["Current file", "Whole project"]);
+if (scope === undefined) return;
+const depth = await ctx.ui.select("Depth", ["Quick", "Thorough"]);
+if (depth === undefined) return;
+ctx.ui.setWidget("example.review-plan", [`Scope: ${scope}`, `Depth: ${depth}`], {
+  placement: "aboveEditor",
+});
+```
+
 ## Custom cards and source changes
 
 A [tool-presentation rule](tool-presentations.md#example) maps an exact tool name to a summary and typed blocks. It can also replace a native-name mapping when an extension overrides that tool. Rules customize content within the existing card; they cannot inject React, HTML, CSS, or JavaScript.
@@ -334,7 +334,7 @@ form state, communication, deadlines and modal focus. A source-owned dialog can 
 its normal styles; supply its own outer dialog/focus owner. Permission prompts should normally use
 Pi's native `ctx.ui.confirm`, without introducing a persistent permission-list panel.
 
-Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Resources. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
+Reuse existing icons, tokens, modal focus, and responsive drawers. Keep runtime widgets near the Composer, tool results in their cards, and project details in Files and Changes. Settings is for persisted preferences. Follow neighboring controls' accessible labels, keyboard behavior, and pointer/touch target sizes, and respect reduced motion.
 
 Inspire has no runtime React plugin API. Source customization needs a checkout and a rebuilt frontend; the npm package contains the built application.
 

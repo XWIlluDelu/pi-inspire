@@ -133,9 +133,9 @@ describe("PreferencesStore validation", () => {
     expect((await store.read()).sessionActionOrder).toEqual(SESSION_ACTION_IDS);
     await store.patch({
       theme: "dark",
-      sessionActionOrder: ["export", "rename", "clone", "terminal"],
+      sessionActionOrder: ["export", "rename", "clone", "resume-command"],
     });
-    const order = ["export", "rename", "clone", "terminal", "copy-id"];
+    const order = ["export", "rename", "clone", "resume-command", "copy-id"];
     expect(await new PreferencesStore(path).read()).toMatchObject({
       theme: "dark",
       sessionActionOrder: order,
@@ -147,6 +147,23 @@ describe("PreferencesStore validation", () => {
       store.patch({ sessionActionOrder: ["unknown"] }),
     ).rejects.toBeDefined();
     expect((await store.read()).sessionActionOrder).toEqual(order);
+  });
+
+  it("migrates the retired terminal handoff preferences", async () => {
+    const { path } = await fixture();
+    await writeFile(
+      path,
+      JSON.stringify({
+        sessionActionOrder: ["terminal", "rename"],
+        terminalSessionIds: ["session-a"],
+      }),
+    );
+    const store = new PreferencesStore(path);
+    expect((await store.inspect()).warning).toBeUndefined();
+    expect((await store.read()).sessionActionOrder.slice(0, 2)).toEqual([
+      "resume-command",
+      "rename",
+    ]);
   });
 
   it("preserves invalid and unknown fields while saving unrelated settings and allows field repair", async () => {
@@ -174,14 +191,12 @@ describe("PreferencesStore validation", () => {
       projectDisplay: "path",
       toolVisibility: "dynamic",
     });
-    await store.setTerminalSession("terminal-a", true);
     await store.removeSession("session-a");
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       toolVisibility: "impossible",
       futurePreference: { retained: true },
       projectDisplay: "path",
       pinnedSessionIds: [],
-      terminalSessionIds: ["terminal-a"],
     });
     await store.patch({ toolVisibility: "compact" });
     expect((await store.inspect()).warning).toBeUndefined();

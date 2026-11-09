@@ -11,13 +11,8 @@ export function isExternalSession(state: SessionControlsState): boolean {
   );
 }
 
+/** Owned workers and attached terminal Pi both take model and thinking
+ * changes; an unreachable terminal Pi reports that when a change is sent. */
 export function modelControlsSupported(state: SessionControlsState): boolean {
-  return Boolean(
-    state.sessionId &&
-      (!isExternalSession(state) ||
-        state.sessionStatuses[state.sessionId]?.nativeModelControls === true),
-  );
+  return Boolean(state.sessionId);
 }
-
-export const NATIVE_MODEL_GUIDANCE =
-  "Load the updated Inspire session bridge extension with /reload in the original Pi terminal, then reselect this session.";

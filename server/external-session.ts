@@ -1,51 +1,66 @@
 import type {
-  NativeImageReference,
-  NativeModelCatalog,
-  NativeModelSelection,
-  NativeTaskRuns,
-} from "../extensions/inspire-session-bridge.js";
+  ImageReference as NativeImageReference,
+  ModelCatalog as NativeModelCatalog,
+  ModelSelection as NativeModelSelection,
+  TaskRuns as NativeTaskRuns,
+} from "../extensions/attach-control.js";
 
 /** A connection to an externally owned Pi, not an Inspire-owned worker. */
 export interface ExternalSessionState {
   status: "idle" | "working" | "blocked" | "unknown";
   taskRuns?: NativeTaskRuns;
-  modelControls?: boolean;
   modelSelection?: NativeModelSelection;
   outcome?: "failed";
+  /** The attached Pi's current branch leaf. */
+  leafId?: string | null;
+  uiRequests?: Record<string, unknown>[];
 }
 
+/** Why Inspire stopped following an attached Pi. Only "exited" is evidence
+ * about the process; none establishes the outcome of a task it was running. */
+export type AttachmentEnd =
+  | "exited"
+  | "left-session"
+  | "left-branch"
+  | "unreachable";
+
 export interface ExternalSessionConnection {
-  /** A target extension may interrupt agent work but not native TUI shell execution. */
-  readonly interruptionScope?: "agent";
-  readonly retirementReason?: "process-exit";
-  /** null means this owner is confirmed no longer writing this session.
-   * An unavailable endpoint or uncertain ownership MUST reject, never return null. */
-  read(): Promise<ExternalSessionState | null>;
+  /** `ended` finishes the attachment; a rejection is transient (such as a
+   * reload) until it outlasts the grace period and becomes "unreachable". */
+  read(): Promise<
+    ExternalSessionState | { ended: Exclude<AttachmentEnd, "left-branch"> }
+  >;
   prompt(
     message: string,
     behavior?: "steer" | "followUp",
     beforeSend?: () => void,
     images?: NativeImageReference[],
+    expectedLeafId?: string | null,
   ): Promise<void>;
-  abort(): Promise<void>;
-  rename?(name: string, beforeSend?: () => void): Promise<void>;
-  models?(): Promise<NativeModelCatalog>;
-  setModel?(
+  /** Interrupts agent work, not native TUI shell execution. */
+  abort(expectedLeafId?: string | null): Promise<void>;
+  answerUi(response: Record<string, unknown>): Promise<void>;
+  rename(name: string, beforeSend?: () => void): Promise<void>;
+  models(): Promise<NativeModelCatalog>;
+  setModel(
     provider: string,
     modelId: string,
     beforeSend?: () => void,
   ): Promise<NativeModelSelection>;
-  setThinkingLevel?(
+  setThinkingLevel(
     level: NativeModelCatalog["thinkingLevel"],
     beforeSend?: () => void,
   ): Promise<NativeModelSelection>;
+  /** Reload settings, extensions and resources in the attached Pi. */
+  reload(): Promise<void>;
   /** Release Host resources only; never terminate Pi or close its terminal. */
   close(): void;
 }
 
-/** null means the connector does not claim this session. Errors veto local
- * startup. A connector claiming a scope must retain that claim across outages. */
+/** Attach to the preferred live Pi whose leaf `accepts`; null when none
+ * remains. Called only for an explicit takeover. */
 export type ConnectExternalSession = (
   sessionId: string,
   sessionFile: string,
+  accepts: (leafId: string | null) => boolean,
 ) => Promise<ExternalSessionConnection | null>;

@@ -5,7 +5,7 @@ import { connect, type Socket } from "node:net";
 import { readLocalJsonLine, writeLocalJsonLine } from "./local-json-line.js";
 
 /** The pinned endpoint is definitively obsolete, not a transient I/O failure. */
-export class HerdrServerChangedError extends Error {
+class HerdrServerChangedError extends Error {
   readonly code = "HERDR_SERVER_CHANGED";
 
   constructor() {

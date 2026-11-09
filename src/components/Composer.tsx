@@ -24,10 +24,7 @@ import {
   resolveModelMetadata,
   supportedThinkingLevels,
 } from "../model-options";
-import {
-  modelControlsSupported,
-  NATIVE_MODEL_GUIDANCE,
-} from "../session-controls";
+import { modelControlsSupported } from "../session-controls";
 import {
   sessionDraft,
   sessionDraftRevision,
@@ -572,7 +569,6 @@ export const Composer = memo(function Composer() {
             disabled={
               sessionOpening || Boolean(state.readOnlyReason) || !modelControls
             }
-            title={!modelControls ? NATIVE_MODEL_GUIDANCE : undefined}
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&
               state.nativeCommandUiRequest.action === "model"
@@ -588,11 +584,9 @@ export const Composer = memo(function Composer() {
             key={`thinking-${sessionId ?? "none"}`}
             label="Thinking level"
             title={
-              !modelControls
-                ? NATIVE_MODEL_GUIDANCE
-                : thinkingSupported
-                  ? "Thinking level"
-                  : "The active model does not support thinking"
+              thinkingSupported
+                ? "Thinking level"
+                : "The active model does not support thinking"
             }
             direction="up"
             value={state.thinkingLevel}

@@ -826,15 +826,12 @@ export function createApi(token: string | null = null) {
         { id },
         { signal },
       ),
-    setSessionExecution: (
-      sessionId: string,
-      target: "terminal" | "inspire",
-      interrupt = false,
-    ) =>
-      post<{ snapshot: ActiveSnapshot; command: string }>(
+    takeOverSession: (sessionId: string) =>
+      post<ActiveSnapshot>(token, "/api/sessions/takeover", { sessionId }),
+    resumeCommand: (sessionId: string) =>
+      request<{ command: string }>(
         token,
-        "/api/sessions/execution",
-        { sessionId, target, interrupt },
+        `/api/sessions/resume-command?sessionId=${encodeURIComponent(sessionId)}`,
       ),
     deselectSession: (signal?: AbortSignal) =>
       post<ActiveSnapshot>(token, "/api/sessions/deselect", undefined, {

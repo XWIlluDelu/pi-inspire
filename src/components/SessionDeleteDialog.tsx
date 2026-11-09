@@ -1,5 +1,5 @@
 import { AlertTriangle, Trash2, X } from "lucide-react";
-import type { SessionSummary } from "../../shared/contracts";
+import { isBusyRunState, type SessionSummary } from "../../shared/contracts";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
@@ -19,6 +19,7 @@ export function SessionDeleteDialog({
       reviewRequired: state.sessionDeleteReviewRequired,
       openInPi:
         state.sessionStatuses[session.id]?.external === true ||
+        isBusyRunState(state.sessionStatuses[session.id]?.runState ?? "idle") ||
         state.externalSessionActivities[session.id] !== undefined,
     }),
     shallowEqual,
@@ -75,13 +76,14 @@ export function SessionDeleteDialog({
           id="session-delete-description"
         >
           <span>This session will be moved to Trash.</span>
+          <span>Pi instances using this session will be closed first.</span>
           <span>If Trash is unavailable, it will be permanently deleted.</span>
           <span>Forked sessions remain; project files are unchanged.</span>
         </p>
         {openInPi ? (
           <p className="session-delete__warning" id="session-delete-warning">
             <AlertTriangle size={14} aria-hidden />
-            Pi may write this session again while its terminal remains open.
+            Any work running in this session will stop.
           </p>
         ) : null}
         {error ? (

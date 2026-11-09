@@ -14,6 +14,7 @@ import {
   type SessionReadOnlyReason,
 } from "../shared/contracts.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
+import type { ExternalSessionConnection } from "./external-session.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
 import type { ActiveSessionSnapshot } from "./session-preview.js";
@@ -180,7 +181,10 @@ export interface RuntimeSlot {
   summarizationRetry: RetryInfo | null;
   attention: CompletionAttention | null;
   pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
-  pendingExtensionUiOwners: Map<string, PiRpcProcess>;
+  pendingExtensionUiOwners: Map<
+    string,
+    PiRpcProcess | ExternalSessionConnection
+  >;
   pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
@@ -230,6 +234,9 @@ export interface RuntimeSlot {
   bridge: BranchBridgeIdentity | null;
   pendingBranchBridge: PendingBranchBridge | null;
   navigationLease: NavigationLease | null;
+  /** Branch leaf shown while no Inspire worker runs; undefined follows the
+   * saved default. A worker's own leaf is expressed by `navigationLease`. */
+  viewLeafId?: string | null;
   branchRevision: number;
   incarnationId: string;
   viewId: string;

@@ -9,7 +9,6 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import {
-  isBusyRunState,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
@@ -83,28 +82,15 @@ export const SessionRow = memo(function SessionRow({
   }, [opening]);
   const hidden = individuallyHidden || projectHidden;
   const {
-    conflicted,
     indicator,
     externalLabel,
     label: indicatorLabel,
   } = presentSessionActivity(runtimeStatus, externalActivity);
-  const busy =
-    runtimeStatus && !runtimeStatus.external
-      ? isBusyRunState(runtimeStatus.runState)
-      : false;
   const deleteDisabled =
-    opening ||
-    busy ||
-    conflicted ||
-    deletingSessionId !== null ||
-    clearingHidden;
-  const deleteTitle = conflicted
-    ? "Resolve the session conflict before deleting"
-    : busy
-      ? "Wait for this session to finish working"
-      : opening
-        ? "Wait for this session to finish opening"
-        : "Delete session";
+    opening || deletingSessionId !== null || clearingHidden;
+  const deleteTitle = opening
+    ? "Wait for this session to finish opening"
+    : "Delete session";
   // Yellow stays on while a session works or needs external-change recovery,
   // including the visible one; green and red are unseen completion attention
   // and clear once the row is viewed.
