@@ -55,13 +55,13 @@ authority. Append-only transcript updates preserve the active textarea, focus an
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
 delivery is unavailable.
 
-The textarea grows with content. Expand appears at the top right only when the compact layout
-actually requires internal scrolling; it expands the same input within the main column, preserving
-text, artifacts, focus and selection. Collapse stays available after the text becomes shorter and
-restores the compact layout. No hidden control reserves an overlay gutter. Wrapping, container width
-and visual-viewport changes update the height budget, which reserves space for controls. The
-Expand/Collapse controls have 44px touch targets and take no Escape ownership from completion,
-modals or Stop.
+The textarea grows with content. Expand appears at the top right when the compact input scrolls
+and the reading-stage budget leaves room to grow. It expands the same input within the main column,
+preserving text, artifacts, focus and selection. Collapse stays available after the text becomes
+shorter and restores the compact layout. No hidden control reserves an overlay gutter. Wrapping,
+container width and visual-viewport changes update the height budget, which reserves space for
+controls. The Expand/Collapse controls have 44px touch targets and take no Escape ownership from
+completion, modals or Stop.
 
 ### Retained prompt history
 

@@ -714,6 +714,7 @@ hairline border, medium radius, compact padding and entry motion.
 Action rows use the same small UI text, accent-tint interaction feedback and inset focus role.
 Each owner keeps its action/selection semantics, anchor, grouping and viewport constraints;
 searchable model lists and descriptive project groups keep their information hierarchy.
+An open dropdown follows its trigger while scrolling and closes once the trigger is fully clipped.
 Session actions size to their content within viewport bounds, with drag handles in a separate
 trailing column. [[workspace-layout]] owns compact disclosure and [[interface-preferences]] owns
 saved ordering.

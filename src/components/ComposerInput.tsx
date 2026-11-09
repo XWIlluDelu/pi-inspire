@@ -379,7 +379,7 @@ export function ComposerInput({
   const completionId = useId();
   const editorId = useId();
   const [expanded, setExpanded] = useState(false);
-  const [overflowing, setOverflowing] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
   const [completionTruncated, setCompletionTruncated] = useState(false);
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
   const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
@@ -483,6 +483,7 @@ export function ComposerInput({
     const composer = wrap.closest(".composer");
     const dock = wrap.closest(".composer-dock");
     let chrome = 0;
+    let readingLimit = Infinity;
     if (composer) {
       const style = getComputedStyle(composer);
       const insets = (node: Element) => {
@@ -541,17 +542,18 @@ export function ComposerInput({
             );
           }, 0);
         const height = stage.getBoundingClientRect().height;
-        const remaining =
+        const editorAndReadingSpace =
           height -
           chrome -
-          24 -
           support -
           (Number.parseFloat(dockStyle.paddingTop) || 0) -
           (Number.parseFloat(dockStyle.paddingBottom) || 0);
-        stage.style.setProperty(
-          "--reading-min-height",
-          `${Math.max(0, Math.min(144, height * 0.28, remaining))}px`,
+        const readingMinimum = Math.max(
+          0,
+          Math.min(144, height * 0.28, editorAndReadingSpace - 24),
         );
+        stage.style.setProperty("--reading-min-height", `${readingMinimum}px`);
+        readingLimit = editorAndReadingSpace - readingMinimum;
       }
     }
     const dockChrome =
@@ -563,6 +565,7 @@ export function ComposerInput({
       48,
       Math.min(
         viewportHeight * 0.8,
+        readingLimit,
         Math.min(
           main?.getBoundingClientRect().height || viewportHeight,
           viewportHeight,
@@ -572,15 +575,17 @@ export function ComposerInput({
           64,
       ),
     );
-    const limit = expanded
-      ? available
-      : Math.min(viewportHeight * maxHeightRatio, available);
+    const compactLimit = Math.min(viewportHeight * maxHeightRatio, available);
+    const limit = expanded ? available : compactLimit;
     const scrollTop = element.scrollTop;
     element.style.maxHeight = `${limit}px`;
     element.style.height = "auto";
     element.style.height = `${expanded ? limit : Math.min(element.scrollHeight, limit)}px`;
     element.scrollTop = scrollTop;
-    setOverflowing(element.scrollHeight > element.clientHeight + 1);
+    setCanExpand(
+      available > compactLimit + 1 &&
+        element.scrollHeight > element.clientHeight + 1,
+    );
   }, [expanded, maxHeightRatio]);
 
   useLayoutEffect(() => {
@@ -1045,7 +1050,7 @@ export function ComposerInput({
           autoCorrect="off"
           data-modal-autofocus={autoFocus || undefined}
         />
-        {expanded || overflowing ? (
+        {expanded || canExpand ? (
           <button
             type="button"
             className="composer__expand icon-button"

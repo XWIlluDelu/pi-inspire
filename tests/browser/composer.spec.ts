@@ -483,6 +483,28 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
   await expect(input).toHaveValue("short again");
   await expect(page.getByText("expanded.txt", { exact: true })).toBeVisible();
 
+  await page
+    .locator(".composer__file-input")
+    .setInputFiles([
+      "tests/browser/fixtures/file-previews/training curve.png",
+      "tests/browser/fixtures/file-previews/report.pdf",
+      "tests/browser/fixtures/file-previews/notebook.ipynb",
+    ]);
+  const attachments = page.locator(".composer__attachments > li");
+  await expect(attachments).toHaveCount(4);
+  await page.setViewportSize({ width: 320, height: 560 });
+  await input.fill(long);
+  await expect
+    .poll(() =>
+      input.evaluate((element) => element.scrollHeight - element.clientHeight),
+    )
+    .toBeGreaterThan(1);
+  await expect(expand).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await expect(expand).toBeVisible();
+  await expect(input).toHaveValue(long);
+  await expect(attachments).toHaveCount(4);
+
   await page.getByRole("button", { name: "New session", exact: true }).click();
   const first = page.getByRole("textbox", { name: "First message" });
   await expect(expand).toHaveCount(0);
