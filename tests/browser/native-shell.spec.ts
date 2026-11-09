@@ -8,7 +8,7 @@ for (const touch of [false, true]) {
     test.use({
       hasTouch: touch,
       deviceScaleFactor: touch ? 2 : 1,
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
     test("fits the output notice without shrinking touch targets or losing the log action", async ({
       page,

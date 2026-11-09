@@ -124,30 +124,19 @@ function measureWork(events: number, incremental: boolean) {
     spy.mockRestore();
   }
   expectExactBudget(fixture.slot);
-  return { events, fullMessages, bytes, message: fixture.slot.overlay.at(-1) };
+  return { fullMessages, bytes, message: fixture.slot.overlay.at(-1) };
 }
 
 describe("runtime assistant stream byte budget", () => {
   it("serializes only appended fragments, with linear work across valid event counts", () => {
-    const rows = [1000, 2000].map((count) => {
+    for (const count of [1000, 2000]) {
       const baseline = measureWork(count, false);
       const incremental = measureWork(count, true);
       expect(incremental.message).toEqual(baseline.message);
       expect(baseline.fullMessages).toBe(count);
       expect(incremental.fullMessages).toBe(0);
       expect(incremental.bytes).toBe(count * 34);
-      return {
-        events: count,
-        baselineBytes: baseline.bytes,
-        incrementalBytes: incremental.bytes,
-        baselineFullMessages: baseline.fullMessages,
-        incrementalFullMessages: incremental.fullMessages,
-      };
-    });
-    console.info(
-      "Host overlay JSON serialization work (not transport/latency):",
-      rows,
-    );
+    }
   });
 
   it("counts escaping, Unicode, split surrogates, revisions, and the 64k cap exactly", () => {
@@ -447,7 +436,7 @@ describe("runtime tool argument streaming", () => {
   });
 
   it("serializes append fragments rather than cumulative bodies, including split-surrogate JSON growth", () => {
-    const measurements = [1000, 2000].map((count) => {
+    for (const count of [1000, 2000]) {
       const fixture = setup();
       fixture.start();
       startTool(fixture);
@@ -491,8 +480,6 @@ describe("runtime tool argument streaming", () => {
       const capped = fixture.forwarded();
       fixture.delta("toolcall_delta", 0, "x".repeat(1_000_000));
       expect(fixture.forwarded()).toBe(capped);
-      return { fragments: count, serializedAppendBytes: bytes, fullMessages };
-    });
-    console.info("Host tool-argument serialization work:", measurements);
+    }
   });
 });

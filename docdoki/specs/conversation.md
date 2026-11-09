@@ -82,23 +82,7 @@ boundaries in this contract.
 
 - User and assistant messages appear in source order without duplicate or missing settled content
   after reconnecting. A keyed message updates only its own key; if an earlier turn lacks its end
-  event, the next keyed assistant turn appends rather than overwriting it.
-
-- Markdown math accepts `$…$`, `$$…$$`, `\\(…\\)`, and `\\[…\\]` through token-aware parsing.
-  Inline/fenced code and escapes stay code/text; valid same-line, multiline, and newline-adjacent
-  displays remain distinct math blocks; first-line display content is never misclassified as
-  metadata; and any unclosed opener remains exact readable source while a response streams.
-  Dollar delimiters use lexical boundaries so ordinary amounts, whitespace/path-separated Shell
-  variables, and bare or quoted regex endings do not consume intervening prose as math. Escaped
-  dollars within formulas are preserved, including backslash-run parity. Genuine formula closers,
-  including formulas followed by a slash and ordinal suffixes, remain valid.
-  Raw HTML-shaped source (including generic types such as `Array<T>`) is rendered as inert text,
-  never interpreted as elements or silently discarded.
-  Oversized inline formulas scroll locally, like display formulas and code, without widening the
-  message. Ordinary inline formulas retain the surrounding text baseline.
-  Untrusted Markdown is sanitized before trust-disabled KaTeX generates its complete HTML, MathML,
-  and SVG output, preserving extensible glyph geometry and accessibility metadata without enabling
-  trust-only commands.
+  event, the next keyed assistant turn appends instead of overwriting it.
 
 - Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source
   projection. Inline formulas use `$…$`; display formulas put each `$$` delimiter on its own line,
@@ -236,22 +220,25 @@ boundaries in this contract.
 ## Response streaming and message-owned outcomes
 
 - Assistant text streams smoothly without visually rebuilding the entire transcript for every
-  fragment. Pi JSON/RPC `message_update` frames carry `assistantMessageEvent`; the Host reconstructs
-  the active assistant from typed thinking/text deltas and identity-bearing tool starts for both live events and reconnect snapshots. Tool
-  argument JSON is incrementally parsed and redacted into bounded display-only updates before it
-  reaches the browser. Both projections use the same pure reducer, with ordered batching governed
-  by [[session-transport]], and resync rather than guessing against settled history. Tool argument
-  preview and execution states are specified in [[activity-presentation]]. Pi may emit an empty assistant `message_start` before the provider yields its
-  first visible thinking, text, or tool delta; that truthful waiting state renders a quiet
-  `Working…` indicator and replaces it immediately when content arrives.
+  fragment. Pi JSON/RPC `message_update` frames carry `assistantMessageEvent`; for both live events
+  and reconnect snapshots, the Host reconstructs the active assistant from typed thinking/text
+  deltas and identity-bearing tool starts. Tool argument JSON is incrementally parsed and redacted
+  into bounded display-only updates before it reaches the browser. Both projections use the same
+  pure reducer, with ordered batching governed by [[session-transport]], and resync instead of
+  guessing against settled history. Tool argument preview and execution states are specified in
+  [[activity-presentation]].
 
-  A settled empty assistant without a terminal outcome allocates no Divider-only transcript row;
-  stopped and failed replies retain their visible outcome as specified below. While latest-follow remains
-  active, the viewport follows actual rendered-content and scrollport geometry—not only
-  message-count or ordinary-text changes—so thinking/tool deltas, Markdown reflow, card transitions,
-  virtual-row measurement, and a mobile keyboard resizing the scrollport cannot strand new content
-  below the fold. Only an explicit wheel, touch, or keyboard gesture releases latest-follow
-  outright.
+  Pi may emit an empty assistant `message_start` before the provider yields its first visible
+  thinking, text, or tool delta; that waiting state renders a quiet `Working…` indicator, replaced
+  immediately when content arrives. A settled empty assistant without a terminal outcome allocates
+  no Divider-only transcript row; stopped and failed replies keep their visible outcome as specified
+  below.
+
+  While latest-follow is active, the viewport follows actual rendered-content and scrollport
+  geometry, not only message-count or ordinary-text changes. Thinking/tool deltas, Markdown reflow,
+  card transitions, virtual-row measurement, and a mobile keyboard resizing the scrollport therefore
+  cannot strand new content below the fold. Only an explicit wheel, touch, or keyboard gesture
+  releases latest-follow outright.
 
   A fold disclosure gesture owns its layout mutation before resizing. The unified collapsed
   disclosure keeps the center anchor; open upper/lower controls keep their respective anchors
@@ -371,9 +358,9 @@ boundaries in this contract.
 Native `bashExecution` messages are user activity, not assistant tool calls. A readable shell card
 shows the exact command with `!`/`!!`, streamed output, running/final exit or cancelled status,
 context inclusion/exclusion, and native truncation metadata. **View full output** opens Pi's recorded
-log through the same session-authorized resource viewer as assistant-tool output. Worker retirement settles
-an unfinished card as Interrupted with retained known output and an unconfirmed result/context;
-it does not leave a spinner or invent a native persisted result. It remains visible when
+log through the same session-authorized resource viewer as assistant-tool output. Worker retirement
+settles an unfinished card as Interrupted with retained known output and an unconfirmed
+result/context, not a spinner or an invented native persisted result. The card stays visible when
 assistant tools are hidden, supports copying the displayed result and metadata, and strips terminal
 control sequences without interpreting output as HTML. Live-to-durable reconciliation and reopened
 history keep one result per native execution. [[pi-integration]] owns execution and context semantics.
@@ -384,28 +371,27 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   under [[session-branches]], separate from Git branch selection. Edit confirms only when it would
   replace an existing draft; Edit and Fork prepare the selected input without submitting it. A
   settled user turn exposes a direct fork shortcut keyed by its opaque Pi entry id; the browser
-  refreshes the authoritative tree and reuses the same revision-checked fork operation rather than
-  implementing a second branch path. A known branch load or action failure remains actionable inside
-  this pane and does not duplicate itself into the global error banner.
+  refreshes the authoritative tree and reuses the same revision-checked fork operation, with no
+  second branch path. A known branch load or action failure stays actionable inside this pane and
+  is not duplicated into the global error banner.
 
 - Unknown tools and noninteractive extension display messages receive a generic, attributable,
   inspectable fallback instead of disappearing. Available extension name or attribution is the
   primary normal-font title; generic implementation labels such as `custom` and `Extension content`
-  are suppressed, with `Extension` as the neutral fallback. Raw method/type and payload remain
-  inside the expanded body, subject to host redaction and transport bounds; unsupported future
-  response-bearing methods enter the same cancellable dialog model rather than being dropped.
+  are suppressed, with `Extension` as the neutral fallback. Raw method/type and payload stay inside
+  the expanded body, subject to host redaction and transport bounds. Unsupported future
+  response-bearing methods enter the same cancellable dialog model instead of being dropped.
 
-- Concurrent extension dialogs retain arrival order while the oldest is modal. Browser response
+- Concurrent extension dialogs keep arrival order while the oldest is modal. Browser response
   gestures are idempotent; [[pi-integration]] owns Host request/worker validation, deadlines,
   reconnect retention and cleanup. Model settlement does not dismiss an independent command's dialog.
 
 - Pending sits at the end of Transcript; the composer-adjacent activity surface provides a compact
-  count and Jump to Pending action. That surface keeps the Composer’s full measure and left alignment
-  for Pending, retry and compaction states, including in short windows. [[composer]] owns navigation,
-  previews, copying, recovery and discard; [[design-system]] owns visual emphasis. Pending remains a
-  projection of Pi/Host-owned input, not a browser-owned queue.
-  Retry/compaction feedback belongs to the activity surface; running and failed tools remain in
-  their chronological cards.
+  count and Jump to Pending action. That surface keeps the Composer's full measure and left alignment
+  for Pending, retry and compaction states, including in short windows. Retry/compaction feedback
+  belongs to the activity surface; running and failed tools stay in their chronological cards.
+  [[composer]] owns navigation, previews, copying, recovery and discard; [[design-system]] owns
+  visual emphasis. Pending is a projection of Pi/Host-owned input, not a browser-owned queue.
 
 - Running, retrying, compacting, queued, user-stopped, failed, and settled states remain
   distinguishable; a user-initiated abort is presented as `Stopped`, not as a failed run.

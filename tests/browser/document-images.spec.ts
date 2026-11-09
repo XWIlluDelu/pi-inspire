@@ -2,8 +2,7 @@ import { expect, type Locator, test } from "@playwright/test";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
 async function openFile(resources: Locator, name: string) {
-  const back = resources.getByRole("button", { name: "Back to file browser" });
-  if (await back.isVisible()) await back.click();
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
   await resources
     .getByRole("searchbox", { name: "Search workspace files" })
     .fill(`file-previews/${name}`);
@@ -77,11 +76,71 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   await expect(dialog.getByAltText("Output pipeline")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
+  const showActions = resources.getByRole("button", {
+    name: "Show file actions",
+    exact: true,
+  });
+  if (await showActions.isVisible()) await showActions.click();
   await resources.getByRole("button", { name: "Source", exact: true }).click();
   await expect(
     resources.getByRole("region", { name: "File source" }),
   ).toContainText('"nbformat": 4');
   expect(remoteRequests).toBe(0);
+});
+
+test("responsive panel history retires without dismissing a foreground Notebook image", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 820, height: 900 });
+  await pairedPage(page);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const resources = page.locator(".ctx");
+  await openFile(resources, "document-images.ipynb");
+  const dialog = page.getByRole("dialog", {
+    name: "Image preview",
+    exact: true,
+  });
+  for (const [width, close, finalWidth] of [
+    [820, "Back", 1440],
+    [820, "Close", 820],
+    [1440, "Back", 820],
+    [1440, "Close", 1440],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await resources
+      .getByRole("button", { name: "Preview Notebook output", exact: true })
+      .click();
+    await expect(dialog.locator("img")).toBeVisible();
+    for (const width of [1440, 820, 390, finalWidth]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator(".image-lightbox__name")).toHaveText(
+        "Notebook output",
+      );
+      await expect(dialog.locator("img")).toBeVisible();
+    }
+    if (close === "Back") await page.goBack();
+    else
+      await dialog
+        .getByRole("button", { name: "Close image preview", exact: true })
+        .click();
+    await expect(dialog).toBeHidden();
+    await expect(
+      resources.getByRole("document", { name: "Notebook preview" }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
+      )
+      .toBe(finalWidth < 901 ? 1 : 0);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
+      )
+      .toBe(0);
+  }
 });
 
 test("Notebook image outputs use the same reader as a standalone image file", async ({

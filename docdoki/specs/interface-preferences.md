@@ -41,13 +41,12 @@ presentation. These rules also apply to Terminal settings.
 | Adapters | Unified enablement of externally configured GUI adapters under [[tool-presentations]]; not Pi extension execution management. |
 | System | Component versions, Docs/Changelog release references and unified update check; then `Host`, with `Herdr enhancement` followed by Host restart under [[host-lifecycle]]. |
 
-Pi controls follow [[pi-integration]]. A dedicated `Pi session settings` section and concise scope note
-(`Changes apply to the current session; Pi manages defaults and project overrides.`) distinguish
-current-session runtime settings from Pi-managed defaults and project overrides without implying confirmed
-global persistence. Keep detailed persistence limitations in [[pi-integration]]; do not label a setter
-acknowledgment as Saved. In `System`, `Herdr enhancement` shares the Host/restart card with the actions
-that apply it under [[herdr-enhancement]].
-Footer utilities present INSΠRE version, optional install action, and Reset preferences on a single line.
+Pi controls follow [[pi-integration]]. A dedicated `Pi session settings` section and concise scope
+note (`Changes apply to the current session; Pi manages defaults and project overrides.`) separate
+current-session runtime settings from Pi-managed defaults and project overrides without implying
+confirmed global persistence. Detailed persistence limitations stay in [[pi-integration]]; a setter
+acknowledgment is never labelled Saved.
+
 System lists Pi, Extensions and Inspire in that order. Pi's Docs and Changelog links share its label
 row; update commands reuse the file/path click-to-copy presentation without a persistent copy icon.
 `Herdr enhancement` shares the Host/restart card with the actions that apply it under
@@ -61,10 +60,10 @@ non-obvious behavior. The bounded category navigation has no separate search.
 Titlebar needles is an opt-in persisted switch for installed-window animation. The centered titlebar
 brand toggles the same preference; refresh restores the saved choice. See [[design-system]] for motion.
 
-Reset preferences opens a confirmation dialog stating its exact scope before patching the complete
-interface-default set (including Herdr, titlebar needles and session action order) while leaving Pi
-runtime settings, models, credentials, MCP servers, update observations, navigation curation, pane
-state, and other direct work state unchanged.
+Reset preferences opens a confirmation dialog stating its exact scope, then patches the complete
+interface-default set (including Herdr, titlebar needles and session action order). Pi runtime
+settings, models, credentials, MCP servers, update observations, navigation curation, pane state,
+and other direct work state are unchanged.
 
 Terminal settings uses the same category navigation for Appearance, Interaction and Saved output
 under [[terminal]]. Category and subsection navigation scroll only dialog content; the header,
@@ -134,8 +133,8 @@ a fresh resource scan and package update results cannot establish current-worker
 
 ## Update observations
 
-- The Extensions check covers global/user packages. Document this scope in the command guide rather
-  than adding a persistent qualifier to the result label.
+- The Extensions check covers global/user packages. This scope is documented in the command guide,
+  not as a persistent qualifier on the result label.
 - System shows the extension update count and copyable update command on the main line, then
   lists package source links below, one package per line, even for a single update. Details align
   right on desktop and left on narrow screens; long names wrap. Pi's package observation provides
@@ -149,8 +148,8 @@ a fresh resource scan and package update results cannot establish current-worker
 - Explicit checks bypass the cache and reread the installed Pi identity without importing its SDK.
   Pi availability and copied version transitions compare that installation with the latest release,
   not the version recorded at Host startup. The main row shows the installed version. When it differs
-  from the Host-loaded version, show only `Restart Host to apply`; keep the loaded version in the
-  version's tooltip, not an additional permanent explanation. A still-newer release keeps its update
+  from the Host-loaded version, show only `Restart Host to apply`, with the loaded version in the
+  version's tooltip and no additional permanent explanation. A still-newer release keeps its update
   action alongside the restart status. An unreadable installation is unknown, never the startup
   version presented as a fresh observation. Local identity remains observable when remote checks fail
   or Pi is offline. Installed updates leave the available-update notice; pending activation alone
@@ -181,7 +180,7 @@ a fresh resource scan and package update results cannot establish current-worker
 ## Independent activity density
 
 Activity groups, tools, and reasoning have independent saved defaults and per-card overrides.
-All default to **Adaptive**, stored as `dynamic`; existing stored identifiers retain their meaning.
+All default to **Adaptive**, stored as `dynamic`; existing stored identifiers keep their meaning.
 Selectors put Adaptive first, followed by fixed modes from most to least detail:
 
 | Control | Fixed modes |

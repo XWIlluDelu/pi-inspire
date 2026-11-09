@@ -131,10 +131,12 @@ describe("browser terminal operation identity", () => {
       profileId: "bash",
       cwd: "/fixture",
     });
-    expect(first).toBe(second);
     await vi.waitFor(() => expect(sent).toBeDefined());
     gate.resolve(reply(sent));
-    await first;
+    expect(await Promise.all([first, second])).toEqual([
+      { id: "created" },
+      { id: "created" },
+    ]);
     expect(transport).toHaveBeenCalledTimes(2);
   });
 

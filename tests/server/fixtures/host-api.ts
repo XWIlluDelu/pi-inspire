@@ -9,15 +9,15 @@ import { WebSocket } from "ws";
 import { createInspireServer } from "../../../server/app.js";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type { GitInspectionLike } from "../../../server/git-inspection.js";
-import type { RuntimeLike } from "../../../server/runtime.js";
-import { workbenchFixture } from "../../fixtures/workbench.js";
 import { PreferencesStore } from "../../../server/preferences.js";
 import { ResourceStore } from "../../../server/resources.js";
+import type { RuntimeLike } from "../../../server/runtime.js";
 import { ToolPresentationConfigStore } from "../../../server/tool-presentation-config.js";
 import type {
   ActiveSnapshot,
   SessionRuntimeStatus,
 } from "../../../shared/contracts.js";
+import { workbenchFixture } from "../../fixtures/workbench.js";
 
 export type DetailFrame = Record<string, unknown> & {
   data?: ActiveSnapshot;
@@ -135,7 +135,7 @@ export async function hostApiFixture(
     options.runtime ?? workbench.runtime;
   const git: GitInspectionLike = {
     status: vi.fn(async () => ({ kind: "not-repository" as const })),
-    diff: vi.fn(async (_cwd, pathId, side) => ({
+    diff: vi.fn(async (_cwd, pathId) => ({
       kind: "empty" as const,
       path: {
         id: pathId,
@@ -143,7 +143,6 @@ export async function hostApiFixture(
         utf8Path: "file.txt",
         workspacePath: "file.txt",
       },
-      side,
       reason: "no-changes" as const,
     })),
   };

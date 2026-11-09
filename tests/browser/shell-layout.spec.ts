@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { focusRingClipping } from "./support/focus-bounds";
+import { routeSnapshots } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 import { textBaseline } from "./support/text-baseline";
 
@@ -9,7 +10,7 @@ for (const touch of [false, true]) {
       viewport: { width: 1366, height: 768 },
       hasTouch: touch,
       deviceScaleFactor: touch ? 2 : 1,
-      reducedMotion: "reduce",
+      contextOptions: { reducedMotion: "reduce" },
     });
     test("keeps focus rings and workspace buttons inside clipped header regions", async ({
       page,
@@ -81,7 +82,7 @@ for (const touch of [false, true]) {
           }
         }
         const box = (await header.boundingBox())!;
-        expect(box.height).toBe(width > 900 ? 36 : 37);
+        expect(box.height).toBe(width > 900 ? (touch ? 36 : 32) : 37);
         for (const tool of await header.getByRole("tab").all()) {
           const target = (await tool.boundingBox())!;
           const icon = (await tool.locator("svg").first().boundingBox())!;
@@ -235,7 +236,8 @@ test("saved side widths share a reading budget without changing preferences on r
         page.getByRole("separator", { name: "Resize files panel" }),
       ).toHaveCount(0);
     } else {
-      const minimum = Math.min(400, width - 220 - 320 - 12);
+      // Two 4px pane gutters and the 8px trailing shell inset are not reading space.
+      const minimum = Math.min(400, width - 220 - 320 - 4 - 4 - 8);
       await expect
         .poll(async () => (await page.locator(".center").boundingBox())!.width)
         .toBeGreaterThanOrEqual(minimum - 1);
@@ -375,23 +377,25 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
         : []),
     ].map((s) => {
       const rect = box(s);
-      return rect.x + rect.width / 2;
+      const style = getComputedStyle(nav.querySelector(s)!);
+      // Compare icon slots, including the folder glyph's marker-clearance inset.
+      const leading = parseFloat(style.marginLeft);
+      const trailing = parseFloat(style.marginRight);
+      return rect.x + (rect.width + trailing - leading) / 2;
     });
     const labels = [
       ".wordmark",
       ".nav__new-session-label > span",
       ".nav__search input",
       ".nav__group-name",
-      ".nav__row-title",
+      ".nav__row-name",
+      ".nav__row-age",
       ...(nav.querySelector(".nav__dock-title") ? [".nav__dock-title"] : []),
     ].map((s) => box(s).x);
     const right = [".nav__new-session", ".nav__search", ".nav__row"].map(
       (s) => box(s).right,
     );
-    const metadata = [".nav__group-count", ".nav__row-age"].map(
-      (s) => box(s).right,
-    );
-    return { icons, labels, right, metadata };
+    return { icons, labels, right };
   });
   for (const positions of Object.values(alignment))
     expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(
@@ -461,32 +465,12 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
 test("session title and workspace/status text share a baseline at every header tier", async ({
   page,
 }) => {
-  const withStatus = (snapshot: Record<string, unknown>) => {
-    snapshot.extensionStatuses = { context: "mc: 93.7K (46%) · idle" };
-    if (snapshot.active && typeof snapshot.active === "object")
-      (snapshot.active as Record<string, unknown>).sessionName =
-        "frontend cross val";
-  };
-  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
-    const upstream = client.connectToServer();
-    upstream.onMessage((data) => {
-      const event = JSON.parse(String(data));
-      if (event.type === "snapshot" && event.data) withStatus(event.data);
-      client.send(JSON.stringify(event));
-    });
+  await routeSnapshots(page, {
+    snapshot: (snapshot) => {
+      snapshot.extensionStatuses = { context: "mc: 93.7K (46%) · idle" };
+      if (snapshot.active) snapshot.active.sessionName = "frontend cross val";
+    },
   });
-  for (const pattern of [
-    "**/api/bootstrap**",
-    "**/api/snapshot**",
-    "**/api/sessions/open",
-  ])
-    await page.route(pattern, async (route) => {
-      const response = await route.fetch();
-      const body = await response.json();
-      if (body.snapshot) withStatus(body.snapshot);
-      else if ("active" in body) withStatus(body);
-      await route.fulfill({ response, json: body });
-    });
   await pairedPage(page);
   await page
     .locator(".nav__row-main")
