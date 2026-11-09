@@ -166,7 +166,7 @@ for (const surface of [
           : surface === "extension"
             ? {
                 role: "custom",
-                customType: "intercom_message",
+                customType: "relay_message",
                 display: true,
                 content: checklist,
                 details: {

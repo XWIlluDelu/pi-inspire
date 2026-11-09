@@ -351,17 +351,13 @@
   align-items: center;
   justify-content: center;
   color: var(--accent-deep);
-  /* Match the uppercase heading's ink center rather than its line box. */
-  transform: translateY(-1px);
 }
 
 .settings__section-title {
   min-width: 0;
   margin: 0;
   color: var(--ink);
-  font: 500 var(--text-base)/var(--leading-ui) var(--font-label);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font: 600 var(--text-base)/var(--leading-ui) var(--font-label);
   overflow-wrap: anywhere;
 }
 
@@ -371,15 +367,7 @@
 }
 
 .host-restart__actions .button {
-  padding-block: calc(var(--space-1) + var(--ui-text-offset))
-    calc(var(--space-1) - var(--ui-text-offset));
-}
-
-.dialog.settings .button,
-.dialog.settings .settings-section-action .button,
-.dialog.settings .host-restart .button {
-  /* These controls already have a fixed height and zero vertical padding. */
-  padding-block: calc(2 * var(--ui-text-offset)) 0;
+  padding-block: var(--space-1);
 }
 
 .settings__section-desc {
@@ -411,15 +399,9 @@
   gap: var(--space-3);
   min-height: 48px;
   padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--hairline);
   background: transparent;
   position: relative;
   transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.session-action-order > li:last-child,
-.session-action-order__row:has(+ .session-action-order__boundary) {
-  border-bottom: 0;
 }
 
 .session-action-order__row:hover:where(:not([data-dragging])) {
@@ -641,11 +623,12 @@
   overflow-wrap: anywhere;
 }
 
+/* Whole-pixel line boxes keep adjacent action rows on the same raster baseline. */
 .settings__field-label {
   font-size: 13px;
   font-weight: 500;
   color: var(--ink);
-  line-height: var(--leading-ui);
+  line-height: 19px;
 }
 
 .settings__field-help {
@@ -653,7 +636,7 @@
   max-width: 52ch;
   color: var(--muted);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 17px;
 }
 
 .settings__field-status {
@@ -908,49 +891,11 @@
   }
 }
 
-.settings__action-button {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: 30px;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--bg-surface);
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.settings__action-button:hover:not(:disabled) {
-  border-color: var(--hairline-strong);
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-.settings__action-button:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 1px;
-}
-
-.settings__action-button:disabled {
-  opacity: 0.6;
-  cursor: wait;
-}
-
 @media (pointer: coarse) {
   .settings__field .dropdown--field .dropdown__trigger,
   .settings__field .dropdown__option,
   .settings-switch,
   .settings__nav-item,
-  .settings__action-button,
   .host-restart__actions .button {
     min-height: 40px;
   }
@@ -1089,6 +1034,7 @@
   background: transparent;
   color: var(--muted);
   font: inherit;
+  font-family: var(--font-sans);
   font-size: var(--text-xs);
   text-decoration: none;
   white-space: nowrap;
@@ -1113,6 +1059,9 @@
 /* --- Overlays (palette + dialogs) --- */
 
 .overlay {
+  --overlay-space-top: 12dvh;
+  --overlay-space-inline: var(--space-4);
+  --overlay-space-bottom: var(--space-4);
   position: fixed;
   inset: var(--window-titlebar-height) 0 0;
   z-index: 50;
@@ -1122,7 +1071,10 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 12dvh var(--space-4) var(--space-4);
+  padding: max(var(--overlay-space-top), var(--safe-top))
+    max(var(--overlay-space-inline), var(--safe-right))
+    max(var(--overlay-space-bottom), var(--safe-bottom))
+    max(var(--overlay-space-inline), var(--safe-left));
   overflow-y: auto;
   overscroll-behavior: contain;
   animation: overlay-in var(--dur-standard) var(--ease-standard);
@@ -1130,23 +1082,18 @@
 
 @media (max-height: 640px) {
   .overlay {
-    padding: var(--space-2) var(--space-3);
+    --overlay-space-top: var(--space-2);
+    --overlay-space-inline: var(--space-3);
+    --overlay-space-bottom: var(--space-2);
   }
 
   .dialog.settings {
-    height: calc(var(--app-height) - 2 * var(--space-2));
-    max-height: calc(var(--app-height) - 2 * var(--space-2));
+    height: 100%;
   }
 
   .settings__header {
     min-height: 44px;
     padding: var(--space-2) var(--space-4);
-  }
-}
-
-@media (max-height: 480px) {
-  .overlay {
-    padding-top: var(--space-2);
   }
 }
 
@@ -1265,8 +1212,6 @@
   padding: var(--space-2) calc(var(--palette-content-inset) - var(--space-2))
     calc(var(--space-1) + 1px);
   font: 600 var(--text-xs)/var(--leading-ui) var(--font-label);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--muted);
   border-bottom: 1px solid var(--line);
 }
@@ -1584,6 +1529,8 @@
 .session-delete__header .dialog__title {
   flex: 1 1 auto;
   min-width: 0;
+  /* Centre Plex's visible letters against the badge and close glyphs. */
+  translate: 0 var(--ui-text-offset);
 }
 
 .session-delete__icon {
@@ -1615,6 +1562,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  /* Match the session label's text inset, including its 1px border. */
+  padding-inline: calc(var(--space-3) + 1px);
 }
 
 .session-delete__description span {
@@ -1913,6 +1862,7 @@
 
 .dirpicker__hidden.icon-button {
   flex: 0 0 auto;
+  margin-inline-start: auto;
   width: 32px;
   height: 32px;
   color: var(--muted);
@@ -2119,6 +2069,21 @@
 
 /* Workspace drawers sit at 40, below dialog overlays. */
 .app:has(> .nav[aria-modal="true"], > .ctx[aria-modal="true"]) .notices {
+  z-index: 38;
+}
+
+/* An open menu or popover is the current focus owner, too: feedback steps
+   beneath it instead of hiding its items. */
+:root:has(
+    :is(
+      .session-actions-menu,
+      .extension-status-popover,
+      .dropdown__menu,
+      .terminal-menu__popover,
+      .session-action-order__popover
+    )
+  )
+  .notices {
   z-index: 38;
 }
 

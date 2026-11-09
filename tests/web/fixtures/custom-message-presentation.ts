@@ -6,8 +6,8 @@ export const customMessageConfiguration: ToolPresentationConfiguration = {
   rules: {},
   mappings: {},
   customMessages: {
-    intercom_message: {
-      source: "Intercom",
+    relay_message: {
+      source: "Relay",
       title: ["details.from.name", "details.from.id"],
       body: "details.bodyText",
       requireAbsent: ["details.message.crossMachine"],
@@ -15,7 +15,7 @@ export const customMessageConfiguration: ToolPresentationConfiguration = {
   },
 };
 
-export const intercomBody = `## Composer review ready
+export const relayBody = `## Composer review ready
 
 Expanded editing now preserves **the current draft and attachments**. The focused checks passed; the changes remain in the workspace for review.
 
@@ -36,7 +36,7 @@ const draft = { text: "Keep the exact message", attachments: [] };
 
 Please review the **final paragraph** as well as the header.`;
 
-export function incomingIntercom(bodyText = intercomBody): ChatMessage {
+export function incomingRelay(bodyText = relayBody): ChatMessage {
   const from = {
     id: "21b2937f-1111-2222-3333-444444444444",
     name: "Inspire: composer editing",
@@ -52,14 +52,14 @@ export function incomingIntercom(bodyText = intercomBody): ChatMessage {
     injectedAt: 1_900_000_000_030,
   };
   const replyCommand =
-    'intercom({ action: "send", to: "21b2937f", message: "..." })';
+    'relay({ action: "send", to: "21b2937f", message: "..." })';
   return {
     role: "custom",
-    customType: "intercom_message",
+    customType: "relay_message",
     display: true,
     timestamp: 1_900_000_000_040,
     __inspireMessageId: "custom-message-review",
-    content: `**From ${from.name}** (${from.cwd})\n\nTo reply, use the intercom tool: ${replyCommand}\n\n_Message ${message.id} · seq 42 · sent 2030-03-17T17:46:40.000Z · broker 2030-03-17T17:46:40.010Z · received 2030-03-17T17:46:40.020Z · injected 2030-03-17T17:46:40.030Z_\n\n${bodyText}`,
+    content: `**From ${from.name}** (${from.cwd})\n\nTo reply, use the relay tool: ${replyCommand}\n\n_Message ${message.id} · seq 42 · sent 2030-03-17T17:46:40.000Z · broker 2030-03-17T17:46:40.010Z · received 2030-03-17T17:46:40.020Z · injected 2030-03-17T17:46:40.030Z_\n\n${bodyText}`,
     details: { from, message, replyCommand, bodyText },
   };
 }

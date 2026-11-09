@@ -396,15 +396,24 @@
   }
 
   .extension-display--widget {
-    position: relative;
-    padding: var(--space-1) 40px var(--space-1) var(--space-2);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    padding: var(--space-1) var(--space-2);
   }
 
   .extension-display--widget .extension-display__head {
-    position: absolute;
-    top: 0;
-    right: var(--space-1);
+    grid-area: 1 / 2;
     min-height: 0;
+  }
+
+  .extension-display--widget .extension-display__text {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+
+  .extension-display--widget .extension-display__copy.icon-button {
+    margin-block: 0;
   }
 
   .extension-display--widget .extension-display__head > :not(.extension-display__copy) {
@@ -425,8 +434,16 @@
   }
 }
 
+@media (max-height: 500px) and (pointer: coarse) {
+  .extension-dock {
+    /* Keep one complete 32px Copy target, its padding and the widget border. */
+    min-height: calc(32px + 2 * var(--space-1) + 2px);
+  }
+}
+
 .composer {
-  /* Align writing and delivery with the model label, inside its trigger border. */
+  /* Boxes (fields, attachments, Send) sit on the content edge; writing,
+     delivery and their labels share the model label's inner column. */
   --composer-content-inset: calc(var(--space-2) + 1px);
   position: relative;
   max-width: var(--composer-max);
@@ -657,6 +674,17 @@
   display: contents;
 }
 
+@media (min-width: 901px) and (pointer: fine) {
+  .composer { padding-inline: var(--space-2); }
+
+  @container reading-stage (min-width: 441px) {
+    /* Separate settings from file actions without a border or a second row. */
+    .composer__selectors + .icon-button {
+      margin-inline-start: var(--space-1);
+    }
+  }
+}
+
 /* Pixel-stable labels belong to both composers, independent of adapters. */
 .composer__selectors .model-picker__trigger-copy,
 .composer__selectors .dropdown__value {
@@ -726,18 +754,13 @@
   white-space: nowrap;
 }
 
+/* Menus are portaled; use the shared placement hook, never an ancestor offset. */
 .dropdown__menu {
-  position: absolute;
-  left: 0;
+  position: fixed;
   z-index: 40;
-  min-width: max(100%, 148px);
+  min-width: 0;
   max-height: 300px;
   overflow-y: auto;
-}
-
-.dropdown__menu--floating {
-  position: fixed;
-  min-width: 0;
 }
 
 /* Both native and composed Thinking menus use the same reading rhythm. */
@@ -813,7 +836,7 @@
 }
 
 @media (pointer: coarse) {
-  .dropdown__menu--floating .dropdown__option {
+  .dropdown__menu > .dropdown__option {
     min-height: 44px;
   }
 }
@@ -1041,6 +1064,8 @@
 .composer__attachments {
   list-style: none;
   margin: 0;
+  /* On the box edge: a chip's border and padding land its name on the
+     writing column, and thumbnails line up with the project field. */
   padding: 0;
   display: flex;
   align-items: flex-start;
@@ -1416,7 +1441,6 @@
   align-items: flex-start;
 }
 
-.model-picker__provider,
 .model-picker__id {
   max-width: 180px;
   overflow: hidden;
@@ -1429,9 +1453,7 @@
 }
 
 .model-picker__menu {
-  position: fixed;
   display: flex;
-  min-width: 0;
   flex-direction: column;
   padding: 0;
   overflow: hidden;

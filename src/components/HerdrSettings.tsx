@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { HerdrEnhancementStatus } from "../../shared/herdr";
 import { createApi } from "../api";
 import { store, useAppState } from "../store";
@@ -15,27 +15,17 @@ export function HerdrSettings({
   onNavigateRestart,
 }: {
   getStatus?: () => Promise<HerdrEnhancementStatus>;
-  onNavigateRestart?: () => void;
+  onNavigateRestart: () => void;
 }) {
   const saved = useAppState((state) => state.prefs.herdrEnabled);
   const [status, setStatus] = useState<HerdrEnhancementStatus | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      setStatus(await getStatus());
-      setError(false);
-    } catch {
-      setStatus(null);
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [getStatus]);
+  const [retryRevision, setRetryRevision] = useState(0);
   useEffect(() => {
-    // A dialog can close before the status request settles.
+    // Initial reads and rechecks share the same mounted request lifetime.
     let active = true;
+    setLoading(true);
     void getStatus().then(
       (result) => {
         if (active) {
@@ -55,7 +45,7 @@ export function HerdrSettings({
     return () => {
       active = false;
     };
-  }, [getStatus]);
+  }, [getStatus, retryRevision]);
 
   const canEnable = status?.ready === true;
   const pending = status !== null && saved !== status.enabled;
@@ -85,7 +75,7 @@ export function HerdrSettings({
                 aria-label="Recheck availability"
                 disabled={loading}
                 aria-busy={loading}
-                onClick={() => void refresh()}
+                onClick={() => setRetryRevision((revision) => revision + 1)}
               >
                 {loading ? (
                   <PiLoader size={12} aria-hidden />
@@ -108,15 +98,7 @@ export function HerdrSettings({
               type="button"
               className="settings__utility"
               aria-label="Review Host restart"
-              onClick={() => {
-                if (onNavigateRestart) {
-                  onNavigateRestart();
-                } else {
-                  document
-                    .getElementById("settings-host-restart")
-                    ?.scrollIntoView({ block: "start" });
-                }
-              }}
+              onClick={onNavigateRestart}
             >
               Restart Host…
             </button>

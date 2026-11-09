@@ -77,15 +77,9 @@ export const CommandPalette = memo(function CommandPalette({
   onToggleCtx,
   onNewSession,
   onOpenSession,
-  onFindSession = () => {
-    store.runPaletteNativeCommand("/resume");
-  },
-  onOpenSettings = () => {
-    store.runPaletteNativeCommand("/settings");
-  },
-  onOpenHelp = (mode) => {
-    store.runPaletteNativeCommand(`/${mode}`);
-  },
+  onFindSession,
+  onOpenSettings,
+  onOpenHelp,
 }: {
   onClose: () => void;
   active?: boolean;
@@ -94,9 +88,9 @@ export const CommandPalette = memo(function CommandPalette({
   onToggleCtx: () => void;
   onNewSession: () => void;
   onOpenSession: (id: string) => void;
-  onFindSession?: () => void;
-  onOpenSettings?: () => void;
-  onOpenHelp?: (mode: "hotkeys" | "changelog") => void;
+  onFindSession: () => void;
+  onOpenSettings: () => void;
+  onOpenHelp: (mode: "hotkeys" | "changelog") => void;
 }) {
   const state = useAppState((appState) => {
     const catalogTitle = appState.sessions.find(
@@ -155,8 +149,8 @@ export const CommandPalette = memo(function CommandPalette({
   const [delivery, setDelivery] = useState<"steer" | "followUp">("steer");
   const [index, setIndex] = useState(0);
   const [keyboardActive, setKeyboardActive] = useState(true);
-  const [renaming, setRenaming] = useState(false);
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+  const renaming = renameSessionId !== null;
   const [renameValue, setRenameValue] = useState("");
   const [renameInitialValue, setRenameInitialValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -171,7 +165,6 @@ export const CommandPalette = memo(function CommandPalette({
   }, []);
   const exitRename = useCallback(() => {
     renameIncarnationRef.current += 1;
-    setRenaming(false);
     setRenameSessionId(null);
     setRenameValue("");
     setRenameInitialValue("");
@@ -430,7 +423,6 @@ export const CommandPalette = memo(function CommandPalette({
           setRenameSessionId(state.sessionId);
           setRenameValue(state.heading);
           setRenameInitialValue(state.heading);
-          setRenaming(true);
         },
       });
     }
@@ -711,7 +703,6 @@ export const CommandPalette = memo(function CommandPalette({
     if (
       (await store.renameSession(owner, name)) &&
       renameIncarnationRef.current === incarnation &&
-      renameSessionId === owner &&
       store.getState().sessionId === owner
     )
       onClose();

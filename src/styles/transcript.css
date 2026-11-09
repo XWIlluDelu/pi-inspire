@@ -94,8 +94,8 @@
   min-height: 0;
   overflow-y: auto;
   padding-inline: var(--space-6);
-  /* Search jumps and row anchors land below the floating search pill zone
-     (top 12 + pill 32 + breathing room) instead of sliding underneath it. */
+  /* Search jumps and row anchors land below the open search row
+     (top 12 + row 32 + breathing room) instead of sliding underneath it. */
   scroll-padding-top: calc(var(--space-3) + 44px);
   /* With no hairline under the topbar, scrolled content dissolves just
      before reaching it instead of colliding with the session title. */
@@ -223,10 +223,6 @@
   font-size: var(--text-xs);
 }
 
-.transcript-search__scope .dropdown__menu {
-  min-width: 108px;
-}
-
 .transcript-search input {
   flex: 1 1 150px;
   width: min(24vw, 220px);
@@ -284,6 +280,24 @@
   display: none;
 }
 
+/* Side panes can leave a phone-width reader on desktop: span the stage. */
+@container reading-stage (max-width: 440px) {
+  .transcript-search {
+    left: var(--space-6);
+    right: var(--space-6);
+    gap: 2px;
+  }
+
+  .transcript-search input {
+    width: 100%;
+    min-width: 40px;
+  }
+
+  .transcript-search output {
+    min-width: 4em;
+  }
+}
+
 .transcript__column {
   max-width: var(--content-max);
   margin: 0 auto;
@@ -304,6 +318,22 @@
   left: 0;
   width: 100%;
   padding-bottom: var(--space-4);
+}
+
+/* Compact consecutive activity/checkpoint groups, keeping prose and prompt
+   boundaries on their existing rhythm in both measured and ordinary lists. */
+@media (min-width: 901px) and (pointer: fine) {
+  .transcript__column:not(.transcript__column--virtual)
+    > [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint))
+    + [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint)) {
+    margin-top: calc(var(--space-2) - var(--space-4));
+  }
+
+  .transcript__virtual-row:has(> :is(.activity-fold, .turn--checkpoint)):has(
+    + [data-transcript-row] > :is(.activity-fold, .turn--checkpoint)
+  ) {
+    padding-bottom: var(--space-2);
+  }
 }
 
 /* Prompt Map is a reading navigator, not a second branch ledger. Its narrow
@@ -693,6 +723,13 @@
 }
 
 /* Lightweight activity groups. */
+.activity-fold,
+.context-checkpoint {
+  /* Balance both chevron directions against actual letter ink, including
+     its side bearing, rather than aligning the SVG's blank outer box. */
+  --disclosure-outdent: 7px;
+}
+
 .activity-fold {
   display: flex;
   min-width: 0;
@@ -704,10 +741,13 @@
 .activity-fold__boundary,
 .activity-fold__omission {
   display: flex;
-  width: 100%;
+  /* Hang the hit row into the reading gutter: the 4px button inset and
+     chevron's own blank side must not indent its visible stroke twice. */
+  width: calc(100% + var(--disclosure-outdent));
+  margin-inline-start: calc(-1 * var(--disclosure-outdent));
   align-items: center;
   gap: 6px;
-  max-width: 100%;
+  max-width: calc(100% + var(--disclosure-outdent));
   min-height: 28px;
   padding: 4px var(--space-1);
   border: 0;
@@ -724,19 +764,14 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
+/* Compact mono headings retain intrinsic text width for predictable spacing. */
 .activity-fold__disclosure,
 .activity-fold__boundary,
 .activity-fold__omission {
-  font-size: var(--text-base);
-  font-weight: 400;
-}
-.activity-fold__boundary,
-.activity-fold__disclosure,
-.activity-fold__omission {
-  font-family: var(--font-label);
+  font-family: var(--font-mono);
+  font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: -0.045em;
 }
 
 .activity-fold__disclosure > svg,
@@ -745,13 +780,30 @@
   flex-shrink: 0;
 }
 
-/* Center marks on Rajdhani's uppercase ink, not its lower line-box center.
-   Move the marks only; disclosure hit areas and the content guide stay put. */
+/* The expanded summary shares the mono voice in quieter metadata scale and ink. */
+.activity-fold__summary {
+  min-width: 0;
+  margin-inline-start: 2px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateY(0.5px);
+}
+
+.activity-fold__summary-failed {
+  color: var(--error-ink);
+}
+
+/* Center chevrons and the 3x3 matrix against the 13px Flux Mono label's
+   optical center; hit areas and reading-gutter guides remain unchanged. */
 .activity-fold__disclosure > svg,
 .activity-fold__boundary > svg,
-.activity-fold__omission > svg,
-.activity-fold__matrix {
-  transform: translateY(-1px);
+.activity-fold__omission > svg {
+  transform: translateY(-0.1px);
 }
 
 :is(
@@ -787,6 +839,7 @@
   width: 10px;
   height: 10px;
   margin-inline-start: 2px;
+  transform: translateY(-0.1px);
 }
 
 .activity-fold__kind,
@@ -838,9 +891,9 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--space-1);
-  /* The guide follows the disclosure axis; nested rows start under the label.
-     4px control inset + half the 14px chevron = 11px. */
-  margin: 2px 0 2px 11px;
+  /* Follow the outdented arrow's center (4px inset + 7px half icon).
+     Nested rows still start under the Activity label. */
+  margin: 2px 0 2px calc(11px - var(--disclosure-outdent));
   border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
   padding: 2px 0 2px 12px;
 }
@@ -897,6 +950,8 @@
 /* Context boundaries are transcript events, not full-width message cards. */
 .context-checkpoint {
   --checkpoint-indent: 44px;
+  width: calc(100% + var(--disclosure-outdent));
+  margin-inline-start: calc(-1 * var(--disclosure-outdent));
   min-width: 0;
   color: var(--muted);
 }
@@ -1155,7 +1210,7 @@
     padding: 10px 12px;
   }
 
-  .turn--user .turn__action.icon-button {
+  .turn__action.icon-button {
     width: 32px;
     height: 32px;
   }
@@ -1241,7 +1296,6 @@
   min-width: 0;
   min-height: 28px;
   line-height: var(--leading-ui);
-  translate: 0 var(--ui-text-offset);
 }
 .custom-message__title {
   color: var(--ink);
@@ -1433,6 +1487,11 @@
   font: 400 var(--text-xs)/var(--leading-ui) var(--font-sans);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+.assistant-error__disclosure > svg {
+  display: block;
+  flex: 0 0 auto;
 }
 
 @media (hover: hover) {

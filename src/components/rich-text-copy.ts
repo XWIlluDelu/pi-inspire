@@ -2,7 +2,7 @@ import type { ClipboardEvent as ReactClipboardEvent } from "react";
 
 function closestKatexBoundary(node: Node, root: HTMLElement): Element | null {
   const element = node instanceof Element ? node : node.parentElement;
-  const katex = element?.closest(".katex") ?? null;
+  const katex = element?.closest(".katex, .katex-display") ?? null;
   if (!katex || !root.contains(katex)) return null;
   const display = katex.closest(".katex-display");
   return display && root.contains(display) ? display : katex;
@@ -46,7 +46,11 @@ function projectKatexSelection(
     const rendered = mathml.nextElementSibling;
     if (rendered?.classList.contains("katex-html")) rendered.remove();
     mathml.replaceWith(
-      document.createTextNode(display ? `$$${source}$$` : `$${source}$`),
+      document.createTextNode(
+        display
+          ? `$$\n${source.replace(/^\s*\n|\n\s*$/g, "")}\n$$`
+          : `$${source}$`,
+      ),
     );
   }
   return { plain: fragment.textContent ?? "", html };

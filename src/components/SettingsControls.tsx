@@ -54,13 +54,11 @@ export function SegmentedControl<T extends string>({
   value,
   options,
   onChange,
-  disabled = false,
 }: {
   label: string;
   value: T;
   options: SettingsChoice<T>[];
   onChange: (value: T) => void;
-  disabled?: boolean;
 }) {
   return (
     <div className="segmented" role="group" aria-label={label}>
@@ -70,7 +68,6 @@ export function SegmentedControl<T extends string>({
           key={option.value}
           className={`segmented__item${value === option.value ? " segmented__item--active" : ""}`}
           onClick={() => onChange(option.value)}
-          disabled={disabled}
           aria-pressed={value === option.value}
         >
           {option.icon}

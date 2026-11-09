@@ -134,6 +134,7 @@ export async function openSettings(page: Page) {
       .getByRole("button", { name: "Toggle navigation", exact: true })
       .click();
   await drawer.click();
+}
 
 /** Use persistent desktop search or open the local narrow tool row. */
 export async function openConversationSearch(page: Page) {

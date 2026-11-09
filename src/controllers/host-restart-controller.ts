@@ -12,6 +12,7 @@ interface State {
   pending: HostRestartRequest | null;
   sending: boolean;
   blocked: boolean;
+  recoveryInvalid: boolean;
   error: string | null;
   notice: string | null;
 }
@@ -24,6 +25,7 @@ export class HostRestartClient {
     pending: null,
     sending: false,
     blocked: false,
+    recoveryInvalid: false,
     error: null,
     notice: null,
   };
@@ -48,8 +50,10 @@ export class HostRestartClient {
   }
   private restore(): void {
     if (this.loaded) return;
+    let recordRead = false;
     try {
       const raw = this.storage().getItem(KEY);
+      recordRead = true;
       if (raw !== null) {
         if (raw.length > 512) throw new Error();
         const value = JSON.parse(raw) as HostRestartRequest;
@@ -73,12 +77,14 @@ export class HostRestartClient {
         this.patch({ pending: null });
       }
       this.loaded = true;
-      this.patch({ blocked: false, error: null });
+      this.patch({ blocked: false, recoveryInvalid: false, error: null });
     } catch {
       this.patch({
         blocked: true,
-        error:
-          "The browser's restart recovery record is unreadable. Restart requests are disabled; Host status remains available.",
+        recoveryInvalid: recordRead,
+        error: recordRead
+          ? "The browser's saved restart recovery record is invalid. Restart requests are disabled; Host status remains available."
+          : "Browser restart recovery storage is unavailable. Restart requests are disabled; Host status remains available.",
       });
       throw new Error("Restart storage unavailable");
     }
@@ -87,13 +93,14 @@ export class HostRestartClient {
     try {
       if (pending) this.storage().setItem(KEY, JSON.stringify(pending));
       else this.storage().removeItem(KEY);
-      this.patch({ blocked: false, error: null });
+      this.patch({ blocked: false, recoveryInvalid: false, error: null });
     } catch {
       this.loaded = false;
       this.patch({
         blocked: true,
+        recoveryInvalid: false,
         error:
-          "The browser could not save its restart recovery record. Recheck status or clear the local record before trying another restart.",
+          "The browser could not save its restart recovery record. Recheck status to retry recovery before starting another restart.",
       });
       throw new Error("Restart storage unavailable");
     }

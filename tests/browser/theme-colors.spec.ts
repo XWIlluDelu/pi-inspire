@@ -77,7 +77,6 @@ const statusMessages = [
   ["pending-groups__confirm-label", "surface", "error-ink"],
   ["welcome__error", "stage", "error-ink"],
   ["welcome__readiness welcome__readiness--error", "stage", "error-ink"],
-  ["files-browser__note files-browser__note--action", "context", "warning-ink"],
   ["token-gate__error", "surface", "error-ink"],
 ] as const;
 const commandStates = [
@@ -114,7 +113,6 @@ const choiceGroups = [
   ],
   ["composer", "composer__delivery", "segmented", ""],
   ["prepared-prompt", "palette__prepare", "segmented", ""],
-  ["resource-mode", "", "ctx__modes", ""],
   ["palette", "dialog settings", "palette-picker", "palette-picker__choice"],
 ] as const;
 
@@ -152,7 +150,7 @@ for (const palette of PALETTE_PREFERENCES)
           .app-error { min-height: 0; padding: 12px; }
           </style>
           <section aria-label="Semantic color roles">
-            <button class="settings__action-button" id="focus-action">Action</button>
+            <button class="settings__utility" id="focus-action">Reset preferences</button>
             <input class="choice-input" type="checkbox" id="focus-choice" aria-label="Choice">
             <button class="terminal-tab__select" id="focus-terminal">Terminal</button>
             <div class="nav__search" id="focus-search"><input aria-label="Session search"></div>
@@ -203,17 +201,12 @@ for (const palette of PALETTE_PREFERENCES)
               <svg width="11" height="11" aria-hidden="true"></svg><span>Directory unavailable</span>
             </button>
           </section>
-          <section style="background:var(--bg-context)">
-            <button class="files-browser__note files-browser__note--action" id="files-retry">
-              <svg width="12" height="12" aria-hidden="true"></svg>Retry recent files
-            </button>
-          </section>
           <section aria-label="Icon button states">
             <button class="icon-button" id="icon" aria-label="Add files">+</button>
             <button class="icon-button icon-button--active" id="icon-selected" aria-label="Resources" aria-expanded="true">▤</button>
             <button class="icon-button pending-group__control pending-group__control--clear" id="icon-clear" aria-label="Clear pending input">×</button>
             <button class="models-icon-button" id="icon-model" aria-label="Move model up">↑</button>
-            <div class="file-detail-header"><button class="icon-button" id="icon-file" aria-label="File action">↗</button></div>
+            <div class="file-preview__actions" style="position:static"><button class="icon-button" id="icon-file" aria-label="File action">↗</button></div>
             <div class="composer__input-wrap" style="width:36px;height:36px;flex:none"><button class="icon-button composer__expand" id="icon-expand" aria-label="Expand composer">↗</button></div>
           </section>
           <section aria-label="Choice selection states">
@@ -228,6 +221,10 @@ for (const palette of PALETTE_PREFERENCES)
               </div>`,
               )
               .join("")}
+            <div class="ctx__modes" id="context-tabs" role="tablist" aria-label="Context tools">
+              <button role="tab" aria-selected="true"><svg width="12" height="12" aria-hidden="true"></svg>Files</button>
+              <button role="tab" aria-selected="false">History</button>
+            </div>
             <span class="settings__section-icon" id="section-icon"><svg width="14" height="14" aria-hidden="true"></svg></span>
           </section>
           <button class="button" id="ordinary">Cancel</button>
@@ -293,7 +290,7 @@ for (const palette of PALETTE_PREFERENCES)
             <div class="custom-message"><div class="custom-message__head">
               <svg data-state-mark="activity-event" width="14" height="14" aria-hidden="true"></svg>
               <span class="custom-message__title" data-role="extension-title" data-ink="ink">Extension message</span>
-              <span class="custom-message__source" data-role="extension-source" data-ink="muted">Intercom</span>
+              <span class="custom-message__source" data-role="extension-source" data-ink="muted">Relay</span>
             </div></div>
             <form class="composer composer--compacting" id="compacting-identity"><input aria-label="Compacting draft"></form>
           </section>
@@ -389,6 +386,7 @@ for (const palette of PALETTE_PREFERENCES)
             "faint",
             "bg-inset",
             "bg-control",
+            "bg-stage",
           ].map((role) => {
             probe.style.color = `var(--${role})`;
             return [role, getComputedStyle(probe).color];
@@ -442,33 +440,22 @@ for (const palette of PALETTE_PREFERENCES)
         const selectedFill = await selected.evaluate(
           (el) => getComputedStyle(el).backgroundColor,
         );
-        await expect(other).not.toHaveCSS("color", roles["accent-deep"]!);
-        if (id === "resource-mode") {
-          await expect(selected).toHaveCSS(
-            "background-color",
-            "rgba(0, 0, 0, 0)",
-          );
-          await expect(other).toHaveCSS("background-color", selectedFill);
-          await expect(selected).toHaveCSS(
-            "box-shadow",
-            `${roles.accent} 0px -2px 0px 0px inset`,
-          );
-          await expect(other).toHaveCSS("box-shadow", "none");
-        } else {
-          await expect(other).not.toHaveCSS("background-color", selectedFill);
-        }
+        await expect(other).toHaveCSS("color", roles.body!);
+        await expect(other).not.toHaveCSS("background-color", selectedFill);
+        expect(
+          await selected.evaluate((el) =>
+            Number(getComputedStyle(el).fontWeight),
+          ),
+        ).toBeGreaterThan(
+          await other.evaluate((el) => Number(getComputedStyle(el).fontWeight)),
+        );
         await selected.focus();
         await selected.hover();
         await page.mouse.down();
         await expect(selected).toHaveCSS("color", roles["accent-deep"]!);
         await expect(selected).toHaveCSS("background-color", selectedFill);
-        if (id === "resource-mode")
-          await expect(selected).toHaveCSS(
-            "box-shadow",
-            `${roles.accent} 0px -2px 0px 0px inset`,
-          );
         await page.mouse.up();
-        // Palette buttons are never disabled; native segments and view modes can be.
+        // Palette buttons are never disabled; native segments can be.
         if (id !== "palette") {
           await selected.evaluate((el: HTMLButtonElement) => {
             el.disabled = true;
@@ -476,6 +463,23 @@ for (const palette of PALETTE_PREFERENCES)
           await expect(selected).toHaveCSS("color", roles.faint!);
         }
       }
+      // Context tabs join the reading canvas; they are not segmented choices.
+      const selectedTab = page.locator('#context-tabs [aria-selected="true"]');
+      const otherTab = page.locator('#context-tabs [aria-selected="false"]');
+      for (const state of ["rest", "hover", "focus"]) {
+        await page.mouse.move(0, 0);
+        if (state === "hover") await selectedTab.hover();
+        if (state === "focus") await selectedTab.focus();
+        await expect(selectedTab).toHaveCSS("color", roles["accent-deep"]!);
+        await expect(selectedTab).toHaveCSS(
+          "background-color",
+          roles["bg-stage"]!,
+        );
+        expect(
+          (await renderedColors(selectedTab)).contrast,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      await expect(otherTab).not.toHaveCSS("color", roles["accent-deep"]!);
       await expect(page.locator("#section-icon")).toHaveCSS(
         "color",
         roles["accent-deep"]!,
@@ -545,7 +549,6 @@ for (const palette of PALETTE_PREFERENCES)
         ["workspace-error", "span", "warning-ink", "svg", "color", "warning"],
         ["meter-warning", "span", "warning-ink", "circle", "stroke", "warning"],
         ["meter-error", "span", "error-ink", "circle", "stroke", "error"],
-        ["files-retry", null, "warning-ink", "svg", "color", "warning"],
       ] as const) {
         const action = page.locator(`#${id}`);
         for (const state of ["rest", "hover", "pressed", "focus"]) {

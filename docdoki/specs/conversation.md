@@ -74,8 +74,9 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 ## Contract map
 
 [[activity-presentation]] owns activity bands, independent Thinking/tool density,
-deferred materialization, and Adaptive lifecycle. Assistant outcomes and displayed
-custom messages remain independent readable boundaries in this contract.
+deferred materialization, and Adaptive lifecycle. [[rich-rendering]] owns Markdown, mathematics
+and code rendering. Assistant outcomes and displayed custom messages remain independent readable
+boundaries in this contract.
 
 ## Source order, rich text, and copy
 
@@ -100,26 +101,28 @@ custom messages remain independent readable boundaries in this contract.
   trust-only commands.
 
 - Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source
-  projection. Formula bodies use canonical `$…$` inline or `$$…$$` display delimiters, including
-  partial selections whose original formula wrapper determines display identity; surrounding
-  selected text and multiple formulas are preserved. Every user turn has a message-level action that
-  copies its exact source. Every assistant response has an action at the end of the response that
-  concatenates only its response text blocks and excludes thinking, tool, custom, and generic
-  activity payloads. Saved user/assistant/custom copies read the original entry on demand through
-  the existing paged History content channel, not the bounded transcript preview or mixed History
-  display text. Display bounds stay unchanged; custom content and details remain complete, embedded
-  image bytes travel separately, and changing the source view retires pending copies.
+  projection. Inline formulas use `$…$`; display formulas put each `$$` delimiter on its own line,
+  preserving internal formula whitespace. This also applies to partial selections, where the
+  original formula wrapper determines display identity; surrounding selected text and multiple
+  formulas are preserved.
 
-  Each Thinking, tool, and generic activity block independently copies its complete source projection;
-  completed-tool copies include the name, arguments, and result under
-  the existing Host projection bounds, while a generating/interrupted call explicitly copies only
-  its partial argument preview. Custom copies include the type, content, and details.
-  [[design-system]] defines the shared Copy/Fork presentation types and activation scopes.
+  Every user turn has a message-level action that copies its exact source. Every assistant response
+  has an action at its end that concatenates only its response text blocks, excluding thinking,
+  tool, custom, and generic activity payloads. Saved user/assistant/custom copies read the original
+  entry on demand through the existing paged History content channel, not the bounded transcript
+  preview or mixed History display text. Display bounds stay unchanged; custom content and details
+  remain complete, embedded image bytes travel separately, and changing the source view retires
+  pending copies.
 
-- User turns appear as compact bubbles while assistant answers use an open, left-aligned document
-  flow suitable for long Markdown, mathematical notation, code, and structured activity. Unbroken
-  links and file references wrap only when needed and remain inside the reading measure at narrow
-  widths.
+  Each Thinking, tool, and generic activity block independently copies its complete source
+  projection. Completed-tool copies include the name, arguments, and result under the existing Host
+  projection bounds; a generating/interrupted call explicitly copies only its partial argument
+  preview. Custom copies include the type, content, and details. [[design-system]] defines the shared
+  Copy/Fork presentation types and activation scopes.
+
+- User turns appear as compact bubbles; assistant answers use an open, left-aligned document flow
+  suited to long Markdown, mathematical notation, code, and structured activity. Unbroken links and
+  file references wrap only when needed and stay inside the reading measure at narrow widths.
 
   Image-bearing user messages omit Pi's exact appended image-dimension/coordinate-mapping suffix
   from their bubble, view-local search, Prompt Map and catalog/title projections. Thumbnails and
@@ -142,53 +145,57 @@ custom messages remain independent readable boundaries in this contract.
 
 ## View-local search and Prompt Map
 
-- View-local search covers already-loaded settled messages, not the whole branch; its input tooltip
-  describes that limit without a persistent scope disclaimer or a second History-search action.
-  History retains complete saved-history search across branches and tool activity in its own surface.
-  Do not preload all messages or build a new index merely to make this local utility look exhaustive.
-  View-local search performs case-insensitive literal matching over settled conversation text and
-  can scope results to all searchable turns, user input only, or model output only. It wraps
-  previous/next navigation and jumps by transcript row through virtualization. The streaming tail
-  and hidden thinking/tool payloads are excluded. An active selected match locks out geometric
-  latest-follow across prepends and live appends until search is cleared or the user explicitly
-  jumps to latest. Deliberate search navigation opens the matching context-summary row so its
-  matched body is visible; unrelated rows and ordinary rendering do not expand it.
-  Rendered occurrences receive theme-aware highlights without changing message markup, source
-  copy or geometry. The current occurrence is stronger and is brought into view within a long
-  message or local horizontal reader. Virtual rows and deferred rich text acquire highlights when
-  mounted; clearing search or leaving the transcript removes them. Source-only Markdown matches
-  still navigate to their row, without assigning an ambiguous source hit to unrelated visible text.
-  Shell output and context summaries use the same display normalization for search and rendering:
-  terminal control sequences and removed summary prefixes do not add invisible matches.
+- View-local search covers already-loaded settled messages, not the whole branch. Its input tooltip
+  states that limit; there is no persistent scope disclaimer or second History-search action.
+  History keeps complete saved-history search across branches and tool activity in its own surface.
+  Do not preload all messages or build a new index to make this local utility look exhaustive.
 
-  Desktop search stays visible as a single-row input at the top-right of the reading measure.
-  Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text. IME composition,
-  modal and contextual surfaces retain their keyboard ownership. Clearing the query releases match
-  ownership while keeping the row visible; desktop search has no Find launcher or Close button.
-  Its opaque surface fill is distinct from the reading stage, with the shared control radius,
-  a quiet boundary and the existing light shadow. Hover strengthens the ink; focus or a non-empty
-  query uses the accent boundary. These states do not change its geometry or let scrolling text
-  show through. Search and narrow navigation surfaces do not reserve layout height; opening narrow
-  controls preserves the scrollport and reading position. Desktop Escape releases input focus
-  without clearing its query or selected match.
-  Session/view changes retire search state. Width changes keep an active query visible in the
-  corresponding desktop or narrow tool; neither layout retains an invisible active search.
+  Search performs case-insensitive literal matching over settled conversation text and can scope
+  results to all searchable turns, user input only, or model output only. Previous/next navigation
+  wraps and jumps by transcript row through virtualization. The streaming tail and hidden
+  thinking/tool payloads are excluded. An active selected match locks out geometric latest-follow
+  across prepends and live appends until search is cleared or the user explicitly jumps to latest.
+  Deliberate search navigation opens the matching context-summary row so its matched body is
+  visible; unrelated rows and ordinary rendering do not expand it.
+
+  Rendered occurrences receive theme-aware highlights without changing message markup, source copy
+  or geometry. The current occurrence is stronger and is brought into view within a long message or
+  local horizontal reader. Virtual rows and deferred rich text acquire highlights when mounted;
+  clearing search or leaving the transcript removes them. Source-only Markdown matches still
+  navigate to their row, without assigning an ambiguous source hit to unrelated visible text. Shell
+  output and context summaries use the same display normalization for search and rendering, so
+  terminal control sequences and removed summary prefixes add no invisible matches.
+
+  Desktop search remains visible as a compact single-row input at the top-right of the reading
+  measure. Ctrl/Cmd+F in the conversation, its composer or header focuses/selects its text without
+  an extra launcher. Escape blurs the desktop input while preserving its query, highlights and
+  selected match; clearing the input releases match ownership. IME composition, modal and contextual
+  surfaces keep their keyboard ownership. Local-tool placement follows [[design-system]]: the
+  launcher and working surface form one interaction rather than disconnected destinations.
+
+  [[design-system]] owns the row's surface and states. Search and narrow navigation surfaces reserve
+  no layout height; opening them preserves the
+  scrollport and reading position. Session/view changes retire search state. Width changes keep an
+  active query visible in the corresponding desktop or narrow tool; neither layout keeps an
+  invisible active search.
+
+  On a narrow workbench, adjacent 44px Search and Prompt Map launchers live in the conversation
+  tool row. Search replaces that row in place with an input across the reading width, focusing
+  and selecting its text. Close or Escape clears the query and match ownership, closes the row,
+  and restores focus to its local launcher. An outside press dismisses either narrow tool; the
+  portaled search-scope menu remains part of search. No duplicate search launcher sits in the
+  global header.
+
   A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
   actually away from its latest boundary, independently of automatic-follow or search ownership.
   It restores follow at the complete Transcript bottom, including Pending and extension content
-  after virtualized message rows. Search and narrow launchers precede messages in keyboard order;
+  after virtualized message rows. The search row and narrow tool launchers precede messages in keyboard order;
   Latest follows them.
-
-  On a narrow workbench, Search is an explicit 44px launcher in an idle control with no shared
-  backdrop that floats over Transcript without reserving layout height; activating it replaces the
-  launchers with the complete search row on a surface background and focuses the input, while Close,
-  Escape, outside dismissal, or a view change clears the hidden search ownership before restoring
-  the launchers.
 
 - The Prompt Map is a read-only outline of every visible user turn on the current branch. Its
   branch-bound, bounded index is independent of loaded Transcript pages and History's raw-entry
-  window; one shared projection derives its Unicode-safe snippets and image counts consistently for
-  loaded, preview, and indexed turns, and selecting an unloaded prompt seeks directly to that turn
+  window. One shared projection derives its Unicode-safe snippets and image counts consistently for
+  loaded, preview, and indexed turns. Selecting an unloaded prompt seeks directly to that turn
   without sequentially scanning older pages or materializing folded activity. At desktop rest it is
   only a floating stack of at most 12 fixed-spacing theme-muted horizontal ticks with one accent
   current mark: no full-height border, background, icon, or boundary buttons.
@@ -198,33 +205,33 @@ custom messages remain independent readable boundaries in this contract.
   only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus
   expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping
   Previous and Next controls. Ordinals and attachment counts use the shared small monospace scale
-  and readable secondary ink, without a second opacity reduction; the current prompt retains its
-  accent emphasis. The ordinal column fits the actual total's digit count and aligns right, so
-  one- and multi-digit labels share a text start. Metadata shares the prompt's first-line baseline
-  without enlarging its row. Keyboard focus contours stay inside the clipped scrolling rows.
-  Leaving the surface collapses it automatically, while touch uses tap
-  and outside dismissal. Native disabled semantics and subdued token colors distinguish unavailable
-  directions.
+  and readable secondary ink with no second opacity reduction; the current prompt keeps its accent
+  emphasis. The ordinal column fits the actual total's digit count and aligns right, so one- and
+  multi-digit labels share a text start. Metadata shares the prompt's first-line baseline without
+  enlarging its row. Keyboard focus contours stay inside the clipped scrolling rows. Leaving the
+  surface collapses it automatically; touch uses tap and outside dismissal. Native disabled
+  semantics and subdued token colors distinguish unavailable directions.
 
   The expanded list initially follows a changed current turn, then yields scroll ownership while the
-  user browses it; disclosure preserves keyboard focus, and only one seek may own navigation until
+  user browses it. Disclosure preserves keyboard focus, and only one seek may own navigation until
   it succeeds or exposes an exact-target retry. At the authoritative Transcript latest boundary, the
   current mark is the final prompt even when a tall viewport leaves that prompt below the ordinary
-  reading line. On a narrow workbench, the desktop vertical rail is removed: a 44px launcher joins
-  Search in the backdrop-free idle top-right control floating over Transcript, and activation
-  replaces those launchers on a shared surface in the same floating zone with the desktop navigator
-  rotated 90 degrees—Previous at left, at most 12 fixed-spacing vertical prompt marks in the center,
-  and Next at right.
+  reading line.
 
-  The same local-window and disabled-boundary semantics remain; selecting the center marks opens the
-  complete independently scrollable virtual directory as a bounded sheet, and outside dismissal
-  restores the two Search and Prompt Map launchers. Search and Prompt Map modes are mutually
-  exclusive. While either local tool owns focus or its narrow mode, Escape resolves that tool before
-  the global run-abort shortcut. Sparse seek windows remain explicitly separated in Transcript,
-  while same-branch pagination, append snapshots, branch rewrites, search ownership, and
-  latest-follow preserve their existing authorities. Outline loading, conflict resync, turn reads
-  and the eventual scroll share the original session/view owner; crossing an await cannot recapture
-  another session.
+  On a narrow workbench the desktop vertical rail is removed. A 44px launcher sits in the
+  backdrop-free idle top-right control floating over Transcript. Activation replaces that launcher,
+  on a shared surface in the same floating zone, with the desktop navigator rotated 90
+  degrees: Previous at left, at most 12 fixed-spacing vertical prompt marks in the center, and Next
+  at right.
+
+  The same local-window and disabled-boundary semantics apply. Selecting the center marks opens the
+  complete independently scrollable virtual directory as a bounded sheet; outside dismissal restores
+  the Prompt Map launcher. Search and Prompt Map modes are mutually exclusive. While either local
+  tool owns focus or its narrow mode, Escape resolves that tool before the global run-abort shortcut.
+  Sparse seek windows stay explicitly separated in Transcript, while same-branch pagination, append
+  snapshots, branch rewrites, search ownership, and latest-follow keep their existing authorities.
+  Outline loading, conflict resync, turn reads and the eventual scroll share the original
+  session/view owner; crossing an await cannot recapture another session.
 
 ## Response streaming and message-owned outcomes
 
@@ -247,115 +254,117 @@ custom messages remain independent readable boundaries in this contract.
   outright.
 
   A fold disclosure gesture owns its layout mutation before resizing. The unified collapsed
-  disclosure keeps the center anchor; open upper/lower controls keep their respective anchors through
-  ordinary and virtualized history. It retains latest-follow
-  afterward only when the anchored result remains at the exact latest boundary. Input owns the
-  viewport before its deferred scroll event, and once released, Markdown reflow, virtual-row
-  measurement, scrollport resize, and other programmatic scroll events cannot silently reacquire
-  follow; only the user reaching the latest boundary or choosing Jump to latest does so. Transcript
-  search retains its separate viewport lock.
+  disclosure keeps the center anchor; open upper/lower controls keep their respective anchors
+  through ordinary and virtualized history. The gesture keeps latest-follow afterward only when the
+  anchored result is at the exact latest boundary. Input owns the viewport before its deferred
+  scroll event. Once follow is released, Markdown reflow, virtual-row measurement, scrollport resize,
+  and other programmatic scroll events cannot silently reacquire it; only the user reaching the
+  latest boundary or choosing Jump to latest does. Transcript search keeps its separate viewport
+  lock.
 
 - Cancellation is a normal terminal outcome, not a Pi failure. An assistant with
-  `stopReason: "aborted"` displays **Stopped** after its partial content,
-  outside activity folding. `stopReason: "error"` remains an error, including the standalone
-  diagnostic `This operation was aborted`: diagnostic text does not establish cancellation.
-  Runtime settlement, attention indicators and the browser use native cancellation evidence,
-  not error-message wording, to determine an `aborted` run without failed Composer styling.
-  Native `agent_settled.aborted` determines the run's cancellation outcome even when retry ended
-  unsuccessfully or the last assistant message already completed. This leaves original message stop
-  reasons, earlier diagnostics and projection conflicts intact. Retry-failure feedback waits for
-  settlement, and cancelled background runs do not announce success or failure. A Stop request or
+  `stopReason: "aborted"` displays **Stopped** after its partial content, outside activity folding.
+  `stopReason: "error"` remains an error, including the standalone diagnostic
+  `This operation was aborted`: diagnostic text does not establish cancellation. Runtime
+  settlement, attention indicators and the browser use native cancellation evidence, not
+  error-message wording, to identify an `aborted` run, without failed Composer styling. Native
+  `agent_settled.aborted` determines the run's cancellation outcome even when retry ended
+  unsuccessfully or the last assistant message already completed; original message stop reasons,
+  earlier diagnostics and projection conflicts stay intact. Retry-failure feedback waits for
+  settlement, and cancelled background runs announce neither success nor failure. A Stop request or
   its HTTP receipt alone does not establish completion.
 
   Cancellation reuses the error outcome's compact container, padding, title typography and red
-  identity colors, with a plain square stop glyph (no surrounding circle) and the **Stopped** label. The 14px glyph uses
-  the same header alignment and 8px gap as errors. This visual identity does not change the aborted
-  runtime outcome or activate the Composer's failed styling.
-  It has no diagnostic subtext, Copy or details controls. Transcript search indexes the visible label,
-  not the unshown cancellation diagnostic.
-  Partial replies, tools and unsent drafts remain intact. An earlier cancellation cannot suppress
-  a later genuine error. Live events,
-  reconnect, reduced projections and older pages use the same message-derived classification;
-  Pi's stored messages, stop reason and original error text remain unchanged.
+  identity colors, with a plain square stop glyph (no surrounding circle) and the **Stopped** label.
+  The 14px glyph uses the same header alignment and 8px gap as errors. This visual identity does not
+  change the aborted runtime outcome or activate the Composer's failed styling. There is no
+  diagnostic subtext, Copy or details control. Transcript search indexes the visible label, not the
+  unshown cancellation diagnostic. Partial replies, tools and unsent drafts stay intact. An earlier
+  cancellation cannot suppress a later genuine error. Live events, reconnect, reduced projections
+  and older pages use the same message-derived classification; Pi's stored messages, stop reason
+  and original error text are unchanged.
 
-- Every other Pi assistant message with `stopReason: "error"` displays its `errorMessage` as a persistent
-  plain-text error block after that reply's existing content. Empty and thinking-only failed replies
-  remain visible boundaries rather than deferred activity, and activity visibility or
-  assistant-round styling cannot hide the error. Short errors are immediately readable; long or
-  multiline details have an explicit expand/collapse control and an independent copy action for the
-  entire available error text, not its collapsed preview. Existing Host projection bounds still
-  apply and visibly mark truncated source. A missing detail retains a truthful no-details fallback.
-  The error uses a compact neutral surface with a subtle error-tinted boundary, no shadow,
-  a semantic icon/label, adjacent Copy, and a readable reason. Its preview uses the first paragraph, bounded to three lines and
-  240 Unicode code points; an intact paragraph does not gain a trailing ellipsis solely because
-  diagnostics follow. Expansion keeps the reason in its reading font and at the same horizontal
-  anchor. A separately supplied paragraph after the reason becomes a local monospace diagnostic
-  surface; unstructured text stays in the reading font. Expanded content is bounded and keyboard
-  scrollable. Search navigation also reveals an error's matching details.
-  The label, body and details action share a reading anchor; secondary controls use 24px mouse and
-  32px touch targets. Semantic error icons and color remain distinct from tool identity.
+- Every other Pi assistant message with `stopReason: "error"` displays its `errorMessage` as a
+  persistent plain-text error block after that reply's existing content. Empty and thinking-only
+  failed replies remain visible boundaries, not deferred activity; activity visibility and
+  assistant-round styling cannot hide the error.
+
+  The error shows a semantic icon and label, adjacent Copy and a readable reason on the surface
+  [[design-system]] defines. Short errors are immediately readable. Long or
+  multiline details have an explicit expand/collapse control; Copy copies the entire available error
+  text, not the collapsed preview. Existing Host projection bounds still apply and visibly mark
+  truncated source. A missing detail shows a truthful no-details fallback.
+
+  The preview uses the first paragraph, bounded to three lines and 240 Unicode code points; an intact
+  paragraph gains no trailing ellipsis just because diagnostics follow. Expansion keeps the reason
+  in its reading font at the same horizontal anchor. A separately supplied paragraph after the
+  reason becomes a local monospace diagnostic surface; unstructured text stays in the reading font.
+  Expanded content is bounded and keyboard scrollable. Search navigation also reveals an error's
+  matching details. The label, body and details action share a reading anchor; secondary controls
+  use 24px mouse and 32px touch targets. Semantic error icons and color stay distinct from tool
+  identity.
 
   Live message completion, reload, reopening, and older-history pagination all derive the outcome
-  from the same Pi message, without a second error-history store or a retry/diagnostic subsystem.
+  from the same Pi message, with no second error-history store or retry/diagnostic subsystem.
 
 - Assistant replies and activity have no per-turn Pi/model/time attribution row or divider rule.
   Message metadata, independent error notices and per-tool duration/status remain intact.
 
 - A displayed Pi custom message is extension-authored context, not a tool execution or user-authored
-  turn. It uses a quiet, neutral bordered message surface without a colored edge, a package glyph,
-  and a readable type-derived title, distinct from user input and Pi assistant authorship. Raw
-  `customType` stays available in complete copy and existing Details rather than repeating in the
-  primary header. Its body renders through the shared sanitized Markdown pipeline, supports
-  text/image blocks, and stays directly readable regardless of Thinking, tool, or activity-fold
-  preferences. Optional non-null `details` gets a separate, initially closed disclosure; absence
-  creates no empty entry, and expanded details mount only on demand. A configured reading projection
-  may replace the type-derived title with attribution and show a subdued source label, selecting the
-  exact body from structured fields. Title and source share a baseline; title, body, and Details share
-  a reading anchor, while Copy retains its own column at narrow widths. No timestamp presentation is
-  added. Configured messages preserve original type/content/details in lazy Details and complete
-  copy. Missing or incompatible declarations retain the generic message, including images and
-  unknown blocks. [[tool-presentations]] defines the declarative contract. There is no invented
-  execution status or Adaptive lifecycle.
+  turn. It has a package glyph and a readable type-derived title, distinct from user input and Pi
+  assistant authorship, on the surface [[design-system]] defines. Raw
+  `customType` stays in complete copy and existing Details instead of repeating in the primary
+  header. The body renders through the shared sanitized Markdown pipeline, supports text/image
+  blocks, and stays directly readable regardless of Thinking, tool, or activity-fold preferences.
+  Optional non-null `details` gets a separate, initially closed disclosure that mounts only on
+  demand; absent details create no empty entry.
 
-  One semantic message keeps one presentation owner as it crosses Pi’s live lifecycle and durable
-  `custom_message` entry: because Pi assigns those forms separate timestamps, the host pairs their
-  exact persisted payloads one-to-one in event order, retains legitimately repeated equal payloads
-  as separate entries, and replaces rather than appends the linked overlay during snapshots.
-  Timestamp adoption and prepends preserve the message's Details state. Older-history and Prompt Map
-  paging treat displayed custom messages as visible content boundaries, never deferred tool
-  activity. Settled content is searchable in All without being attributed to User or Model.
-  `display:false` custom context remains absent from the browser.
+  A configured reading projection may replace the type-derived title with attribution, show a
+  subdued source label, and select the exact body from structured fields. No timestamp is shown. Configured messages preserve original type/content/details
+  in lazy Details and complete copy. Missing or incompatible declarations fall back to the generic
+  message, including images and unknown blocks. [[tool-presentations]] defines the declarative
+  contract. There is no invented execution status or Adaptive lifecycle.
+
+  One semantic message keeps one presentation owner as it crosses Pi's live lifecycle and durable
+  `custom_message` entry. Because Pi gives those forms separate timestamps, the host pairs their
+  exact persisted payloads one-to-one in event order, keeps legitimately repeated equal payloads as
+  separate entries, and replaces (does not append) the linked overlay during snapshots. Timestamp
+  adoption and prepends preserve the message's Details state. Older-history and Prompt Map paging
+  treat displayed custom messages as visible content boundaries, never deferred tool activity.
+  Settled content is searchable in All without being attributed to User or Model.
+  `display:false` custom context stays absent from the browser.
 
   This presentation does not change Pi delivery, model-context conversion, or the existing Pi error
   surface.
 
 - Durable Pi `compaction` and `branch_summary` entries are projected as dedicated, collapsed
-  context-event rows with recorded token counts and searchable Markdown bodies. Pi compaction
-  shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context estimate.
-  Source-specific titles, metric meanings and redundant-prefix elision come from external
-  checkpoint declarations under [[tool-presentations]], not extension-name tests in the renderer.
-  Source is read from the public compaction entry's `details.source` and projected as
-  `__inspireCompactionSource`; optional declared prefixes cover cached source-less snapshots.
-  Copy retains the recorded summary. No savings ratio is derived.
-  These unframed context events use a leading disclosure chevron, source icon, quiet label,
-  secondary metric, and an adjacent Copy only while expanded. Closed rows have no Copy gap or tab
-  stop. The metric wraps to the label's reading anchor in a narrow column, and expanded Markdown
-  shares that anchor without a new outer card. Disclosure and Copy are separate buttons in reading
-  order; the disclosure also owns the metric and blank header space, while Copy follows the complete
-  header text and never changes disclosure state. Hover strengthens ink only on hover-capable pointers;
-  touch press gives temporary local feedback, and keyboard focus keeps a visible outline. Both use the
-  shared control radius with non-overlapping 32px touch targets. Closed bodies do not render Markdown.
-  Branch summaries have no compaction-before metric. Like Thinking,
-  tool, and extension-message headers, they show no timestamp or elapsed-time metadata.
-  Canonical timestamps and source content remain unchanged. They are not hidden behind a
-  generic-message raw JSON fallback and remain distinct rows at their context boundaries.
-  Manual/automatic cancellation and failure have visible outcome notices even without a local
-  receipt, not duplicate successful summaries. Host snapshots restore summarization retry wait,
-  attempts and bounded reason; attempts/completion retire details without altering compaction's
-  cancellation boundary in [[pi-integration]].
+  context-event rows with recorded token counts and searchable Markdown bodies. They are not hidden
+  behind a generic-message raw JSON fallback and stay distinct rows at their context boundaries.
+  - Pi compaction shows `Context compacted` and `Before ≈ … tokens` for its pre-compaction context
+    estimate. Branch summaries have no compaction-before metric. No savings ratio is derived; Copy
+    keeps the recorded summary.
+  - Source-specific titles, metric meanings and redundant-prefix elision come from external
+    checkpoint declarations under [[tool-presentations]], not extension-name tests in the renderer.
+    Source is read from the public compaction entry's `details.source` and projected as
+    `__inspireCompactionSource`; optional declared prefixes cover cached source-less snapshots.
+  - Rows are unframed: a leading disclosure chevron, source icon, quiet label, secondary metric, and
+    an adjacent Copy only while expanded; closed rows have no Copy gap or tab stop and do not render
+    Markdown. In a narrow column the metric wraps to the label's reading anchor; expanded Markdown
+    shares that anchor without a new outer card.
+  - Disclosure and Copy are separate buttons in reading order. The disclosure also owns the metric
+    and blank header space; Copy follows the complete header text and never changes disclosure
+    state. Hover strengthens ink only on hover-capable pointers; touch press gives temporary local
+    feedback, and keyboard focus keeps a visible outline. Both use the shared control radius with
+    non-overlapping 32px touch targets.
+  - Like Thinking, tool, and extension-message headers, they show no timestamp or elapsed-time
+    metadata. Canonical timestamps and source content are unchanged.
+  - Manual/automatic cancellation and failure have visible outcome notices even without a local
+    receipt, not duplicate successful summaries. Host snapshots restore summarization retry wait,
+    attempts and bounded reason; attempts/completion retire details without altering compaction's
+    cancellation boundary in [[pi-integration]].
 
-- Structured file paths and explicit local file references in conversation content remain
-  distinguishable from external web links and can open the owning session’s resource preview.
+- Structured file paths and explicit local file references in conversation content stay
+  distinguishable from external web links and can open the owning session's resource preview.
 
 ## Direct shell results
 

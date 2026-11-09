@@ -3,15 +3,41 @@ import { activityReadingMessages } from "../web/fixtures/activity-reading";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
 import { openEventSession } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
-import { textMarkOffsets } from "./support/text-baseline";
+import {
+  disclosureReadingOffset,
+  textBaseline,
+  textMarkOffsets,
+} from "./support/text-baseline";
 
 async function expectActivityMarksCentered(control: Locator) {
+  // The nine cells span the matrix's complete box, including dim cells. Its
+  // center is compared with letter ink, not just with the control's line box.
+  await control.page().evaluate(() => document.fonts.ready);
   const offsets = await control.evaluate(textMarkOffsets, {
-    label: ":scope > span:not(.activity-fold__matrix)",
+    label: ":scope > span:not(.activity-fold__matrix, .activity-fold__summary)",
     marks: ":scope > svg, :scope > .activity-fold__matrix",
   });
   expect(offsets.length).toBeGreaterThan(0);
   for (const offset of offsets) expect(Math.abs(offset)).toBeLessThan(0.5);
+}
+
+async function expectActivityArrowAtReadingEdge(control: Locator) {
+  const reading = await control.evaluateHandle(
+    (element) =>
+      element
+        .closest("[data-transcript-row]")!
+        .nextElementSibling!.querySelector(".rich-text")!,
+  );
+  try {
+    const offset = await control
+      .locator("svg")
+      .evaluate(disclosureReadingOffset, reading);
+    // Chevron directions have different painted widths; both should read on
+    // the prose edge, without forcing the indented Activity label onto it.
+    expect(Math.abs(offset)).toBeLessThan(2);
+  } finally {
+    await reading.dispose();
+  }
 }
 
 test("the full activity header discloses content with Copy beside its text", async ({
@@ -54,7 +80,6 @@ test("the full activity header discloses content with Copy beside its text", asy
           copy.left -
           element.querySelector(".card__disclosure")!.getBoundingClientRect()
             .right,
-        bodyIndent: body.left - element.getBoundingClientRect().left,
         bodyBackground: getComputedStyle(
           element.parentElement!.querySelector(".card__body")!,
         ).backgroundColor,
@@ -81,7 +106,6 @@ test("the full activity header discloses content with Copy beside its text", asy
     expect(geometry.leadingDisclosure).toBe(true);
     expect(geometry.copyGap).toBeGreaterThanOrEqual(4);
     expect(geometry.copyGap).toBeLessThanOrEqual(8);
-    expect(Math.abs(geometry.bodyIndent)).toBeLessThanOrEqual(1);
     expect(Math.abs(geometry.readingOffset)).toBeLessThanOrEqual(1);
     expect(geometry.bodyBackground).toBe("rgba(0, 0, 0, 0)");
     expect(geometry.bodyBorder).toBe("0px");
@@ -137,8 +161,8 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     name: "Expand assistant activity",
   });
   await expect(disclosure).toBeVisible();
-  await expect(disclosure).toHaveCSS("font-family", /Rajdhani/);
-  await expect(disclosure).toHaveCSS("text-transform", "uppercase");
+  await expect(disclosure).toHaveCSS("font-family", /Flux Mono SC/);
+  await expect(disclosure).toHaveCSS("text-transform", "none");
   const matrix = await disclosure
     .locator(".activity-fold__matrix")
     .boundingBox();
@@ -178,13 +202,45 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await disclosure.scrollIntoViewIfNeeded();
+    await expectActivityArrowAtReadingEdge(disclosure);
     await disclosure.focus();
     await disclosure.press("Enter");
     const content = fold.locator(".activity-fold__content");
     await expect(content).toBeVisible();
-    await expectActivityMarksCentered(
-      fold.locator(".activity-fold__boundary--upper"),
-    );
+    const upper = fold.locator(".activity-fold__boundary--upper");
+    await expectActivityArrowAtReadingEdge(upper);
+    await expectActivityMarksCentered(upper);
+    await expect(upper.locator(".activity-fold__summary")).toContainText(" · ");
+    const headerSpacing = await upper.evaluate((element) => {
+      const label = element
+        .querySelector(
+          ":scope > span:not(.activity-fold__matrix, .activity-fold__summary)",
+        )!
+        .getBoundingClientRect();
+      const matrix = element
+        .querySelector(".activity-fold__matrix")!
+        .getBoundingClientRect();
+      const summary = element
+        .querySelector(".activity-fold__summary")!
+        .getBoundingClientRect();
+      return {
+        labelToMatrix: matrix.left - label.right,
+        matrixToSummary: summary.left - matrix.right,
+      };
+    });
+    expect(headerSpacing.labelToMatrix).toBeGreaterThanOrEqual(7.5);
+    expect(headerSpacing.matrixToSummary).toBeGreaterThanOrEqual(7.5);
+    const [labelBaseline, summaryBaseline] = await Promise.all([
+      upper
+        .locator(
+          ":scope > span:not(.activity-fold__matrix, .activity-fold__summary)",
+        )
+        .evaluate(textBaseline, ".activity-fold__boundary--upper"),
+      upper
+        .locator(".activity-fold__summary")
+        .evaluate(textBaseline, ".activity-fold__boundary--upper"),
+    ]);
+    expect(Math.abs(labelBaseline - summaryBaseline)).toBeLessThanOrEqual(0.75);
     const groupingGaps = await content.evaluate((element) => [
       getComputedStyle(element).rowGap,
       ...Array.from(
@@ -216,7 +272,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
     const lower = fold.getByRole("button", {
       name: "Collapse assistant activity from the lower boundary",
     });
-    await expect(lower).toHaveCSS("font-family", /Rajdhani/);
+    await expect(lower).toHaveCSS("font-family", /Flux Mono SC/);
     await lower.scrollIntoViewIfNeeded();
     await expectActivityMarksCentered(lower);
     await lower.focus();
@@ -370,8 +426,8 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
   );
   const earlier = page.locator(".activity-fold__omission");
   await expect(earlier).toBeVisible();
-  await expect(earlier).toHaveCSS("font-family", /Rajdhani/);
-  await expect(earlier).toHaveCSS("text-transform", "uppercase");
+  await expect(earlier).toHaveCSS("font-family", /Flux Mono SC/);
+  await expect(earlier).toHaveCSS("text-transform", "none");
   await page.evaluate(() => document.fonts.ready);
   await expectActivityMarksCentered(earlier);
   await expect(page.locator(".card--thinking")).toHaveCount(24);
@@ -398,7 +454,7 @@ test("success and failure cues retain semantic color in tools and nested calls",
       message.role === "toolResult" &&
       "toolCallId" in message &&
       message.toolCallId === "reading-code",
-  );
+  ) as { details: { calls: Record<string, unknown>[] } } | undefined;
   if (!code || !("details" in code) || !code.details?.calls)
     throw new Error("Missing nested activity fixture");
   code.details.calls.push(

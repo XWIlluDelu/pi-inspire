@@ -82,7 +82,7 @@ it("retires a confirmation warning when the requested selection arrives late", a
   expect(store.selectStatusControl).toHaveBeenCalledTimes(1);
 });
 
-it("retains meaningful option guidance while a different selection is pending", async () => {
+it("keeps inactive selections quiet while retaining real request errors", async () => {
   const state = store.getState();
   vi.spyOn(store, "getState").mockReturnValue({ ...state, sessionId: "s1" });
   const pending = deferred<boolean>();
@@ -91,22 +91,29 @@ it("retains meaningful option guidance while a different selection is pending", 
     <StatusChoice
       control={{
         ...control,
+        state: { ...control.state, supported: "supported" },
         options: [
           { ...control.options[0]!, description: "Uses standard limits." },
           control.options[1]!,
         ],
       }}
-      status='{"value":"low"}'
+      status='{"value":"low","supported":{"low":false,"high":true}}'
       disabled={false}
       owner="s1"
       generation={state.transportGeneration}
     />,
   );
+  expect(screen.getByRole("slider", { name: "Choice" })).toHaveAttribute(
+    "aria-valuetext",
+    "Low",
+  );
+  expect(screen.queryByRole("status")).toBeNull();
   fireEvent.change(screen.getByRole("slider", { name: "Choice" }), {
     target: { value: "1" },
   });
-  expect(screen.getByText("Uses standard limits.")).toBeVisible();
+  expect(screen.queryByRole("status")).toBeNull();
   await act(async () => pending.resolve(false));
+  expect(screen.getByText("The change was not accepted.")).toBeVisible();
 });
 
 it("keeps confirmed Pi state when its command observation fails later", async () => {
@@ -166,8 +173,9 @@ it("keeps missing status neutral instead of prescribing an extension reload", ()
     />,
   );
   expect(screen.getByRole("slider", { name: "Choice" })).toBeDisabled();
-  expect(
-    screen.getByText("Selection status is not available yet."),
-  ).toBeVisible();
-  expect(screen.queryByText(/reload/i)).toBeNull();
+  expect(screen.getByRole("slider", { name: "Choice" })).toHaveAttribute(
+    "aria-valuetext",
+    "Unknown",
+  );
+  expect(screen.queryByRole("status")).toBeNull();
 });

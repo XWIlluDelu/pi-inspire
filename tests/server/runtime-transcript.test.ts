@@ -710,7 +710,7 @@ describe("live and durable transcript reconciliation", () => {
     try {
       const live = {
         role: "custom",
-        customType: "intercom_message",
+        customType: "relay_message",
         content: "delivered",
         display: true,
         details: { source: "peer" },
@@ -721,7 +721,7 @@ describe("live and durable transcript reconciliation", () => {
         id: "custom-1",
         parentId: "u1",
         timestamp: "2026-08-01T00:00:05.000Z",
-        customType: "intercom_message",
+        customType: "relay_message",
         content: "delivered",
         display: true,
         details: { source: "peer" },
@@ -784,7 +784,7 @@ describe("live and durable transcript reconciliation", () => {
       for (const timestamp of [2_001, 2_001]) {
         const live = {
           role: "custom",
-          customType: "intercom_message",
+          customType: "relay_message",
           content: "same payload",
           display: true,
           timestamp,
@@ -804,7 +804,7 @@ describe("live and durable transcript reconciliation", () => {
           id: "custom-repeat-1",
           parentId: "u1",
           timestamp: "2026-08-01T00:00:07.000Z",
-          customType: "intercom_message",
+          customType: "relay_message",
           content: "same payload",
           display: true,
         },
@@ -813,7 +813,7 @@ describe("live and durable transcript reconciliation", () => {
           id: "custom-repeat-2",
           parentId: "custom-repeat-1",
           timestamp: "2026-08-01T00:00:08.000Z",
-          customType: "intercom_message",
+          customType: "relay_message",
           content: "same payload",
           display: true,
         },
@@ -854,13 +854,13 @@ describe("live and durable transcript reconciliation", () => {
         id: "custom-entry-first",
         parentId: "u1",
         timestamp: "2026-08-01T00:00:06.000Z",
-        customType: "intercom_message",
+        customType: "relay_message",
         content: "arrived while idle",
         display: true,
       };
       const live = {
         role: "custom",
-        customType: "intercom_message",
+        customType: "relay_message",
         content: "arrived while idle",
         display: true,
         timestamp: 3_000,

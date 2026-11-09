@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  pairedPage,
+  openConversationSearch,
+} from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "Touch notices" : "Mouse notices", () => {
@@ -48,16 +52,12 @@ for (const touch of [false, true]) {
             control.getBoundingClientRect().bottom
           );
         }, selector);
+      // Persistent desktop search and an expanded narrow row both own clearance.
       await expect
         .poll(() => gapBelowTool(".transcript-search"))
         .toBeCloseTo(8, 0);
-      await expect(
-        page.getByRole("button", { name: "Close conversation search" }),
-      ).toBeHidden();
       await page.setViewportSize({ width: 568, height: 420 });
-      await page
-        .getByRole("button", { name: "Open conversation search" })
-        .click();
+      await openConversationSearch(page);
       await expect
         .poll(() => gapBelowTool(".transcript-search"))
         .toBeCloseTo(8, 0);

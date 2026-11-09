@@ -1,3 +1,4 @@
+import { fireEvent, screen } from "@testing-library/react";
 import { vi } from "vitest";
 import {
   type ActiveSnapshot,
@@ -303,4 +304,14 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
     snapshot: { active: null, runState: "idle", sessionStatuses: {} },
     ...overrides,
   };
+}
+
+// --- Transcript search ---
+
+/** Focus desktop search or open the narrow row through its keyboard shortcut. */
+export function openTranscriptSearch(): HTMLInputElement {
+  fireEvent.keyDown(screen.getByRole("log"), { key: "f", ctrlKey: true });
+  return screen.getByRole("searchbox", {
+    name: "Search conversation",
+  }) as HTMLInputElement;
 }
