@@ -245,7 +245,7 @@ for (const width of [1280, 390, 320]) {
       await palette.getByLabel("Filter commands").fill("/quit");
       await palette.getByRole("option", { name: /Leave Inspire/ }).click();
       const quit = receipt.getByText(
-        "Close this browser tab when you are done. The Host and persistent Pi sessions keep running so you can reconnect later.",
+        "Close this tab when you are done. Your sessions keep running.",
         { exact: true },
       );
       await expect(quit).toBeVisible();

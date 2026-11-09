@@ -219,9 +219,9 @@ export function CommandHelp({
                         </dl>
                         {section.title === "Composer" ? (
                           <p className="command-help__note">
-                            Touch-first input: Return inserts a line break; use
-                            Send. IME composition: Enter confirms, never
-                            submits.
+                            On touch screens, Return adds a line. Tap Send. With
+                            an input method, Enter confirms text while you
+                            compose.
                           </p>
                         ) : null}
                       </section>
@@ -247,8 +247,7 @@ export function CommandHelp({
           ) : release ? (
             <>
               <p className="palette__hint">
-                From the installed Pi package. Documentation links open current
-                upstream documentation.
+                Notes for your installed Pi. Links open the current docs.
               </p>
               <ProgressiveRichText
                 text={release.markdown}

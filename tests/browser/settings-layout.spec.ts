@@ -1214,7 +1214,7 @@ for (const touch of [false, true]) {
               .evaluateAll((buttons) =>
                 buttons.map((button) => button.getBoundingClientRect().top),
               );
-            expect(restartTops).toHaveLength(3);
+            expect(restartTops).toHaveLength(2);
             for (const [index, top] of restartTops.slice(1).entries()) {
               const separation = top - restartTops[index]!;
               expect(

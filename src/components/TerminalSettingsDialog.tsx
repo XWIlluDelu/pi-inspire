@@ -387,7 +387,7 @@ export function TerminalSettingsDialog({
                   </SettingField>
                   <SettingField
                     label="Shortcut priority"
-                    description="Which side receives search, copy and paste shortcuts."
+                    description="Where search, copy and paste shortcuts go."
                   >
                     <SegmentedControl
                       label="Terminal shortcut priority"
@@ -402,7 +402,7 @@ export function TerminalSettingsDialog({
                   {isMacTerminalBrowser() ? (
                     <SettingField
                       label="Option as Meta"
-                      description="Send Escape-prefixed shell keys instead of macOS characters and accents."
+                      description="Option sends shell shortcuts instead of special characters."
                     >
                       <SettingsSwitch
                         label="Use Option as Meta"
@@ -468,7 +468,7 @@ export function TerminalSettingsDialog({
                   </SettingField>
                   <SettingField
                     label="Screen reader mode"
-                    description="Expose terminal rows to assistive technology. May slow rendering."
+                    description="Make terminal output readable by screen readers. May slow rendering."
                   >
                     <SettingsSwitch
                       label="Terminal screen reader mode"
@@ -489,7 +489,7 @@ export function TerminalSettingsDialog({
                     <>
                       <SettingField
                         label="Persist output"
-                        description="Keep output across system restarts. It may contain secrets. Turning this off deletes saved output."
+                        description="Keep output after a system restart. It may contain secrets. Turning this off deletes saved output."
                       >
                         <SettingsSwitch
                           label="Persist terminal output"
@@ -499,7 +499,7 @@ export function TerminalSettingsDialog({
                             if (
                               !persistOutput &&
                               !window.confirm(
-                                "Turn off saved output and delete all terminal history from this Host?",
+                                "Stop saving output and delete all saved terminal output on this Host?",
                               )
                             )
                               return;

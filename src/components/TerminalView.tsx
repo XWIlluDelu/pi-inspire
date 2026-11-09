@@ -477,11 +477,7 @@ export const TerminalView = memo(function TerminalView({
         return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (
-        window.confirm(
-          "Paste multiple lines or control characters into this terminal?",
-        )
-      )
+      if (window.confirm("Paste multiple lines or control characters?"))
         xterm.paste(value);
     };
     host.addEventListener("paste", protectNativePaste, true);
@@ -789,21 +785,17 @@ export const TerminalView = memo(function TerminalView({
         const text = takeTerminalInsertion(descriptor.projectCwd);
         if (!text) break;
         if (hasUnsafePasteControl(text)) {
-          setError("Code containing control characters was not inserted");
+          setError("Control characters blocked code insertion");
           continue;
         }
         if (/[\r\n]/u.test(text)) {
           if (!xterm.modes.bracketedPasteMode) {
-            setError(
-              "Multiline code needs protected paste support from the active program",
-            );
+            setError("Multiline insertion requires protected paste support");
             continue;
           }
           if (
             settingsRef.current.pasteProtection &&
-            !window.confirm(
-              "Insert multiple lines into this terminal? Review them before running.",
-            )
+            !window.confirm("Insert multiple lines? Review before running.")
           )
             continue;
         }
@@ -895,9 +887,7 @@ export const TerminalView = memo(function TerminalView({
         value &&
         (!settingsRef.current.pasteProtection ||
           !isRiskyPaste(value) ||
-          window.confirm(
-            "Paste multiple lines or control characters into this terminal?",
-          ))
+          window.confirm("Paste multiple lines or control characters?"))
       ) {
         clearModifiers();
         xterm.paste(value);
@@ -1203,7 +1193,7 @@ export const TerminalView = memo(function TerminalView({
                     if (selection) onSendToComposerRef.current?.(selection);
                   }}
                   aria-label="Send terminal selection to composer"
-                  title="Add selection to the composer without sending"
+                  title="Add selection to draft"
                 >
                   <MessageSquareQuote size={14} aria-hidden /> Add to chat
                 </button>

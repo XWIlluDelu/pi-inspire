@@ -855,7 +855,7 @@ export const Welcome = memo(function Welcome({
             role="status"
             aria-busy={starting}
           >
-            <span>Folder does not exist yet.</span>
+            <span>Folder doesn't exist.</span>
             <button
               type="button"
               className="button welcome__dir-action-btn"
@@ -988,7 +988,7 @@ export const Welcome = memo(function Welcome({
               label="Thinking level"
               title={
                 selectedModel?.reasoning === false
-                  ? "The selected model does not support thinking"
+                  ? "Thinking unavailable for this model"
                   : "Thinking level"
               }
               direction="up"
@@ -1028,7 +1028,7 @@ export const Welcome = memo(function Welcome({
             onClick={() => fileInputRef.current?.click()}
             disabled={starting}
             aria-label="Attach files"
-            title="Attach files (or paste / drop them)"
+            title="Attach, paste, or drop files"
           >
             <Paperclip size={14} aria-hidden />
           </button>

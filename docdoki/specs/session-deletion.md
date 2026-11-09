@@ -26,8 +26,8 @@ centre against the badge and close glyphs. Footer actions keep their existing la
 and behavior rather than moving all layers onto one text origin.
 
 Deletion is a second-tier action inside Hidden. Confirmation names the exact targets and explains
-Trash, closing the sessions' Pi instances and stopping their work, the permanent-delete fallback,
-and the exclusion of project files and separately stored forks.
+Trash, the permanent-delete fallback, and that project files and separate session copies stay.
+Warn when deletion closes a session in use and stops work in progress.
 The browser submits bounded session identities; the Host resolves and validates their files.
 
 Confirmed deletion ends the Host's workers and every attach-control-discovered Pi using the exact

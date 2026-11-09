@@ -156,7 +156,9 @@ test("session search distinguishes loading, error and an empty result", async ({
     const q = new URL(route.request().url()).searchParams.get("q");
     if (q === "empty-fixture-query") {
       await gate;
-      await route.continue();
+      await route.fulfill({
+        json: { sessions: [], total: 0, offset: 0, limit: 40 },
+      });
     } else if (q === "failed-fixture-query") {
       await route.fulfill({
         status: 503,

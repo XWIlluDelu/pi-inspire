@@ -179,9 +179,7 @@ describe("shortcut help", () => {
       screen.getByRole("heading", { name: "Keyboard shortcuts" }),
     ).toBeVisible();
     expect(
-      screen.getByText("IME composition: Enter confirms, never submits.", {
-        exact: false,
-      }),
+      screen.getByText(/Enter confirms text while you compose/),
     ).toBeVisible();
     expect(screen.queryByRole("status")).toBeNull();
     expect(installedPiChangelog).not.toHaveBeenCalled();

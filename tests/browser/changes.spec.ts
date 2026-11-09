@@ -350,10 +350,12 @@ for (const touch of [false, true]) {
       let gate: Promise<void> | null = null;
       await page.route("**/api/git/diff", async (route) => {
         diffReads += 1;
+        const useLatest = latest;
+        const responseGate = gate;
         const response = await route.fetch();
         const diff = (await response.json()) as GitDiffResponse;
-        if (latest && diff.kind === "text") {
-          if (gate) await gate;
+        if (useLatest && diff.kind === "text") {
+          if (responseGate) await responseGate;
           diff.lines = diff.lines.map((line) =>
             line.kind === "add"
               ? { ...line, text: "+LATEST_VISIBLE_SOURCE" }
@@ -417,17 +419,26 @@ for (const touch of [false, true]) {
       gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      await page.clock.fastForward(4_001);
-      await expect.poll(() => diffReads).toBeGreaterThan(readsBeforePoll);
-      await expect(source.locator(".source-diff__line--add code")).toHaveText(
-        oldAddition,
-      );
-      await expect(
-        pane.getByText("Loading source", { exact: true }),
-      ).toHaveCount(0);
-      expect(await position()).toEqual(saved);
-      release();
-      gate = null;
+      try {
+        // The next timer is scheduled after any earlier inspection settles.
+        await expect
+          .poll(async () => {
+            if (diffReads === readsBeforePoll)
+              await page.clock.fastForward(4_001);
+            return diffReads;
+          })
+          .toBeGreaterThan(readsBeforePoll);
+        await expect(source.locator(".source-diff__line--add code")).toHaveText(
+          oldAddition,
+        );
+        await expect(
+          pane.getByText("Loading source", { exact: true }),
+        ).toHaveCount(0);
+        expect(await position()).toEqual(saved);
+      } finally {
+        release();
+        gate = null;
+      }
       await expect(source.locator(".source-diff__line--add code")).toHaveText(
         "LATEST_VISIBLE_SOURCE",
       );

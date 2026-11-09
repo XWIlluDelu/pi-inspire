@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { independentProcessEnvironment } from "../server/user-environment.mjs";
 import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
 import { testPiCommand } from "./test-pi-command.mjs";
 
@@ -66,7 +67,7 @@ const child = spawn(
   {
     env: {
       ...Object.fromEntries(
-        Object.entries(process.env).filter(
+        Object.entries(independentProcessEnvironment(process.env)).filter(
           ([key]) => !key.startsWith("INSPIRE_") && !key.startsWith("PI_"),
         ),
       ),

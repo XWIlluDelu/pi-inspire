@@ -75,15 +75,14 @@ export function SessionDeleteDialog({
           className="dialog__message session-delete__description"
           id="session-delete-description"
         >
-          <span>This session will be moved to Trash.</span>
-          <span>Pi instances using this session will be closed first.</span>
-          <span>If Trash is unavailable, it will be permanently deleted.</span>
-          <span>Forked sessions remain; project files are unchanged.</span>
+          <span>Moves this session to Trash.</span>
+          <span>If Trash is unavailable, deletion is permanent.</span>
+          <span>Session copies and project files stay.</span>
         </p>
         {openInPi ? (
           <p className="session-delete__warning" id="session-delete-warning">
             <AlertTriangle size={14} aria-hidden />
-            Any work running in this session will stop.
+            This closes the session and stops any work in progress.
           </p>
         ) : null}
         {error ? (

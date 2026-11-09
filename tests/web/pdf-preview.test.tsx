@@ -209,8 +209,8 @@ describe("static PDF preview", () => {
       expect(
         screen.getByText(
           name === "PasswordException"
-            ? /needs a password/
-            : /could not be read/,
+            ? /Password required/
+            : "Download to open in another reader.",
         ),
       ).toBeVisible();
     },

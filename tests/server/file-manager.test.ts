@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { showInFileManager } from "../../server/file-manager.js";
 
@@ -21,7 +22,7 @@ describe("desktop file manager integration", () => {
         `org.freedesktop.FileManager1.${directory ? "ShowFolders" : "ShowItems"}`,
       );
       expect(JSON.parse(args.at(-2))).toEqual([
-        "file:///tmp/file%20'quoted',%20$(command);%20%23%25.txt",
+        `${pathToFileURL("/tmp").href}/file%20'quoted',%20$(command);%20%23%25.txt`,
       ]);
       expect(options).not.toHaveProperty("shell");
       expect(options.timeout).toBe(10_000);

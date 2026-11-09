@@ -131,7 +131,7 @@ describe("Settings component UX and navigation", () => {
     );
     const section = screen.getByRole("region", { name: "Extension adapters" });
     const guidance = within(section).getByText(
-      "Choose how Pi extensions appear in Inspire. These switches change the GUI, not which extensions Pi runs.",
+      "Choose how Pi extensions appear in Inspire.",
     );
     expect(guidance.closest(".settings__section-header")).not.toBeNull();
     expect(guidance.closest(".settings__card")).toBeNull();

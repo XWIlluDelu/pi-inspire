@@ -489,12 +489,11 @@ for (const touch of [false, true]) {
 
       await openRename(page);
       await input.fill("Saved outside the editor");
-      const bar = (await page.locator(".topbar").boundingBox())!;
-      const outside = { x: bar.x + bar.width / 2, y: bar.y + bar.height - 1 };
-      if (touch) await page.touchscreen.tap(outside.x, outside.y);
-      else await page.mouse.click(outside.x, outside.y);
+      if (touch) await composer.tap();
+      else await composer.click();
       await expect(input).toHaveCount(0);
       await expect(title).toContainText("Saved outside the editor");
+      await expect(composer).toBeFocused();
       await expect(composer).toHaveValue("Keep the unfinished comparison");
 
       await title.focus();

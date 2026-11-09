@@ -1040,9 +1040,7 @@ describe("terminal project ownership", () => {
     ]);
     api.retryTerminalOperation.mockResolvedValue(undefined);
     render(<TerminalPane cwd="/A" />);
-    await screen.findByText(
-      "Completed · browser recovery record could not be cleared",
-    );
+    await screen.findByText("Completed · Could not clear tracking");
     expect(screen.queryByText("Outcome unknown")).toBeNull();
     expect(screen.queryByRole("button", { name: "Stop tracking…" })).toBeNull();
     fireEvent.click(
@@ -1081,7 +1079,7 @@ describe("terminal project ownership", () => {
     expect(stopTracking).not.toHaveBeenCalled();
     fireEvent.click(button);
     expect(confirm).toHaveBeenCalledWith(
-      expect.stringContaining("This does not cancel it"),
+      expect.stringContaining("The operation may still be running."),
     );
     expect(stopTracking).toHaveBeenCalledExactlyOnceWith("lost");
     expect(api.createTerminal).not.toHaveBeenCalled();

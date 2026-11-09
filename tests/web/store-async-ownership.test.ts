@@ -661,7 +661,7 @@ describe("resync failure ownership", () => {
     await vi.advanceTimersByTimeAsync(14_000);
     expect(store.getState()).toMatchObject({
       error:
-        "The conversation could not be synchronized. Showing the last confirmed state.",
+        "Could not refresh this conversation. Showing the last loaded version.",
       errorSeverity: "warning",
     });
   });

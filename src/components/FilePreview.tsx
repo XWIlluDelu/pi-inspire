@@ -201,7 +201,7 @@ function sourceLanguage(descriptor: ResourceDescriptor): string {
 function TruncatedRenderedNotice() {
   return (
     <div className="file-preview__notice" role="status">
-      Rendered preview truncated · Source shows the preview boundary
+      Preview truncated. See the cutoff in Source.
     </div>
   );
 }
@@ -254,8 +254,8 @@ function ReadyResource({
     return preview.truncated ? (
       <ContextPaneState
         icon={<FileText size={17} aria-hidden />}
-        title="Notebook preview not loaded"
-        hint="Open Source to inspect this large notebook."
+        title="Notebook too large to render"
+        hint="Open Source to see the available text."
       />
     ) : (
       <DocumentPreview descriptor={descriptor} className="res__preview-fill">
@@ -326,7 +326,7 @@ function ReadyResource({
     <ContextPaneState
       icon={<FileText size={17} aria-hidden />}
       title="Binary file"
-      hint="This file type is not rendered inline."
+      hint="Download to open this file."
     />
   );
 }
@@ -350,7 +350,6 @@ function ResourcePreviewContent({
       <ContextPaneState
         icon={<FileText size={17} aria-hidden />}
         title="Select a file"
-        hint="Choose a workspace or recent file to preview it."
       />
     );
   if (preview.status === "loading")

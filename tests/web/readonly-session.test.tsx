@@ -103,8 +103,8 @@ it.each(["workspace-unavailable", "external-active"] as const)(
       reason === "workspace-unavailable"
         ? "Project folder unavailable. This session is read-only."
         : reason === "external-active"
-          ? "Running in another Pi. Its progress shows here."
-          : "Pi connection unavailable. History remains readable while Inspire checks for recovery.";
+          ? "Running in another Pi."
+          : "Pi is unavailable. You can still read this session.";
     expect(screen.getByText(notice)).toBeInTheDocument();
     const settings = within(screen.getByLabelText("Session settings"));
     expect(settings.getByText("example/session-model")).toBeInTheDocument();

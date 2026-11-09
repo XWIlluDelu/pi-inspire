@@ -221,10 +221,15 @@ test.describe("touch session drawer", () => {
   test("direct curation does not select a session; selection dismisses the drawer and restores its draft", async ({
     page,
   }) => {
+    const sessionId = "fixture-history";
     await pairedPage(page);
     const restoreCuration = await preserveCuration(page);
     try {
-      await openFixtureSession(page, /Review extension event lifecycle/);
+      await openFixtureSession(
+        page,
+        /Review extension event lifecycle/,
+        sessionId,
+      );
       const input = page.getByRole("textbox", { name: "Message", exact: true });
       await input.fill("Keep this touch draft");
       await page
@@ -235,8 +240,9 @@ test.describe("touch session drawer", () => {
         exact: true,
       });
       const title = "Review extension event lifecycle";
+      const row = drawer.locator(`[data-session-id="${sessionId}"]`);
       const action = (name: string) =>
-        drawer.getByRole("button", {
+        row.getByRole("button", {
           name: name + ' "' + title + '"',
           exact: true,
         });
@@ -244,14 +250,20 @@ test.describe("touch session drawer", () => {
       await expect(drawer.locator(".nav__group--pinned")).toContainText(title);
       await action("Hide").tap();
       const hidden = drawer.locator(".nav__group--hidden");
-      await hidden.getByRole("button", { name: "Hidden", exact: true }).tap();
-      await expect(hidden).toContainText(title);
+      const hiddenToggle = hidden.getByRole("button", {
+        name: "Hidden",
+        exact: true,
+      });
+      if ((await hiddenToggle.getAttribute("aria-expanded")) === "false")
+        await hiddenToggle.tap();
+      const hiddenRow = hidden.locator(`[data-session-id="${sessionId}"]`);
+      await expect(hiddenRow).toBeVisible();
       await action("Restore").tap();
-      await expect(drawer.locator(".nav__group--hidden")).toHaveCount(0);
+      await expect(hiddenRow).toHaveCount(0);
       // Hiding clears the pin; restoring returns a regular session row.
       await expect(action("Pin")).toBeVisible();
       await expect(input).toHaveValue("Keep this touch draft");
-      await drawer.locator(".nav__row-main").filter({ hasText: title }).tap();
+      await row.locator(".nav__row-main").tap();
       await expect(drawer).toHaveCount(0);
       await expect(input).toHaveValue("Keep this touch draft");
     } finally {

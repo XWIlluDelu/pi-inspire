@@ -455,7 +455,7 @@ export const SettingsContent = memo(function SettingsContent({
             >
               <SettingField
                 label="Reasoning detail"
-                description="How much model thinking to show by default."
+                description="How much model thinking to show."
               >
                 <Dropdown
                   label="Reasoning detail"
@@ -470,7 +470,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Tool activity"
-                description="How much detail to show for each tool call."
+                description="Detail shown for each tool call."
               >
                 <Dropdown
                   label="Tool activity"
@@ -483,10 +483,7 @@ export const SettingsContent = memo(function SettingsContent({
                 />
               </SettingField>
 
-              <SettingField
-                label="Activity groups"
-                description="Whether grouped steps start expanded or collapsed."
-              >
+              <SettingField label="Activity groups">
                 <Dropdown
                   label="Activity groups"
                   className="dropdown--field"
@@ -502,7 +499,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Send key"
-                description="Shortcut to send a message on desktop. Touch keyboards always insert a new line with Return."
+                description="Desktop shortcut. Return adds a new line on touch keyboards."
               >
                 <SegmentedControl
                   label="Send key"
@@ -524,10 +521,7 @@ export const SettingsContent = memo(function SettingsContent({
               icon={<Compass size={14} />}
               title="Behavior"
             >
-              <SettingField
-                label="On launch"
-                description="What to open when INSΠRE starts."
-              >
+              <SettingField label="On launch">
                 <Dropdown
                   label="On launch"
                   className="dropdown--field"
@@ -689,7 +683,7 @@ export const SettingsContent = memo(function SettingsContent({
             >
               <SettingField
                 label="Steering delivery"
-                description="How steering messages are delivered while Pi is responding."
+                description="Delivery while Pi is responding."
               >
                 <Dropdown
                   label="Steering delivery"
@@ -715,7 +709,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Follow-up delivery"
-                description="How queued follow-up messages are delivered after a response."
+                description="Delivery after Pi responds."
               >
                 <Dropdown
                   label="Follow-up delivery"
@@ -764,7 +758,7 @@ export const SettingsContent = memo(function SettingsContent({
 
               <SettingField
                 label="Automatic retry"
-                description="Retry automatically when a provider returns a temporary error."
+                description="Retry temporary provider errors."
                 status={
                   !state.sessionId ||
                   state.runtimeSettings?.autoRetryEnabled == null

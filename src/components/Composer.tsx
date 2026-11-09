@@ -525,8 +525,8 @@ export const Composer = memo(function Composer() {
         placeholder={
           deliveryBusy
             ? deliveryBehavior === "steer"
-              ? "Add direction to the running task…"
-              : "Add a follow-up for after this task…"
+              ? "Guide the current task…"
+              : "Queue a follow-up…"
             : "Message Pi…"
         }
         label="Message"
@@ -586,7 +586,7 @@ export const Composer = memo(function Composer() {
             title={
               thinkingSupported
                 ? "Thinking level"
-                : "The active model does not support thinking"
+                : "Thinking unavailable for this model"
             }
             direction="up"
             value={state.thinkingLevel}
@@ -624,7 +624,7 @@ export const Composer = memo(function Composer() {
           disabled={sessionOpening}
           onClick={() => fileInputRef.current?.click()}
           aria-label="Attach files"
-          title="Attach files (or paste / drop them)"
+          title="Attach, paste, or drop files"
         >
           <Paperclip size={14} aria-hidden />
         </button>

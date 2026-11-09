@@ -306,6 +306,7 @@ test("independent Host ports require their own pairing; restart reconnects and r
     await tab.getByLabel("Access token").fill(token);
     await tab.getByRole("button", { name: "Pair" }).click();
     await expect(tab.getByRole("main")).toBeVisible();
+    await page.bringToFront();
     const before = snapshots;
     await host.restart();
     await expect

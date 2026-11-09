@@ -1,7 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Response, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { openEventSession } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
 import { openConversationSearch } from "./support/navigation";
+import { terminalMutationHeaders } from "./support/terminal-operations";
 
 const configuration = checkpointAdapterConfiguration;
 const current = () => {
@@ -573,9 +575,31 @@ test.describe("touch reading controls", () => {
     await expect
       .poll(() => page.evaluate(() => CSS.highlights.has("transcript-match")))
       .toBe(false);
-    await page.getByRole("button", { name: "Insert code in terminal" }).tap();
-    await expect(
-      page.locator(".ctx__terminal-tabs [role=tab][aria-selected=true]"),
-    ).toHaveAttribute("aria-selected", "true");
+    const createdTerminals: Response[] = [];
+    const recordTerminal = (response: Response) => {
+      if (
+        response.ok() &&
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/terminals"
+      )
+        createdTerminals.push(response);
+    };
+    page.on("response", recordTerminal);
+    try {
+      await page.getByRole("button", { name: "Insert code in terminal" }).tap();
+      await expect(
+        page.locator(".ctx__terminal-tabs [role=tab][aria-selected=true]"),
+      ).toHaveAttribute("aria-selected", "true");
+    } finally {
+      page.off("response", recordTerminal);
+      for (const response of createdTerminals) {
+        const { id } = (await response.json()) as { id: string };
+        const closed = await hostRequest(page).delete(
+          `/api/terminals/${encodeURIComponent(id)}?force=1`,
+          { headers: await terminalMutationHeaders(page) },
+        );
+        expect(closed.ok()).toBe(true);
+      }
+    }
   });
 });

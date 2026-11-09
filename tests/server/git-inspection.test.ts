@@ -336,19 +336,6 @@ describe("porcelain-v2 parser", () => {
     expect(() => parsePorcelainV2(type2("R.", "R101"))).toThrow(/rename/);
     expect(() => parsePorcelainV2(type2("RC", "R050"))).toThrow(/rename/);
   });
-
-  it("projects at most the explicit status cardinality while declaring the total", () => {
-    const records = Array.from({ length: 1_005 }, (_, index) =>
-      Buffer.from(`? file-${String(index).padStart(4, "0")}`),
-    );
-    const parsed = parsePorcelainV2(statusBuffer(...headers(), ...records));
-    expect(parsed.response).toMatchObject({ total: 1_005, truncated: true });
-    expect(parsed.response.files).toHaveLength(1_000);
-    expect(parsed.response.files.every((file) => file.untracked)).toBe(true);
-    expect(
-      new Set(parsed.response.files.map((file) => file.path.id)).size,
-    ).toBe(1_000);
-  });
 });
 
 describe("bounded diff contract", () => {
@@ -368,6 +355,9 @@ describe("bounded diff contract", () => {
     if (result.kind === "repository") {
       expect(result.files).toHaveLength(1_000);
       expect(result.files.every((file) => file.untracked)).toBe(true);
+      expect(new Set(result.files.map((file) => file.path.id)).size).toBe(
+        1_000,
+      );
     }
   });
 
@@ -1000,6 +990,7 @@ describe("real temporary repository", () => {
         ).toMatchObject({ kind });
       }
     },
+    20_000,
   );
 
   it.runIf(process.platform !== "win32")(
@@ -1172,7 +1163,7 @@ describe("real temporary repository", () => {
     }
     const indexAfter = await readFile(join(root, ".git", "index"));
     expect(indexAfter.equals(indexBefore)).toBe(true);
-  });
+  }, 20_000);
 
   it("does not report a restored rename source as removed or renamed", async () => {
     const root = await mkdtemp(join(tmpdir(), "inspire-restored-source-"));

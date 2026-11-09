@@ -117,14 +117,12 @@ export function ExportDialog({
         </fieldset>
         {readOnly ? (
           <p className="export-dialog__hint">
-            Exports saved history. Unsaved Pi output is not included; HTML needs
-            a writable session.
+            Read-only sessions can export saved history as JSONL.
           </p>
         ) : null}
         {busy ? (
           <p className="export-dialog__hint" role="status">
-            You can close this dialog. The download will start when the export
-            is ready.
+            Download starts when ready, even if you close this dialog.
           </p>
         ) : null}
         {error !== null ? (

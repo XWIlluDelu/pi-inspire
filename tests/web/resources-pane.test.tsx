@@ -1821,16 +1821,14 @@ describe("Files pane", () => {
     });
     expect(
       await within(pane).findByText(
-        "Rendered preview truncated · Source shows the preview boundary",
+        "Preview truncated. See the cutoff in Source.",
       ),
     ).toBeVisible();
 
     fireEvent.click(within(pane).getByRole("button", { name: "Source" }));
     expect(within(pane).getByText("Preview ends here")).toBeVisible();
     expect(
-      within(pane).queryByText(
-        "Rendered preview truncated · Source shows the preview boundary",
-      ),
+      within(pane).queryByText("Preview truncated. See the cutoff in Source."),
     ).toBeNull();
 
     await act(async () => {
@@ -1838,7 +1836,7 @@ describe("Files pane", () => {
     });
     expect(
       await within(pane).findByText(
-        "Rendered preview truncated · Source shows the preview boundary",
+        "Preview truncated. See the cutoff in Source.",
       ),
     ).toBeVisible();
     expect(within(pane).getByTitle("Preview truncated.html")).toHaveAttribute(

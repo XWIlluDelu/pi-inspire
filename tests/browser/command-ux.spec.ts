@@ -790,7 +790,7 @@ test("reads shortcuts and installed release notes, including from the start scre
   await palette.getByRole("option", { name: /Keyboard shortcuts/ }).click();
   const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(help).toContainText("Browse prompt history");
-  await expect(help).toContainText("IME composition");
+  await expect(help).toContainText("Enter confirms text while you compose");
   await page.evaluate(() => document.fonts.ready);
   for (const width of [1280, 820, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
@@ -816,7 +816,7 @@ test("reads shortcuts and installed release notes, including from the start scre
   await expect(
     release.getByRole("heading", { name: /Pi \d+\.\d+\.\d+ release notes/ }),
   ).toBeVisible();
-  await expect(release).toContainText("From the installed Pi package");
+  await expect(release).toContainText("Notes for your installed Pi");
   await expect(
     page.locator(".command-help .rich-text:not(.rich-text--deferred)"),
   ).toBeVisible();

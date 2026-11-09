@@ -747,11 +747,9 @@ describe("session navigation controls", () => {
       name: "Clear Hidden?",
     });
     expect(within(dialog).getByText("Hidden · 2 sessions")).toBeInTheDocument();
-    expect(
-      within(dialog).getByText(
-        "Project files and project folders are unchanged.",
-      ),
-    ).toBeInTheDocument();
+    expect(dialog).toHaveAccessibleDescription(
+      /all hidden sessions.*deletion is permanent.*Project files stay/,
+    );
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("button", { name: "Hidden" })).toHaveAttribute(
       "aria-expanded",
@@ -815,11 +813,9 @@ describe("session navigation controls", () => {
       name: "Clear hidden folder?",
     });
     expect(within(dialog).getByText("alpha · 1 session")).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        /Other hidden sessions and folders are unchanged/,
-      ),
-    ).toBeTruthy();
+    expect(dialog).toHaveAccessibleDescription(
+      /Moves only sessions in \/work\/alpha to Trash/,
+    );
     expect(within(dialog).queryByText(/Pi terminal|Pi process/)).toBeNull();
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Delete 1 session" }),
@@ -863,16 +859,9 @@ describe("session navigation controls", () => {
     const dialog = screen.getByRole("alertdialog", { name: "Delete session?" });
     expect(within(dialog).getByText("Beta session")).toBeInTheDocument();
     expect(within(dialog).queryByText("beta")).not.toBeInTheDocument();
-    const description = dialog.querySelector("#session-delete-description");
-    expect(description).not.toBeNull();
-    expect(
-      Array.from(description!.children).map((line) => line.textContent),
-    ).toEqual([
-      "This session will be moved to Trash.",
-      "Pi instances using this session will be closed first.",
-      "If Trash is unavailable, it will be permanently deleted.",
-      "Forked sessions remain; project files are unchanged.",
-    ]);
+    expect(dialog).toHaveAccessibleDescription(
+      /Moves this session to Trash.*deletion is permanent.*Session copies and project files stay/,
+    );
     expect(within(dialog).queryByText(/another Pi process/)).toBeNull();
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(

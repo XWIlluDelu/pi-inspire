@@ -487,8 +487,8 @@ export const Nav = memo(function Nav({
         {sessionListIssues.length ? (
           <div className="nav__pagination">
             <details className="nav__source-issues">
-              <summary>Some session sources are unavailable</summary>
-              <p>Showing available history. Counts may be incomplete.</p>
+              <summary>Some sessions may be missing</summary>
+              <p>Counts may be incomplete.</p>
               <ul>
                 {sessionListIssues.map((issue) => (
                   <li key={issue.path}>
@@ -505,7 +505,7 @@ export const Nav = memo(function Nav({
               disabled={sessionListBusy}
               onClick={() => void store.refreshSessions()}
             >
-              Retry unavailable sources
+              Retry loading sessions
             </button>
           </div>
         ) : null}

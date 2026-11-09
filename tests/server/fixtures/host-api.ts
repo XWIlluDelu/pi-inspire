@@ -243,5 +243,5 @@ export async function closeHostApiFixture(
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
-  await rm(fixture.temporary, { recursive: true, force: true });
+  await rm(fixture.temporary, { recursive: true, force: true, maxRetries: 3 });
 }

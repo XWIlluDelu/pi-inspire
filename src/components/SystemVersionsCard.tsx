@@ -243,7 +243,7 @@ export function SystemVersionsCard() {
             version={installedPiVersion}
             versionTitle={
               piRestartRequired
-                ? `Installed Pi version; Host loaded v${piCheck?.currentVersion}.`
+                ? `The Host is running Pi v${piCheck?.currentVersion}.`
                 : undefined
             }
             restartRequired={piRestartRequired}

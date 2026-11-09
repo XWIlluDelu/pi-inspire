@@ -284,7 +284,7 @@ export function WorkspaceTree({
         ) : null}
         {state.workspaceTruncatedDirs[dir] ? (
           <div className="workspace-tree__status" role="status" style={indent}>
-            Directory listing incomplete; showing partial contents.
+            Partial directory listing.
           </div>
         ) : null}
         {entries.map((entry) => {
@@ -397,7 +397,7 @@ export function WorkspaceSearchResults({
     >
       {state.workspaceSearchTruncated ? (
         <div className="workspace-tree__status" role="status">
-          Partial search results; browse the folder for more files.
+          Partial results. Browse for more files.
         </div>
       ) : null}
       {state.workspaceSearchError ? (

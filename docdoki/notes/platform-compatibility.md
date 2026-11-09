@@ -42,9 +42,10 @@ came from one isolated production build with synthetic content; the mobile captu
 touch/coarse-pointer context at 390×844 CSS pixels.
 
 [[follow-runtime-quality-2026-10-25]] records local Linux production-install verification for 0.6.5.
-Its later `auto-dev` review fixes pass all seven jobs in
-[run 40481436169](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169)
-at `2fe2dc73`; this does not change the original v0.6.5 tag's failed result.
+The later `auto-dev` review at `2fe2dc73` passed all seven jobs in
+[run 40481436169](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40481436169).
+The [v0.6.5 release run](https://github.com/XWIlluDelu/pi-inspire/actions/runs/40339358680)
+failed at its tagged revision.
 
 Package checks exercise a real default daemon, PTY I/O, terminal maintenance, Host restart preserving
 terminals, authenticated readiness/pairing and native session recovery. Native filesystem/shell checks

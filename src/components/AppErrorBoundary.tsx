@@ -19,11 +19,8 @@ export function AppErrorBoundary({ children }: AppErrorBoundaryProps) {
         >
           <div className="app-error__card">
             <div className="app-error__eyebrow">INSΠRE</div>
-            <h1 id="app-error-title">This view could not be rendered</h1>
-            <p>
-              Reload the page to restore the workbench. The active Pi session is
-              not modified.
-            </p>
+            <h1 id="app-error-title">The workbench hit an error</h1>
+            <p>Reload the page. Any running Pi session continues.</p>
             <button type="button" onClick={() => window.location.reload()}>
               Reload page
             </button>

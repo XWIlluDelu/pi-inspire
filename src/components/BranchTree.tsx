@@ -651,11 +651,11 @@ export function BranchTree({
         : state.readOnlyReason
           ? "This session is read-only"
           : state.runState !== "idle" || state.bashRunning
-            ? "Wait until the current task finishes before changing this conversation"
+            ? "Wait for the current task to finish."
             : state.pendingCount
-              ? "Send or clear Pending input before changing this conversation"
+              ? "Send or clear Pending input first."
               : state.dialogCount
-                ? "Answer the open dialog before changing this conversation"
+                ? "Respond to the open dialog first."
                 : null);
 
   async function navigate(summarize: boolean) {
@@ -1186,7 +1186,7 @@ export function BranchTree({
                 <p role="status">
                   <PiLoader size={14} aria-hidden />
                   {summarizing
-                    ? "Summarizing the conversation being left…"
+                    ? "Summarizing this branch…"
                     : "Opening the conversation…"}
                   {summarizing ? (
                     <button
@@ -1208,7 +1208,7 @@ export function BranchTree({
                     <h3>This session</h3>
                     {!tree.skipSummaryPrompt && !selected.leaf ? (
                       <div className="history-summary">
-                        <label title="Carry a summary of the conversation being left">
+                        <label title="Include a summary of the branch you're leaving">
                           <input
                             type="checkbox"
                             className="choice-input"

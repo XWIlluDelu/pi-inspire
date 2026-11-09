@@ -1217,7 +1217,12 @@ test.describe("international terminal keyboard input", () => {
         "true",
       );
       expect(first!.inputs.join("")).toBe(beforeTabs);
-      await page.locator("#terminal-tab-" + ids[0]).click();
+      // The shared strip can overflow the inactive tab into More tabs.
+      await input.press("Alt+1");
+      await expect(page.locator("#terminal-tab-" + ids[0])).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
       await showTerminalControls(page);
       await page
         .getByRole("button", { name: "Search terminal output", exact: true })
@@ -1366,10 +1371,27 @@ test("compact terminal controls keep selection, search, and output scoped to the
   context,
   page,
 }) => {
-  const ids = ["compact-terminal-a", "compact-terminal-b"];
-  const terminals = await terminalTransportFixture(page, browserWorkspace, ids);
+  const firstId = "compact-terminal-a";
+  const secondId = "compact-terminal-b";
+  const terminals = await terminalTransportFixture(page, browserWorkspace, [
+    firstId,
+    secondId,
+  ]);
   const firstTerminal = terminals[0]!;
   const secondTerminal = terminals[1]!;
+  const selectTab = async (id: string) => {
+    const name = new RegExp(`^${id}(?:,|\\s|$)`);
+    const tab = page.getByRole("tab", { name });
+    if (await tab.isVisible()) {
+      await tab.click();
+    } else {
+      await page
+        .getByRole("combobox", { name: "More tabs", exact: true })
+        .click();
+      await page.getByRole("option", { name }).click();
+    }
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+  };
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   await page.evaluate(() =>
@@ -1388,7 +1410,9 @@ test("compact terminal controls keep selection, search, and output scoped to the
   });
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await openProjectTerminal(page);
-  await page.locator(`#terminal-tab-${ids[0]}`).click();
+  await expect(
+    page.getByRole("tab", { name: firstId, exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.getByRole("status", { name: "Controlling", exact: true }),
   ).toBeVisible();
@@ -1440,7 +1464,7 @@ test("compact terminal controls keep selection, search, and output scoped to the
           size.cols === beforeSearch.cols && size.rows === beforeSearch.rows,
       ),
   ).toBe(true);
-  await page.locator(`#terminal-tab-${ids[1]}`).click();
+  await selectTab(secondId);
   await expect.poll(() => secondTerminal.resizes.length).toBeGreaterThan(0);
   secondTerminal.write("TERMINAL_REDESIGN_B\r\n");
   await expect(searchButton).toHaveCount(1);
@@ -1456,10 +1480,12 @@ test("compact terminal controls keep selection, search, and output scoped to the
   await expect(
     page.getByRole("button", { name: "Copy last output", exact: true }),
   ).toBeDisabled();
-  await page.locator(`#terminal-tab-${ids[0]}`).click();
+  await selectTab(firstId);
   await expect(searchInput).toHaveValue("TERMINAL_REDESIGN_A");
   await expect(input).toHaveAttribute("data-continuity", "retained");
   await page.getByRole("button", { name: "Close terminal search" }).click();
+  // xterm retains the search match as a selection, which owns the tools corner.
+  await activeView.locator(".xterm-screen").click({ position: { x: 8, y: 8 } });
 
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {
     origin: new URL(page.url()).origin,
@@ -1570,8 +1596,8 @@ test("compact terminal controls keep selection, search, and output scoped to the
   await page
     .getByRole("button", { name: "Paste into terminal", exact: true })
     .click();
-  await page.locator(`#terminal-tab-${ids[1]}`).click();
-  await page.locator(`#terminal-tab-${ids[0]}`).click();
+  await selectTab(secondId);
+  await selectTab(firstId);
   await deliverPaste("TERMINAL_CLIPBOARD_STALE");
   expect(firstTerminal.inputs).toEqual([]);
   expect(secondTerminal.inputs).toEqual([]);

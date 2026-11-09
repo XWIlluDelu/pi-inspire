@@ -67,7 +67,7 @@ export function ImagePreview({
   const failure =
     error ||
     (decodeError
-      ? "This image could not be displayed. Open the preview to download the original."
+      ? "Image unavailable. Open the preview to download it."
       : null);
 
   useLayoutEffect(() => {

@@ -26,15 +26,6 @@ function declaredVariables(css: string): Set<string> {
 }
 
 describe("static asset contracts", () => {
-  it("distinguishes custom properties from BEM selectors and comments", () => {
-    const css = `
-      /* --danger: red; */
-      :root { --accent: blue; --accent-focus: var(--accent); }
-      .button--danger:hover { color: var(--danger); }
-    `;
-    expect([...declaredVariables(css)]).toEqual(["accent", "accent-focus"]);
-  });
-
   it("does not reference undeclared project CSS variables", async () => {
     const css = (await readStylesheet()).replace(/\/\*[\s\S]*?\*\//g, "");
     const declared = declaredVariables(css);

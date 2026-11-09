@@ -85,8 +85,8 @@ project are not editable here.
 replace a running worker. New Pi workers read the saved configuration.
 
 After saving in an Inspire-owned session, **Reload selected session…** offers a confirmed restart
-of that idle worker. Other sessions stay unchanged. For a connected native Pi, Settings instead asks
-you to run `/reload` in its original terminal; restarting the Host does not reload that Pi.
+of that idle worker. Other sessions stay unchanged. For a taken-over Pi, run `/reload` in its
+original terminal or use [Restart Host](host.md#host-and-terminal-maintenance).
 Removing an entry likewise changes only the file, leaving running connections and Pi's separate
 saved OAuth credentials alone.
 

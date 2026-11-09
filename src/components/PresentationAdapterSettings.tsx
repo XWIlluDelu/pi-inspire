@@ -27,7 +27,7 @@ export function PresentationAdapterSettings() {
       id="extension-adapters"
       icon={<Puzzle size={14} />}
       title="Extension adapters"
-      description="Choose how Pi extensions appear in Inspire. These switches change the GUI, not which extensions Pi runs."
+      description="Choose how Pi extensions appear in Inspire."
     >
       {adapters.length ? (
         adapters.map((adapter) => (
@@ -52,7 +52,7 @@ export function PresentationAdapterSettings() {
         ))
       ) : (
         <SettingsCardMessage>
-          No adapters configured. Add adapter files to your custom presentation
+          No adapters configured. Add adapter files to your presentation
           profile.
         </SettingsCardMessage>
       )}

@@ -379,7 +379,7 @@ application uses an external Pi; the Pi development dependency is only for compa
 npm ci
 npm run release:verify
 npm pack
-npm install --global ./inspire-pi-gui-0.6.5.tgz
+npm install --global ./inspire-pi-gui-0.7.0.tgz
 inspire
 ```
 

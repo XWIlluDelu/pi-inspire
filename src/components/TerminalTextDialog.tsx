@@ -86,7 +86,7 @@ export function TerminalTextDialog({
           <p className="terminal-text-dialog__error" role="alert">
             {error}
             <br />
-            Use your browser’s Copy action on the selected text.
+            Use your browser’s Copy action.
           </p>
         )}
         <footer
@@ -109,7 +109,7 @@ export function TerminalTextDialog({
                 type="button"
                 className="icon-button"
                 aria-label="Send terminal selection to composer"
-                title="Add selection to the composer without sending"
+                title="Add selection to draft"
                 disabled={!hasSelection}
                 onClick={() => {
                   const selection = selectedText();

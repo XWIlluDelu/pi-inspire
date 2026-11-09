@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  type Ref,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -396,6 +397,7 @@ const SessionIdent = memo(function SessionIdent({
 export const AppTopbar = memo(function AppTopbar({
   narrowViewport,
   mobileNavOpen,
+  mobileNavToggleRef,
   settingsOpen,
   onToggleNavigation,
   onOpenCommandPalette,
@@ -405,6 +407,7 @@ export const AppTopbar = memo(function AppTopbar({
 }: {
   narrowViewport: boolean;
   mobileNavOpen: boolean;
+  mobileNavToggleRef?: Ref<HTMLButtonElement>;
   settingsOpen: boolean;
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
@@ -440,6 +443,7 @@ export const AppTopbar = memo(function AppTopbar({
     <header className="topbar">
       {narrowViewport ? (
         <NavigationToggle
+          ref={mobileNavToggleRef}
           className="icon-button"
           onClick={onToggleNavigation}
           aria-label="Toggle navigation"

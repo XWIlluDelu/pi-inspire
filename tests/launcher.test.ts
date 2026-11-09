@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -640,10 +641,11 @@ describe("production launcher", () => {
     expect(Buffer.concat(output).toString()).toContain(
       "No managed INSΠRE instance is running.",
     );
-    const cacheDirectory = defaultStaticAssetCacheDirectory(checkout, {
-      environment: env,
-      home,
-    });
+    // The build hashes the canonical checkout path, including native casing.
+    const cacheDirectory = defaultStaticAssetCacheDirectory(
+      await realpath(checkout),
+      { environment: env, home },
+    );
     const generations = JSON.parse(
       await readFile(join(cacheDirectory, "generations.json"), "utf8"),
     ) as { generations: { id: string }[] };

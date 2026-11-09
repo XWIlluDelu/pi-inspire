@@ -223,6 +223,8 @@ for (const touch of [false, true]) {
         let connected = false;
         const transport = await routeSnapshots(page, {
           event: (event) => {
+            // Layout uses synthetic sessions, so only their injected activity applies.
+            if (event.type === "external_session_activity") return false;
             if (event.type === "snapshot") connected = true;
           },
           snapshot: (snapshot) => {
