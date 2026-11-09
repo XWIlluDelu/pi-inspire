@@ -1,21 +1,45 @@
-/docdoki/private/
-/.pi-subagents/
-/.agents/
+# Dependencies, builds, and package archives
 /node_modules/
 /dist/
 /build/
 /.inspire-build
-/.inspire/
-*.tgz
+/*.tsbuildinfo
+/*.tgz
+
+# Tests, browser captures, and local logs
 /coverage/
-.env
-.env.*
-!.env.example
-*.log
-*.tsbuildinfo
 /output/
+/test-results/
+/playwright-report/
 /.playwright-cli/
 /.playwright-mcp/
 /.playwright/
+/*.log
+
+# Local Host and agent state
+/.inspire/
+/.pi-subagents/
+/.agents/
+/.codex/
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
+/.claude/scheduled_tasks.json
+/.claude/routines/.state/
+/.claude/worktrees/
+/.claude/checkpoints/
+/.claude/mailbox/
+/.claude/agent-registry.json
+/.claude/agent-memory-local
+/.claude/first-run
+/.claude/assistant-daemon-state.json
+
+# Local credentials and environment overrides
+/.aws/
+.env
+.env.*
+!.env.example
+
+# Private documents and local archives
+/docdoki/private/
 /docdoki/stages/archive/
 /docs/redesign/
