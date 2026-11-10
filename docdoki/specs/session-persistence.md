@@ -228,9 +228,11 @@ live Pi runs the branch. A Host restart returns every session to this ordinary r
 **Take over** attaches to the preferred corresponding instance: idle first, then the most recent
 activity. The binding is to that process incarnation and session file; every operation re-resolves
 its current endpoint, so reloads are transparent, and input and Stop stay addressed to it. The view
-follows the attached Pi's reported leaf. When the attached Pi exits, moves to another session or
-off the viewed branch, or stays unreachable for longer than a reload takes (the record's stale
-period), the binding ends and the view continues editable with Inspire's own worker at its position.
+follows the attached Pi's reported leaf as soon as the saved projection contains it, even when
+the report arrives after Inspire has already read that file revision. When the attached Pi exits,
+moves to another session or off the viewed branch, or stays unreachable for longer than a reload
+takes (the record's stale period), the binding ends and the view continues editable with Inspire's
+own worker at its position.
 Ending the attachment does not establish how a task the Pi was running turned out. The view says
 why it was released (the Pi exited, opened another session, moved off the branch or stopped
 responding) and claims no failure. Only an exit during work ends the task; it is reported as ended

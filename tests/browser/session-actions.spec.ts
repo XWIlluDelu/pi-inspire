@@ -161,7 +161,7 @@ for (const touch of [false, true]) {
             sessionActionOrder: [
               "rename",
               "copy-id",
-              "resume-command",
+              "switch-branch",
               "clone",
               "export",
             ],
@@ -182,7 +182,7 @@ for (const touch of [false, true]) {
         // Dragging expands the compact menu so a visible action can cross into overflow.
         await down(
           page.getByRole("menuitem", {
-            name: "Reorder Copy resume command",
+            name: "Reorder Switch branch…",
             exact: true,
           }),
         );
@@ -202,13 +202,13 @@ for (const touch of [false, true]) {
           "Copy session ID",
           "Clone current branch",
           "Export session…",
-          "Copy resume command",
+          "Switch branch…",
         ]);
         expect(writes).toHaveLength(0);
         await up();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "clone", "export", "resume-command"]);
+          .toEqual(["rename", "copy-id", "clone", "export", "switch-branch"]);
         expect(writes).toHaveLength(1);
         await page.keyboard.press("Escape");
         await openSettings(page);
@@ -226,7 +226,7 @@ for (const touch of [false, true]) {
           "Copy session ID",
           "Clone current branch",
           "Export session…",
-          "Copy resume command",
+          "Switch branch…",
         ]);
         const copyHandle = page.getByRole("button", {
           name: "Reorder Copy session ID",
@@ -269,13 +269,13 @@ for (const touch of [false, true]) {
           .click();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "export", "clone", "resume-command"]);
+          .toEqual(["rename", "copy-id", "export", "clone", "switch-branch"]);
         await expect(settingsLabels).toHaveText([
           "Rename session",
           "Copy session ID",
           "Export session…",
           "Clone current branch",
-          "Copy resume command",
+          "Switch branch…",
         ]);
 
         // Starting a drag dismisses an already-open move menu.
@@ -293,13 +293,13 @@ for (const touch of [false, true]) {
         await up();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "clone", "export", "resume-command"]);
+          .toEqual(["rename", "copy-id", "clone", "export", "switch-branch"]);
         await expect(settingsLabels).toHaveText([
           "Rename session",
           "Copy session ID",
           "Clone current branch",
           "Export session…",
-          "Copy resume command",
+          "Switch branch…",
         ]);
 
         // A click-menu move is also reflected in the title menu after reload.
@@ -312,7 +312,7 @@ for (const touch of [false, true]) {
           .click();
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "export", "clone", "resume-command"]);
+          .toEqual(["rename", "copy-id", "export", "clone", "switch-branch"]);
         await page.reload();
         await title.click();
         await expect(actions).toHaveText([
@@ -339,12 +339,12 @@ for (const touch of [false, true]) {
           "Copy session ID",
           "Export session…",
           "Clone current branch",
-          "Copy resume command",
+          "Switch branch…",
         ]);
         expect(writes).toHaveLength(writeCount);
         await expect
           .poll(savedOrder)
-          .toEqual(["rename", "copy-id", "export", "clone", "resume-command"]);
+          .toEqual(["rename", "copy-id", "export", "clone", "switch-branch"]);
         await expect(composer).toHaveValue("Keep the unfinished comparison");
       } finally {
         await touchClient?.detach();
@@ -436,6 +436,9 @@ for (const touch of [false, true]) {
         "Copy session ID",
         "Clone current branch",
       ]);
+      await expect(
+        menu.getByRole("menuitem", { name: "Switch branch…", exact: true }),
+      ).toHaveCount(0);
       await expect(
         menu.getByRole("menuitem", { name: "More actions" }),
       ).toBeVisible();

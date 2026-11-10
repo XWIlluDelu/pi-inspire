@@ -1237,18 +1237,19 @@ export class SessionProjection
   }
 
   latestContinuation(leafId: string | null): string | null {
-    const entries = this.currentEntries;
-    const position = new Map(entries.map((entry, index) => [entry.id, index]));
-    // Saved entries follow their parents: nothing before the viewed leaf
-    // can continue it.
-    const floor = leafId === null ? -1 : (position.get(leafId) ?? Infinity);
-    for (let index = entries.length - 1; index > floor; index -= 1) {
-      let id: string | null = entries[index]!.id;
-      while (id !== null && (position.get(id) ?? -1) > floor)
-        id = this.currentEntriesById.get(id)?.parentId ?? null;
-      if (id === leafId) return entries[index]!.id;
+    if (leafId === null) return this.tailEntryId;
+    if (leafId === this.tailEntryId || !this.currentEntriesById.has(leafId))
+      return leafId;
+    const descendants = new Set([leafId]);
+    let latest = leafId;
+    // Parents precede children in the validated file, so one pass classifies
+    // each entry and the last match is the latest saved continuation.
+    for (const entry of this.currentEntries) {
+      if (entry.parentId === null || !descendants.has(entry.parentId)) continue;
+      descendants.add(entry.id);
+      latest = entry.id;
     }
-    return leafId;
+    return latest;
   }
 
   onSameLine(leafId: string | null, other: string | null): boolean {

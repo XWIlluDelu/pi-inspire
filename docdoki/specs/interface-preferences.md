@@ -89,8 +89,8 @@ Ordering changes only presentation, not action eligibility or execution.
 
 The order is a Host-persisted interface preference, saved through the existing field-owned write
 path and included in Reset preferences. An older saved order keeps its relative order and gains
-newly introduced actions at the end; sorting never removes actions. [[workspace-layout]] owns the
-menu's behavior.
+newly introduced actions at the end. Existing saved positions for the former resume command or
+terminal handoff become the position of Switch branch. [[workspace-layout]] owns the menu's behavior.
 
 ## Loaded extension names
 

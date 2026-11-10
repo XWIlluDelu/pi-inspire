@@ -91,7 +91,7 @@ describe("preference persistence", () => {
       "export",
       "rename",
       "clone",
-      "resume-command",
+      "switch-branch",
     ] as const;
     store.setSessionActionOrder([...order]);
     expect(store.getState().prefs.sessionActionOrder).toEqual(order);

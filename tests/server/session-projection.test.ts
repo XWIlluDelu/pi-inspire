@@ -89,6 +89,27 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("finds the latest saved continuation independently for interleaved sibling branches", async () => {
+    const { projection } = await fixture([
+      message("root", null, "user", "root", 1),
+      message("left", "root", "assistant", "left", 2),
+      message("right", "root", "assistant", "right", 3),
+      message("left-first", "left", "user", "first left continuation", 6),
+      message("right-end", "right", "user", "right continuation", 7),
+      message("left-end", "left", "user", "last saved left continuation", 4),
+    ]);
+    try {
+      expect(projection.latestContinuation("left")).toBe("left-end");
+      expect(projection.latestContinuation("right")).toBe("right-end");
+      expect(projection.latestContinuation("right-end")).toBe("right-end");
+      expect(projection.latestContinuation("root")).toBe("left-end");
+      expect(projection.latestContinuation(null)).toBe("left-end");
+      expect(projection.latestContinuation("missing")).toBe("missing");
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("does not turn an unknown parent outcome into success when projecting failed child receipts", () => {
     const result = {
       role: "toolResult",

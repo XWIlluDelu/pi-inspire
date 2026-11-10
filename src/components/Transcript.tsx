@@ -89,7 +89,6 @@ export const Transcript = memo(function Transcript({
   queue = emptyPendingQueues(),
   pendingAction = null,
   extensionDisplays = [],
-  viewingEarlierBranch = false,
 }: {
   ref?: Ref<TranscriptNavigation>;
   messages: ChatMessage[];
@@ -124,7 +123,6 @@ export const Transcript = memo(function Transcript({
   queue?: PendingQueues;
   pendingAction?: "clear" | "recover" | null;
   extensionDisplays?: ExtensionDisplay[];
-  viewingEarlierBranch?: boolean;
 }) {
   const genericExtensionDisplays = extensionDisplays.filter(
     (display): display is GenericExtensionDisplay => display.kind === "raw",
@@ -565,7 +563,7 @@ export const Transcript = memo(function Transcript({
 
   return (
     <div
-      className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"} ${viewingEarlierBranch ? "transcript-wrap--earlier-branch" : ""}`}
+      className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"}`}
       tabIndex={-1}
       onKeyDownCapture={(event) => {
         if (
@@ -607,7 +605,7 @@ export const Transcript = memo(function Transcript({
         }
       }}
     >
-      <EarlierBranchBanner />
+      <EarlierBranchBanner key={`${sessionId}:${viewId}`} />
       <TranscriptUtilities
         search={search}
         inputRef={searchInputRef}

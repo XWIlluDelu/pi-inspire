@@ -150,6 +150,10 @@ describe("Session actions", () => {
       const user = userEvent.setup();
       render(<Harness />);
       await user.click(screen.getByRole("button", { name: "Session title" }));
+      expect(
+        screen.queryByRole("menuitem", { name: "Switch branch…" }),
+      ).toBeNull();
+      await user.click(screen.getByRole("menuitem", { name: "More actions" }));
       const open = screen.getByRole("menuitem", { name: "Switch branch…" });
       await waitFor(() => expect(open).toBeEnabled());
       await user.click(open);
@@ -161,7 +165,19 @@ describe("Session actions", () => {
         name: /Try the other approach.*Default/,
       });
       expect(other).toHaveFocus();
-      await user.click(other);
+      await user.click(
+        screen.getByRole("menuitem", { name: "Back to actions" }),
+      );
+      expect(
+        screen.getByRole("menuitem", { name: "Switch branch…" }),
+      ).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(
+        screen.getByRole("menuitemradio", {
+          name: /Try the other approach.*Default/,
+        }),
+      ).toHaveFocus();
+      await user.keyboard("{Enter}");
       expect(select).toHaveBeenCalledWith(
         "01a163f4-8e43-71df-9bd6-71efa60bd123",
         "newer",
@@ -171,6 +187,7 @@ describe("Session actions", () => {
       leaves.mockResolvedValue({ total: 1, leaves: [] });
       await user.click(screen.getByRole("button", { name: "Session title" }));
       await waitFor(() => expect(leaves).toHaveBeenCalledTimes(2));
+      await user.click(screen.getByRole("menuitem", { name: "More actions" }));
       expect(
         screen.getByRole("menuitem", { name: "Switch branch…" }),
       ).toBeDisabled();
@@ -193,9 +210,9 @@ describe("Session actions", () => {
     const more = screen.getByRole("menuitem", { name: "Fewer actions" });
     expect(more).toHaveAttribute("aria-expanded", "true");
     expect(
-      screen.getByRole("menuitem", { name: "Copy resume command" }),
+      screen.getByRole("menuitem", { name: "Export session…" }),
     ).toHaveFocus();
-    await user.keyboard("{ArrowDown}{ArrowDown}{Enter}");
+    await user.keyboard("{Enter}");
     expect(onExport).toHaveBeenCalledOnce();
     await user.keyboard("{Escape}");
     expect(title).toHaveFocus();
@@ -206,21 +223,25 @@ describe("Session actions", () => {
     ).toBeNull();
   });
 
-  it("offers keyboard reordering from the menu handle using the same settings order", async () => {
+  it("reorders Switch branch from its menu handle even when switching is unavailable", async () => {
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Session title" }));
+    await user.click(screen.getByRole("menuitem", { name: "More actions" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Switch branch…" }),
+    ).toBeDisabled();
     const handle = screen.getByRole("menuitem", {
-      name: "Reorder Clone current branch",
+      name: "Reorder Switch branch…",
     });
     handle.focus();
-    await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
     expect(handle).toHaveFocus();
     expect(
       within(screen.getByRole("list", { name: "Session action order" }))
         .getAllByRole("listitem")
-        .at(3),
-    ).toHaveTextContent("Clone current branch");
+        .at(2),
+    ).toHaveTextContent("Switch branch…");
     expect(
       screen.getByRole("menuitem", { name: "Export session…" }),
     ).toBeVisible();
@@ -261,7 +282,7 @@ describe("Session actions", () => {
       "Copy session ID",
       "Clone current branch",
       "Export session…",
-      "Copy resume command",
+      "Switch branch…",
     ]);
     fireEvent.click(exportHandle);
     await user.click(
@@ -272,14 +293,13 @@ describe("Session actions", () => {
       screen.getByRole("menuitem", { name: "Export session…" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("menuitem", { name: "Copy resume command" }),
+      screen.queryByRole("menuitem", { name: "Switch branch…" }),
     ).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-    const terminal = screen.getByRole("menuitem", {
-      name: "Copy resume command",
-    });
-    expect(terminal).toBeEnabled();
-    fireEvent.keyDown(terminal, { key: "Escape" });
+    expect(
+      screen.getByRole("menuitem", { name: "Switch branch…" }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     const copyHandle = screen.getByRole("button", {
       name: "Reorder Copy session ID",

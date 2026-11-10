@@ -557,6 +557,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             ).catch(() => undefined);
         },
         corresponds: (slot, leafId) => this.leafContinuesView(slot, leafId),
+        followLeaf: (slot, leafId) => this.followAttachedLeaf(slot, leafId),
         syncUi: (slot, requests, owner) =>
           this.extensionUi.synchronize(slot, requests, owner),
         assertUsable: (slot) => {
@@ -1191,7 +1192,33 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           : projection.latestContinuation(slot.viewLeafId);
     }
     const after = this.effectiveLeaf(slot);
-    if (after === before) return;
+    this.recordViewChange(slot, projection, before, after);
+  }
+
+  private followAttachedLeaf(slot: RuntimeSlot, leafId: string | null): void {
+    const projection = slot.projection;
+    if (!projection || (leafId !== null && !projection.entry(leafId))) return;
+    const before = this.effectiveLeaf(slot);
+    slot.viewLeafId = leafId;
+    if (before === leafId) return;
+    this.recordViewChange(slot, projection, before, leafId);
+    // A saved append can be reconciled before Pi reports its new leaf. The
+    // later observation changes the visible transcript at the same revision.
+    this.emitSlotEvent(slot, {
+      type: "session_projection_changed",
+      revision: projection.revision,
+      health: projection.health,
+      conflict: slot.conflict,
+    });
+  }
+
+  private recordViewChange(
+    slot: RuntimeSlot,
+    projection: SessionProjectionView,
+    before: string | null,
+    after: string | null,
+  ): void {
+    if (after === before || before === null) return;
     // Growth of the same branch is an ordinary append, not a new view.
     for (
       let id = after;

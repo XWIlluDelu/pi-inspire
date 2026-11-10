@@ -6,7 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskBoardAdapter } from "../../docs/examples/task-board/TaskBoardAdapter";
 import { App } from "../../src/App";
 import {
@@ -253,6 +253,38 @@ describe("command discovery and preparation", () => {
     expect(
       screen.getByRole("dialog", { name: "Command palette" }),
     ).toBeInTheDocument();
+  });
+
+  it("offers Copy resume command through search for a selected read-only session", async () => {
+    act(() =>
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: activeSnapshot({ readOnlyReason: "external-active" }),
+      }),
+    );
+    const copy = vi.spyOn(store, "copyResumeCommand").mockResolvedValue(true);
+    render(<App />);
+    const input = await palette();
+    const action = { name: "Copy resume command", exact: true };
+    expect(screen.queryByRole("option", action)).toBeNull();
+    fireEvent.change(input, { target: { value: "resume command" } });
+    expect(screen.getAllByRole("option")[0]).toBe(
+      screen.getByRole("option", action),
+    );
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(copy).toHaveBeenCalledExactlyOnceWith("s1");
+    expect(
+      screen.queryByRole("dialog", { name: "Command palette" }),
+    ).toBeNull();
+
+    act(() =>
+      FakeWebSocket.instances.at(-1)?.emit({
+        type: "snapshot",
+        data: { ...activeSnapshot(), active: null },
+      }),
+    );
+    await palette("resume command");
+    expect(screen.queryByRole("option", action)).toBeNull();
   });
 
   it.each([false, true])(

@@ -99,6 +99,7 @@ async function directAttachment(
       released: vi.fn(),
       syncUi: vi.fn(),
       corresponds: () => true,
+      followLeaf: vi.fn(),
       log: vi.fn(),
       reconcile: async () => {},
       ...host,
@@ -570,6 +571,72 @@ describe("continue an externally owned Pi", () => {
       expect(
         JSON.stringify(snapshot.active?.transcriptPage.messages),
       ).toContain("Reply from the same Pi");
+      expect(f.native.close).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("follows a Pi that reports its new leaf after the append was already read", async () => {
+    const session = await persistedRecord("a");
+    const f = nativeFixture();
+    f.setState({ status: "working", leafId: "u1" });
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => ["u1"])
+      .setExternalSessionConnector(async () => f.native);
+    const events: Array<{ type: string; sessionId: string }> = [];
+    runtime.on("event", (event) => events.push(event));
+    try {
+      const attached = await openAttached(runtime, "a");
+      expect(attached.sessionStatuses.a?.external).toBe(true);
+      const replyId = "native-reply";
+      await appendFile(
+        session.path,
+        `${JSON.stringify({
+          type: "message",
+          id: replyId,
+          parentId: "u1",
+          timestamp: session.created.toISOString(),
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Reply from the attached Pi" }],
+            timestamp: 2,
+          },
+        })}\n`,
+      );
+      const saved = await runtime.snapshot("a");
+      expect(saved.active?.durableLeafId).toBe(replyId);
+
+      events.length = 0;
+      f.setState({ status: "working", leafId: replyId });
+      await vi.waitFor(
+        () =>
+          expect(events).toContainEqual(
+            expect.objectContaining({
+              sessionId: "a",
+              type: "session_projection_changed",
+            }),
+          ),
+        { timeout: 2_000 },
+      );
+      const { active } = await runtime.snapshot("a");
+      expect(active?.effectiveLeafId).toBe(replyId);
+      expect(active?.transcriptPage.viewId).toBe(
+        saved.active?.transcriptPage.viewId,
+      );
+      expect(active?.transcriptPage.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ __inspireEntryId: replyId }),
+        ]),
+      );
       expect(f.native.close).not.toHaveBeenCalled();
     } finally {
       await runtime.close();

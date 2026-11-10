@@ -23,7 +23,10 @@ import {
   resolveCommandInventory,
 } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
-import { branchCopiesBlocked } from "../controllers/branch-controller";
+import {
+  branchCopiesBlocked,
+  hasEarlierContinuation,
+} from "../controllers/branch-controller";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
@@ -113,8 +116,7 @@ export const CommandPalette = memo(function CommandPalette({
       ),
       runState: appState.runState,
       bashRunning: appState.bashRunning,
-      transcriptDurableLeafId: appState.transcriptDurableLeafId,
-      transcriptEffectiveLeafId: appState.transcriptEffectiveLeafId,
+      earlierContinuation: hasEarlierContinuation(appState),
       prefs: appState.prefs,
       sessions: appState.sessions,
       commands: appState.commands,
@@ -183,11 +185,6 @@ export const CommandPalette = memo(function CommandPalette({
     },
   );
   const abortable = isAbortableRunState(state.runState) || state.bashRunning;
-  const hasEarlierBranch = Boolean(
-    state.transcriptDurableLeafId &&
-      state.transcriptEffectiveLeafId &&
-      state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
-  );
 
   useSearchFocus(active && !preparation && !renaming, inputRef, dialogRef);
   useEffect(() => {
@@ -266,7 +263,14 @@ export const CommandPalette = memo(function CommandPalette({
       },
     ];
     if (state.sessionId) {
+      const { sessionId } = state;
       actions.push(
+        {
+          id: "copy-resume-command",
+          group: "Actions",
+          title: "Copy resume command",
+          run: () => void store.copyResumeCommand(sessionId),
+        },
         {
           id: "files",
           group: "Workspace",
@@ -395,11 +399,12 @@ export const CommandPalette = memo(function CommandPalette({
         aliases: ["/scoped-models", "common models", "provider settings"],
         run: () => store.openModelSettings(),
       });
-      if (hasEarlierBranch) {
+      if (state.earlierContinuation) {
         actions.push({
           id: "latest-branch",
           group: "Workspace",
-          title: "Back to latest branch",
+          title: "Restore latest saved position",
+          aliases: ["Back to latest branch"],
           default: true,
           run: () => void store.returnToLatestBranch(),
         });
@@ -611,7 +616,7 @@ export const CommandPalette = memo(function CommandPalette({
   }, [
     state,
     abortable,
-    hasEarlierBranch,
+    state.earlierContinuation,
     onToggleNav,
     onToggleCtx,
     onNewSession,

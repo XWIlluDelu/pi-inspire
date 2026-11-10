@@ -65,15 +65,19 @@ position. **Current conversation** returns to the active conversation's outline,
 - **Fork into new session** copies the conversation before the selected input and prepares its text
   and saved images as an editable draft in the new session.
 - **Clone into new session** copies through the selected response or other point and opens an empty
-  draft. **Clone current branch** in the title's action menu, `/clone`, and the palette share this action;
-  the earlier-conversation notice offers **Clone from here**.
+  draft. **Clone current branch** in the title's action menu, `/clone`, and the palette share this action.
 
-Click the session title for Rename, Clone and Export. **Switch branch…** in the same menu lists
-the session's branch ends with their latest message and age, marking the default (what a newly
-opened Pi would show) and the one you are viewing; it is disabled when there is only one. History
-shows the full tree. Continuing in the same session requires an
-idle session with no pending input or dialogs. Fork and Clone can copy recorded history while the
-source runs, leaving its task, Pending input and draft intact; neither sends a prompt.
+When new messages will continue from earlier history, **Restore saved position** returns to the latest
+saved point. Closing the notice leaves the continuation in place. You can still restore it from the
+command palette.
+
+Click the session title for Rename, Copy session ID, and Clone. **More actions** shows Switch branch
+and Export in the default order. **Switch branch…** lists the session's branch ends with their latest
+message and age, marking the default (what a newly opened Pi would show) and the one you are viewing.
+It is disabled when there is only one branch. History shows the full tree. Continuing in the same
+session requires an idle session with no pending input or dialogs. Fork and Clone can copy recorded
+history while the source runs, leaving its task, Pending input and draft intact without sending a
+prompt.
 
 ## Models and thinking
 

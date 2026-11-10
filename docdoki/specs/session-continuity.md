@@ -257,9 +257,10 @@ External activity does not block deletion; [[session-deletion]] owns its confirm
 ### Sharing
 
 Terminal Pi and Inspire may use one session at the same time; there is no handoff, release step or
-terminal mode. **Copy resume command** copies a correctly quoted change-directory and
-`pi --session` command for POSIX shells or PowerShell and changes nothing. [[session-persistence]]
-owns which view is read-only, takeover, and how appends from several processes are reconciled.
+terminal mode. Search the command palette for **Copy resume command** to copy a correctly quoted
+change-directory and `pi --session` command for POSIX shells or PowerShell. Copying remains
+available in read-only sessions. [[session-persistence]] owns read-only views, takeover, and how
+appends from several processes are reconciled.
 
 ## New project creation
 

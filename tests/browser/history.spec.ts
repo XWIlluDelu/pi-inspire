@@ -710,36 +710,40 @@ test.describe("touch History navigation", () => {
     await history
       .getByRole("button", { name: "Continue here", exact: true })
       .click();
+    const banner = page.getByRole("region", { name: "Earlier continuation" });
     await expect(
-      page.getByText("Earlier branch", { exact: true }),
+      banner.getByText("Continuing from earlier history"),
     ).toBeVisible();
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     await expect(
       page.getByRole("dialog", { name: "Context panel", exact: true }),
     ).toHaveCount(0);
+    await page.setViewportSize({ width: 320, height: 844 });
+    await expect(banner).toBeInViewport({ ratio: 1 });
+    for (const control of await banner.getByRole("button").all()) {
+      await expect(control).toBeInViewport({ ratio: 1 });
+      expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    const sessionActions = page.getByRole("button", {
+      name: /^Session actions:/,
+    });
+    await sessionActions.tap();
     await page
-      .getByRole("button", { name: "Clone from here", exact: true })
-      .click();
+      .getByRole("menuitem", { name: "Clone current branch", exact: true })
+      .tap();
     await expect(composer).toHaveValue("");
-    await expect(page.getByText("Earlier branch", { exact: true })).toHaveCount(
-      0,
-    );
-    expect(calls.at(-1)?.path).toBe("/api/branches/clone");
+    await expect(banner).toHaveCount(0);
+    expect(calls.at(-1)).toMatchObject({
+      path: "/api/branches/clone",
+      body: { targetId: "history-a-0" },
+    });
     await chooseSource(page);
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
-    await page
-      .getByRole("button", { name: "Back to latest", exact: true })
+    await banner
+      .getByRole("button", { name: "Restore saved position", exact: true })
       .click();
-    await expect(page.getByText("Earlier branch", { exact: true })).toHaveCount(
-      0,
-    );
-    await page.getByRole("button", { name: /^Session actions:/ }).click();
-    const cloneButton = page.getByRole("menuitem", {
-      name: "Clone current branch",
-      exact: true,
-    });
-    await cloneButton.tap();
-    await expect(composer).toHaveValue("");
+    await expect(banner).toHaveCount(0);
     await composer.fill("UNSENT — keep this in the source clone");
 
     const palette = await openCommandPalette(page);
@@ -751,10 +755,8 @@ test.describe("touch History navigation", () => {
         () =>
           calls.filter((call) => call.path === "/api/branches/clone").length,
       )
-      .toBe(3);
-    await expect(
-      page.getByRole("button", { name: /^Session actions:/ }),
-    ).toBeEnabled();
+      .toBe(2);
+    await expect(sessionActions).toBeEnabled();
     await expect(composer).toHaveValue("");
     await composer.fill("/clone");
     const send = page.getByRole("button", {
@@ -767,14 +769,12 @@ test.describe("touch History navigation", () => {
         () =>
           calls.filter((call) => call.path === "/api/branches/clone").length,
       )
-      .toBe(4);
-    await expect(
-      page.getByRole("button", { name: /^Session actions:/ }),
-    ).toBeEnabled();
+      .toBe(3);
+    await expect(sessionActions).toBeEnabled();
     await expect(composer).toHaveValue("");
     expect(
       calls.filter((call) => call.path === "/api/branches/clone"),
-    ).toHaveLength(4);
+    ).toHaveLength(3);
     expect(calls.filter((call) => call.path === "/api/prompt")).toHaveLength(0);
     expect(errors).toEqual([]);
     expect(
@@ -891,7 +891,7 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
   ).toBeVisible();
 });
 
-test("earlier-branch progress identifies the action while keeping both failures recoverable", async ({
+test("earlier continuation can be restored from the palette after dismissal", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -916,76 +916,33 @@ test("earlier-branch progress identifies the action while keeping both failures 
   });
   expect(navigated.ok()).toBe(true);
   await page.reload();
-  const banner = page.getByRole("region", { name: "Earlier branch context" });
+  const banner = page.getByRole("region", { name: "Earlier continuation" });
   await expect(banner).toBeVisible();
   const draft = page.getByRole("textbox", { name: "Message", exact: true });
   await draft.fill("Keep the calibration draft");
-  for (const [endpoint, label, otherLabel] of [
-    ["clone", "Clone from here", "Back to latest"],
-    ["navigate", "Back to latest", "Clone from here"],
-  ]) {
-    let release!: () => void;
-    let arrive!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const requested = new Promise<void>((resolve) => {
-      arrive = resolve;
-    });
-    const pattern = `**/api/branches/${endpoint}`;
-    await page.route(pattern, async (route) => {
-      arrive();
-      await gate;
-      await route.fulfill({
-        status: 503,
-        json: { error: "Operation temporarily unavailable. Try again." },
-      });
-    });
-    const chosen = banner.getByRole("button", { name: label, exact: true });
-    const other = banner.getByRole("button", { name: otherLabel, exact: true });
-    try {
-      await chosen.click();
-      await requested;
-      await expect(chosen).toHaveAttribute("aria-busy", "true");
-      await expect(chosen.locator(".pi-loading")).toHaveCount(1);
-      await expect(other.locator(".pi-loading")).toHaveCount(0);
-      await expect(chosen).toBeDisabled();
-      await expect(other).toBeDisabled();
-      for (const [width, height] of [
-        [1280, 900],
-        [390, 844],
-        [320, 640],
-      ]) {
-        await page.setViewportSize({ width, height });
-        await expect(chosen).toBeInViewport();
-        expect(
-          await chosen.evaluate((button) => {
-            const box = button.getBoundingClientRect();
-            const owner = button
-              .closest(".earlier-branch-banner")!
-              .getBoundingClientRect();
-            return (
-              box.left >= owner.left &&
-              box.right <= owner.right &&
-              box.top >= owner.top &&
-              box.bottom <= owner.bottom
-            );
-          }),
-        ).toBe(true);
-        await expect(chosen.locator(".pi-loading")).toHaveCount(1);
-      }
-    } finally {
-      release();
-    }
-    await expect(banner.getByRole("alert")).toContainText(
-      "Operation temporarily unavailable",
-    );
-    await expect(chosen).toBeEnabled();
-    await expect(other).toBeEnabled();
-    await expect(banner.locator(".pi-loading")).toHaveCount(0);
-    await expect(draft).toHaveValue("Keep the calibration draft");
-    await page.unroute(pattern);
-  }
+  await banner
+    .getByRole("button", { name: "Dismiss earlier continuation notice" })
+    .click();
+  await expect(banner).toHaveCount(0);
+  const stillEarlier = await (
+    await hostRequest(page).get("/api/branches/tree?sessionId=fixture-branch")
+  ).json();
+  expect(stillEarlier.effectiveLeafId).toBe(earlier);
+
+  const palette = await openCommandPalette(page);
+  await palette
+    .getByLabel("Filter commands")
+    .fill("restore latest saved position");
+  const restored = page.waitForResponse("**/api/branches/navigate");
+  await palette
+    .getByRole("option", { name: /Restore latest saved position/ })
+    .click();
+  expect((await restored).ok()).toBe(true);
+  await expect(draft).toHaveValue("Keep the calibration draft");
+  const latest = await (
+    await hostRequest(page).get("/api/branches/tree?sessionId=fixture-branch")
+  ).json();
+  expect(latest.effectiveLeafId).toBe(latest.durableLeafId);
 });
 
 test("earlier-branch notice follows reader width and reserves wrapped diagnostics", async ({
@@ -1005,7 +962,7 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
   await history
     .getByRole("button", { name: "Edit in this session", exact: true })
     .click();
-  const banner = page.getByRole("region", { name: "Earlier branch context" });
+  const banner = page.getByRole("region", { name: "Earlier continuation" });
   await expect(banner).toBeVisible();
   const reader = page.locator(".reading-stage");
   const resize = page.getByRole("separator", {
@@ -1027,40 +984,46 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
     banner.evaluate((root) => {
       const r = (element: Element) => element.getBoundingClientRect();
       const stage = r(root.closest(".reading-stage")!);
-      const header = r(root.querySelector(".earlier-branch-banner__header")!);
-      const copy = root.querySelector(".earlier-branch-banner__copy")!;
-      const title = root.querySelector("strong")!;
+      const box = r(root);
+      const title = root.querySelector(
+        ".earlier-branch-banner__header > span",
+      )!;
       const mark = r(
         root.querySelector(".earlier-branch-banner__header > svg")!,
       );
-      const actions = r(root.querySelector(".earlier-branch-banner__actions")!);
+      const controls = [...root.querySelectorAll("button")].map(r);
       const transcript = root.parentElement!.querySelector(".transcript")!;
       const style = getComputedStyle(transcript);
       const contentStyle = getComputedStyle(
         transcript.querySelector(".transcript__content")!,
       );
       const needed =
-        r(root).bottom -
+        box.bottom -
         r(transcript).top +
         Number.parseFloat(style.getPropertyValue("--space-4"));
-      const range = document.createRange();
-      range.selectNodeContents(copy);
+      const textFits = (element: Element) => {
+        const textBox = r(element);
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return [...range.getClientRects()].every(
+          (line) =>
+            line.left >= textBox.left - 0.5 &&
+            line.right <= textBox.right + 0.5,
+        );
+      };
+      const diagnostic = root.querySelector('[role="alert"]');
       return {
+        fitsReader: box.left >= stage.left && box.right <= stage.right,
         firstLineOffset:
           mark.y +
           mark.height / 2 -
           r(title).y -
           Number.parseFloat(getComputedStyle(title).lineHeight) / 2,
-        textFits: [...range.getClientRects()].every(
-          (box) =>
-            box.left >= r(copy).left - 0.5 && box.right <= r(copy).right + 0.5,
+        textFits: textFits(title) && (!diagnostic || textFits(diagnostic)),
+        controlsFit: controls.every(
+          (button) =>
+            button.left >= r(title).right && button.right <= box.right,
         ),
-        controlsFit:
-          actions.left >= r(root).left && actions.right <= r(root).right,
-        separated:
-          stage.width <= 640
-            ? actions.top >= header.bottom
-            : actions.left >= header.right,
         paddingRoom:
           Math.min(
             Number.parseFloat(contentStyle.paddingTop),
@@ -1074,10 +1037,10 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
       .poll(async () => (await measure()).paddingRoom)
       .toBeGreaterThanOrEqual(-0.5);
     const geometry = await measure();
+    expect(geometry.fitsReader).toBe(true);
     expect(Math.abs(geometry.firstLineOffset)).toBeLessThanOrEqual(0.5);
     expect(geometry.textFits).toBe(true);
     expect(geometry.controlsFit).toBe(true);
-    expect(geometry.separated).toBe(true);
   };
   await checkGeometry();
   let release!: () => void;
@@ -1090,13 +1053,21 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
     await gate;
     await route.fulfill({ status: 503, json: { error: diagnostic } });
   });
-  await banner
-    .getByRole("button", { name: "Back to latest", exact: true })
-    .click();
-  await expect(banner.locator(".pi-loading")).toBeVisible();
-  await checkGeometry();
-  release();
+  const restore = banner.getByRole("button", {
+    name: "Restore saved position",
+    exact: true,
+  });
+  try {
+    await restore.click();
+    await expect(restore).toHaveAttribute("aria-busy", "true");
+    await expect(restore).toBeDisabled();
+    await expect(restore.locator(".pi-loading")).toBeVisible();
+    await checkGeometry();
+  } finally {
+    release();
+  }
   await expect(banner.getByRole("alert")).toHaveText(diagnostic);
+  await expect(restore).toBeEnabled();
   for (const width of [1280, 820, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     const close = page.getByRole("button", {
@@ -1107,17 +1078,13 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
     await checkGeometry();
   }
   await page.unroute("**/api/branches/navigate");
-  await banner
-    .getByRole("button", { name: "Back to latest", exact: true })
-    .click();
+  await restore.click();
   await expect(banner).toHaveCount(0);
   expect(
     await page
       .locator(".transcript-wrap")
       .evaluate((wrap) =>
-        (wrap as HTMLElement).style.getPropertyValue(
-          "--earlier-branch-banner-bottom",
-        ),
+        (wrap as HTMLElement).style.getPropertyValue("--earlier-branch-inset"),
       ),
   ).toBe("");
   expect(errors).toEqual([]);

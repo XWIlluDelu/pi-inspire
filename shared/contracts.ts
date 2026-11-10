@@ -234,7 +234,7 @@ export const SESSION_ACTION_IDS = [
   "rename",
   "copy-id",
   "clone",
-  "resume-command",
+  "switch-branch",
   "export",
 ] as const;
 export type SessionActionId = (typeof SESSION_ACTION_IDS)[number];

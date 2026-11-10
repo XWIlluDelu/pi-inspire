@@ -239,13 +239,14 @@ all acquired handles close. [[composer]] owns the dialog and typed receipts.
 
 ## Earlier-branch presentation
 
-A leased earlier branch shows a persistent notice above the transcript with Return to latest and
-endpoint-inclusive Clone from here, whether or not History is open. Return refreshes the runtime-owned
-branch projection; Clone captures the displayed endpoint without a History refresh. Derive the notice
-from the runtime's durable/effective leaf pair, never a browser-owned branch state. It clears only
-after the resulting snapshot owns the durable leaf.
+When a worker holds a navigation lease away from the latest saved point, show a compact notice above
+the transcript explaining that new messages continue from earlier history. **Restore saved position**
+refreshes the runtime-owned branch projection and restores where the next message will continue.
+The notice is available with History closed. Dismissing it hides it for the current view and leaves
+the continuation in place. The command palette still offers the restore action. **Clone current branch**
+in the session menu copies through the displayed point without changing the source session.
 
-Fit the notice to the reading stage, including narrow centers between side panes. Keep its branch
-mark aligned with the first title line when diagnostics wrap. Initial reading space and native
-scroll-target insets keep their minimum spacing and expand with the measured notice, so diagnostics
-stay clear of content and targets stay aligned.
+Use the Host's navigation lease and durable/effective leaf pair for this presentation. A difference
+caused by following an attached Pi or viewing a saved session alone does not qualify. Fit the notice
+to its content and the available reading stage. Reserve only the measured clearance needed above the
+transcript and its scroll targets, including when diagnostics wrap.

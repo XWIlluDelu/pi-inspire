@@ -189,10 +189,10 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   transcriptAppendFromRevision: number;
   transcriptIncarnation: string | null;
   transcriptViewId: string | null;
-  /** Durable Pi projection leaf. It differs from effective only while the
-   * visible session is inspecting an earlier branch. */
+  /** Saved Pi projection leaf and the continuation shown in the transcript. */
   transcriptDurableLeafId: string | null;
   transcriptEffectiveLeafId: string | null;
+  transcriptNavigationLeased: boolean;
   composerHistoryVersion: string | null;
   hasOlderMessages: boolean;
   olderMessagesCursor: string | null;
@@ -361,6 +361,7 @@ export function createInitialAppState(): AppState {
     transcriptViewId: null,
     transcriptDurableLeafId: null,
     transcriptEffectiveLeafId: null,
+    transcriptNavigationLeased: false,
     composerHistoryVersion: null,
     hasOlderMessages: false,
     olderMessagesCursor: null,

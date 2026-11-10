@@ -342,8 +342,6 @@ const ConversationStage = memo(function ConversationStage({
       tools: source.tools,
       transcriptViewId: source.transcriptViewId,
       transcriptIncarnation: source.transcriptIncarnation,
-      transcriptDurableLeafId: source.transcriptDurableLeafId,
-      transcriptEffectiveLeafId: source.transcriptEffectiveLeafId,
       queue: source.queue,
       pendingAction: source.pendingAction,
       extensionDisplays: source.extensionDisplays,
@@ -379,11 +377,6 @@ const ConversationStage = memo(function ConversationStage({
       sessionId={state.sessionId}
       viewId={state.transcriptViewId ?? ""}
       projectionIncarnation={state.transcriptIncarnation ?? ""}
-      viewingEarlierBranch={Boolean(
-        state.transcriptDurableLeafId &&
-          state.transcriptEffectiveLeafId &&
-          state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId,
-      )}
       queue={state.queue}
       pendingAction={state.pendingAction}
       extensionDisplays={state.extensionDisplays}
