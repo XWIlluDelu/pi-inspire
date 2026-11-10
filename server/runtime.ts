@@ -79,10 +79,9 @@ import {
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
 import type { ConnectExternalSession } from "./external-session.js";
-import { modelOption, modelSettings } from "./model-catalog.js";
+import { modelOption } from "./model-catalog.js";
 import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
 import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
-import { commonModelOptions } from "./model-settings.js";
 import { createProjectDirectory, resolveProjectDirectory } from "./paths.js";
 import {
   isPiRpcOutcomeUnknown,
@@ -347,7 +346,7 @@ export interface RuntimeLike extends RestartLeaseOwner {
   refreshModels(
     sessionId: string,
     inherit?: boolean,
-  ): Promise<ModelCatalogResponse>;
+  ): Promise<ModelCatalogResponse & { enabledModelPatterns?: string[] }>;
   providerAuth?(
     sessionId: string,
     operation: ProviderAuthOperation,
@@ -2170,7 +2169,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     rpc: PiRpcProcess,
   ): Promise<{
     stats: unknown;
-    models: unknown[];
+    models: unknown[] | undefined;
     commands: unknown[];
   }> {
     const [stats, models, commands] = await Promise.all([
@@ -2192,13 +2191,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 (slot.availableModels = result.models.map((model) =>
                   modelOption(model as ModelOption),
                 )),
-              (error) =>
+              (error) => {
                 this.runtimeCapabilityUnavailable(
                   slot,
                   rpc,
                   "get_available_models",
                   error,
-                ),
+                );
+                return undefined;
+              },
             ),
       this.readRuntimeCommands(slot, rpc),
     ]);
@@ -2327,11 +2328,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               ? null
               : (slot.projection.selectedModel(metadata?.virtualModels ?? []) ??
                 slot.preview.model),
-        ...(external
-          ? { availableModels: slot.availableModels ?? [] }
-          : metadata !== undefined
-            ? { availableModels: metadata?.models ?? [] }
-            : {}),
+        availableModels:
+          live || external
+            ? (slot.availableModels ?? undefined)
+            : metadata?.models,
         modelDiscovery:
           external && !nativeSelection
             ? "unavailable"
@@ -3145,7 +3145,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         isCompacting: false,
         transcriptPage: page,
         projectionHealth: projection.health,
-        availableModels: [],
         commands: [],
       };
       this.projectionCoordinator.captureWriterBaseline(slot);
@@ -4454,7 +4453,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             isCompacting: false,
             transcriptPage: page,
             projectionHealth: destinationProjection.health,
-            availableModels: [],
             commands: [],
           },
           projection: destinationProjection,
@@ -5412,7 +5410,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async refreshModels(
     sessionId: string,
     inherit = false,
-  ): Promise<ModelCatalogResponse> {
+  ): Promise<ModelCatalogResponse & { enabledModelPatterns?: string[] }> {
     this.assertMaintenanceAvailable();
     const retained = this.slots.get(sessionId);
     const slot =
@@ -5475,6 +5473,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.previewModels.set(slot, { revision, data: metadata });
         return {
           models: metadata.models,
+          enabledModelPatterns: metadata.enabledModelPatterns,
           defaults: metadata.defaults,
           ...(metadata.warning ? { warning: metadata.warning } : {}),
           ...(await selected()),
@@ -5754,10 +5753,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 : null,
           },
           availableModels: slot.availableModels ?? models,
-          commonModels: await commonModelOptions(
-            modelSettings(slot.cwd).getEnabledModels() ?? [],
-            (slot.availableModels ?? models) as ModelOption[],
-          ),
           commands,
         },
         runState: slot.runState,

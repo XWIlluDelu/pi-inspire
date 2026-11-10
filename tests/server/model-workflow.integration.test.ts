@@ -72,7 +72,7 @@ it("keeps retained history and known models available when one startup extension
     const snapshot = await runtime.snapshot(manager.getSessionId());
     expect(snapshot.active).toMatchObject({
       model: null,
-      availableModels: [],
+      modelDiscovery: "loading",
       projectionHealth: { status: "ok" },
       transcriptPage: {
         messages: [
@@ -81,6 +81,7 @@ it("keeps retained history and known models available when one startup extension
         ],
       },
     });
+    expect(snapshot.active?.availableModels).toBeUndefined();
     expect(snapshot.runState).toBe("idle");
     expect(factory).not.toHaveBeenCalled();
     const opened = await runtime.openSession(manager.getSessionId());

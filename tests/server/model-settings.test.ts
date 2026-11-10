@@ -447,6 +447,15 @@ describe("model settings routes", () => {
 });
 
 describe("native configuration round trips", () => {
+  it("reads global model settings after the session workspace is removed", async () => {
+    await rm(cwd, { recursive: true });
+
+    const settings = await snapshot();
+
+    expect(settings.saved.defaultThinkingLevel).toBe("high");
+    expect(settings.effective).toEqual(settings.saved);
+  });
+
   it("keeps global preferences editable when trusted project settings cannot be parsed", async () => {
     new ProjectTrustStore(agent).set(cwd, true);
     const projectPath = join(cwd, ".pi", "settings.json");

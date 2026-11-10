@@ -109,6 +109,9 @@ history keeps known selection/effort but discovers choices in the prospective di
 the read-only source. Choosing manual effort retires an in-flight thinking preview; directory changes
 preserve that choice without leaving model readiness pending.
 
+Native settings and trust reads run in the model metadata process. The model picker resolves
+common choices with its catalog read, so session snapshots do not wait for Pi's settings lock.
+
 A model-only change must preserve a manually selected current-session effort when the target
 supports it, clamping only unsupported levels. This requires one owning-worker operation that applies
 the effort intent before model-select hooks. [[pi-capability-gaps]] tracks the missing public Pi

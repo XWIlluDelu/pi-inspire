@@ -24,7 +24,6 @@ export function sessionProjectionSnapshot(
     isCompacting: false,
     transcriptPage: projection.latestPage(),
     projectionHealth: projection.health,
-    availableModels: [],
     commands: [],
   };
 }

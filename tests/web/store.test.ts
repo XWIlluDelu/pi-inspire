@@ -637,7 +637,7 @@ describe("websocket lifecycle", () => {
         return {
           body: bootstrapPayload({
             availableModels: models,
-            snapshot: activeSnapshot({ availableModels: [] }),
+            snapshot: activeSnapshot(),
           }),
         };
       }

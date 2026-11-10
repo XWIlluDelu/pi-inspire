@@ -1101,12 +1101,9 @@ export class AppStore {
           : this.state.thinkingLevel,
       commonModels:
         active?.commonModels ?? (sessionChanged ? [] : this.state.commonModels),
-      availableModels:
-        active &&
-        Array.isArray(active.availableModels) &&
-        active.availableModels.length > 0
-          ? (active.availableModels as ModelOption[])
-          : this.state.availableModels,
+      availableModels: Array.isArray(active?.availableModels)
+        ? (active.availableModels as ModelOption[])
+        : this.state.availableModels,
       commands: Array.isArray(active?.commands)
         ? (active.commands as PiCommand[])
         : [],

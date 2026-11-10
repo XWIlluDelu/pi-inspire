@@ -26,6 +26,7 @@ import { clipboardFiles } from "../clipboard-files";
 import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
+import { relativeTime } from "../format";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
 import {
@@ -52,7 +53,6 @@ import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
-import { relativeTime } from "../format";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 const DIRECTORY_PREVIEW_DELAY_MS = 220;
@@ -265,121 +265,132 @@ export const Welcome = memo(function Welcome({
     !inheritance?.readOnlyReason && inheritance?.cwd === effectiveDirectory
       ? inheritance.sessionId
       : undefined;
-  const refreshModels = useCallback(async () => {
-    catalogRequest.current?.abort();
-    catalogRecovery.reset();
-    const request = new AbortController();
-    catalogRequest.current = request;
-    const generation = ++catalogGeneration.current;
-    const transportGeneration = state.transportGeneration;
-    const owns = () =>
-      !request.signal.aborted &&
-      catalogGeneration.current === generation &&
-      store.getState().transportGeneration === transportGeneration;
-    setCheckingDirectory(effectiveDirectory);
-    const inputGeneration = thinkingInputGeneration.current;
-    let result;
-    try {
-      result = await catalogRecovery.read(
-        () =>
-          store.readNewSessionModels(
-            catalogSource,
-            effectiveDirectory || undefined,
-          ),
-        request.signal,
-        owns,
-      );
-    } catch (error) {
-      if (!owns()) return undefined;
-      const missing =
-        error instanceof ApiError && error.code === "PROJECT_DIRECTORY_MISSING";
-      const invalid =
-        error instanceof ApiError &&
-        (error.status === 400 || error.status === 403);
-      if (missing || invalid) confirmedDirectory.current = null;
-      const directoryWasConfirmed =
-        confirmedDirectory.current?.path === effectiveDirectory &&
-        confirmedDirectory.current.transportGeneration === transportGeneration;
-      // An observation failure cannot undo a known invalid/missing path.
-      setDirectoryIssue((previous) => {
-        if (missing || invalid) {
-          return {
-            path: effectiveDirectory,
-            missing,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Project directory could not be checked",
-          };
-        }
-        if (previous?.path === effectiveDirectory) return previous;
-        return directoryWasConfirmed
-          ? null
-          : {
+  const refreshModels = useCallback(
+    async (pick = false) => {
+      catalogRequest.current?.abort();
+      catalogRecovery.reset();
+      const request = new AbortController();
+      catalogRequest.current = request;
+      const generation = ++catalogGeneration.current;
+      const transportGeneration = state.transportGeneration;
+      const owns = () =>
+        !request.signal.aborted &&
+        catalogGeneration.current === generation &&
+        store.getState().transportGeneration === transportGeneration;
+      setCheckingDirectory(effectiveDirectory);
+      const inputGeneration = thinkingInputGeneration.current;
+      let result;
+      try {
+        result = await catalogRecovery.read(
+          () =>
+            store.readNewSessionModels(
+              catalogSource,
+              effectiveDirectory || undefined,
+            ),
+          request.signal,
+          owns,
+        );
+      } catch (error) {
+        if (!owns()) return undefined;
+        const missing =
+          error instanceof ApiError &&
+          error.code === "PROJECT_DIRECTORY_MISSING";
+        const invalid =
+          error instanceof ApiError &&
+          (error.status === 400 || error.status === 403);
+        if (missing || invalid) confirmedDirectory.current = null;
+        const directoryWasConfirmed =
+          confirmedDirectory.current?.path === effectiveDirectory &&
+          confirmedDirectory.current.transportGeneration ===
+            transportGeneration;
+        // An observation failure cannot undo a known invalid/missing path.
+        setDirectoryIssue((previous) => {
+          if (missing || invalid) {
+            return {
               path: effectiveDirectory,
-              missing: false,
+              missing,
               message:
                 error instanceof Error
                   ? error.message
                   : "Project directory could not be checked",
             };
-      });
-      const keepReady = directoryWasConfirmed && modelReadyRef.current;
-      if (!modelOwnedRef.current && !keepReady) {
-        setModelWarning(
-          error instanceof Error ? error.message : "Model discovery failed",
-        );
-        setModelStatus("error");
-      }
-      if (
-        error instanceof ApiError &&
-        error.code === "PROJECT_DIRECTORY_MISSING"
-      )
-        return undefined;
-      throw error;
-    } finally {
-      if (owns()) setCheckingDirectory(null);
-      if (catalogRequest.current === request) {
-        catalogRequest.current = null;
-        catalogRecovery.reset();
-      }
-    }
-    if (!owns()) return undefined;
-    confirmedDirectory.current = {
-      path: effectiveDirectory,
-      transportGeneration,
-    };
-    setDirectoryIssue(null);
-    setCatalog(result.models);
-    setCatalogCommands(
-      result.commands
-        ? {
-            cwd: effectiveDirectory,
-            transport: transportGeneration,
-            commands: result.commands,
           }
-        : null,
-    );
-    setCommonModels(result.commonModels ?? []);
-    if (!modelOwnedRef.current && result.defaults) {
-      const defaults = result.defaults;
-      setResolvedDefaultModel(defaults.model);
-      setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
-      setModelWarning(result.warning ?? null);
-      if (
-        !thinkingTouchedRef.current &&
-        thinkingInputGeneration.current === inputGeneration
-      )
-        setThinkingLevel(defaults.thinkingLevel);
-      setModelStatus(defaults.model ? "ready" : "error");
-    }
-    return result.warning;
-  }, [
-    catalogSource,
-    effectiveDirectory,
-    state.transportGeneration,
-    catalogRecovery,
-  ]);
+          if (previous?.path === effectiveDirectory) return previous;
+          return directoryWasConfirmed
+            ? null
+            : {
+                path: effectiveDirectory,
+                missing: false,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Project directory could not be checked",
+              };
+        });
+        const keepReady = directoryWasConfirmed && modelReadyRef.current;
+        if (!modelOwnedRef.current && !keepReady) {
+          setModelWarning(
+            error instanceof Error ? error.message : "Model discovery failed",
+          );
+          setModelStatus("error");
+        }
+        if (missing) {
+          if (pick) {
+            const fallback = await store.readNewSessionModels();
+            if (owns()) {
+              setCatalog(fallback.models);
+              setCommonModels(fallback.commonModels ?? []);
+            }
+            return fallback.warning;
+          }
+          return undefined;
+        }
+        throw error;
+      } finally {
+        if (owns()) setCheckingDirectory(null);
+        if (catalogRequest.current === request) {
+          catalogRequest.current = null;
+          catalogRecovery.reset();
+        }
+      }
+      if (!owns()) return undefined;
+      confirmedDirectory.current = {
+        path: effectiveDirectory,
+        transportGeneration,
+      };
+      setDirectoryIssue(null);
+      setCatalog(result.models);
+      setCatalogCommands(
+        result.commands
+          ? {
+              cwd: effectiveDirectory,
+              transport: transportGeneration,
+              commands: result.commands,
+            }
+          : null,
+      );
+      setCommonModels(result.commonModels ?? []);
+      if (!modelOwnedRef.current && result.defaults) {
+        const defaults = result.defaults;
+        setResolvedDefaultModel(defaults.model);
+        setModelKey(defaults.model ? modelIdentityKey(defaults.model) : "");
+        setModelWarning(result.warning ?? null);
+        if (
+          !thinkingTouchedRef.current &&
+          thinkingInputGeneration.current === inputGeneration
+        )
+          setThinkingLevel(defaults.thinkingLevel);
+        setModelStatus(defaults.model ? "ready" : "error");
+      }
+      return result.warning;
+    },
+    [
+      catalogSource,
+      effectiveDirectory,
+      state.transportGeneration,
+      catalogRecovery,
+    ],
+  );
   useEffect(() => {
     if (!modelOwnedRef.current) {
       setModelKey("");
@@ -399,6 +410,10 @@ export const Welcome = memo(function Welcome({
       catalogRecovery.reset();
     };
   }, [effectiveDirectory, refreshModels, catalogRecovery]);
+  const refreshPickerModels = useCallback(
+    () => refreshModels(true),
+    [refreshModels],
+  );
   const availableModels = useMemo(() => {
     const models = catalog ?? state.availableModels;
     if (
@@ -956,7 +971,7 @@ export const Welcome = memo(function Welcome({
                     !modelTouched))
               }
               disabled={starting}
-              refreshModels={refreshModels}
+              refreshModels={refreshPickerModels}
               onChange={(provider, id) => {
                 const model = availableModels.find(
                   (item) => item.provider === provider && item.id === id,

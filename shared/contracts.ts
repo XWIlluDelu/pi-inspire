@@ -1278,7 +1278,8 @@ export interface ActiveSnapshot {
     stats?: unknown;
     /** Settings that affect the live Pi session rather than INSΠRE chrome. */
     runtimeSettings?: PiRuntimeSettings;
-    availableModels: unknown[];
+    /** Omitted until the current Pi catalog is known. An empty array is a known empty catalog. */
+    availableModels?: unknown[];
     commonModels?: import("./model-settings.js").CommonModelOption[];
     commands: unknown[];
   };
