@@ -17,8 +17,8 @@ import { assistantOutcome } from "../shared/assistant-outcome.js";
 import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type BranchEntryResponse,
-  type BranchTreeQuery,
   type BranchLeavesResponse,
+  type BranchTreeQuery,
   type BranchTreeResponse,
   type ComposerHistoryPage,
   MAX_SESSION_ID_CHARS,
@@ -33,8 +33,8 @@ import {
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { resultChildCalls } from "../shared/tool-activity.js";
-import { userTurnSummary } from "../shared/user-turns.js";
 import { userMessageContent } from "../shared/user-message.js";
+import { userTurnSummary } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
   projectComposerHistoryPage,
@@ -178,6 +178,7 @@ export interface SessionProjectionView {
   /** Whether `other` is an ancestor of `leafId`, `leafId` itself, or one of
    * its continuations in the saved tree. */
   onSameLine(leafId: string | null, other: string | null): boolean;
+  continues(leafId: string | null, from: string | null): boolean;
   /** The most recently saved entry continuing `leafId`, or `leafId`. */
   latestContinuation(leafId: string | null): string | null;
   /** Branch ends, most recently saved first. */
@@ -1253,18 +1254,18 @@ export class SessionProjection
   }
 
   onSameLine(leafId: string | null, other: string | null): boolean {
-    if (leafId === other) return true;
-    const reaches = (from: string | null, target: string | null) => {
-      const seen = new Set<string>();
-      let id = from;
-      while (id !== null && !seen.has(id)) {
-        if (id === target) return true;
-        seen.add(id);
-        id = this.currentEntriesById.get(id)?.parentId ?? null;
-      }
-      return target === null;
-    };
-    return reaches(leafId, other) || reaches(other, leafId);
+    return this.continues(leafId, other) || this.continues(other, leafId);
+  }
+
+  continues(leafId: string | null, from: string | null): boolean {
+    if (from === null) return true;
+    // Index validation requires parents to precede children.
+    let id = leafId;
+    while (id !== null) {
+      if (id === from) return true;
+      id = this.currentEntriesById.get(id)?.parentId ?? null;
+    }
+    return false;
   }
 
   hasActiveEntryType(type: string): boolean {

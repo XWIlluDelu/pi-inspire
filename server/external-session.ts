@@ -55,10 +55,13 @@ export interface ExternalSessionConnection {
   close(): void;
 }
 
-/** Attach to the preferred live Pi whose leaf `accepts`; null when none
- * remains. Called only for an explicit takeover. */
+export type MatchExternalLeaf = (
+  leafId: string | null,
+) => "continues" | "possible" | "other";
+
+/** Select a live Pi to verify on explicit takeover. */
 export type ConnectExternalSession = (
   sessionId: string,
   sessionFile: string,
-  accepts: (leafId: string | null) => boolean,
+  match: MatchExternalLeaf,
 ) => Promise<ExternalSessionConnection | null>;

@@ -55,6 +55,8 @@ interface ExternalSessionHost {
   ): void;
   /** Whether a leaf still continues this view's branch. */
   corresponds(slot: RuntimeSlot, leafId: string | null): boolean;
+  /** A confirmed leaf at or after the selected position. */
+  continues(slot: RuntimeSlot, leafId: string | null): boolean;
 }
 
 /** Conversation access to externally owned sessions, deliberately outside the
@@ -190,13 +192,10 @@ export class RuntimeExternalSessions {
     return this.connections.get(slot)?.state.status === "blocked";
   }
 
-  async connect(
-    slot: RuntimeSlot,
-    accepts: (leafId: string | null) => boolean = () => true,
-  ): Promise<boolean> {
+  async connect(slot: RuntimeSlot): Promise<boolean> {
     const pending = this.connecting.get(slot);
     if (pending) return pending;
-    const operation = this.connectInside(slot, accepts);
+    const operation = this.connectInside(slot);
     this.connecting.set(slot, operation);
     try {
       return await operation;
@@ -205,25 +204,22 @@ export class RuntimeExternalSessions {
     }
   }
 
-  private async connectInside(
-    slot: RuntimeSlot,
-    accepts: (leafId: string | null) => boolean,
-  ): Promise<boolean> {
+  private async connectInside(slot: RuntimeSlot): Promise<boolean> {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
-      if (await this.refreshConnection(slot, previous, accepts, false))
-        return true;
+      if (await this.refreshConnection(slot, previous, false)) return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
     }
-    // An as-yet unprojected leaf may still be on this branch. Include it in
-    // candidate selection, then require a confirmed match after reading Pi.
-    const native = await this.connector(
-      slot.id,
-      slot.sessionPath,
-      (leaf) =>
-        accepts(leaf) || (leaf !== null && !slot.projection?.entry(leaf)),
-    );
+    const native = await this.connector(slot.id, slot.sessionPath, (leaf) => {
+      if (this.host.continues(slot, leaf)) return "continues";
+      if (
+        this.host.corresponds(slot, leaf) ||
+        (leaf !== null && !slot.projection?.entry(leaf))
+      )
+        return "possible";
+      return "other";
+    });
     if (native === null) return false;
     if (this.closed || !this.host.current(slot) || slot.process) {
       native.close();
@@ -240,7 +236,7 @@ export class RuntimeExternalSessions {
     }
     if (
       "ended" in state ||
-      !accepts(state.leafId ?? null) ||
+      !this.host.continues(slot, state.leafId ?? null) ||
       this.closed ||
       !this.host.current(slot) ||
       slot.process
@@ -281,8 +277,7 @@ export class RuntimeExternalSessions {
   private async refreshConnection(
     slot: RuntimeSlot,
     connection: Connection,
-    accepts: (leaf: string | null) => boolean,
-    release: boolean,
+    release = true,
   ): Promise<boolean> {
     const read = ++this.readSequence;
     const selectionRevision = connection.selectionRevision;
@@ -304,25 +299,16 @@ export class RuntimeExternalSessions {
       return false;
     if (!state || read < connection.latestRead) return true;
     connection.latestRead = read;
-    if ("ended" in state || !accepts(state.leafId ?? null)) {
+    if (
+      "ended" in state ||
+      !this.host.corresponds(slot, state.leafId ?? null)
+    ) {
       this.end(slot, "ended" in state ? state.ended : "left-branch", release);
       return false;
     }
     connection.failing = false;
     this.applyState(slot, connection, state, false, selectionRevision);
     return true;
-  }
-
-  private refreshAttached(
-    slot: RuntimeSlot,
-    connection: Connection,
-  ): Promise<boolean> {
-    return this.refreshConnection(
-      slot,
-      connection,
-      (leaf) => this.host.corresponds(slot, leaf),
-      true,
-    );
   }
 
   /** Revalidate the current receiver without attaching or starting another Pi. */
@@ -333,7 +319,7 @@ export class RuntimeExternalSessions {
     const connection = this.connections.get(slot);
     if (
       !connection ||
-      !(await this.refreshAttached(slot, connection)) ||
+      !(await this.refreshConnection(slot, connection)) ||
       this.connections.get(slot) !== connection
     )
       throw requestError("The external Pi connection has ended.", 409);
@@ -537,7 +523,7 @@ export class RuntimeExternalSessions {
         { code: "NATIVE_ACTION_UNSUPPORTED" },
       );
     assertView();
-    if (!(await this.refreshAttached(slot, connection)))
+    if (!(await this.refreshConnection(slot, connection)))
       throw requestError("The external Pi connection has ended.", 409);
     assertView();
     const originalIds = request.attachmentIds ?? [];

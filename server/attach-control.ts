@@ -14,6 +14,7 @@ import {
 import type {
   ExternalSessionConnection,
   ExternalSessionState,
+  MatchExternalLeaf,
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 
@@ -307,18 +308,25 @@ export class AttachControlRegistry {
   }
 }
 
-/** A heartbeat shows presence, but does not say which Pi the user meant. */
-export function unambiguousInstance(
+/** Prefer a reported continuation over a record that may be behind. */
+export function takeoverCandidate(
   records: readonly AttachControlRecord[],
+  matchLeaf: MatchExternalLeaf,
 ): AttachControlRecord | undefined {
-  const [record, other] = records;
+  const candidates = records
+    .filter((record) => record.endpoint)
+    .map((record) => ({ record, match: matchLeaf(record.leafId) }));
+  const continuations = candidates.filter(({ match }) => match === "continues");
+  const [candidate, other] = continuations.length
+    ? continuations
+    : candidates.filter(({ match }) => match === "possible");
   if (other)
     throw requestError(
-      "Several Pi processes are using this branch. Leave this branch in the other Pi processes, then try again.",
+      "Several Pi processes match this view. Leave the session in the other Pi processes, then try again.",
       409,
       { code: "EXTERNAL_PI_AMBIGUOUS" },
     );
-  return record?.endpoint ? record : undefined;
+  return candidate?.record;
 }
 
 function stateOf(state: AttachControlState): ExternalSessionState {

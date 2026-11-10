@@ -109,6 +109,7 @@ async function directAttachment(
       released: vi.fn(),
       syncUi: vi.fn(),
       corresponds: () => true,
+      continues: () => true,
       followLeaf: vi.fn(),
       log: vi.fn(),
       reconcile: async () => {},
@@ -306,17 +307,22 @@ describe("continue an externally owned Pi", () => {
   });
 
   it("rejects a connection that moved off the displayed branch before the owner poll", async () => {
-    const f = await nativeModelFixture();
-    const accepts = (leaf: string | null) => leaf === "branch-a";
+    const f = nativeFixture();
+    const onBranch = (_slot: RuntimeSlot, leaf: string | null) =>
+      leaf === "branch-a";
+    const { slot, external } = await directAttachment(async () => f.native, {
+      corresponds: onBranch,
+      continues: onBranch,
+    });
     f.setState({ status: "idle", leafId: "branch-a" });
     try {
-      expect(await f.external.connect(f.slot, accepts)).toBe(true);
+      expect(await external.connect(slot)).toBe(true);
       f.setState({ status: "idle", leafId: "branch-b" });
-      expect(await f.external.connect(f.slot, accepts)).toBe(false);
-      expect(f.external.has(f.slot)).toBe(false);
+      expect(await external.connect(slot)).toBe(false);
+      expect(external.has(slot)).toBe(false);
       expect(f.native.prompt).not.toHaveBeenCalled();
     } finally {
-      f.external.close();
+      external.close();
     }
   });
 
@@ -327,18 +333,36 @@ describe("continue an externally owned Pi", () => {
       known.add("continued");
     });
     const connect = vi.fn(async () => f.native);
-    const { slot, external } = await directAttachment(connect, { reconcile });
-    const accepts = (leaf: string | null) => leaf !== null && known.has(leaf);
+    const { slot, external } = await directAttachment(connect, {
+      reconcile,
+      corresponds: (_slot, leaf) => leaf !== null && known.has(leaf),
+    });
     f.setState({ status: "idle", leafId: "old" });
     try {
-      expect(await external.connect(slot, accepts)).toBe(true);
+      expect(await external.connect(slot)).toBe(true);
       reconcile.mockClear();
       known.delete("continued");
       f.setState({ status: "working", leafId: "continued" });
-      expect(await external.connect(slot, accepts)).toBe(true);
+      expect(await external.connect(slot)).toBe(true);
       expect(reconcile).toHaveBeenCalledOnce();
       expect(connect).toHaveBeenCalledOnce();
       expect(f.native.close).not.toHaveBeenCalled();
+    } finally {
+      external.close();
+    }
+  });
+
+  it("does not take over a Pi whose live leaf is still behind the selected branch", async () => {
+    const f = nativeFixture();
+    const { slot, external } = await directAttachment(async () => f.native, {
+      continues: (_slot, leaf) => leaf === "current",
+    });
+    f.setState({ status: "idle", leafId: "ancestor" });
+    try {
+      expect(await external.connect(slot)).toBe(false);
+      expect(f.native.close).toHaveBeenCalledOnce();
+      f.setState({ status: "working", leafId: "current" });
+      expect(await external.connect(slot)).toBe(true);
     } finally {
       external.close();
     }
@@ -1056,52 +1080,6 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("displays native history appends without claiming another writer or losing the connection", async () => {
-    const session = await persistedRecord("a");
-    const f = nativeFixture();
-    const runtime = new RuntimeController(
-      catalog([session]),
-      trackedAttachmentStore(),
-      {
-        createProcess: () => {
-          throw new Error("must not launch Pi");
-        },
-      },
-    )
-      .setExternalSessionPresence(async () => [null])
-      .setExternalSessionConnector(async () => f.native);
-    try {
-      await openAttached(runtime, "a");
-      await runtime.prompt({ sessionId: "a", message: "Continue" });
-      const entries = (await readFile(session.path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line));
-      await appendFile(
-        session.path,
-        JSON.stringify({
-          type: "message",
-          id: "native-reply",
-          parentId: entries.at(-1).id,
-          timestamp: new Date().toISOString(),
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "Reply from the same Pi" }],
-            timestamp: Date.now(),
-          },
-        }) + "\n",
-      );
-      const snapshot = await runtime.snapshot("a");
-      expect(snapshot.active?.projectionConflict).toBeNull();
-      expect(
-        JSON.stringify(snapshot.active?.transcriptPage.messages),
-      ).toContain("Reply from the same Pi");
-      expect(f.native.close).not.toHaveBeenCalled();
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("follows a Pi that reports its new leaf after the append was already read", async () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();
@@ -1139,6 +1117,7 @@ describe("continue an externally owned Pi", () => {
       );
       const saved = await runtime.snapshot("a");
       expect(saved.active?.durableLeafId).toBe(replyId);
+      expect(saved.active?.projectionConflict).toBeNull();
 
       events.length = 0;
       f.setState({ status: "working", leafId: replyId });
@@ -1424,6 +1403,7 @@ describe("continue an externally owned Pi", () => {
   it("uses version-checked native polling and forced prompt admission", async () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();
+    f.setState({ status: "idle", leafId: "u1" });
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
@@ -1464,7 +1444,8 @@ describe("continue an externally owned Pi", () => {
     async (status) => {
       const sessions = [await persistedRecord("a"), await persistedRecord("b")];
       const connections = [nativeFixture(), nativeFixture()];
-      for (const connection of connections) connection.setState({ status });
+      for (const connection of connections)
+        connection.setState({ status, leafId: "u1" });
       const stopped = new Set<string>();
       const remove = vi.fn(async (session) => {
         expect(stopped.has(session.id)).toBe(true);
@@ -1522,6 +1503,7 @@ describe("continue an externally owned Pi", () => {
     "ends an in-flight native %s before moving its session",
     async (operation) => {
       const f = nativeFixture();
+      f.setState({ status: "idle", leafId: "u1" });
       const entered = deferredSignal();
       const gate = deferredSignal();
       const terminated = vi.fn(async () => {

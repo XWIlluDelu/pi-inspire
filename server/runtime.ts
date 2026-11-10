@@ -550,6 +550,18 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             ).catch(() => undefined);
         },
         corresponds: (slot, leafId) => this.leafContinuesView(slot, leafId),
+        continues: (slot, leafId) => {
+          const view = this.effectiveLeaf(slot);
+          const { projection } = slot;
+          return (
+            leafId === view ||
+            Boolean(
+              leafId !== null &&
+                projection?.entry(leafId) &&
+                projection.continues(leafId, view),
+            )
+          );
+        },
         followLeaf: (slot, leafId) => this.followAttachedLeaf(slot, leafId),
         syncUi: (slot, requests, owner) =>
           this.extensionUi.synchronize(slot, requests, owner),
@@ -2688,9 +2700,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   /** True when attached to an external Pi; otherwise checks presence. */
   private async connectExternalSession(slot: RuntimeSlot): Promise<boolean> {
     if (this.externalSessions?.has(slot)) {
-      const connected = await this.externalSessions.connect(slot, (leaf) =>
-        this.leafContinuesView(slot, leaf),
-      );
+      const connected = await this.externalSessions.connect(slot);
       if (connected) return true;
     }
     await this.assertExternalWriterAvailable(slot, true);
@@ -2784,7 +2794,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  /** Attach to the preferred live Pi continuing this view's branch. With
+  /** Attach to a live Pi continuing this view's branch. With
    * none left, continue directly with Inspire's own Pi. */
   async takeOverSession(sessionId: string): Promise<ActiveSnapshot> {
     return this.withMaintenanceOperation(async () => {
@@ -2793,9 +2803,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.requireWorkspace(slot, true);
         if (!slot.process && !this.externalSessions?.has(slot)) {
           await this.reconcileSlot(slot, false);
-          const connected = await this.externalSessions?.connect(slot, (leaf) =>
-            this.leafContinuesView(slot, leaf),
-          );
+          const connected = await this.externalSessions?.connect(slot);
           if (!connected) {
             await this.assertExternalWriterAvailable(slot, true);
             await this.ensureFreshWriterInsideGate(slot, true);
