@@ -7,7 +7,7 @@ import {
   PinOff,
   Trash2,
 } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import {
   projectNameFromCwd,
   type SessionSummary,
@@ -19,6 +19,37 @@ import { compactAge, parentSegment, type SessionGroup } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { SearchMatchText } from "./SearchMatchText";
+
+const ageListeners = new Set<() => void>();
+let ageTimer: ReturnType<typeof setInterval> | undefined;
+
+function subscribeToAge(listener: () => void): () => void {
+  ageListeners.add(listener);
+  ageTimer ??= setInterval(() => {
+    for (const refresh of ageListeners) refresh();
+  }, 30_000);
+  return () => {
+    ageListeners.delete(listener);
+    if (ageListeners.size) return;
+    clearInterval(ageTimer);
+    ageTimer = undefined;
+  };
+}
+
+function SessionAge({
+  modified,
+  className,
+}: {
+  modified: string;
+  className: string;
+}) {
+  const age = useSyncExternalStore(subscribeToAge, () => compactAge(modified));
+  return (
+    <span className={className} title={new Date(modified).toLocaleString()}>
+      {age}
+    </span>
+  );
+}
 
 function searchParentContext(cwd: string, query: string): string {
   const parent = parentSegment(cwd);
@@ -166,12 +197,10 @@ export const SessionRow = memo(function SessionRow({
               Opening…
             </span>
           ) : !parentContext ? (
-            <span
+            <SessionAge
               className={`nav__row-age${attention ? ` nav__row-age--${attention}` : ""}`}
-              title={new Date(session.modified).toLocaleString()}
-            >
-              {compactAge(session.modified)}
-            </span>
+              modified={session.modified}
+            />
           ) : null}
         </span>
       </button>
