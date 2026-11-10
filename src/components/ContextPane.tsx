@@ -118,6 +118,11 @@ export const ContextPane = memo(function ContextPane({
     state.resourcesOpen &&
     state.contextMode === "files" &&
     state.fileBrowserView === "browse";
+  const currentResourcePage =
+    resourcePage?.sessionId === state.sessionId &&
+    resourcePage.viewId === state.transcriptViewId &&
+    resourcePage.revision === state.transcriptRevision &&
+    resourcePage.clientTransportGeneration === transportGeneration;
 
   const loadResources = useCallback(
     async function loadResources() {
@@ -213,36 +218,24 @@ export const ContextPane = memo(function ContextPane({
 
   useEffect(() => {
     if (!browsingFiles || !state.sessionId || !state.transcriptViewId) return;
-    const current =
-      resourcePage?.sessionId === state.sessionId &&
-      resourcePage.viewId === state.transcriptViewId &&
-      resourcePage.revision === state.transcriptRevision &&
-      resourcePage.clientTransportGeneration === transportGeneration;
-    if (!current) void loadResources();
+    if (!currentResourcePage) void loadResources();
   }, [
     browsingFiles,
+    currentResourcePage,
     loadResources,
-    resourcePage?.revision,
-    resourcePage?.sessionId,
-    resourcePage?.viewId,
-    resourcePage?.clientTransportGeneration,
     state.sessionId,
     state.transcriptRevision,
     state.transcriptViewId,
-    transportGeneration,
   ]);
 
   useEffect(() => {
-    if (!browsingFiles) return;
+    // Keep the last rows visible while the new list is loading. Only probe
+    // the references confirmed for the current transcript and transport.
+    if (!browsingFiles || !currentResourcePage) return;
     void store.probeResources(
       recentRows.map((row) => row.reference ?? row.label),
     );
-  }, [
-    browsingFiles,
-    recentRows,
-    state.transcriptRevision,
-    transportGeneration,
-  ]);
+  }, [browsingFiles, currentResourcePage, recentRows]);
 
   useEffect(
     () => () => {

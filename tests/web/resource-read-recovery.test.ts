@@ -30,6 +30,7 @@ function fixture() {
     resourceStanding: {},
   };
   const api = {
+    probeResources: vi.fn(),
     resolveResource: vi.fn().mockResolvedValue(descriptor),
     resourceContent: vi.fn().mockResolvedValue({
       blob: new Blob(["Notes"], { type: "text/plain" }),
@@ -63,6 +64,17 @@ function fixture() {
 describe("resource preview read recovery", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("does not retry probes belonging to an earlier transcript revision", async () => {
+    const f = fixture();
+    f.api.probeResources.mockRejectedValueOnce(
+      new ApiError(503, "Temporary probe failure"),
+    );
+    await f.controller.probeResources(["notes.txt"]);
+    f.state.transcriptRevision += 1;
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(f.api.probeResources).toHaveBeenCalledOnce();
+  });
 
   it.each(["resolveResource", "resourceContent"] as const)(
     "recovers a temporary %s failure in the original read",

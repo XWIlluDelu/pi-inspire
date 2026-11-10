@@ -237,17 +237,19 @@ export class ResourceController {
     this.resourceProbeRequest?.abort();
     const request = new AbortController();
     this.resourceProbeRequest = request;
-    const stale = (): boolean => {
+    const ownsProjection = (): boolean => {
       const current = this.host.state();
       return (
-        this.resourceProbeRequest !== request ||
-        request.signal.aborted ||
-        !this.ownsTransport(api, transportGeneration) ||
-        current.sessionId !== sessionId ||
-        current.transcriptViewId !== viewId ||
-        current.transcriptRevision !== revision
+        this.ownsTransport(api, transportGeneration) &&
+        current.sessionId === sessionId &&
+        current.transcriptViewId === viewId &&
+        current.transcriptRevision === revision
       );
     };
+    const stale = () =>
+      this.resourceProbeRequest !== request ||
+      request.signal.aborted ||
+      !ownsProjection();
     let retryNeeded = false;
     try {
       for (
@@ -326,10 +328,7 @@ export class ResourceController {
       }
       if (retryNeeded)
         this.probeRecovery.schedule(() => {
-          if (
-            this.resourceProbeKey === generationKey &&
-            this.ownsTransport(api, transportGeneration)
-          )
+          if (this.resourceProbeKey === generationKey && ownsProjection())
             void this.probeResources(unique);
         });
       else this.probeRecovery.reset();
