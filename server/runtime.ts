@@ -939,8 +939,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   async stopAttachedPiWork(): Promise<void> {
     await Promise.all(
       [...this.slots.values()].map(async (slot) => {
-        if (!this.externalSessions?.has(slot) || !isBusyRunState(slot.runState))
-          return;
+        if (!this.externalSessions?.has(slot)) return;
         try {
           await this.externalSessions.abort(slot, true);
         } catch (error) {

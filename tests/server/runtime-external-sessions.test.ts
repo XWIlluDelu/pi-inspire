@@ -172,7 +172,7 @@ async function openAttached(runtime: RuntimeController, id: string) {
 }
 
 describe("continue an externally owned Pi", () => {
-  it("checks live attached work at Restart all submission before the next poll", async () => {
+  it("detects and stops live attached work before the next poll on restart", async () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();
     f.setState({ status: "idle", leafId: "u1" });
@@ -190,14 +190,18 @@ describe("continue an externally owned Pi", () => {
     const events: string[] = [];
     runtime.on("event", (event) => events.push(event.type));
     const dispatch = vi.fn();
+    let startsAfterReservation = true;
     const controller = new HostRestartController(runtime, {
       inspect: async () => ({ host: true, all: true }),
       prepare: async () => {},
       request: async (all, commit) => {
         expect(all).toBe(true);
         const before = vi.mocked(f.native.read).mock.calls.length;
-        // The TUI starts work after reservation while its last poll is idle.
-        f.setState({ status: "working", leafId: "u1" });
+        if (startsAfterReservation) {
+          // The TUI starts work after reservation while its last poll is idle.
+          startsAfterReservation = false;
+          f.setState({ status: "working", leafId: "u1" });
+        }
         if (await commit()) {
           dispatch();
           return { code: 0, issued: true };
@@ -207,6 +211,7 @@ describe("continue an externally owned Pi", () => {
         return { code: 1, issued: false };
       },
     });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await openAttached(runtime, "a");
       controller.start({
@@ -223,8 +228,24 @@ describe("continue an externally owned Pi", () => {
       );
       expect(dispatch).not.toHaveBeenCalled();
       expect(f.native.abort).not.toHaveBeenCalled();
+      expect(events).not.toContain("agent_start");
+      controller.start({
+        hostId: (await controller.status()).hostId,
+        operationId: "forced-before-poll",
+        scope: "all",
+        interruptWork: true,
+      });
+      await vi.waitFor(async () =>
+        expect((await controller.status()).operation).toMatchObject({
+          id: "forced-before-poll",
+          phase: "submitted",
+        }),
+      );
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(f.native.abort).toHaveBeenCalledExactlyOnceWith("u1");
     } finally {
       await runtime.close();
+      vi.useRealTimers();
     }
   });
 
@@ -267,7 +288,7 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it("skips restart interruption for an attached Pi with no verified leaf", async () => {
+  it("requires a verified leaf for restart interruption and accepts an empty branch", async () => {
     const f = nativeFixture();
     f.setState({ status: "working" });
     const { slot, external } = await directAttachment(async () => f.native);
@@ -277,6 +298,9 @@ describe("continue an externally owned Pi", () => {
         "verify the branch",
       );
       expect(f.native.abort).not.toHaveBeenCalled();
+      f.setState({ status: "working", leafId: null });
+      await external.abort(slot, true);
+      expect(f.native.abort).toHaveBeenCalledExactlyOnceWith(null);
     } finally {
       external.close();
     }
