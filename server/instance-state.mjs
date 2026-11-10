@@ -77,6 +77,10 @@ function validState(value) {
       typeof value.processStartTime === "string" &&
       value.processStartTime.length > 0 &&
       (value.shutdownControlVersion === undefined || value.shutdownControlVersion === 1) &&
+      (value.scopedShutdown === undefined || value.scopedShutdown === true) &&
+      (value.systemdInvocationId === undefined ||
+        (typeof value.systemdInvocationId === "string" &&
+          /^[a-f0-9]{32}$/u.test(value.systemdInvocationId))) &&
       (value.httpControlVersion === undefined || value.httpControlVersion === 1),
   );
 }
@@ -143,6 +147,7 @@ const SHUTDOWN_DOMAIN = "inspire:local-host-shutdown:v1";
 const MAX_CONTROL_BYTES = 2_048;
 
 const shutdownTarget = instanceIdentity;
+const shutdownNonce = /^[0-9a-f-]{36}$/u;
 
 function controlMac(state, payload) {
   return createHmac("sha256", state.token)
@@ -197,7 +202,9 @@ async function readControl(path, state, kind, allowExpired = false) {
     if (kind === "request") {
       if (
         typeof value.nonce !== "string" ||
-        !/^[0-9a-f-]{36}$/u.test(value.nonce) ||
+        !shutdownNonce.test(value.nonce) ||
+        (value.scope !== undefined &&
+          (value.scope !== "host-only" || state.scopedShutdown !== true)) ||
         !Number.isSafeInteger(value.expiresAt) ||
         (!allowExpired &&
           (value.expiresAt < Date.now() ||
@@ -210,10 +217,25 @@ async function readControl(path, state, kind, allowExpired = false) {
         target: value.target,
         nonce: value.nonce,
         expiresAt: value.expiresAt,
+        ...(value.scope === undefined ? {} : { scope: value.scope }),
       };
     } else {
-      if (typeof value.clean !== "boolean") return null;
-      payload = { version: 1, kind, target: value.target, clean: value.clean };
+      if (
+        typeof value.clean !== "boolean" ||
+        (value.requestNonce !== undefined &&
+          (typeof value.requestNonce !== "string" ||
+            !shutdownNonce.test(value.requestNonce)))
+      )
+        return null;
+      payload = {
+        version: 1,
+        kind,
+        target: value.target,
+        clean: value.clean,
+        ...(value.requestNonce === undefined
+          ? {}
+          : { requestNonce: value.requestNonce }),
+      };
     }
     if (
       !timingSafeEqual(
@@ -231,24 +253,30 @@ async function readControl(path, state, kind, allowExpired = false) {
   }
 }
 
-export async function requestInstanceShutdown(path, state, timeoutMs = 15_000) {
+export async function requestInstanceShutdown(path, state, timeoutMs = 15_000, scope) {
+  if (scope !== undefined && (scope !== "host-only" || !state.scopedShutdown))
+    throw new Error("The Host does not support this shutdown scope.");
+  const nonce = randomUUID();
   await writeControl(path + ".shutdown-request", state, {
     version: 1,
     kind: "request",
     target: shutdownTarget(state),
-    nonce: randomUUID(),
+    nonce,
     expiresAt: Date.now() + Math.min(timeoutMs, 60_000),
+    ...(scope === undefined ? {} : { scope }),
   });
+  return nonce;
 }
 
 /** Called only after application/worker cleanup, before state removal and exit.
  * A signed failure must not authorize a replacement even if the Host exits. */
-export async function completeInstanceShutdown(path, state, clean) {
+export async function completeInstanceShutdown(path, state, clean, requestNonce) {
   await writeControl(path + ".shutdown-result", state, {
     version: 1,
     kind: "result",
     target: shutdownTarget(state),
     clean,
+    ...(requestNonce === undefined ? {} : { requestNonce }),
   });
   // This incarnation still owns the launcher lease; no successor can have
   // published a request yet. Leave unknown/foreign files alone.
@@ -269,11 +297,12 @@ export function watchInstanceShutdown(path, state, onShutdown) {
     if (closed || pending) return;
     pending = true;
     try {
-      if (await instanceShutdownRequested(path, state)) {
+      const request = await readControl(path + ".shutdown-request", state, "request");
+      if (request) {
         if (closed) return;
         closed = true;
         clearInterval(timer);
-        await onShutdown();
+        await onShutdown(request);
       }
     } finally {
       pending = false;
@@ -524,8 +553,7 @@ async function waitForProcessExit(path, state, timeoutMs) {
   return false;
 }
 
-/** Tells a healthy Host which restart follows. `host-only` keeps its own Pi
- * workers running along with the Pi instances it has taken over. */
+/** Ordinary CLI restart preparation remains compatible with older Hosts. */
 export async function prepareInstanceRestart(path, expected, scope, options = {}) {
   const result = await inspectInstance(path, expected, options);
   if (result.kind === "unavailable")
@@ -547,6 +575,16 @@ export async function stopManagedInstance(path, expected, options = {}) {
   if (!state) return { kind: "absent" };
   if (!(await expectedState(state, expected))) return { kind: "stale" };
 
+  const scoped = options.scopedOwner;
+  if (
+    scoped &&
+    (state.shutdownControlVersion !== 1 ||
+      state.scopedShutdown !== true ||
+      instanceIdentity(state) !== instanceIdentity(scoped) ||
+      state.token !== scoped.token)
+  )
+    return { kind: "unavailable", state };
+
   const timeoutMs = options.timeoutMs ?? 15_000;
   if (state.shutdownControlVersion === 1) {
     // An already-crashed owner is stale, not a failed response to this stop.
@@ -555,7 +593,12 @@ export async function stopManagedInstance(path, expected, options = {}) {
       await removeInstanceState(path, state);
       return { kind: "stale" };
     }
-    await requestInstanceShutdown(path, state, timeoutMs);
+    const requestNonce = await requestInstanceShutdown(
+      path,
+      state,
+      timeoutMs,
+      scoped ? "host-only" : undefined,
+    );
     if (!(await waitForProcessExit(path, state, timeoutMs)))
       return { kind: "timeout", state };
     const result = await readControl(
@@ -563,7 +606,8 @@ export async function stopManagedInstance(path, expected, options = {}) {
       state,
       "result",
     );
-    if (!result) return { kind: "unavailable", state };
+    if (!result || (scoped && result.requestNonce !== requestNonce))
+      return { kind: "unavailable", state };
     return { kind: result.clean ? "stopped" : "cleanup-failed", state };
   }
   // Legacy HTTP cannot prove its peer before receiving a bearer. Never send

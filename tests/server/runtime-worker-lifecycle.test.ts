@@ -665,6 +665,9 @@ describe("worker startup and retirement", () => {
     });
     const creating = runtime.newSession(TEST_CWD);
     await vi.waitFor(() => expect(worker?.starts).toBe(1));
+    expect(runtime.ownWorkerTags()).toEqual(
+      new Set([worker.options.env?.PI_ATTACH_CONTROL_TAG]),
+    );
     const closing = runtime.close();
     await vi.waitFor(() => expect(worker.stops).toBe(1));
     await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(/closing/);

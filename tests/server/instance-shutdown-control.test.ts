@@ -128,6 +128,32 @@ describe("authenticated local Host shutdown", () => {
     expect(shutdown).toHaveBeenCalledOnce();
   });
 
+  it("authenticates the Host-only scope and passes its request identity to shutdown", async () => {
+    const f = await fixture();
+    const state = { ...f.state, scopedShutdown: true as const };
+    const nonce = await requestInstanceShutdown(
+      f.path,
+      state,
+      15_000,
+      "host-only",
+    );
+    const original = await readFile(f.path + ".shutdown-request", "utf8");
+    const { scope, ...unscoped } = JSON.parse(original);
+    expect(scope).toBe("host-only");
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(f.path + ".shutdown-request", JSON.stringify(unscoped));
+    expect(await instanceShutdownRequested(f.path, state)).toBe(false);
+    await writeFile(f.path + ".shutdown-request", original);
+
+    const shutdown = vi.fn(async () => {});
+    controls.push(watchInstanceShutdown(f.path, state, shutdown));
+    await vi.waitFor(() =>
+      expect(shutdown).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ nonce, scope: "host-only" }),
+      ),
+    );
+  });
+
   it("never runs a disposed monitor, including a request already being read", async () => {
     const f = await fixture();
     await requestInstanceShutdown(f.path, f.state);

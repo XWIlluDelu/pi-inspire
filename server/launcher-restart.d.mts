@@ -27,5 +27,5 @@ export function createLauncherRestartClient(
   timeoutMs?: number,
 ): {
   inspect(): Promise<boolean>;
-  request(commit: () => boolean): Promise<{ code: number; issued: boolean }>;
+  request(commit: () => boolean | Promise<boolean>): Promise<{ code: number; issued: boolean }>;
 };

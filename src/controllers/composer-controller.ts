@@ -90,6 +90,7 @@ export interface ComposerPartition {
 
 interface ComposerControllerState {
   sessionId: string | null;
+  transcriptViewId: string | null;
 }
 
 export type ComposerSlice = Pick<
@@ -443,7 +444,7 @@ export class ComposerController {
     onHandoff?: () => void,
     independent = false,
   ): Promise<PromptAcceptedResponse | false> {
-    const sessionId = this.host.state().sessionId;
+    const { sessionId, transcriptViewId } = this.host.state();
     const api = this.host.api();
     const authorityId = this.host.authorityId();
     if (!api || !sessionId || !authorityId) return false;
@@ -546,6 +547,7 @@ export class ComposerController {
     }
     const deliveryContent = {
       sessionId,
+      ...(transcriptViewId ? { expectedViewId: transcriptViewId } : {}),
       message,
       ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
       ...(historyOwner
@@ -566,10 +568,11 @@ export class ComposerController {
       ...(projectFiles.length > 0 ? { projectFiles } : {}),
       ...(behavior ? { behavior } : {}),
     };
-    // A phase change (e.g. compacting → idle) cannot turn an unknown steer
-    // into a second operation. Reobserve its original, exact payload.
+    // A view or phase change cannot turn unknown delivery into a new
+    // operation. Reobserve its original, exact payload.
     const signature = JSON.stringify({
       ...deliveryContent,
+      expectedViewId: undefined,
       behavior: undefined,
     });
     if (

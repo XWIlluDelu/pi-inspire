@@ -356,6 +356,17 @@ export async function inspectBrowserRestart(root, options = {}) {
     return { kind: "unsupported" };
   const service = await inspectHostService(root, options);
   if (service.kind !== "managed") return service;
+  const value = await inspectHostInvocation(options);
+  if (
+    !value ||
+    value.InvocationID !== options.invocationId ||
+    value.ActiveState !== "active"
+  )
+    return { kind: "invocation-changed" };
+  return { kind: "managed" };
+}
+
+async function inspectHostInvocation(options) {
   const result = await (options.run ?? runSystemctl)(
     [
       "--user",
@@ -366,14 +377,25 @@ export async function inspectBrowserRestart(root, options = {}) {
     ],
     options.environment,
   );
-  const value = properties(result.stdout);
-  if (
-    result.code !== 0 ||
-    value.InvocationID !== options.invocationId ||
-    value.ActiveState !== "active"
-  )
-    return { kind: "invocation-changed" };
-  return { kind: "managed" };
+  return result.code === 0 ? properties(result.stdout) : null;
+}
+
+/** The Host writes its shutdown receipt before its launcher exits. Wait for
+ * systemd to finish that invocation so `start` cannot no-op on the old unit. */
+export async function waitForHostServiceExit(invocationId, options = {}) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const value = await inspectHostInvocation(options);
+    if (!value?.ActiveState) return false;
+    if (
+      value.InvocationID !== invocationId ||
+      value.ActiveState === "inactive" ||
+      value.ActiveState === "failed"
+    )
+      return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return false;
 }
 
 export async function requestBrowserRestart(root, all, commit, options = {}) {
@@ -381,7 +403,7 @@ export async function requestBrowserRestart(root, all, commit, options = {}) {
   if (service.kind !== "managed") return { issued: false, code: 1 };
   // Final owner commit follows every asynchronous inspection. A committed
   // runtime drain cannot expire while systemd is processing this transaction.
-  if (!commit()) return { issued: false, code: 1 };
+  if (!(await commit())) return { issued: false, code: 1 };
   return (options.run ?? runSystemctl)(
     [
       "--user",

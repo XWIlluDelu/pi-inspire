@@ -107,10 +107,21 @@ test("unsupported, disconnected, and ownerless channels never acquire restart au
 test("failed commit does not send a restart request", async (t) => {
   const f = fixture();
   t.after(f.close);
-  assert.deepEqual(await f.client.request(() => false), {
+  assert.deepEqual(await f.client.request(async () => false), {
     code: 1,
     issued: false,
   });
+  assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
+});
+
+test("a disconnected launcher during commit cannot receive a restart request", async (t) => {
+  const f = fixture();
+  t.after(f.close);
+  const result = await f.client.request(async () => {
+    f.child.connected = false;
+    return true;
+  });
+  assert.deepEqual(result, { code: 1, issued: false });
   assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
 });
 

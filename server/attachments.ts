@@ -55,12 +55,16 @@ interface StoredAttachment extends UploadedAttachment {
    * to an in-flight prompt or consumed by a delivered one is (about to be)
    * referenced from the conversation and must survive a racing DELETE. */
   state: "staged" | "in-flight" | "pending" | "consumed";
+  /** Pi may already have persisted this path before its receipt was lost. */
+  retainOnWithdraw?: boolean;
 }
 
 interface AttachmentOwnership extends UploadedAttachment {
   /** Legacy paths stay unchanged; v3 distinguishes temporary and possibly delivered copies. */
   version?: 2 | 3;
   delivery?: "unsubmitted" | "possible";
+  /** Transport-only images are read as bytes and never persisted as paths. */
+  expiresAt?: number;
   path: string;
   ownerPid: number;
   ownerStartTime?: string;
@@ -77,6 +81,7 @@ interface AttachmentCollection {
 }
 
 const MAX_CACHE_NAME_BYTES = 255;
+const TRANSPORT_IMAGE_RETENTION_MS = 5 * 60_000;
 
 function normalizedName(name: string): string {
   return basename(name).replace(/[^\p{L}\p{M}\p{N}._ -]+/gu, "_");
@@ -278,6 +283,10 @@ export class AttachmentStore {
         (value.version === 3 &&
           value.delivery !== "unsubmitted" &&
           value.delivery !== "possible") ||
+        (value.expiresAt !== undefined &&
+          (value.version !== 3 ||
+            value.kind !== "image" ||
+            !Number.isSafeInteger(value.expiresAt))) ||
         value.fileName !==
           (value.version
             ? safeName(value.fileName)
@@ -313,11 +322,15 @@ export class AttachmentStore {
     }
   }
 
-  private async persistOwnership(value: StoredAttachment): Promise<void> {
+  private async persistOwnership(
+    value: StoredAttachment,
+    expiresAt?: number,
+  ): Promise<void> {
     const ownership: AttachmentOwnership = {
       ...this.publicValue(value),
       version: 3,
       delivery: "unsubmitted",
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
       path: value.path,
       ownerPid: process.pid,
       ownerStartTime: await ownerStart(),
@@ -351,9 +364,8 @@ export class AttachmentStore {
     }
   }
 
-  /** Only explicitly unsubmitted copies of retired owners are collectible.
-   * Legacy and possibly delivered copies are durable assets, independent of
-   * session directories, forks, backup locations and desktop Trash.
+  /** Unsubmitted copies of retired owners and expired transport-only images
+   * are collectible. Possibly delivered file paths are durable assets.
    */
   async collectStaged(): Promise<AttachmentCollection> {
     await this.ensureRoot();
@@ -374,11 +386,11 @@ export class AttachmentStore {
     await this.loadOwnership();
     const reclaimed: string[] = [];
     for (const value of this.owned.values()) {
+      if (this.values.has(value.id) || value.version !== 3) continue;
       if (
-        value.version !== 3 ||
-        value.delivery !== "unsubmitted" ||
-        this.values.has(value.id) ||
-        (await ownerAlive(value))
+        value.expiresAt !== undefined
+          ? Date.now() < value.expiresAt
+          : value.delivery !== "unsubmitted" || (await ownerAlive(value))
       )
         continue;
       // The owner may have marked a delivery possible before exiting. Re-read
@@ -388,6 +400,7 @@ export class AttachmentStore {
         !latest ||
         latest.version !== 3 ||
         latest.delivery !== "unsubmitted" ||
+        latest.expiresAt !== value.expiresAt ||
         latest.ownerPid !== value.ownerPid ||
         latest.ownerStartTime !== value.ownerStartTime
       )
@@ -517,6 +530,7 @@ export class AttachmentStore {
 
   private async storeFile(
     file: Express.Multer.File,
+    expiresAt?: number,
   ): Promise<UploadedAttachment> {
     await this.ensureRoot();
     const id = randomUUID();
@@ -547,7 +561,7 @@ export class AttachmentStore {
     };
     this.values.set(id, value);
     try {
-      await this.persistOwnership(value);
+      await this.persistOwnership(value, expiresAt);
     } catch (error) {
       this.values.delete(id);
       await rm(path, { force: true });
@@ -665,6 +679,13 @@ export class AttachmentStore {
   async stageImages(
     images: readonly { data: string; mimeType: string }[],
   ): Promise<UploadedAttachment[]> {
+    return this.stageImageCopies(images);
+  }
+
+  private async stageImageCopies(
+    images: readonly { data: string; mimeType: string }[],
+    expiresAt?: number,
+  ): Promise<UploadedAttachment[]> {
     const sizes = images.map((image) => {
       const size = canonicalBase64DecodedSize(image.data);
       if (!isSupportedPromptImageMimeType(image.mimeType) || !size)
@@ -680,12 +701,15 @@ export class AttachmentStore {
       for (const [index, image] of images.entries()) {
         const extension = image.mimeType.split("/")[1]!.toLowerCase();
         copied.push(
-          await this.storeFile({
-            originalname: `Recovered image ${index + 1}.${extension === "jpeg" ? "jpg" : extension}`,
-            mimetype: image.mimeType,
-            size: sizes[index]!,
-            buffer: Buffer.from(image.data, "base64"),
-          } as Express.Multer.File),
+          await this.storeFile(
+            {
+              originalname: `Recovered image ${index + 1}.${extension === "jpeg" ? "jpg" : extension}`,
+              mimetype: image.mimeType,
+              size: sizes[index]!,
+              buffer: Buffer.from(image.data, "base64"),
+            } as Express.Multer.File,
+            expiresAt,
+          ),
         );
       }
       return copied;
@@ -693,6 +717,35 @@ export class AttachmentStore {
       await Promise.allSettled(copied.map((value) => this.remove(value.id)));
       throw error;
     }
+  }
+
+  async prepareTransportImages(
+    images: readonly { data: string; mimeType: string }[],
+  ): Promise<(UploadedAttachment & { path: string })[]> {
+    const copies = await this.stageImageCopies(
+      images,
+      Date.now() + TRANSPORT_IMAGE_RETENTION_MS,
+    );
+    return copies.map((copy) => {
+      const value = this.values.get(copy.id)!;
+      value.state = "in-flight";
+      return { ...copy, path: value.path };
+    });
+  }
+
+  restageUncertainPrompt(
+    originalIds: readonly string[],
+    transportIds: readonly string[],
+  ): void {
+    for (const id of originalIds) {
+      const value = this.values.get(id);
+      if (value?.state !== "in-flight") continue;
+      if (value.kind === "file") value.retainOnWithdraw = true;
+      value.state = "staged";
+    }
+    // The receiver may still be reading these independent copies. Their
+    // persisted expiration handles both normal cleanup and Host restart.
+    for (const id of transportIds) this.values.delete(id);
   }
 
   /** Worker-owned copies survive queue acceptance, including resolved history
@@ -844,6 +897,7 @@ export class AttachmentStore {
   }
 
   private async removeStoredFile(value: StoredAttachment): Promise<void> {
+    if (value.retainOnWithdraw) return;
     await rm(value.path, { force: true });
     await rm(join(this.root, `${value.id}.json`), { force: true });
     this.owned.delete(value.path);
@@ -854,7 +908,7 @@ export class AttachmentStore {
     const value = this.owned.get(candidate);
     const local = value ? this.values.get(value.id) : null;
     return value?.kind === "file" &&
-      local?.state !== "staged" &&
+      (local?.state !== "staged" || local.retainOnWithdraw) &&
       (value.version !== 3 || value.delivery === "possible")
       ? value
       : null;
@@ -905,7 +959,12 @@ export class AttachmentStore {
   }
 
   private publicValue(value: StoredAttachment): UploadedAttachment {
-    const { path: _path, state: _state, ...publicValue } = value;
+    const {
+      path: _path,
+      state: _state,
+      retainOnWithdraw: _retain,
+      ...publicValue
+    } = value;
     return publicValue;
   }
 

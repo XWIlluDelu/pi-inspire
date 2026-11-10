@@ -495,12 +495,9 @@ describe("Host local-control ingress", () => {
         ).body.result.kind,
       ).toBe("released");
       expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
-      // CLI restarts declare their scope like the page does.
+      // Ordinary CLI preparation is compatible with older launchers. The old
+      // Host-only prepare cannot authorize a later unscoped signal.
       const stopAttachedWork = vi.spyOn(f.runtime, "stopAttachedPiWork");
-      // Stubbed: the fixture Host must still stop its test workers.
-      const preserve = vi
-        .spyOn(f.runtime, "preserveWorkersOnClose")
-        .mockImplementation(() => {});
       for (const scope of ["host", "host-only"] as const) {
         const prepareRestart = createInstanceControlRequest(
           owner,
@@ -511,10 +508,13 @@ describe("Host local-control ingress", () => {
           .post("/api/host/local-control")
           .send(prepareRestart)
           .expect(200);
-        expect(prepared.body.result).toEqual({ kind: "prepared", scope });
+        expect(prepared.body.result).toEqual(
+          scope === "host"
+            ? { kind: "prepared", scope }
+            : { kind: "skipped", reason: "scoped-shutdown-required" },
+        );
       }
       expect(stopAttachedWork).not.toHaveBeenCalled();
-      expect(preserve).toHaveBeenCalledOnce();
       owner = null;
       await request(f.application.server)
         .post("/api/host/local-control")

@@ -24,6 +24,18 @@ type CompletionAttention = "completed" | "failed";
 
 export type PersistenceMatcher = (entry: SessionEntry) => boolean;
 
+export function effectiveRuntimeLeaf(slot: RuntimeSlot): string | null {
+  if (slot.navigationLease) return slot.navigationLease.effectiveLeafId;
+  const view = slot.viewLeafId;
+  if (
+    !slot.process &&
+    view !== undefined &&
+    (view === null || slot.projection?.entry(view))
+  )
+    return view;
+  return slot.projection?.leafId ?? null;
+}
+
 /** Shared by the exact claim and its possibly delayed message presentation. */
 export interface PersistenceMessageIdentity {
   overlayId?: string;

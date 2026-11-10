@@ -11,7 +11,7 @@ interface ServiceControl {
   requestBrowserRestart(
     root: string,
     all: boolean,
-    commit: () => boolean,
+    commit: () => boolean | Promise<boolean>,
     options: { invocationId: string },
   ): Promise<{ code: number; issued?: boolean }>;
 }

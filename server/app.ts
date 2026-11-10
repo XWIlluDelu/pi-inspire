@@ -20,6 +20,7 @@ import {
   MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_CURATED_SESSION_RESULTS,
   MAX_PROJECT_FILES,
+  MAX_PROMPT_CHARS,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_CHARS,
   MAX_SESSION_ID_HYDRATION_IDS,
@@ -136,7 +137,8 @@ const promptSchema = z
     operationId: z.string().uuid(),
     authorityId: z.string().uuid(),
     sessionId: sessionIdField,
-    message: z.string().max(500_000),
+    expectedViewId: z.string().min(1).max(240).optional(),
+    message: z.string().max(MAX_PROMPT_CHARS),
     attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
     historyArtifacts: z
       .object({
@@ -629,7 +631,7 @@ export function createInspireServer(deps: AppDependencies): {
   /** Process-lifetime prompt-delivery authority, also advertised by bootstrap. */
   authorityId: string;
   launchUrl: (origin: string) => string;
-  close: () => Promise<void>;
+  close: (preserveWorkers?: boolean) => Promise<void>;
 } {
   const app = express();
   const generatedExports = new GeneratedExportStore();
@@ -768,6 +770,8 @@ export function createInspireServer(deps: AppDependencies): {
     expireLegacyCookies(request, response);
     next();
   });
+  // JSON escapes can take six bytes per character of a valid prompt.
+  app.post("/api/prompt", express.json({ limit: "4mb" }));
   app.use(express.json({ limit: "2mb" }));
   const browserAuth = new BrowserAuth(deps.token);
   const taskNotifications = new TaskNotifications(
@@ -876,8 +880,10 @@ export function createInspireServer(deps: AppDependencies): {
         const { scope } = z
           .object({ scope: z.enum(["host", "host-only"]) })
           .parse(grant.request.payload);
-        if (scope === "host-only") deps.runtime.preserveWorkersOnClose();
-        result = { kind: "prepared", scope };
+        result =
+          scope === "host"
+            ? { kind: "prepared", scope }
+            : { kind: "skipped", reason: "scoped-shutdown-required" };
         break;
       }
       case "maintenance-commit":
@@ -2189,7 +2195,7 @@ export function createInspireServer(deps: AppDependencies): {
     server,
     authorityId,
     launchUrl,
-    close: async () => {
+    close: async (preserveWorkers) => {
       deps.providerAuth?.close();
       htmlPreviews.close();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
@@ -2203,7 +2209,7 @@ export function createInspireServer(deps: AppDependencies): {
       deps.runtime.off("event", taskNotifications.observe);
       await taskNotifications.close();
       terminalGateway.close();
-      const runtimeResult = await deps.runtime.close().then(
+      const runtimeResult = await deps.runtime.close(preserveWorkers).then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );

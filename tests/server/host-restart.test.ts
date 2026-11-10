@@ -4,7 +4,10 @@ import {
   type HostRestartBackend,
   HostRestartController,
 } from "../../server/host-restart.js";
-import type { MaintenanceRestartDecision } from "../../server/runtime.js";
+import type {
+  MaintenanceRestartDecision,
+  MaintenanceRestartTransition,
+} from "../../server/runtime.js";
 
 function fixture(overrides: Partial<HostRestartBackend> = {}) {
   const runtime = {
@@ -15,18 +18,19 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
       leaseId: "lease",
       expiresAt: Date.now() + 30_000,
     })),
-    commitMaintenanceRestart: vi.fn(() => ({
+    commitMaintenanceRestart: vi.fn<() => MaintenanceRestartTransition>(() => ({
       kind: "committed" as const,
       leaseId: "lease",
     })),
     releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" as const })),
+    checkAttachedRestartWork: vi.fn(async () => null),
     stopAttachedPiWork: vi.fn(async () => {}),
   };
   const backend: HostRestartBackend = {
     inspect: vi.fn(async () => ({ host: true, all: true })),
     prepare: vi.fn(async () => {}),
     request: vi.fn(async (_all, commit) =>
-      commit() ? { code: 0 } : { code: 1, issued: false },
+      (await commit()) ? { code: 0 } : { code: 1, issued: false },
     ),
     ...overrides,
   };
@@ -63,6 +67,9 @@ describe("manual Host restart ownership", () => {
         preserveWork,
       );
       expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
+      expect(f.runtime.checkAttachedRestartWork).toHaveBeenCalledTimes(
+        preserveWork ? 0 : 1,
+      );
       expect(f.backend.request).toHaveBeenCalledWith(
         scope === "all",
         expect.any(Function),
@@ -245,7 +252,7 @@ describe("manual Host restart ownership", () => {
   it("releases only after proven non-issuance", async () => {
     const f = fixture({
       request: vi.fn(async (_all, commit) => {
-        commit();
+        await commit();
         return { issued: false, code: 1 };
       }),
     });
@@ -256,12 +263,34 @@ describe("manual Host restart ownership", () => {
     expect(f.runtime.releaseMaintenanceRestart).toHaveBeenCalledWith("lease");
   });
 
+  it.each(["active-work", "in-flight-operation"] as const)(
+    "reports a %s veto at final submission as a workload refusal",
+    async (reason) => {
+      const f = fixture();
+      f.runtime.commitMaintenanceRestart.mockReturnValue({
+        kind: "skipped",
+        reason,
+      });
+      f.controller.start(await intent(f.controller));
+      await vi.waitFor(async () =>
+        expect((await f.controller.status()).operation).toMatchObject({
+          phase: "rejected",
+          busyReason: reason,
+          error: expect.stringContaining("Stop work and restart"),
+        }),
+      );
+      expect(
+        f.runtime.releaseMaintenanceRestart,
+      ).toHaveBeenCalledExactlyOnceWith("lease");
+    },
+  );
+
   it.each(["exit-error", "lost-result"])(
     "retains committed drain and prohibits replay after %s",
     async (mode) => {
       const f = fixture({
         request: vi.fn(async (_all, commit) => {
-          commit();
+          await commit();
           if (mode === "lost-result") throw new Error("IPC lost");
           return { code: 1 };
         }),

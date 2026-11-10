@@ -6,6 +6,7 @@ import type {
   ExternalSessionConnection,
   ExternalSessionState,
 } from "../../server/external-session.js";
+import { HostRestartController } from "../../server/host-restart.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
 import {
   RuntimeController,
@@ -69,6 +70,16 @@ function nativeFixture() {
       state = next;
     },
   };
+}
+
+function branchMessage(id: string, parentId: string): string {
+  return `${JSON.stringify({
+    type: "message",
+    id,
+    parentId,
+    timestamp: "2026-11-10T15:00:00.000Z",
+    message: { role: "assistant", content: [{ type: "text", text: id }] },
+  })}\n`;
 }
 
 /** RuntimeExternalSessions driven directly on one idle slot "a". */
@@ -160,6 +171,116 @@ async function openAttached(runtime: RuntimeController, id: string) {
 }
 
 describe("continue an externally owned Pi", () => {
+  it("checks live attached work at Restart all submission before the next poll", async () => {
+    const session = await persistedRecord("a");
+    const f = nativeFixture();
+    f.setState({ status: "idle", leafId: "u1" });
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => ["u1"])
+      .setExternalSessionConnector(async () => f.native);
+    const events: string[] = [];
+    runtime.on("event", (event) => events.push(event.type));
+    const dispatch = vi.fn();
+    const controller = new HostRestartController(runtime, {
+      inspect: async () => ({ host: true, all: true }),
+      prepare: async () => {},
+      request: async (all, commit) => {
+        expect(all).toBe(true);
+        const before = vi.mocked(f.native.read).mock.calls.length;
+        // The TUI starts work after reservation while its last poll is idle.
+        f.setState({ status: "working", leafId: "u1" });
+        if (await commit()) {
+          dispatch();
+          return { code: 0, issued: true };
+        }
+        expect(f.native.read).toHaveBeenCalledTimes(before + 1);
+        expect(events).not.toContain("agent_start");
+        return { code: 1, issued: false };
+      },
+    });
+    try {
+      await openAttached(runtime, "a");
+      controller.start({
+        hostId: (await controller.status()).hostId,
+        operationId: "busy-before-commit",
+        scope: "all",
+      });
+      await vi.waitFor(async () =>
+        expect((await controller.status()).operation).toMatchObject({
+          phase: "rejected",
+          busyReason: "active-work",
+          error: expect.stringContaining("Stop work and restart"),
+        }),
+      );
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(f.native.abort).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("blocks a restart when an attached Pi becomes busy after reservation", async () => {
+    const session = await persistedRecord("a");
+    const f = nativeFixture();
+    f.setState({ status: "idle", leafId: "u1" });
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => ["u1"])
+      .setExternalSessionConnector(async () => f.native);
+    const events: string[] = [];
+    runtime.on("event", (event) => events.push(event.type));
+    try {
+      await openAttached(runtime, "a");
+      const lease = runtime.reserveMaintenanceRestart(false, true);
+      if (lease.kind !== "ready") throw new Error("Expected an idle lease");
+      f.setState({ status: "working", leafId: "u1" });
+      await vi.waitFor(() => expect(events).toContain("agent_start"), {
+        timeout: 2000,
+      });
+      expect(runtime.commitMaintenanceRestart(lease.leaseId)).toEqual({
+        kind: "skipped",
+        reason: "active-work",
+      });
+      expect(runtime.releaseMaintenanceRestart(lease.leaseId).kind).toBe(
+        "released",
+      );
+      await runtime.stopAttachedPiWork();
+      expect(f.native.abort).toHaveBeenCalledExactlyOnceWith("u1");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("skips restart interruption for an attached Pi with no verified leaf", async () => {
+    const f = nativeFixture();
+    f.setState({ status: "working" });
+    const { slot, external } = await directAttachment(async () => f.native);
+    try {
+      expect(await external.connect(slot)).toBe(true);
+      await expect(external.abort(slot, true)).rejects.toThrow(
+        "verify the branch",
+      );
+      expect(f.native.abort).not.toHaveBeenCalled();
+    } finally {
+      external.close();
+    }
+  });
+
   it("retains an idle takeover through ordinary navigation and worker-cache reclamation", async () => {
     const f = nativeFixture();
     const spawn = vi.fn(() => {
@@ -196,6 +317,144 @@ describe("continue an externally owned Pi", () => {
       expect(f.native.prompt).not.toHaveBeenCalled();
     } finally {
       f.external.close();
+    }
+  });
+
+  it("loads a reported continuation before revalidating its attachment", async () => {
+    const f = nativeFixture();
+    const known = new Set(["old"]);
+    const reconcile = vi.fn(async () => {
+      known.add("continued");
+    });
+    const connect = vi.fn(async () => f.native);
+    const { slot, external } = await directAttachment(connect, { reconcile });
+    const accepts = (leaf: string | null) => leaf !== null && known.has(leaf);
+    f.setState({ status: "idle", leafId: "old" });
+    try {
+      expect(await external.connect(slot, accepts)).toBe(true);
+      reconcile.mockClear();
+      known.delete("continued");
+      f.setState({ status: "working", leafId: "continued" });
+      expect(await external.connect(slot, accepts)).toBe(true);
+      expect(reconcile).toHaveBeenCalledOnce();
+      expect(connect).toHaveBeenCalledOnce();
+      expect(f.native.close).not.toHaveBeenCalled();
+    } finally {
+      external.close();
+    }
+  });
+
+  it("restores an addressed view read-only when a live Pi owns its branch", async () => {
+    const f = nativeFixture();
+    const create = vi.fn(
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+    );
+    const presence = vi.fn(async () => [null]);
+    const runtime = attachedRuntime(
+      async () => f.native,
+      create,
+    ).setExternalSessionPresence(presence);
+    const release = runtime.retainSessionView("a");
+    try {
+      const snapshot = await runtime.snapshot("a");
+      expect(snapshot.active?.readOnlyReason).toBe("external-active");
+      expect(runtime.activeSessionId).toBeNull();
+      expect(presence).toHaveBeenCalledExactlyOnceWith(
+        "a",
+        expect.any(String),
+        true,
+      );
+      expect(create).not.toHaveBeenCalled();
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "First input" }),
+      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+      expect(presence).toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+      expect(f.native.prompt).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await runtime.close();
+    }
+  });
+
+  it.each([null, "not-in-projection"])(
+    "keeps a live Pi with unavailable attachment and leaf %s read-only",
+    async (leaf) => {
+      const presence = vi.fn(async () => [leaf]);
+      const connect = vi.fn(async () => null);
+      const create = vi.fn(
+        (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      );
+      const runtime = attachedRuntime(
+        connect,
+        create,
+      ).setExternalSessionPresence(presence);
+      const release = runtime.retainSessionView("a");
+      try {
+        await expect(runtime.takeOverSession("a")).rejects.toMatchObject({
+          code: "EXTERNAL_PI_WRITER_ACTIVE",
+        });
+        expect(presence).toHaveBeenCalledWith("a", expect.any(String), true);
+        expect(connect).toHaveBeenCalledOnce();
+        expect(create).not.toHaveBeenCalled();
+        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+          "external-active",
+        );
+      } finally {
+        release();
+        await runtime.close();
+      }
+    },
+  );
+
+  it("does not start a writer when live ownership could not be observed", async () => {
+    const create = vi.fn(
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+    );
+    const runtime = attachedRuntime(
+      async () => null,
+      create,
+    ).setExternalSessionPresence(async () => {
+      throw new Error("Cannot read registry");
+    });
+    try {
+      await runtime.snapshot("a");
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "First input" }),
+      ).rejects.toMatchObject({ code: "EXTERNAL_PI_PRESENCE_UNAVAILABLE" });
+      expect(create).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("fences a new external leaf reported during writer preparation", async () => {
+    const workers: FakeRpc[] = [];
+    const runtime = attachedRuntime(
+      async () => null,
+      (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+    ).setExternalSessionPresence(
+      vi
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValue(["not-yet-projected"]),
+    );
+    const release = runtime.retainSessionView("a");
+    try {
+      await runtime.snapshot("a");
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "First input" }),
+      ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.starts).toBe(0);
+    } finally {
+      release();
+      await runtime.close();
     }
   });
 
@@ -411,6 +670,273 @@ describe("continue an externally owned Pi", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it.each(["!pwd", "!!pwd", "/unknown-command"])(
+    "rejects attached command %s before it can become a prompt",
+    async (message) => {
+      const f = nativeFixture();
+      const runtime = attachedRuntime(async () => f.native);
+      try {
+        await openAttached(runtime, "a");
+        await expect(
+          runtime.prompt({ sessionId: "a", message }),
+        ).rejects.toMatchObject({ code: "NATIVE_ACTION_UNSUPPORTED" });
+        expect(f.native.prompt).not.toHaveBeenCalled();
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it("rejects input for a retired attachment instead of sending to its replacement", async () => {
+    const first = nativeFixture();
+    const replacement = nativeFixture();
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce(first.native)
+      .mockResolvedValue(replacement.native);
+    const runtime = attachedRuntime(connect);
+    try {
+      await openAttached(runtime, "a");
+      first.setState({ ended: "exited" });
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "First Pi only" }),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(first.native.close).toHaveBeenCalledOnce();
+      expect(connect).toHaveBeenCalledOnce();
+      expect(first.native.prompt).not.toHaveBeenCalled();
+      expect(replacement.native.prompt).not.toHaveBeenCalled();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it.each(["rename", "setModel", "setThinkingLevel"] as const)(
+    "does not retarget %s from a retired attachment",
+    async (action) => {
+      const first = nativeFixture();
+      const replacement = nativeFixture();
+      const connect = vi
+        .fn()
+        .mockResolvedValueOnce(first.native)
+        .mockResolvedValue(replacement.native);
+      const create = vi.fn(
+        (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+      );
+      const runtime = attachedRuntime(connect, create);
+      try {
+        await openAttached(runtime, "a");
+        first.setState({ ended: "exited" });
+        const mutation =
+          action === "rename"
+            ? runtime.rename("a", "Original Pi")
+            : action === "setModel"
+              ? runtime.setModel("a", "native", "model")
+              : runtime.setThinkingLevel("a", "high");
+        await expect(mutation).rejects.toMatchObject({ status: 409 });
+        expect(connect).toHaveBeenCalledOnce();
+        expect(create).not.toHaveBeenCalled();
+        expect(first.native[action]).not.toHaveBeenCalled();
+        expect(replacement.native[action]).not.toHaveBeenCalled();
+      } finally {
+        await runtime.close();
+      }
+    },
+  );
+
+  it("rejects input for a cold view superseded by a pending branch selection", async () => {
+    const session = await persistedRecord("a");
+    await appendFile(session.path, branchMessage("old-branch", "u1"));
+    const scanning = deferredSignal();
+    const finish = deferredSignal();
+    let pause = false;
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => {
+        if (pause) {
+          pause = false;
+          scanning.resolve();
+          await finish.promise;
+        }
+        return ["old-branch"];
+      })
+      .setExternalSessionConnector(async () => null);
+    const release = runtime.retainSessionView("a");
+    try {
+      await runtime.openSession("a");
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
+          "external-active",
+        ),
+      );
+      await appendFile(session.path, branchMessage("other-branch", "u1"));
+      const oldView = (await runtime.snapshot("a")).active!;
+      expect(oldView.effectiveLeafId).toBe("old-branch");
+      pause = true;
+      const select = runtime.selectBranch("a", "other-branch");
+      await scanning.promise;
+      const send = expect(
+        runtime.prompt({ sessionId: "a", message: "For old branch" }),
+      ).rejects.toMatchObject({ code: "PROMPT_VIEW_CHANGED" });
+      finish.resolve();
+      await Promise.all([select, send]);
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          expectedViewId: oldView.transcriptPage!.viewId,
+          message: "For old branch",
+        }),
+      ).rejects.toMatchObject({ code: "PROMPT_VIEW_CHANGED" });
+      expect((await runtime.snapshot("a")).active?.effectiveLeafId).toBe(
+        "other-branch",
+      );
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.commands).not.toContainEqual({
+        type: "prompt",
+        message: "For old branch",
+      });
+    } finally {
+      finish.resolve();
+      release();
+      await runtime.close();
+    }
+  });
+
+  it("keeps the attachment if a running session cannot switch branches", async () => {
+    const session = await persistedRecord("a");
+    await appendFile(
+      session.path,
+      branchMessage("other", "u1") + branchMessage("chosen", "u1"),
+    );
+    const f = nativeFixture();
+    f.setState({ status: "working", leafId: "chosen" });
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: () => {
+          throw new Error("must not create Pi");
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => ["chosen", "other"])
+      .setExternalSessionConnector(async () => f.native);
+    try {
+      await openAttached(runtime, "a");
+      await expect(runtime.selectBranch("a", "other")).rejects.toMatchObject({
+        status: 409,
+      });
+      expect(f.native.close).not.toHaveBeenCalled();
+      const after = await runtime.snapshot("a");
+      expect(after.sessionStatuses.a?.external).toBe(true);
+      expect(after.runState).toBe("running");
+      expect(after.active?.effectiveLeafId).toBe("chosen");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("validates recalled artifacts against the attached leaf", async () => {
+    const session = await persistedRecord("a");
+    await appendFile(
+      session.path,
+      branchMessage("other", "u1") + branchMessage("chosen", "u1"),
+    );
+    const f = nativeFixture();
+    f.setState({ status: "idle", leafId: "chosen" });
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: () => {
+          throw new Error("must not create Pi");
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => ["chosen", "other"])
+      .setExternalSessionConnector(async () => f.native);
+    try {
+      await openAttached(runtime, "a");
+      await appendFile(session.path, branchMessage("other-tip", "other"));
+      const { active } = await runtime.snapshot("a");
+      expect(active?.effectiveLeafId).toBe("chosen");
+      expect(active?.durableLeafId).toBe("other-tip");
+      const { viewId, incarnation } = active!.transcriptPage;
+      await runtime.prompt({
+        sessionId: "a",
+        message: "Recall from attached view",
+        historyArtifacts: {
+          viewId: viewId!,
+          incarnation: incarnation!,
+          effectiveLeafId: "chosen",
+          imageReferences: [],
+          fileReferences: [],
+        },
+      });
+      expect(f.native.prompt).toHaveBeenCalledOnce();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("does not send from the default branch when restoring the attached leaf fails", async () => {
+    const session = await persistedRecord("a");
+    await appendFile(
+      session.path,
+      branchMessage("other", "u1") + branchMessage("chosen", "u1"),
+    );
+    const f = nativeFixture();
+    f.setState({ status: "idle", leafId: "chosen" });
+    let live = true;
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: (options) => {
+          const worker = new FakeRpc(options);
+          worker.failPrompts = true;
+          workers.push(worker);
+          return worker as unknown as PiRpcProcess;
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => (live ? ["chosen"] : []))
+      .setExternalSessionConnector(async () => f.native);
+    try {
+      await openAttached(runtime, "a");
+      await appendFile(session.path, branchMessage("other-tip", "other"));
+      f.setState({ ended: "exited" });
+      live = false;
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "For chosen branch" }),
+      ).rejects.toThrow("The external Pi connection has ended");
+      await expect(
+        runtime.prompt({ sessionId: "a", message: "For chosen branch" }),
+      ).rejects.toThrow("prompt rejected");
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.stops).toBeGreaterThan(0);
+      expect(workers[0]!.commands).not.toContainEqual({
+        type: "prompt",
+        message: "For chosen branch",
+      });
+      const { active } = await runtime.snapshot("a");
+      expect(active?.effectiveLeafId).toBe("chosen");
+      expect(active?.durableLeafId).toBe("other-tip");
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("discards late native state after retirement and completes writer recovery", async () => {
     const f = nativeFixture();
     const entered = deferredSignal();
@@ -422,7 +948,7 @@ describe("continue an externally owned Pi", () => {
     const runtime = attachedRuntime(
       async () => (retired ? null : f.native),
       worker,
-    );
+    ).setExternalSessionPresence(async () => (retired ? [] : [null]));
     const events: Array<{ type: string }> = [];
     runtime.on("event", (event) => events.push(event));
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -729,6 +1255,79 @@ describe("continue an externally owned Pi", () => {
         status: 404,
       });
     } finally {
+      await runtime.close();
+    }
+  });
+
+  it("retains transport image copies after a lost receipt and restages originals", async () => {
+    const store = trackedAttachmentStore();
+    const [image, file] = await store.addMany([
+      {
+        originalname: "image.png",
+        mimetype: "image/png",
+        size: 6,
+        buffer: Buffer.from("pixels"),
+      } as Express.Multer.File,
+      {
+        originalname: "notes.txt",
+        mimetype: "text/plain",
+        size: 5,
+        buffer: Buffer.from("notes"),
+      } as Express.Multer.File,
+    ]);
+    const f = nativeFixture();
+    vi.mocked(f.native.prompt).mockRejectedValue(
+      Object.assign(new Error("Receipt lost"), { outcomeUnknown: true }),
+    );
+    const runtime = new RuntimeController(
+      catalog([record("a", "/tmp")]),
+      store,
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+        openSessionProjection: preview,
+      },
+    )
+      .setExternalSessionPresence(async () => [null])
+      .setExternalSessionConnector(async () => f.native);
+    try {
+      await openAttached(runtime, "a");
+      const attachmentIds = [image!.id, file!.id];
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          message: "Read this",
+          attachmentIds,
+        }),
+      ).rejects.toMatchObject({ outcomeUnknown: true });
+      const [message, , , images] = vi.mocked(f.native.prompt).mock.calls[0]!;
+      const imagePath = images![0]!.path;
+      const filePath = parseAttachmentContext(message, 1).references[0]!;
+      expect((await store.imagePreview(image!.id)).bytes.toString()).toBe(
+        "pixels",
+      );
+      expect((await store.resolveForPrompt(attachmentIds)).files).toHaveLength(
+        2,
+      );
+      store.restage(attachmentIds);
+      await store.remove(image!.id);
+      await store.remove(file!.id);
+      expect(await readFile(imagePath, "utf8")).toBe("pixels");
+      expect(await readFile(filePath, "utf8")).toBe("notes");
+      expect(store.ownsPromptFile(filePath)).toBe(true);
+      expect((await store.collectStaged()).reclaimed).not.toContain(imagePath);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.advanceTimersByTime(6 * 60_000);
+      await expect(store.collectStaged()).resolves.toMatchObject({
+        reclaimed: [imagePath],
+      });
+      await expect(readFile(imagePath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect(await readFile(filePath, "utf8")).toBe("notes");
+    } finally {
+      vi.useRealTimers();
       await runtime.close();
     }
   });

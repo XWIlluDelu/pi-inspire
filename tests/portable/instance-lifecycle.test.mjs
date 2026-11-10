@@ -16,7 +16,7 @@ after(async () => {
   );
 });
 
-function childServer(path, token) {
+function childServer(path, token, acknowledgeScope) {
   const source = String.raw`
     import { createServer } from "node:http";
     const { InstanceHttpControl } = await import(process.argv[1]);
@@ -24,6 +24,7 @@ function childServer(path, token) {
       removeInstanceState, watchInstanceShutdown } = await import(process.argv[2]);
     const path = process.argv[3];
     const token = process.argv[4];
+    const acknowledgeScope = process.argv[5] === "true";
     const control = new InstanceHttpControl();
     let state;
     const server = createServer(async (request, response) => {
@@ -43,13 +44,14 @@ function childServer(path, token) {
         schemaVersion: 1, pid: process.pid, root: process.cwd(), host: "127.0.0.1",
         port: server.address().port, token, startedAt: new Date().toISOString(),
         processStartTime: await processStartIdentity(process.pid),
-        shutdownControlVersion: 1, httpControlVersion: 1,
+        shutdownControlVersion: 1, scopedShutdown: true, httpControlVersion: 1,
       };
       await writeInstanceState(path, state);
-      const close = watchInstanceShutdown(path, state, async () => {
+      const close = watchInstanceShutdown(path, state, async (request) => {
         close();
         server.close(async () => {
-          await completeInstanceShutdown(path, state, true);
+          const nonce = acknowledgeScope && request.scope === "host-only" ? request.nonce : undefined;
+          await completeInstanceShutdown(path, state, true, nonce);
           await removeInstanceState(path, state);
           process.exit(0);
         });
@@ -67,6 +69,7 @@ function childServer(path, token) {
       new URL("../../server/instance-state.mjs", import.meta.url).href,
       path,
       token,
+      String(acknowledgeScope),
     ],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
@@ -95,11 +98,11 @@ async function firstLine(stream) {
   });
 }
 
-test("inspects a proven Host and stops it without sending a bearer", async (context) => {
+async function fixture(context, acknowledgeScope = false) {
   const directory = await mkdtemp(join(tmpdir(), "inspire-instance-proof-"));
   directories.push(directory);
   const path = join(directory, "instance.json");
-  const child = childServer(path, "portable-lifecycle-token");
+  const child = childServer(path, "portable-lifecycle-token", acknowledgeScope);
   context.after(async () => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -113,8 +116,38 @@ test("inspects a proven Host and stops it without sending a bearer", async (cont
     port: state.port,
   };
   assert.equal((await inspectInstance(path, expected)).kind, "healthy");
+  return { path, expected, state };
+}
+
+test("inspects a proven Host and stops it without sending a bearer", async (context) => {
+  const { path, expected } = await fixture(context);
   const stopped = await stopManagedInstance(path, expected, {
     timeoutMs: 5_000,
   });
   assert.equal(stopped.kind, "stopped");
+});
+
+test("requires an exact owner and request receipt for Host-only shutdown", async (context) => {
+  const { path, expected, state } = await fixture(context, true);
+  const wrongOwner = { ...state, processStartTime: "different-birth" };
+  const rejected = await stopManagedInstance(path, expected, {
+    scopedOwner: wrongOwner,
+    timeoutMs: 5_000,
+  });
+  assert.equal(rejected.kind, "unavailable");
+  assert.equal((await inspectInstance(path, expected)).kind, "healthy");
+  const stopped = await stopManagedInstance(path, expected, {
+    scopedOwner: state,
+    timeoutMs: 5_000,
+  });
+  assert.equal(stopped.kind, "stopped");
+});
+
+test("an unscoped clean exit does not acknowledge a concurrent Host-only request", async (context) => {
+  const { path, expected, state } = await fixture(context);
+  const stopped = await stopManagedInstance(path, expected, {
+    scopedOwner: state,
+    timeoutMs: 5_000,
+  });
+  assert.equal(stopped.kind, "unavailable");
 });

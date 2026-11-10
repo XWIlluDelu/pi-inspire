@@ -202,9 +202,9 @@ worker or starting it at that leaf. An attached Pi is released when another bran
 ### Live instances
 
 Admission reads live [attach-control](../../docs/extensions.md#share-sessions-with-terminal-pi)
-records for each decision; nothing is fenced in advance. Admission and activity badges share one
-directory scan up to a second old, well inside a record's stale period; takeover, deletion and an
-attached Pi's own polls read fresh records, and waiting for a Pi to exit checks only its process. A record matching session id and physical file
+records for each decision. Activity badges can reuse recent observations. Cold writer admission,
+restored browser views, branch selection, takeover and deletion check current process identity.
+Waiting for a Pi to exit checks its process. A record matching session id and physical file
 from a live process incarnation corresponds to the view when its leaf lies on the viewed
 root-to-leaf line: an ancestor (a report may lag one append) or a continuation.
 
@@ -212,16 +212,17 @@ root-to-leaf line: an ancestor (a report may lag one append) or a continuation.
   worker started for a non-default view first navigates to it, so displayed conversation and model
   context agree.
 - One or more: the view is read-only (`external-active`) with that Pi's progress and **Take over**.
-- Unreadable or missing records are no instance; a delay between persistence and reporting never
-  becomes a lasting fence. Read-only views recheck about every two seconds and become editable as
-  soon as no instance corresponds.
+- A live owner with a reported leaf still missing from the refreshed projection blocks cold writer
+  admission until Inspire can determine which branch that Pi owns. Read-only views recheck about
+  every two seconds and become editable once there is no corresponding instance.
 
-Inspire's own workers load attach-control with their worker tag; their records are ignored while
-this Host owns them. Sessions worked on in Inspire since Host start (input sent, a takeover, or a
-branch chosen to continue here) keep that continuity: idle reclamation, navigation and other
-processes' appends never return them to read-only viewing. A worker warmed by merely viewing a
-session grants none; entering such a session again applies the rule, stopping that idle worker if a
-live Pi runs the branch. A Host restart returns every session to this ordinary rule.
+Inspire's own workers load attach-control with a tag bound to the worker launcher. The owning Host
+excludes those records from external admission. Sessions worked on in Inspire keep their viewed
+position across idle reclamation and navigation. Starting a replacement worker checks live
+ownership again, including after an attachment ends or the browser restores an addressed view.
+A session only warmed by viewing can return to read-only on re-entry if a live Pi now runs its branch.
+An addressed browser reconnect can recover a read-only view without selecting it for other browsers
+or starting a worker.
 
 ### Takeover
 
@@ -231,22 +232,26 @@ its current endpoint, so reloads are transparent, and input and Stop stay addres
 follows the attached Pi's reported leaf as soon as the saved projection contains it, even when
 the report arrives after Inspire has already read that file revision. When the attached Pi exits,
 moves to another session or off the viewed branch, or stays unreachable for longer than a reload
-takes (the record's stale period), the binding ends and the view continues editable with Inspire's
-own worker at its position.
+takes (the record's stale period), the binding ends. Inspire can start its own worker at the viewed
+position once a fresh scan finds no owner for it.
 Ending the attachment does not establish how a task the Pi was running turned out. The view says
 why it was released (the Pi exited, opened another session, moved off the branch or stopped
 responding) and claims no failure. Only an exit during work ends the task; it is reported as ended
 with an unknown outcome. A Pi that is still running may continue its work, so no task notification
 is sent for it.
-Shorter failures keep the binding and the view editable; an action sent meanwhile fails and can be
-retried. A takeover whose Pi cannot be read fails without changing the view. Pending input queued in that Pi is not observable; agent Stop does not interrupt its
-terminal shell; its dialogs stay in its terminal and block browser input. A receipt means Pi accepted
-the call. Host shutdown and idle reclamation leave attached Pi running.
+Shorter failures keep the binding and the view editable. If a Pi still owns the branch but its
+endpoint is unavailable, takeover leaves the view read-only. Pending input queued in that Pi stays
+invisible to Inspire. Agent Stop targets that Pi's agent work, and its terminal dialogs block
+browser input. Host shutdown and idle reclamation leave attached Pi running.
 
-Attached connections stay outside the owned-worker pool and are not reclaimed. Input keeps artifact
-validation, file-backed images and final Stop/session fences; uncertain admission is never resent.
-Actions that need Inspire's own worker (branch tools, settings that restart a worker) are
-unavailable while attached.
+Attached connections stay outside the owned-worker pool. Input keeps artifact validation,
+file-backed images and final Stop/session fences. The browser identifies the branch view it sent
+from. A changed branch blocks delivery. Input, rename, model and thinking changes stay addressed
+to the attachment present when the request begins.
+A missing admission witness or lost reply after dispatch leaves the outcome unknown, and retrying
+the same browser operation observes the original receipt. Shell and Pi slash commands run from the
+attached Pi's own interface. Branch tools and settings that restart a worker require an
+Inspire-owned worker.
 
 ## Extension requests
 

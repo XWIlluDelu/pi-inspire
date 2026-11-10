@@ -199,9 +199,11 @@ const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
   .setExternalSessionTerminator((sessionId, sessionFile) =>
     attachControl.stopSession(sessionId, sessionFile),
   )
-  .setExternalSessionPresence(async (sessionId, sessionFile) =>
+  .setExternalSessionPresence(async (sessionId, sessionFile, fresh) =>
     (
-      await attachControl.forSession(sessionId, sessionFile, { observe: true })
+      await attachControl.forSession(sessionId, sessionFile, {
+        observe: !fresh,
+      })
     ).map((record) => record.leafId),
   )
   .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
@@ -337,7 +339,11 @@ let publishedState: InstanceState | null = null;
 let shuttingDown = false;
 let closeShutdownControl: (() => void) | undefined;
 
-async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
+async function shutdown(
+  reason: string,
+  requestedExitCode = 0,
+  preserveWorkersRequest?: string,
+): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   closeShutdownControl?.();
@@ -346,7 +352,7 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   console.log(`Shutting down after ${reason}…`);
   diagnostics.record("info", "host_stopping", { reason, requestedExitCode });
   try {
-    await application.close();
+    await application.close(preserveWorkersRequest !== undefined);
     if (statePublication) await statePublication;
   } catch (error) {
     console.error("Failed to shut down cleanly", error);
@@ -370,6 +376,7 @@ async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
           statePath,
           publishedState,
           exitCode === requestedExitCode,
+          preserveWorkersRequest,
         );
         await removeInstanceState(statePath, publishedState);
       }
@@ -411,7 +418,14 @@ async function announceStarted(): Promise<void> {
     startedAt: new Date().toISOString(),
     processStartTime: await processStartIdentity(process.pid),
     ...(statePath
-      ? { shutdownControlVersion: 1 as const, httpControlVersion: 1 as const }
+      ? {
+          shutdownControlVersion: 1 as const,
+          scopedShutdown: true as const,
+          httpControlVersion: 1 as const,
+        }
+      : {}),
+    ...(/^[a-f0-9]{32}$/u.test(process.env.INVOCATION_ID ?? "")
+      ? { systemdInvocationId: process.env.INVOCATION_ID }
       : {}),
   };
   if (statePath) {
@@ -427,8 +441,15 @@ async function announceStarted(): Promise<void> {
   }
   if (shuttingDown) return;
   if (statePath)
-    closeShutdownControl = watchInstanceShutdown(statePath, instanceState, () =>
-      shutdown("authenticated local shutdown"),
+    closeShutdownControl = watchInstanceShutdown(
+      statePath,
+      instanceState,
+      (request) =>
+        shutdown(
+          "authenticated local shutdown",
+          0,
+          request.scope === "host-only" ? request.nonce : undefined,
+        ),
     );
   diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = application.launchUrl(new URL(instanceUrl(instanceState)).origin);

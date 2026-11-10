@@ -3189,6 +3189,7 @@ export class AppStore {
           error instanceof ApiError &&
           (error.status === 404 ||
             error.code === "EXTERNAL_PI_WRITER_ACTIVE" ||
+            error.code === "EXTERNAL_PI_PRESENCE_UNAVAILABLE" ||
             error.code === "SESSION_OWNER_UNAVAILABLE" ||
             error.code === "SESSION_WORKSPACE_UNAVAILABLE")
         )

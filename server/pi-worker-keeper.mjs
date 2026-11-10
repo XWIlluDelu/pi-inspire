@@ -15,10 +15,12 @@ if (!executable) {
 }
 
 const ui = await createPiRpcUiRelay();
+const environment = { ...process.env };
+if (ui) environment.PI_ATTACH_CONTROL_RPC_UI = ui.environment;
+if (environment.PI_ATTACH_CONTROL_TAG)
+  environment.PI_ATTACH_CONTROL_TAG_PARENT_PID = String(process.pid);
 const child = spawn(executable, args, {
-  env: ui
-    ? { ...process.env, PI_ATTACH_CONTROL_RPC_UI: ui.environment }
-    : process.env,
+  env: environment,
   stdio: ["pipe", "pipe", "pipe"],
   windowsHide: true,
 });
