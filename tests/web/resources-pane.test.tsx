@@ -12,8 +12,11 @@ import type {
   GitPathIdentity,
   ResourceProbeResult,
 } from "../../shared/contracts";
-import type { SessionResourceReference } from "../../shared/resource-references";
-import { stripResourceLocation } from "../../shared/resource-references";
+import {
+  MAX_RESOURCE_PROBE_REFERENCES,
+  type SessionResourceReference,
+  stripResourceLocation,
+} from "../../shared/resource-references";
 import { App } from "../../src/App";
 import { ContextPane } from "../../src/components/ContextPane";
 import { MAX_MEDIA_PREVIEW_BYTES } from "../../src/resource-preview";
@@ -1034,10 +1037,10 @@ describe("Files pane", () => {
     resourceListGate = new Promise<void>((resolve) => {
       releaseList = resolve;
     });
-    let releaseProbe: (() => void) | undefined;
-    resourceProbeGate = new Promise<void>((resolve) => {
-      releaseProbe = resolve;
-    });
+    const batchCount = Math.ceil(
+      resourceListRequests[0]!.limit! / MAX_RESOURCE_PROBE_REFERENCES,
+    );
+    await waitFor(() => expect(resourceProbeRequests).toBe(batchCount));
     const probesBefore = resourceProbeRequests;
     transcriptRevision = 2;
     act(() => {
@@ -1055,7 +1058,7 @@ describe("Files pane", () => {
     });
 
     await waitFor(() => expect(resourceListRequests).toHaveLength(2));
-    await waitFor(() => expect(resourceProbeRequests).toBe(probesBefore + 1));
+    expect(resourceProbeRequests).toBe(probesBefore);
     expect(
       within(pane).getByRole("button", { name: /notes\.md/ }),
     ).toBeVisible();
@@ -1067,16 +1070,16 @@ describe("Files pane", () => {
       within(pane).queryByRole("button", { name: /fresh\.md/ }),
     ).toBeNull();
 
-    act(() => {
-      releaseProbe?.();
-      releaseList?.();
-    });
+    act(() => releaseList?.());
     expect(
       await within(pane).findByRole("button", { name: /fresh\.md/ }),
     ).toBeVisible();
     expect(
       within(pane).queryByRole("button", { name: /notes\.md/ }),
     ).toBeNull();
+    await waitFor(() =>
+      expect(resourceProbeRequests).toBe(probesBefore + batchCount),
+    );
   });
 
   it("revalidates Recent across a same-projection transport replacement", async () => {
