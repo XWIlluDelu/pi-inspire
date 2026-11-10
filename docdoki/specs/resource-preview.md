@@ -398,8 +398,8 @@ error, independently of the readable Git comparison.
 
 The file toolbar owns line counts, non-wrapping previous/next change controls and current position;
 these controls navigate changes only within that file. Git Changes toggles back to its remembered
-body mode; opening from Files explicitly selects body. Download stays at the trailing edge, with
-Source/Preview immediately before it when available in body mode. The current change uses an edge
+body mode; opening from Files explicitly selects body. [[workspace-layout]] defines the order of
+file actions. The current change uses an edge
 marker without replacing addition/deletion colors. Old/new line numbers and change signs share a
 sticky gutter with an opaque matching row tint. Changed-file rows use the shared file icons from
 [[design-system]] alongside their Git decoration.
