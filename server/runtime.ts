@@ -78,7 +78,10 @@ import {
   resolveProjectFiles,
 } from "./attachments.js";
 import { type DiagnosticLogger, nullDiagnosticLogger } from "./diagnostics.js";
-import type { ConnectExternalSession } from "./external-session.js";
+import type {
+  ConnectExternalSession,
+  ReadExternalLeaves,
+} from "./external-session.js";
 import { modelOption } from "./model-catalog.js";
 import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
 import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
@@ -498,11 +501,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private workingSessions = new Set<string>();
 
   private externalSessions: RuntimeExternalSessions | null = null;
-  private externalLeaves?: (
-    sessionId: string,
-    sessionFile: string,
-    fresh: boolean,
-  ) => Promise<(string | null)[]>;
+  private externalLeaves?: ReadExternalLeaves;
 
   private stopExternalSession?: (
     sessionId: string,
@@ -518,13 +517,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   /** Current branch leaves of live external Pi instances of a session. */
-  setExternalSessionPresence(
-    leaves: (
-      sessionId: string,
-      sessionFile: string,
-      fresh: boolean,
-    ) => Promise<(string | null)[]>,
-  ): this {
+  setExternalSessionPresence(leaves: ReadExternalLeaves): this {
     this.externalLeaves = leaves;
     return this;
   }
@@ -2647,7 +2640,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
   private async externalWriterContinues(
     slot: RuntimeSlot,
-    accepts: (leaf: string | null) => boolean,
+    target: string | null,
     fresh: boolean,
     refreshProjection = true,
   ): Promise<boolean> {
@@ -2656,6 +2649,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.id,
       slot.sessionPath,
       fresh,
+      (leaf) => leaf !== target && !!slot.projection?.continues(target, leaf),
     ).catch((error: unknown) => {
       throw Object.assign(
         requestError(
@@ -2666,13 +2660,19 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         { cause: error },
       );
     });
-    const unknown = (leaf: string | null) =>
-      leaf !== null && !slot.projection?.entry(leaf);
+    const unknown = (leaf: string | null | undefined) =>
+      typeof leaf === "string" && !slot.projection?.entry(leaf);
     if (refreshProjection && leaves.some(unknown))
       await this.reconcileSlot(slot, false);
     // A live Pi can publish a new leaf while its append is still being read.
     // Until that leaf is known, its branch cannot be ruled out.
-    return leaves.some((leaf) => unknown(leaf) || accepts(leaf));
+    return leaves.some(
+      (leaf) =>
+        leaf === undefined ||
+        leaf === target ||
+        unknown(leaf) ||
+        !!slot.projection?.continues(leaf, target),
+    );
   }
 
   /** Every cold writer checks live ownership of the branch it will open. */
@@ -2683,11 +2683,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<void> {
     const watching = await this.externalWriterContinues(
       slot,
-      (leaf) => this.leafContinuesView(slot, leaf),
+      this.effectiveLeaf(slot),
       fresh,
       refreshProjection,
     );
-    if (!watching) return;
+    if (watching) this.rejectExternalWriter(slot);
+  }
+
+  private rejectExternalWriter(slot: RuntimeSlot): never {
     this.markExternalActive(slot);
     throw requestError(
       "This session is open in another Pi. Take over to continue it here.",
@@ -2697,13 +2700,35 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   /** True when attached to an external Pi; otherwise checks presence. */
-  private async connectExternalSession(slot: RuntimeSlot): Promise<boolean> {
+  private async connectExternalSession(
+    slot: RuntimeSlot,
+    attachIdle = false,
+  ): Promise<boolean> {
     if (this.externalSessions?.has(slot)) {
       const connected = await this.externalSessions.connect(slot);
       if (connected) return true;
     }
-    await this.assertExternalWriterAvailable(slot, true);
-    return false;
+    if (
+      !(await this.externalWriterContinues(
+        slot,
+        this.effectiveLeaf(slot),
+        true,
+      ))
+    )
+      return false;
+    if (
+      attachIdle &&
+      !slot.conflict &&
+      !this.maintenanceRestart &&
+      (await this.externalSessions?.connect(slot, true).catch((error) => {
+        this.logRuntimeError(slot.id, error, "external_session_connection");
+        return false;
+      }))
+    ) {
+      this.workingSessions.add(slot.id);
+      return true;
+    }
+    this.rejectExternalWriter(slot);
   }
 
   async branchLeaves(sessionId: string): Promise<BranchLeavesResponse> {
@@ -2731,11 +2756,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         if (leafId === this.effectiveLeaf(slot)) return false;
         const reported = this.externalSessions?.reportedLeaf(slot);
         if (reported !== undefined && reported === leafId) return false;
-        const watching = await this.externalWriterContinues(
-          slot,
-          (leaf) => projection.onSameLine(leafId, leaf),
-          true,
-        );
+        const watching = await this.externalWriterContinues(slot, leafId, true);
         if (
           !watching &&
           slot.readOnlyReason !== "workspace-unavailable" &&
@@ -2836,7 +2857,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.deletions.isDeleting(slot.id))
       )
         return slot;
-      if (!slot.process && (await this.connectExternalSession(slot)))
+      if (!slot.process && (await this.connectExternalSession(slot, true)))
         return slot;
       // A slow observation must not warm an abandoned or replaced view.
       if (
@@ -4232,11 +4253,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     targetId: string,
     revision: number,
   ): Promise<void> {
-    const watching = await this.externalWriterContinues(
-      slot,
-      (leaf) => projection.onSameLine(targetId, leaf),
-      true,
-    );
+    const watching = await this.externalWriterContinues(slot, targetId, true);
     this.requireIdleBranchSlot(slot, revision);
     const assertSavedTarget = () => {
       this.throwIfConflicted(slot);
@@ -5830,7 +5847,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           )
             return;
           try {
-            await this.assertExternalWriterAvailable(slot, true);
+            if (this.sessionViewObservers.has(slot.id))
+              await this.connectExternalSession(slot, true);
+            else await this.assertExternalWriterAvailable(slot, true);
           } catch (error) {
             // History remains readable when observation fails. Every writer
             // admission still requires its own successful ownership check.

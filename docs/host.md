@@ -185,8 +185,9 @@ progress. **Reset restart recovery…** clears an invalid browser record while a
 continues on the Host.
 
 `inspire restart --host-only` detaches Inspire's Pi workers so their work and loaded settings
-can continue. When the session opens again, **Take over** reconnects to the worker and restores
-its pending browser questions. The [Herdr lifecycle notes](../docdoki/specs/herdr-enhancement.md#worker-lifecycle)
+can continue. When the session opens again, Inspire reconnects automatically to a sole idle
+worker. **Take over** reconnects to a busy worker and restores pending browser questions.
+The [Herdr lifecycle notes](../docdoki/specs/herdr-enhancement.md#worker-lifecycle)
 describe lease recovery for pane-backed workers.
 
 Page restart works on Windows, macOS and Linux for a Host started through `inspire` or

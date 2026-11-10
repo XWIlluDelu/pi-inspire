@@ -388,8 +388,8 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   must identify the attached branch. The Host logs a failed interruption and continues the restart.
 - `inspire restart --host-only` preserves every Pi process and its running work, including
   Inspire's workers. Running work can continue during restart because the closing Host detaches
-  its workers. After any restart, sessions return to ordinary admission, so preserved workers
-  appear as live Pi with **Take over**.
+  its workers. When the browser returns to a preserved session, it automatically attaches to a
+  sole idle worker. A busy worker can be attached through **Take over**.
 - Ordinary CLI restart uses signed `restart-prepare` local control before stopping a running Host.
   `--host-only` authenticates the running Host and binds worker preservation to the signed
   shutdown request for that exact process. Start the replacement only after the old Host exits

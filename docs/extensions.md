@@ -130,9 +130,9 @@ With attach-control installed:
 - A terminal Pi and Inspire can use the same session at the same time. There is no release or
   handoff step. Search for **Copy resume command** in the command palette to get the terminal
   command for the selected session.
-- Opening a session that a live Pi is continuing on the branch you see shows it read-only, with its
-  progress and **Take over**. If no live Pi shows that branch, Inspire continues it directly with
-  its own Pi.
+- Opening a session automatically attaches to a sole controllable Pi on the viewed branch if
+  it is idle. A busy Pi leaves the view read-only with progress and **Take over**. If the branch
+  is free, Inspire continues it with its own Pi.
 - **Take over** attaches to that Pi. The terminal keeps working, and both interfaces operate the
   same context and work: input, Steer/Follow-up, Stop, rename, model and thinking go to it. A Pi
   still at an older shared position does not block attaching to the one continuing the branch
