@@ -46,9 +46,10 @@ thinking, documents, and extension Markdown share one rendering authority with d
   displays remain distinct math blocks, and first-line display content is never misclassified as
   metadata. While a response streams, an unclosed opener remains exact readable source. Dollar
   delimiters use lexical boundaries, so ordinary amounts, whitespace- or
-  path-separated Shell variables, and bare or quoted regex endings do not consume intervening prose
-  as math. Escaped dollars within formulas are preserved, including backslash-run parity; genuine
-  closers, including formulas followed by a slash and ordinal suffixes, remain valid.
+  path-separated Shell variables, quoted Shell variable/array expansions and command substitutions,
+  and bare or quoted regex endings do not consume intervening prose as math. Escaped dollars within
+  formulas are preserved, including backslash-run parity; genuine closers, including formulas followed
+  by a slash and ordinal suffixes, remain valid.
 - Raw HTML-shaped source, including generic types such as `Array<T>`, renders as inert text; it is
   never interpreted as elements or silently discarded.
 - Code blocks preserve whitespace, identify their language when available, highlight syntax, and

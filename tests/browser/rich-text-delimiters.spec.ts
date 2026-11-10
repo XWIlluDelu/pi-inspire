@@ -152,6 +152,11 @@ test("literal syntax and wide formulas remain readable across message surfaces",
       expect(
         await prose.evaluate((el) => el.scrollWidth - el.clientWidth),
       ).toBeLessThanOrEqual(1);
+      expect(
+        await page
+          .locator(".transcript")
+          .evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
       for (const inline of await prose.locator(".inline-math").all()) {
         await expect(inline).toHaveCSS("display", "inline");
         await expect(inline).toHaveCSS("overflow-x", "visible");
