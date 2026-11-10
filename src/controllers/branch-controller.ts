@@ -18,6 +18,7 @@ export interface BranchControllerState {
   transcriptViewId: string | null;
   transcriptDurableLeafId: string | null;
   transcriptEffectiveLeafId: string | null;
+  transcriptNavigationLeased: boolean;
   branchTree: BranchTreeResponse | null;
   branchTreeLoading: boolean;
   branchTreeStale?: boolean;
@@ -27,6 +28,21 @@ export interface BranchControllerState {
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   readOnlyReason?: SessionReadOnlyReason | null;
+}
+
+export function hasEarlierContinuation(
+  state: Pick<
+    BranchControllerState,
+    | "transcriptDurableLeafId"
+    | "transcriptEffectiveLeafId"
+    | "transcriptNavigationLeased"
+  >,
+): boolean {
+  return (
+    state.transcriptNavigationLeased &&
+    state.transcriptDurableLeafId !== null &&
+    state.transcriptDurableLeafId !== state.transcriptEffectiveLeafId
+  );
 }
 
 /** Independent copies need a readable source, not control of its writer. */
@@ -584,12 +600,15 @@ export class BranchController {
     const sessionId = state.sessionId;
     const durableLeafId = state.transcriptDurableLeafId;
     const effectiveLeafId = state.transcriptEffectiveLeafId;
-    if (!sessionId || !durableLeafId || durableLeafId === effectiveLeafId) {
+    if (!sessionId || !durableLeafId || !hasEarlierContinuation(state)) {
       return null;
     }
     if (!(await this.refreshForNavigation())) return null;
     const current = this.host.state();
-    if (current.transcriptDurableLeafId !== durableLeafId) {
+    if (
+      !hasEarlierContinuation(current) ||
+      current.transcriptDurableLeafId !== durableLeafId
+    ) {
       return null;
     }
     const tree = current.branchTree;

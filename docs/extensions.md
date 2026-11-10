@@ -128,8 +128,8 @@ that point to the former `extensions/inspire-session-bridge.ts` or
 With attach-control installed:
 
 - A terminal Pi and Inspire can use the same session at the same time. There is no release or
-  handoff step; resume a session in a terminal whenever you like
-  (**Session actions → Copy resume command**).
+  handoff step. Search for **Copy resume command** in the command palette to get the terminal
+  command for the selected session.
 - Opening a session that a live Pi is continuing on the branch you see shows it read-only, with its
   progress and **Take over**. If no live Pi shows that branch, Inspire continues it directly with
   its own Pi.
@@ -142,8 +142,9 @@ With attach-control installed:
   It does not claim a task failed: a Pi that moved or stopped answering may still be working, and
   a task interrupted by an exit is reported as ended with an unknown outcome.
 - A read-only view follows the branch it opened on, even when another branch becomes the default.
-  **Switch branch…** in the title menu (or History) shows another branch by the same rule. Appends from other Pi processes are ordinary session use; a session you are
-  working on in Inspire keeps its branch.
+  **Switch branch…** under **More actions** in the default title menu, or History, shows another
+  branch by the same rule. Appends from other Pi processes are ordinary session use. A session you
+  are working on in Inspire keeps its branch.
 
 Limits of attaching to another Pi:
 

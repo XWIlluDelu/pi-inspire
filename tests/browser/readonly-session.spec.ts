@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { observeClipboardWrites } from "./support/clipboard";
 import { routeSnapshots } from "./support/host-events";
 import {
   openCommandPalette,
@@ -39,10 +40,9 @@ test("unavailable-project history keeps its reading surface at desktop and phone
       page.getByRole("menuitem", { name, exact: true }),
     ).toBeDisabled();
   await page.getByRole("menuitem", { name: "More actions" }).click();
-  // Copying the resume command changes nothing, so it stays available.
   await expect(
     page.getByRole("menuitem", { name: "Copy resume command", exact: true }),
-  ).toBeEnabled();
+  ).toHaveCount(0);
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();
@@ -60,6 +60,25 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   await exportDialog
     .getByRole("button", { name: "Cancel", exact: true })
     .click();
+
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await observeClipboardWrites(page);
+  const resumePalette = await openCommandPalette(page);
+  const copyResume = resumePalette.getByRole("option", {
+    name: /^Copy resume command\b/,
+  });
+  await expect(copyResume).toHaveCount(0);
+  await resumePalette.getByLabel("Filter commands").fill("Copy resume command");
+  const resumeResponse = page.waitForResponse(
+    "**/api/sessions/resume-command?*",
+  );
+  await copyResume.click();
+  const { command } = await (await resumeResponse).json();
+  expect(command).toContain("pi --session");
+  await expect
+    .poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text))
+    .toBe(command);
+  await expect(resumePalette).toBeHidden();
 
   const palette = await openCommandPalette(page);
   await palette.getByLabel("Filter commands").fill("history");

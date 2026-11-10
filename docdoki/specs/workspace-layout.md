@@ -218,12 +218,12 @@ completion behavior are unchanged.
   reading a newer visible selection, and a rejected rename leaves the current identity intact while
   emitting a non-blocking warning notice.
 
-  A fixed **Switch branch…** item heads the title menu. It lists up to 30 most recent branch ends
+  **Switch branch…** opens a submenu listing up to 30 most recent branch ends
   as radio items (latest user-message excerpt, relative age, Default marker, check for the viewed
   branch) behind a Back item, notes when History holds more, and is disabled with one branch.
   Choosing one applies [[session-persistence]] admission to it. The reorderable actions default to
-  Rename, Copy session ID, Clone, Copy resume command, and Export; the order
-  is configurable in Settings under Behavior. It initially shows the first three actions. More
+  Rename, Copy session ID, Clone, Switch branch, and Export. Settings under Behavior edits the
+  same order. The compact menu shows the first three actions. More
   actions reveals the rest in the same menu and Fewer actions collapses them; reopening starts
   compact. The menu opens with its first enabled action focused, and expansion focuses the first
   enabled newly revealed action. The full menu stays bounded and scrollable within the viewport.
@@ -240,8 +240,8 @@ completion behavior are unchanged.
   Copy neither executes a session operation nor dismisses the menu. Export opens the shared
   format-and-download dialog without reading or changing the message draft. Clone shares History's
   readiness checks; refusal or failure leaves the menu open, and successful navigation closes it
-  without stealing focus from a newer choice. `/clone`, the command palette and the earlier-branch
-  notice's `Clone from here` reach the same endpoint-inclusive action. It creates an independent
+  without stealing focus from a newer choice. `/clone` and the command palette reach the same
+  endpoint-inclusive action. It creates an independent
   copy of the recorded active branch without sending a model prompt or changing the source's work,
   pending input or draft. [[session-branches]] defines native navigation, Fork/Clone boundaries and
   optional branch summaries.

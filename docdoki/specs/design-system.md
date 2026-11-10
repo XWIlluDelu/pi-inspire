@@ -833,7 +833,7 @@ layout space. Presentation follows the action's role:
 | Subordinate exit/navigation | Quiet: form/pre-execution Cancel, Palette Back and Dismiss after login. Compact links and icon-close actions keep their unframed form. |
 | Content/read recovery | Quiet, including Host status recheck. A retry that executes a restart keeps execution styling. |
 | Secondary history/navigation | Quiet: History pagination/Fork/Clone, earlier-branch Clone and directory-root shortcuts; root shortcuts keep compact mono text. |
-| Primary/preferred execution or navigation | Emphasized: Save/Submit, Add/Reset, branch continuation and Back to latest. Response choices, active Cancel login and dangerous execution keep ordinary/primary/danger variants. |
+| Primary/preferred execution or navigation | Emphasize Save/Submit, Add/Reset and branch continuation. Response choices, active Cancel login and dangerous execution keep ordinary/primary/danger variants. Restore saved position uses a quiet action in the continuation notice. |
 
 The directory picker's editable path shares Welcome's canvas fill, line border, small radius and
 inset focus mark, with mono text, soft wrapping and content-sized height above the bordered directory

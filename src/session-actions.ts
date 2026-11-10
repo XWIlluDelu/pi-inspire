@@ -4,7 +4,7 @@ export const SESSION_ACTION_LABELS: Record<SessionActionId, string> = {
   rename: "Rename session",
   "copy-id": "Copy session ID",
   clone: "Clone current branch",
-  "resume-command": "Copy resume command",
+  "switch-branch": "Switch branch…",
   export: "Export session…",
 };
 

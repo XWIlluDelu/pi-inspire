@@ -8,10 +8,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { acquireFileLock } from "../../server/file-lock.mjs";
 import { PreferencesStore } from "../../server/preferences.js";
-import {
-  defaultPreferences,
-  SESSION_ACTION_IDS,
-} from "../../shared/contracts.js";
+import { defaultPreferences } from "../../shared/contracts.js";
 
 const roots: string[] = [];
 
@@ -130,12 +127,18 @@ describe("PreferencesStore validation", () => {
 
   it("persists session action order and appends actions absent from an older saved order", async () => {
     const { path, store } = await fixture();
-    expect((await store.read()).sessionActionOrder).toEqual(SESSION_ACTION_IDS);
+    expect((await store.read()).sessionActionOrder).toEqual([
+      "rename",
+      "copy-id",
+      "clone",
+      "switch-branch",
+      "export",
+    ]);
     await store.patch({
       theme: "dark",
-      sessionActionOrder: ["export", "rename", "clone", "resume-command"],
+      sessionActionOrder: ["export", "rename", "clone", "switch-branch"],
     });
-    const order = ["export", "rename", "clone", "resume-command", "copy-id"];
+    const order = ["export", "rename", "clone", "switch-branch", "copy-id"];
     expect(await new PreferencesStore(path).read()).toMatchObject({
       theme: "dark",
       sessionActionOrder: order,
@@ -143,28 +146,45 @@ describe("PreferencesStore validation", () => {
     await expect(
       store.patch({ sessionActionOrder: ["rename", "rename"] }),
     ).rejects.toBeDefined();
-    await expect(
-      store.patch({ sessionActionOrder: ["unknown"] }),
-    ).rejects.toBeDefined();
+    for (const id of ["unknown", "resume-command", "terminal"]) {
+      await expect(
+        store.patch({ sessionActionOrder: [id] }),
+      ).rejects.toBeDefined();
+    }
     expect((await store.read()).sessionActionOrder).toEqual(order);
   });
 
-  it("migrates the retired terminal handoff preferences", async () => {
-    const { path } = await fixture();
-    await writeFile(
-      path,
-      JSON.stringify({
-        sessionActionOrder: ["terminal", "rename"],
+  it.each([
+    {
+      retired: "resume-command",
+      savedOrder: ["rename", "copy-id", "clone", "resume-command", "export"],
+      migratedOrder: ["rename", "copy-id", "clone", "switch-branch", "export"],
+    },
+    {
+      retired: "terminal",
+      savedOrder: ["export", "terminal", "rename"],
+      migratedOrder: ["export", "switch-branch", "rename", "copy-id", "clone"],
+    },
+  ])(
+    "replaces saved $retired with Switch branch in place",
+    async ({ savedOrder, migratedOrder }) => {
+      const { path, store } = await fixture();
+      const raw = JSON.stringify({
+        sessionActionOrder: savedOrder,
         terminalSessionIds: ["session-a"],
-      }),
-    );
-    const store = new PreferencesStore(path);
-    expect((await store.inspect()).warning).toBeUndefined();
-    expect((await store.read()).sessionActionOrder.slice(0, 2)).toEqual([
-      "resume-command",
-      "rename",
-    ]);
-  });
+      });
+      await writeFile(path, raw);
+      const inspected = await store.inspect();
+      expect(inspected.warning).toBeUndefined();
+      expect(inspected.preferences.sessionActionOrder).toEqual(migratedOrder);
+      expect(await readFile(path, "utf8")).toBe(raw);
+
+      await store.patch({ theme: "dark" });
+      const saved = JSON.parse(await readFile(path, "utf8"));
+      expect(saved.sessionActionOrder).toEqual(migratedOrder);
+      expect(saved).not.toHaveProperty("terminalSessionIds");
+    },
+  );
 
   it("preserves invalid and unknown fields while saving unrelated settings and allows field repair", async () => {
     const { path, store } = await fixture();

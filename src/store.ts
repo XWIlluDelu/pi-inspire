@@ -1119,6 +1119,7 @@ export class AppStore {
       transcriptViewId: nextViewId,
       transcriptDurableLeafId: nextDurableLeafId,
       transcriptEffectiveLeafId: nextEffectiveLeafId,
+      transcriptNavigationLeased: active?.navigationLeased === true,
       composerHistoryVersion: page?.composerHistoryVersion ?? null,
       hasOlderMessages: historyCompatible
         ? this.state.hasOlderMessages

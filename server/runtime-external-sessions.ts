@@ -34,6 +34,7 @@ interface Connection {
   /** The last read failed; logged once per failure run. */
   failing: boolean;
   sending: number;
+  latestRead: number;
   selectionRevision: number;
   modelRefresh?: Promise<NativeModelCatalog>;
 }
@@ -45,6 +46,7 @@ interface ExternalSessionHost {
   assertUsable(slot: RuntimeSlot): void;
   log(slot: RuntimeSlot, error: unknown): void;
   released(slot: RuntimeSlot): void;
+  followLeaf(slot: RuntimeSlot, leafId: string | null): void;
   syncUi(
     slot: RuntimeSlot,
     requests: Record<string, unknown>[],
@@ -59,6 +61,7 @@ interface ExternalSessionHost {
 export class RuntimeExternalSessions {
   private readonly connections = new Map<RuntimeSlot, Connection>();
   private readonly connecting = new Map<RuntimeSlot, Promise<boolean>>();
+  private readSequence = 0;
   private closed = false;
 
   constructor(
@@ -208,6 +211,7 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
+      const read = ++this.readSequence;
       const selectionRevision = previous.selectionRevision;
       let state:
         | Awaited<ReturnType<ExternalSessionConnection["read"]>>
@@ -220,7 +224,9 @@ export class RuntimeExternalSessions {
       if (this.closed || !this.host.current(slot) || slot.process) return false;
       // The owner poll may have retired this connection during the read.
       if (this.connections.get(slot) === previous) {
-        if (state === undefined) return true;
+        // A newer poll may already have advanced the same attachment.
+        if (state === undefined || read < previous.latestRead) return true;
+        previous.latestRead = read;
         if (!("ended" in state) && accepts(state.leafId ?? null)) {
           previous.failing = false;
           this.applyState(slot, previous, state, false, selectionRevision);
@@ -259,6 +265,7 @@ export class RuntimeExternalSessions {
       state,
       failing: false,
       sending: 0,
+      latestRead: 0,
       selectionRevision: 0,
     };
     this.connections.set(slot, connection);
@@ -289,6 +296,7 @@ export class RuntimeExternalSessions {
     const receiverChanged =
       priorState.taskRuns?.instanceId !== state.taskRuns?.instanceId;
     connection.state = state;
+    if (state.leafId !== undefined) this.host.followLeaf(slot, state.leafId);
     this.host.syncUi(slot, state.uiRequests ?? [], connection.native);
     if (selectionChanged) connection.selectionRevision++;
     if (force || receiverChanged) {
@@ -368,6 +376,7 @@ export class RuntimeExternalSessions {
   }
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {
+    const read = ++this.readSequence;
     const selectionRevision = connection.selectionRevision;
     try {
       const state = await connection.native.read();
@@ -385,7 +394,13 @@ export class RuntimeExternalSessions {
         !slot.projection.entry(state.leafId)
       )
         await this.host.reconcile(slot, false);
-      if (this.closed || this.connections.get(slot) !== connection) return;
+      if (
+        this.closed ||
+        this.connections.get(slot) !== connection ||
+        read < connection.latestRead
+      )
+        return;
+      connection.latestRead = read;
       // The attached Pi moving to another branch or session ends the binding;
       // the view keeps its own position.
       if ("ended" in state) {
@@ -402,8 +417,12 @@ export class RuntimeExternalSessions {
       if (slot.projection) await this.host.reconcile(slot, false);
       connection.failing = false;
     } catch (error) {
-      if (!connection.failing && this.connections.get(slot) === connection)
-        this.host.log(slot, error);
+      if (
+        this.connections.get(slot) !== connection ||
+        read < connection.latestRead
+      )
+        return;
+      if (!connection.failing) this.host.log(slot, error);
       connection.failing = true;
     } finally {
       this.schedule(slot, connection);

@@ -8,7 +8,6 @@ import {
   GitFork,
   GripVertical,
   Pencil,
-  SquareTerminal,
 } from "lucide-react";
 import {
   type RefObject,
@@ -52,7 +51,7 @@ const EXPANDED_CONSTRAINTS = { ...CONSTRAINTS, maxHeight: 360 };
 const ACTION_ICONS = {
   rename: Pencil,
   clone: GitBranch,
-  "resume-command": SquareTerminal,
+  "switch-branch": GitFork,
   export: Download,
 };
 
@@ -105,13 +104,13 @@ export function SessionActionsMenu({
       branchViewChanged.current = true;
       return;
     }
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>(
-        choosingBranch
-          ? ".session-actions-menu__branch"
-          : ".session-actions-menu__switch",
-      )
-      ?.focus({ preventScroll: true });
+    const target = menuRef.current?.querySelector<HTMLButtonElement>(
+      choosingBranch
+        ? ".session-actions-menu__branch"
+        : '[data-session-action-id="switch-branch"] [data-session-action]',
+    );
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "nearest" });
   }, [choosingBranch]);
   const { copied, copying, copy } = useCopied({
     scope: sessionId,
@@ -119,7 +118,7 @@ export function SessionActionsMenu({
   });
   const actions: Record<
     SessionActionId,
-    { run: () => void; disabled?: boolean }
+    { run: () => void; disabled?: boolean; title?: string }
   > = {
     rename: { run: onRename, disabled: renameDisabled },
     "copy-id": {
@@ -128,14 +127,13 @@ export function SessionActionsMenu({
       },
     },
     clone: { run: onClone, disabled: cloneDisabled },
-    // Sharing a session needs no handoff: the command only resumes it in a
-    // terminal Pi alongside Inspire.
-    "resume-command": {
-      run: () => {
-        void store.copyResumeCommand(sessionId).then((copied) => {
-          if (copied) onClose();
-        });
-      },
+    "switch-branch": {
+      run: () => setChoosingBranch(true),
+      disabled: !branches || branches.total < 2,
+      title:
+        branches && branches.total < 2
+          ? "This session has no other branch"
+          : undefined,
     },
     export: { run: onExport },
   };
@@ -300,26 +298,11 @@ export function SessionActionsMenu({
             </p>
           ) : null}
         </>
-      ) : (
-        <button
-          type="button"
-          role="menuitem"
-          className="session-actions-menu__overflow session-actions-menu__switch"
-          disabled={!branches || branches.total < 2}
-          title={
-            branches && branches.total < 2
-              ? "This session has no other branch"
-              : undefined
-          }
-          onClick={() => setChoosingBranch(true)}
-        >
-          <GitFork size={14} aria-hidden />
-          <span>Switch branch…</span>
-        </button>
-      )}
+      ) : null}
       {!choosingBranch &&
         visibleActions.map((id, index) => {
           const Icon = id === "copy-id" ? null : ACTION_ICONS[id];
+          const action = actions[id];
           return (
             <div
               key={id}
@@ -336,10 +319,11 @@ export function SessionActionsMenu({
                 data-overflow-action={
                   index >= SESSION_ACTION_VISIBLE_COUNT || undefined
                 }
-                disabled={actions[id].disabled}
+                disabled={action.disabled}
+                title={action.title}
                 aria-disabled={id === "copy-id" ? copying : undefined}
                 aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-                onClick={actions[id].run}
+                onClick={action.run}
               >
                 {id === "copy-id" ? (
                   <CopyFeedback copied={copied} copying={copying} size={14} />

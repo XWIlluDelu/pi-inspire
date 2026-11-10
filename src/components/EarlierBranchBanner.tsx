@@ -1,39 +1,31 @@
-import { GitBranch } from "lucide-react";
-import { memo, useLayoutEffect, useRef } from "react";
-import { branchCopiesBlocked } from "../controllers/branch-controller";
+import { GitBranch, X } from "lucide-react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
+import { hasEarlierContinuation } from "../controllers/branch-controller";
 import { shallowEqual, store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
 
-/**
- * The transcript remains the primary context surface while inspecting an
- * earlier branch. This banner intentionally does not live in the optional
- * History pane, so returning to the durable leaf never depends on a drawer.
- */
 export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
   const {
+    earlierContinuation,
     durableLeafId,
-    effectiveLeafId,
     treeLoading,
     actionId,
     treeError,
-    copyBlocked,
   } = useAppState(
     (state) => ({
+      earlierContinuation: hasEarlierContinuation(state),
       durableLeafId: state.transcriptDurableLeafId,
-      effectiveLeafId: state.transcriptEffectiveLeafId,
       treeLoading: state.branchTreeLoading,
       actionId: state.branchActionId,
       treeError: state.branchTreeError,
-      copyBlocked: branchCopiesBlocked(state),
     }),
     shallowEqual,
   );
-  const viewingEarlierBranch = Boolean(
-    durableLeafId && durableLeafId !== effectiveLeafId,
-  );
+  const [dismissed, setDismissed] = useState(false);
+  const visible = earlierContinuation && !dismissed;
   const bannerRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
-    if (!viewingEarlierBranch) return;
+    if (!visible) return;
     const banner = bannerRef.current;
     const wrap = banner?.parentElement;
     if (!banner || !wrap) return;
@@ -41,61 +33,61 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
       const bottom =
         banner.getBoundingClientRect().bottom -
         wrap.getBoundingClientRect().top;
-      wrap.style.setProperty("--earlier-branch-banner-bottom", `${bottom}px`);
+      wrap.style.setProperty(
+        "--earlier-branch-inset",
+        `calc(${bottom}px + var(--space-4))`,
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(banner);
     return () => {
       observer.disconnect();
-      wrap.style.removeProperty("--earlier-branch-banner-bottom");
+      wrap.style.removeProperty("--earlier-branch-inset");
     };
-  }, [viewingEarlierBranch]);
-  if (!viewingEarlierBranch) return null;
+  }, [visible]);
+  if (!visible) return null;
 
   const busy = treeLoading || actionId !== null;
   const returning = actionId === `switch:${durableLeafId}`;
-  const cloning = actionId === "clone:current";
   return (
     <section
       ref={bannerRef}
       className="earlier-branch-banner"
-      aria-label="Earlier branch context"
+      aria-label="Earlier continuation"
     >
       <div className="earlier-branch-banner__header">
-        <GitBranch size={16} aria-hidden />
-        <div className="earlier-branch-banner__copy">
-          <strong>Earlier branch</strong>
-          {treeError ? (
-            <span className="earlier-branch-banner__error" role="alert">
-              {treeError}
-            </span>
-          ) : null}
-        </div>
+        <GitBranch size={14} aria-hidden />
+        <span>Continuing from earlier history</span>
       </div>
-      <div className="earlier-branch-banner__actions">
-        <button
-          type="button"
-          className="button"
-          disabled={busy}
-          aria-busy={returning || undefined}
-          onClick={() => void store.returnToLatestBranch()}
-        >
-          {returning ? <PiLoader size={13} aria-hidden /> : null}
-          Back to latest
-        </button>
-        <button
-          type="button"
-          className="button button--quiet"
-          disabled={copyBlocked}
-          aria-busy={cloning || undefined}
-          title="Copy through this point into a new session with an empty draft"
-          onClick={() => void store.cloneCurrentBranch()}
-        >
-          {cloning ? <PiLoader size={13} aria-hidden /> : null}
-          Clone from here
-        </button>
-      </div>
+      <button
+        type="button"
+        className="button button--quiet earlier-branch-banner__restore"
+        disabled={busy}
+        aria-busy={returning || undefined}
+        title="Continue your next message from the latest saved point in this session"
+        onClick={() => void store.returnToLatestBranch()}
+      >
+        {returning ? <PiLoader size={13} aria-hidden /> : null}
+        Restore saved position
+      </button>
+      <button
+        type="button"
+        className="icon-button earlier-branch-banner__dismiss"
+        aria-label="Dismiss earlier continuation notice"
+        title="Dismiss notice"
+        onClick={() => {
+          bannerRef.current?.parentElement?.focus({ preventScroll: true });
+          setDismissed(true);
+        }}
+      >
+        <X size={14} aria-hidden />
+      </button>
+      {treeError ? (
+        <span className="earlier-branch-banner__error" role="alert">
+          {treeError}
+        </span>
+      ) : null}
     </section>
   );
 });

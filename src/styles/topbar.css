@@ -370,9 +370,6 @@
   color: var(--muted);
 }
 .session-actions-menu__overflow > svg { flex: 0 0 auto; }
-.session-actions-menu > .session-actions-menu__switch {
-  color: var(--ink);
-}
 
 /* Branch ends: excerpt above its age and Default marker, check for current. */
 .session-actions-menu > .session-actions-menu__branch {

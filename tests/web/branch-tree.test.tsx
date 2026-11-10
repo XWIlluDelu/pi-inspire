@@ -64,6 +64,7 @@ const full = new Map(
 
 let fixture: {
   effective: string | null;
+  navigationLeased?: boolean;
   revision: number;
   skip: boolean;
   paged: boolean;
@@ -71,7 +72,6 @@ let fixture: {
   activity?: "model" | "shell";
   searchGate?: Promise<void>;
   navigateGate?: Promise<void>;
-  cloneGate?: Promise<void>;
   cloneError?: string;
   treeGate?: Promise<void>;
   entryFailures?: number;
@@ -140,6 +140,8 @@ beforeEach(async () => {
               ...activeSnapshot({
                 durableLeafId: "a2",
                 effectiveLeafId: fixture.effective,
+                navigationLeased:
+                  fixture.navigationLeased ?? fixture.effective !== "a2",
               }),
               runState: fixture.activity === "model" ? "running" : "idle",
               bashRunning: fixture.activity === "shell",
@@ -210,6 +212,7 @@ beforeEach(async () => {
           snapshot: activeSnapshot({
             durableLeafId: "a2",
             effectiveLeafId: fixture.effective,
+            navigationLeased: fixture.effective !== "a2",
             transcriptPage: {
               revision: fixture.revision,
               viewId: fixture.cancelled ? "view-1" : "changed-view",
@@ -225,14 +228,8 @@ beforeEach(async () => {
         });
       }
       if (url === "/api/branches/fork" || url === "/api/branches/clone") {
-        if (url.endsWith("clone")) {
-          await fixture.cloneGate;
-          if (fixture.cloneError)
-            return Response.json(
-              { error: fixture.cloneError },
-              { status: 400 },
-            );
-        }
+        if (url.endsWith("clone") && fixture.cloneError)
+          return Response.json({ error: fixture.cloneError }, { status: 400 });
         const fork = url.endsWith("fork");
         const id = fork ? "forked" : "cloned";
         return Response.json({
@@ -1085,41 +1082,32 @@ describe("explicit History actions", () => {
     },
   );
 
-  it.each(["Back to latest", "Clone from here"])(
-    "puts earlier-history progress on %s, not the other action",
-    async (label) => {
-      fixture.effective = "a1";
-      await store.init("token");
-      await store.loadBranchTree();
-      const pending = deferred<void>();
-      if (label === "Back to latest") fixture.navigateGate = pending.promise;
-      else fixture.cloneGate = pending.promise;
-      render(<EarlierBranchBanner />);
-      const selected = screen.getByRole("button", { name: label });
-      const other = screen.getByRole("button", {
-        name: label === "Back to latest" ? "Clone from here" : "Back to latest",
-      });
-      try {
-        fireEvent.click(selected);
-        await waitFor(() =>
-          expect(selected).toHaveAttribute("aria-busy", "true"),
-        );
-        expect(selected.querySelector(".pi-loading")).not.toBeNull();
-        expect(other.querySelector(".pi-loading")).toBeNull();
-        expect(selected).toBeDisabled();
-        expect(other).toBeDisabled();
-      } finally {
-        await act(async () => pending.resolve());
-      }
-      await waitFor(() =>
-        expect(
-          screen.queryByLabelText("Earlier branch context"),
-        ).not.toBeInTheDocument(),
-      );
-    },
-  );
+  it("shows restore progress even when continuing before the first message", async () => {
+    fixture.effective = null;
+    await store.init("token");
+    await store.loadBranchTree();
+    const pending = deferred<void>();
+    fixture.navigateGate = pending.promise;
+    render(<EarlierBranchBanner />);
+    const restore = screen.getByRole("button", {
+      name: "Restore saved position",
+    });
+    try {
+      fireEvent.click(restore);
+      await waitFor(() => expect(restore).toHaveAttribute("aria-busy", "true"));
+      expect(restore.querySelector(".pi-loading")).not.toBeNull();
+      expect(restore).toBeDisabled();
+    } finally {
+      await act(async () => pending.resolve());
+    }
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Earlier continuation" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
 
-  it("does not mislabel a background history refresh as a return or clone action", async () => {
+  it("does not mislabel a background history refresh as a restore action", async () => {
     fixture.effective = "a1";
     await store.init("token");
     await store.loadBranchTree();
@@ -1132,11 +1120,8 @@ describe("explicit History actions", () => {
     });
     try {
       expect(
-        screen.getByRole("button", { name: "Back to latest" }),
+        screen.getByRole("button", { name: "Restore saved position" }),
       ).toBeDisabled();
-      expect(
-        screen.getByRole("button", { name: "Clone from here" }),
-      ).toBeEnabled();
       expect(
         document.querySelector(".earlier-branch-banner .pi-loading"),
       ).toBeNull();
@@ -1147,7 +1132,7 @@ describe("explicit History actions", () => {
       });
     }
     expect(
-      screen.getByRole("button", { name: "Back to latest" }),
+      screen.getByRole("button", { name: "Restore saved position" }),
     ).toBeEnabled();
   });
 
@@ -1159,22 +1144,31 @@ describe("explicit History actions", () => {
     expect(store.getState().sessionId).toBe("s1");
   });
 
-  it("offers endpoint-inclusive Clone in the active earlier-history notice, not user-only Fork", async () => {
+  it("dismisses the notice without moving the continuation", async () => {
     fixture.effective = "a1";
     await store.init("token");
-    await store.loadBranchTree();
     render(<EarlierBranchBanner />);
-    expect(screen.getByText("Earlier branch")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clone from here" }));
-    await waitFor(() => expect(store.getState().sessionId).toBe("cloned"));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Dismiss earlier continuation notice",
+      }),
+    );
     expect(
-      requests.filter((request) => request.url === "/api/branches/clone"),
-    ).toHaveLength(1);
+      screen.queryByRole("region", { name: "Earlier continuation" }),
+    ).not.toBeInTheDocument();
+    expect(store.getState().transcriptEffectiveLeafId).toBe("a1");
+    expect(requests.some(({ url }) => url === "/api/branches/navigate")).toBe(
+      false,
+    );
+  });
+
+  it("keeps the notice hidden for an attached Pi with a different observed leaf", async () => {
+    fixture.effective = "a1";
+    fixture.navigationLeased = false;
+    await store.init("token");
+    render(<EarlierBranchBanner />);
     expect(
-      requests.filter((request) => request.url === "/api/branches/fork"),
-    ).toHaveLength(0);
-    expect(
-      screen.queryByLabelText("Earlier branch context"),
+      screen.queryByRole("region", { name: "Earlier continuation" }),
     ).not.toBeInTheDocument();
   });
 });

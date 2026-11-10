@@ -20,6 +20,7 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     transcriptViewId: "view-1",
     transcriptDurableLeafId: "a1",
     transcriptEffectiveLeafId: "a1",
+    transcriptNavigationLeased: false,
     branchTree: tree(),
     branchTreeLoading: false,
     branchTreeError: null,
@@ -351,6 +352,7 @@ describe("BranchController", () => {
       const currentTree = { ...tree(), effectiveLeafId: "u1" };
       const harness = createHarness({
         transcriptEffectiveLeafId: "u1",
+        transcriptNavigationLeased: true,
         branchTree: currentTree,
       });
       const oldTree = deferred<BranchTreeResponse>();
@@ -436,6 +438,7 @@ describe("BranchController", () => {
     };
     const harness = createHarness({
       transcriptEffectiveLeafId: "u1",
+      transcriptNavigationLeased: true,
       branchTree: currentTree,
     });
     harness.branchTree.mockResolvedValue(currentTree);
