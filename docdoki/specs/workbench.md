@@ -203,7 +203,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   beneath the title so persistent actions do not crowd it. Selection and search highlights cover
   the whole row, including its action area.
 
-  The drawer opens on demand and starts closed again; with no hidden results it is absent. Search
+  The drawer defaults closed and keeps its state when the tab reloads. It is absent when there
+  are no hidden results. Search
   reveals matching hidden sessions inside it instead of returning them to their folders. Ordinary
   session-entry surfaces, including Welcome recents and the command palette's recents/search, share
   the hidden-session/project filter; hidden sessions stay in the Hidden drawer instead of

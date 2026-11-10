@@ -118,7 +118,7 @@ compare the same page and theme in an ordinary Chrome tab.
 | `inspire status` | Check the managed Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
 | `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
-| `inspire restart --host-only` | Restart Inspire while every Pi process, including Inspire's workers, keeps running with its work. |
+| `inspire restart --host-only` | Restart Inspire and detach its Pi workers so their work can continue. |
 | `inspire restart --all` | Restart this installation's Linux Host and terminal services, closing project terminals in the installed terminal service. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
 | `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
@@ -179,21 +179,15 @@ that Pi to apply the update.
 | **Restart all** | Like Restart Host, and also restarts the installed Linux terminal service, closing its project terminals. |
 
 Restart Host and Restart all check for unfinished work before submitting the restart. After a
-workload refusal, the same row offers **Stop work and restart**. Clicking it interrupts the work
-and discards Pending input.
-Idle workers do not block a restart. After a restart, a session a terminal Pi is running
-opens read-only with **Take over**, and the rest continue directly. After a disconnect, the browser
-keeps tracking the submitted restart without sending another.
+workload refusal, the same row offers **Stop work and restart**. Idle workers allow an ordinary
+restart. If confirmation of a submitted restart is delayed, use **Recheck status** to see its
+progress. **Reset restart recovery…** clears an invalid browser record while any submitted restart
+continues on the Host.
 
-Run `inspire restart --host-only` to restart Inspire while every Pi process, including Inspire's
-own workers, keeps its running work and loaded settings. Inspire finds its former workers
-read-only with **Take over**. Taking over also restores their pending browser questions.
-
-The browser drops its tracking once it reconnects to the new Host or sees the request rejected.
-Uncertain requests keep their identity for status checks and explicit retries. **Recheck status**
-reads the Host even when browser recovery storage is unavailable. Only an invalid saved record
-offers **Reset restart recovery…** (with confirmation), which removes browser tracking without
-sending or cancelling a restart. A restart already pending on the Host blocks a new one.
+`inspire restart --host-only` detaches Inspire's Pi workers so their work and loaded settings
+can continue. When the session opens again, **Take over** reconnects to the worker and restores
+its pending browser questions. The [Herdr lifecycle notes](../docdoki/specs/herdr-enhancement.md#worker-lifecycle)
+describe lease recovery for pane-backed workers.
 
 Page restart works on Windows, macOS and Linux for a Host started through `inspire` or
 `npm run inspire`, and for the installed Linux service. It keeps the launcher, environment, instance

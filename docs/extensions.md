@@ -135,8 +135,7 @@ With attach-control installed:
   its own Pi.
 - **Take over** attaches to that Pi. The terminal keeps working, and both interfaces operate the
   same context and work: input, Steer/Follow-up, Stop, rename, model and thinking go to it. With
-  several such Pi processes, Inspire picks an idle one, then the most recently active, and stays
-  with it.
+  several such Pi processes, Inspire prefers an idle one and keeps the resulting attachment.
 - If the attached Pi exits, moves to another session or branch, or stops answering for longer than a
   reload takes, Inspire says which of these happened. It continues the same view with its own Pi
   once the branch is available.

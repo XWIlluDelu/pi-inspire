@@ -313,7 +313,7 @@ completion behavior are unchanged.
   overlays the normal reading canvas without reserving a full-width top band. Direct reading input
   collapses it to an explicit entry; programmatic scrolling/restoration does not. The entry expands
   the controls, and Escape collapses them while keeping keyboard focus. Narrow/touch targets remain
-  available; local wrapping avoids shrinking them. File identity, view, side and independent
+  available; local wrapping avoids shrinking them. File identity, view and independent
   reading offsets survive tab switches and F5 under the existing session/workspace storage scope.
   [[resource-preview]] defines comparison authority and unavailable-content behavior.
 

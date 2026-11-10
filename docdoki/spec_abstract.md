@@ -69,8 +69,8 @@ locally and are not tracked.
   ([pi-integration](specs/pi-integration.md),
   [extension guide](../docs/extensions.md#choose-the-smallest-integration)).
 - **Host operation:** authenticated local and remote browser access, per-instance lifecycle
-  controls, isolated development pairing, and Host-only restarts that keep every Pi running and
-  recover its dialogs on attachment ([host-lifecycle](specs/host-lifecycle.md); platform
+  controls, isolated development pairing, and Host-only restarts with worker detachment and
+  dialog recovery on attachment ([host-lifecycle](specs/host-lifecycle.md); platform
   evidence and limits: [platform-compatibility](notes/platform-compatibility.md)).
 
 ## Work state
