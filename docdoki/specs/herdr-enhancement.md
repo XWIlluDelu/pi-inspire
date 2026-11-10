@@ -80,9 +80,10 @@ Extensions keep their Pi RPC compatibility requirements.
   the next worker-start request, sharing an in-flight attempt with other starts. Successful
   recovery stays established for the Host lifetime; later owned workers are not old recovery
   candidates. Status inspection reports the current result without starting recovery or cleanup.
-- Host shutdown and ordinary restart end its Pi workers. On a Host-only restart, the pane bridge
-  detaches Pi and the Host removes its ownership lease ([[host-lifecycle]]). A failed lease removal
-  can still leave the worker eligible for recovery ([[follow-runtime-quality-2026-10-25]]).
+- Host shutdown and ordinary restart end its Pi workers. Before a CLI Host-only restart, publish
+  one ownership release record for the exact ready enhanced workers of that Host. The pane bridge
+  reads it on disconnect. Recovery skips those workers even if their old lease files cannot be
+  removed. If publication fails, the signed request is refused and the old Host keeps running.
   A shared Herdr server launched by a Linux Host service uses a separate user unit so it survives
   Host replacement. Failure to establish that unit fails startup instead of attaching it to Host.
 - After verified Pi retirement, `pane_not_found` ends pane cleanup. `workspace_not_found` invalidates

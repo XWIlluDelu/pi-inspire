@@ -35,6 +35,7 @@ export class HostRestartController {
     private readonly runtime: RestartLeaseOwner &
       Pick<RuntimeLike, "checkAttachedRestartWork" | "stopAttachedPiWork">,
     private readonly backend: HostRestartBackend,
+    private readonly canPreserveWorkers = () => true,
   ) {}
 
   async status(): Promise<HostRestartStatus> {
@@ -125,6 +126,10 @@ export class HostRestartController {
       const result = await this.backend.request(
         operation.scope === "all",
         async () => {
+          if (preserveWork && !this.canPreserveWorkers())
+            throw new Error(
+              "Use inspire restart --host-only to preserve enhanced Pi workers.",
+            );
           if (!preserveWork && !operation.interruptWork) {
             const busy = await this.runtime.checkAttachedRestartWork();
             if (busy) {

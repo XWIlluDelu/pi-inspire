@@ -36,12 +36,11 @@ covers installed Pi discovery, and [[platform-compatibility]] holds the platform
   32-core Linux host, half the workers held the suite at 41–43 seconds and reduced queue pressure
   that had caused failures at short wait deadlines.
 
-## Remaining acceptance
+- Herdr Host-only restart publishes a single durable ownership release before shutdown. Isolated
+  checks covered publication failure, a signed refusal with the old Host still running, and
+  recovery after the old Host exits while the released leases remain on disk.
 
-- Herdr Host-only restart still needs a durable worker ownership handoff. A simulated failure to
-  remove the old registry lease left detach reported as successful, and startup recovery would
-  still stop that scope. Recovery must distinguish a released worker from an owned worker even
-  when the old Host exits partway through the handoff.
+## Remaining acceptance
 
 [[follow-notifications-2026-10-22]] owns Android and iOS/iPadOS push and same-Pi click-through
 acceptance. Check input typography and native installed-window chrome on the physical platforms,

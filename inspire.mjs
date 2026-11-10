@@ -766,9 +766,9 @@ async function restartHostOnly(context, serviceStatus) {
       );
     return startHost(serviceStatus === 5);
   }
-  if (!owner.state.scopedShutdown)
+  if (!owner.state.scopedShutdown || !owner.state.durableWorkerRelease)
     throw new Error(
-      "This Host predates scoped shutdown. Restart it normally to enable --host-only.",
+      "This Host predates scoped shutdown with durable worker release. Restart it normally to enable --host-only.",
     );
 
   const invocationId = owner.state.systemdInvocationId;

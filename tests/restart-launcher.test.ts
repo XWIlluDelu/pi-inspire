@@ -192,30 +192,41 @@ describe.runIf(process.platform === "linux")(
       {
         case: "legacy Host",
         scopedShutdown: false,
+        durableWorkerRelease: undefined,
         invocation: "a",
         error: /predates scoped shutdown/,
       },
       {
+        case: "legacy scoped Host",
+        scopedShutdown: true,
+        durableWorkerRelease: undefined,
+        invocation: "a",
+        error: /predates scoped shutdown with durable worker release/,
+      },
+      {
         case: "different invocation",
         scopedShutdown: true,
+        durableWorkerRelease: true,
         invocation: "b",
         error: /does not match the requested service/,
       },
       {
         case: "matching invocation",
         scopedShutdown: true,
+        durableWorkerRelease: true,
         invocation: "a",
         error: null,
       },
     ])(
       "binds Host-only restart to the service owner ($case)",
-      async ({ scopedShutdown, invocation, error }) => {
+      async ({ scopedShutdown, durableWorkerRelease, invocation, error }) => {
         const f = await fixture(false);
         const path = join(f.root, "build/server", "instance-state.mjs");
         const original = await readFile(path, "utf8");
         const owner = {
           pid: 321,
           scopedShutdown,
+          durableWorkerRelease,
           systemdInvocationId: invocation.repeat(32),
         };
         await writeFile(

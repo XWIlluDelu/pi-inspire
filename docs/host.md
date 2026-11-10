@@ -201,8 +201,8 @@ before it shows the result. Settings shows the availability of both restart scop
 
 Ordinary CLI restart requires authenticated preparation from the running Host. `--host-only`
 ties worker preservation to an authenticated shutdown request and starts the replacement after
-that Host confirms clean shutdown. If the running Host predates this support, restart it once
-with `inspire restart` before using `--host-only`. If the listener is down, use `inspire stop`
+that Host confirms clean shutdown. If the running Host predates durable worker release, restart
+it once with `inspire restart` before using `--host-only`. If the listener is down, use `inspire stop`
 with the running Host's port and state-path overrides, then start Inspire again after shutdown
 completes. Stopping an installed service also ends its project terminals.
 

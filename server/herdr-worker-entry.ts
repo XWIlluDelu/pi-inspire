@@ -13,6 +13,7 @@ import {
   captureHerdrBridgeGroup,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
+import { herdrWorkerWasReleased } from "./herdr-worker-registry.js";
 
 async function run(): Promise<void> {
   const path = process.argv[2];
@@ -37,12 +38,12 @@ async function run(): Promise<void> {
   let child: ChildProcessWithoutNullStreams | null = null;
   let ui: Awaited<ReturnType<typeof createPiRpcUiRelay>> | null = null;
   let stopping = false;
-  // After the Host asks to detach, losing it leaves Pi and its work running:
-  // Pi's input stays open and its output is drained.
-  let detached = false;
-  stderr.on("data", (chunk: Buffer) => {
-    if (chunk.toString("utf8").includes("detach")) detached = true;
-  });
+  let release: Parameters<typeof herdrWorkerWasReleased>[0] | undefined;
+  let legacyDetach = false;
+  if (ticket.version === 1)
+    stderr.on("data", (chunk: Buffer) => {
+      if (chunk.toString("utf8").includes("detach")) legacyDetach = true;
+    });
   const terminate = (graceful: boolean) => {
     void stopHerdrProcessGroup(group, graceful, () => {}).catch(() => {
       process.stderr.write("Inspire worker scope could not be stopped\n");
@@ -52,22 +53,26 @@ async function run(): Promise<void> {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    if (detached && child?.pid && child.exitCode === null) {
-      child.stdout.unpipe(rpc);
-      child.stderr.unpipe(stderr);
-      child.stdout.resume();
-      child.stderr.resume();
-      rpc.destroy();
-      stderr.destroy();
-      return;
-    }
+    child?.stdout.unpipe(rpc);
+    child?.stderr.unpipe(stderr);
+    child?.stdout.resume();
+    child?.stderr.resume();
     rpc.destroy();
     stderr.destroy();
     // The same kernel-owned tree is available here after Host loss and to the
     // Host after bridge loss. Pi's detached Bash tools remain in this scope.
-    const graceful =
-      !!child?.pid && child.exitCode === null && child.signalCode === null;
-    terminate(graceful);
+    void (async () => {
+      const running =
+        !!child?.pid && child.exitCode === null && child.signalCode === null;
+      if (
+        running &&
+        (legacyDetach ||
+          (release &&
+            (await herdrWorkerWasReleased(release, group).catch(() => true))))
+      )
+        return;
+      terminate(running);
+    })();
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
@@ -79,13 +84,13 @@ async function run(): Promise<void> {
 
   try {
     writeHerdrBridgeRecord(rpc, {
-      version: HERDR_BRIDGE_VERSION,
+      version: ticket.version,
       token: ticket.token,
       channel: "rpc",
       pid: process.pid,
     });
     writeHerdrBridgeRecord(stderr, {
-      version: HERDR_BRIDGE_VERSION,
+      version: ticket.version,
       token: ticket.token,
       channel: "stderr",
       pid: process.pid,
@@ -93,6 +98,9 @@ async function run(): Promise<void> {
     const grant = herdrLaunchGrantSchema.parse(
       await readHerdrBridgeRecord(rpc, AbortSignal.timeout(60_000)),
     );
+    if (ticket.version === HERDR_BRIDGE_VERSION && !grant.release)
+      throw new Error("The Herdr worker has no ownership release binding");
+    release = grant.release;
     if (stopping) return;
     const environment: NodeJS.ProcessEnv = { ...grant.env };
     for (const key of Object.keys(environment))

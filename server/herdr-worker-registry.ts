@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { HerdrWorkerPane } from "./herdr-client.js";
 import {
   captureHerdrHostIdentity,
+  herdrProcessIsLive,
   type HerdrProcessGroup,
   type HerdrProcessIdentity,
 } from "./herdr-process-group.js";
@@ -18,6 +19,73 @@ const processIdentitySchema = z
   })
   .strict();
 const leaseIdSchema = z.string().uuid();
+export const herdrReleaseBindingSchema = z
+  .object({
+    directory: z.string().refine(isAbsolute),
+    owner: processIdentitySchema,
+    leaseId: leaseIdSchema,
+  })
+  .strict();
+const releaseRecordSchema = z
+  .object({
+    version: z.literal(1),
+    owner: processIdentitySchema,
+    workers: z
+      .array(
+        z
+          .object({ leaseId: leaseIdSchema, bridge: processIdentitySchema })
+          .strict(),
+      )
+      .max(4_096),
+  })
+  .strict();
+type ReleaseRecord = z.infer<typeof releaseRecordSchema>;
+type ReleaseBinding = z.infer<typeof herdrReleaseBindingSchema>;
+
+function sameProcess(
+  a: HerdrProcessIdentity,
+  b: HerdrProcessIdentity,
+): boolean {
+  return a.pid === b.pid && a.boot === b.boot && a.birth === b.birth;
+}
+
+function releaseName(owner: HerdrProcessIdentity): string {
+  return `${owner.boot}-${owner.pid}-${owner.birth}.released`;
+}
+
+async function readRelease(path: string): Promise<ReleaseRecord | null> {
+  try {
+    const info = await lstat(path);
+    if (
+      !info.isFile() ||
+      info.uid !== process.getuid!() ||
+      (info.mode & 0o077) !== 0 ||
+      info.size > 1024 * 1024
+    )
+      throw new Error("Invalid Herdr worker release record");
+    return releaseRecordSchema.parse(JSON.parse(await readFile(path, "utf8")));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function herdrWorkerWasReleased(
+  binding: ReleaseBinding,
+  bridge: HerdrProcessIdentity,
+): Promise<boolean> {
+  const record = await readRelease(
+    join(binding.directory, releaseName(binding.owner)),
+  );
+  return (
+    record !== null &&
+    sameProcess(record.owner, binding.owner) &&
+    record.workers.some(
+      ({ leaseId, bridge: recorded }) =>
+        leaseId === binding.leaseId && sameProcess(recorded, bridge),
+    )
+  );
+}
 const leaseSchema = z
   .object({
     version: z.literal(1),
@@ -112,6 +180,72 @@ export class HerdrWorkerRegistry {
     const granted = { ...lease, group };
     await this.write(granted);
     return granted;
+  }
+
+  /** A single publication transfers all selected workers, including when the
+   * Host exits before their sockets observe the disconnect. */
+  async release(
+    leases: readonly HerdrWorkerLease[],
+    verify?: () => void,
+  ): Promise<void> {
+    if (!leases.length) return;
+    await this.assertPrivateDirectory();
+    const owner = await (this.owner ??= captureHerdrHostIdentity());
+    const workers = leases.map(({ id, owner: leaseOwner, group }) => {
+      if (!group || !sameProcess(owner, leaseOwner))
+        throw new Error("Cannot release an unverified Herdr worker");
+      const { pid, birth, boot } = group;
+      return { leaseId: id, bridge: { pid, birth, boot } };
+    });
+    const record = releaseRecordSchema.parse({ version: 1, owner, workers });
+    await replacePrivateStateFile(
+      join(this.directory, releaseName(owner)),
+      `${JSON.stringify(record)}\n`,
+      verify && (async () => verify()),
+    );
+  }
+
+  wasReleased(lease: HerdrWorkerLease): Promise<boolean> {
+    if (!lease.group) return Promise.resolve(false);
+    return herdrWorkerWasReleased(
+      {
+        directory: this.directory,
+        owner: lease.owner,
+        leaseId: lease.id,
+      },
+      lease.group,
+    );
+  }
+
+  async pruneReleases(): Promise<void> {
+    const names = await readdir(this.directory).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      },
+    );
+    for (const name of names.filter((name) => name.endsWith(".released"))) {
+      const path = join(this.directory, name);
+      const record = await readRelease(path);
+      if (!record || releaseName(record.owner) !== name) continue;
+      // Bridges may read the release after the new Host starts. A retained
+      // lease also needs this proof even after its bridge has exited.
+      if (await herdrProcessIsLive(record.owner)) continue;
+      const needed = await Promise.all(
+        record.workers.map(
+          async ({ leaseId, bridge }) =>
+            (await herdrProcessIsLive(bridge)) ||
+            (await lstat(join(this.directory, `${leaseId}.json`)).then(
+              () => true,
+              (error: NodeJS.ErrnoException) => {
+                if (error.code === "ENOENT") return false;
+                throw error;
+              },
+            )),
+        ),
+      );
+      if (!needed.some(Boolean)) await rm(path, { force: true });
+    }
   }
 
   private async write(lease: HerdrWorkerLease): Promise<void> {
