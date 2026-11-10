@@ -45,7 +45,7 @@ const whitespace = (code: number | null) =>
 /** Keep the upstream math AST/resolver and all block/backslash constructs.
  * Dollar text needs escaped-delimiter parity and lexical boundaries: regex or
  * string endings cannot open math; a dollar starting a number cannot close it;
- * whitespace/path separators followed by an identifier continue literal text.
+ * whitespace/path/quote boundaries followed by an identifier continue literal text.
  * Reject in the tokenizer, before prose/links/emphasis can be swallowed. */
 export const remarkMathDelimiterBoundaries: Plugin<[], Root> = function () {
   for (const extension of this.data().micromarkExtensions ?? []) {
@@ -130,7 +130,9 @@ export const remarkMathDelimiterBoundaries: Plugin<[], Root> = function () {
                 ((word(code) || code === 123 || code === 40) &&
                   (whitespace(beforeClose) ||
                     beforeClose === 47 ||
-                    beforeClose === 58)))
+                    beforeClose === 58 ||
+                    beforeClose === 34 ||
+                    beforeClose === 39)))
             )
               return nok(code);
             effects.exit("mathTextSequence");
