@@ -86,11 +86,6 @@ interface BranchViewTicket {
   selectionRequest: number;
 }
 
-interface EarlierBranchSelection {
-  durableLeafId: string;
-  effectiveLeafId: string | null;
-}
-
 interface BranchControllerHost {
   state(): BranchControllerState;
   patch(patch: BranchControllerPatch): void;
@@ -593,41 +588,30 @@ export class BranchController {
     }
   }
 
-  private async resolveCurrentEarlierBranch(
-    changedMessage: string,
-  ): Promise<EarlierBranchSelection | null> {
+  async returnToLatest(): Promise<boolean> {
     const state = this.host.state();
-    const sessionId = state.sessionId;
     const durableLeafId = state.transcriptDurableLeafId;
     const effectiveLeafId = state.transcriptEffectiveLeafId;
-    if (!sessionId || !durableLeafId || !hasEarlierContinuation(state)) {
-      return null;
+    if (!state.sessionId || !durableLeafId || !hasEarlierContinuation(state)) {
+      return false;
     }
-    if (!(await this.refreshForNavigation())) return null;
+    if (!(await this.refreshForNavigation())) return false;
     const current = this.host.state();
-    if (
-      !hasEarlierContinuation(current) ||
-      current.transcriptDurableLeafId !== durableLeafId
-    ) {
-      return null;
-    }
+    if (!hasEarlierContinuation(current)) return false;
     const tree = current.branchTree;
     if (
+      current.transcriptDurableLeafId !== durableLeafId ||
       !tree ||
       tree.durableLeafId !== durableLeafId ||
       tree.effectiveLeafId !== effectiveLeafId
     ) {
-      this.host.patch({ branchTreeError: changedMessage });
-      return null;
+      this.host.patch({
+        branchTreeError:
+          "The saved position changed. Refresh before restoring it.",
+      });
+      return false;
     }
-    return { durableLeafId, effectiveLeafId };
-  }
-
-  async returnToLatest(): Promise<boolean> {
-    const branch = await this.resolveCurrentEarlierBranch(
-      "Branch history changed — refresh the session before returning to latest",
-    );
-    return branch ? this.navigate(branch.durableLeafId, "switch") : false;
+    return this.navigate(durableLeafId, "switch");
   }
 
   private invalidateRequests(): void {

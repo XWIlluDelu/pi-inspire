@@ -20,7 +20,7 @@ import {
 import {
   AttachControlConnection,
   AttachControlRegistry,
-  preferredInstance,
+  unambiguousInstance,
 } from "../../server/attach-control.js";
 import { PiSessionActivity } from "../../server/pi-session-activity.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
@@ -190,14 +190,16 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
   });
 });
 
-describe("preferredInstance", () => {
-  it("prefers idle instances, then the most recent activity", async () => {
-    const busy = await record({ activity: "working", updatedAt: 30 });
-    const idleOld = await record({ activity: "idle", updatedAt: 10 });
-    const idleNew = await record({ activity: "idle", updatedAt: 20 });
-    expect(preferredInstance([busy, idleOld, idleNew])).toBe(idleNew);
-    expect(preferredInstance([busy])).toBe(busy);
-    expect(preferredInstance([])).toBeUndefined();
+describe("unambiguousInstance", () => {
+  it("takes over a single endpoint and reports multiple branch owners", async () => {
+    const busy = await record({ activity: "working", endpoint: "/work/busy" });
+    const offline = await record({ activity: "idle" });
+    expect(() => unambiguousInstance([busy, offline])).toThrow(
+      "Several Pi processes are using this branch",
+    );
+    expect(unambiguousInstance([busy])).toBe(busy);
+    expect(unambiguousInstance([offline])).toBeUndefined();
+    expect(unambiguousInstance([])).toBeUndefined();
   });
 });
 

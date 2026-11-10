@@ -1727,32 +1727,43 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         "This action needs Inspire's own Pi. It is unavailable while this session is attached to another Pi.",
         409,
       );
+    const previousDefault = slot.process ? undefined : slot.projection?.leafId;
     const writer = await this.workerLifecycle.ensureFreshWriter(slot);
     // Pi opens at the saved default; continue from the branch being viewed.
     const target = slot.viewLeafId;
     slot.viewLeafId = undefined;
-    if (target === undefined || target === this.effectiveLeaf(slot))
+    const current = this.effectiveLeaf(slot);
+    if (
+      target === undefined ||
+      target === current ||
+      // Native startup can append settings or extension entries after the
+      // saved point. Its verified continuation still includes the target.
+      (target !== null &&
+        target === previousDefault &&
+        slot.projection?.latestContinuation(target) === current)
+    )
       return writer;
     const rpc = writer.process;
     try {
       const entry = target ? slot.projection?.entry(target) : undefined;
       if (!entry || !target)
         throw requestError("The viewed branch could not be restored", 409);
-      const expectedLeaf = nativeNavigationLeaf(
-        entry,
-        this.effectiveLeaf(slot),
-      );
+      if (isBranchEditTarget(entry))
+        throw requestError(
+          "Pi cannot continue after this branch end. Use Edit from here in History.",
+          409,
+        );
       const result = await this.navigateInsideGate(
         slot,
         {
           sessionId: slot.id,
           targetId: target,
-          mode: isBranchEditTarget(entry) ? "edit" : "switch",
+          mode: "switch",
           revision: slot.branchRevision,
         },
         true,
       );
-      if (result.cancelled || this.effectiveLeaf(slot) !== expectedLeaf)
+      if (result.cancelled || this.effectiveLeaf(slot) !== target)
         throw requestError("The viewed branch could not be restored", 409);
     } catch (error) {
       try {
@@ -2705,7 +2716,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       const slot = this.requireSlot(sessionId);
       const started = await this.mutateSlot(slot, async () => {
         const projection = slot.projection;
-        if (!projection?.entry(leafId))
+        const target = projection?.entry(leafId);
+        if (!projection || !target)
           throw requestError("That branch no longer exists", 404);
         if (leafId === this.effectiveLeaf(slot)) return false;
         const reported = this.externalSessions?.reportedLeaf(slot);
@@ -2715,6 +2727,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           (leaf) => projection.onSameLine(leafId, leaf),
           true,
         );
+        if (
+          !watching &&
+          slot.readOnlyReason !== "workspace-unavailable" &&
+          isBranchEditTarget(target) &&
+          leafId !== projection.leafId
+        )
+          throw requestError(
+            "Pi cannot continue after this branch end. Use Edit from here in History.",
+            409,
+          );
         if (watching || this.externalSessions?.has(slot))
           this.requireIdleBranchSlot(slot, slot.branchRevision);
         // Release the old owner only after the switch has passed admission.
@@ -2732,11 +2754,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           slot.readOnlyReason = null;
         this.workingSessions.add(slot.id);
         if (slot.process && slot.ready) {
-          const target = projection.entry(leafId)!;
           await this.navigateInsideGate(slot, {
             sessionId,
             targetId: leafId,
-            mode: isBranchEditTarget(target) ? "edit" : "switch",
+            mode: "switch",
             revision: slot.branchRevision,
           });
           return false;
@@ -3975,6 +3996,22 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (!target) throw requestError("Branch target does not exist", 404);
 
     const editable = isBranchEditTarget(target);
+    if (
+      editable &&
+      request.mode === "switch" &&
+      request.targetId === projection.leafId &&
+      !request.summarize &&
+      !request.customInstructions
+    ) {
+      if (request.targetId !== this.effectiveLeaf(slot))
+        await this.restoreSavedPositionInsideGate(
+          slot,
+          projection,
+          request.targetId,
+          request.revision,
+        );
+      return { snapshot: await this.snapshotSlot(slot) };
+    }
     if (editable !== (request.mode === "edit"))
       throw requestError(
         editable
@@ -4179,6 +4216,39 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       snapshot: await this.snapshotSlot(slot),
       ...(editorText !== undefined ? { editorText } : {}),
     };
+  }
+
+  /** Pi can only navigate before a user/custom message. Reopening the saved
+   * default through ordinary cold admission preserves that message in context. */
+  private async restoreSavedPositionInsideGate(
+    slot: RuntimeSlot,
+    projection: SessionProjectionView,
+    targetId: string,
+    revision: number,
+  ): Promise<void> {
+    const watching = await this.externalWriterContinues(
+      slot,
+      (leaf) => projection.onSameLine(targetId, leaf),
+      true,
+    );
+    this.requireIdleBranchSlot(slot, revision);
+    const assertSavedTarget = () => {
+      this.throwIfConflicted(slot);
+      if (projection.leafId !== targetId)
+        throw requestError(
+          "The saved position changed. Refresh before restoring it.",
+          409,
+        );
+    };
+    assertSavedTarget();
+    slot.viewLeafId = this.effectiveLeaf(slot);
+    await this.stopWriter(slot);
+    await this.reconcileSlot(slot, true);
+    assertSavedTarget();
+    this.workingSessions.add(slot.id);
+    this.moveView(slot, targetId);
+    if (watching) this.markExternalActive(slot);
+    else this.emitSlotEvent(slot, { type: "runtime_ready" });
   }
 
   async forkBranch(request: BranchForkRequest): Promise<BranchForkResponse> {

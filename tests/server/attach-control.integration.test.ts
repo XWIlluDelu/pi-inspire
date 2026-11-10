@@ -26,13 +26,14 @@ import attachControl, {
 import {
   AttachControlConnection,
   AttachControlRegistry,
+  unambiguousInstance,
 } from "../../server/attach-control.js";
-import { PiRpcProcess } from "../../server/pi-rpc.js";
+import { AttachmentStore } from "../../server/attachments.js";
+import { assertHerdrWorkerScopesAvailable } from "../../server/herdr-process-group.js";
 import { HerdrRpcTransport } from "../../server/herdr-rpc-transport.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
-import { assertHerdrWorkerScopesAvailable } from "../../server/herdr-process-group.js";
+import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
-import { AttachmentStore } from "../../server/attachments.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
@@ -746,6 +747,9 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       first.registry,
       records.find((record) => record.tag === "other-branch")!,
     );
+    expect(records[0]?.leafId).not.toBeNull();
+    expect(records[0]?.leafId).toBe(records[1]?.leafId);
+    expect(() => unambiguousInstance(records)).toThrow(/Several Pi processes/);
     await otherBranch.pi.request({
       type: "prompt",
       message: "/test-navigate u1",

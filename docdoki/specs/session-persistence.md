@@ -226,8 +226,9 @@ or starting a worker.
 
 ### Takeover
 
-**Take over** attaches to the preferred corresponding instance: idle first, then the most recent
-activity. The binding is to that process incarnation and session file; every operation re-resolves
+**Take over** attaches when one corresponding Pi has an available control endpoint. If several Pi
+processes use the branch, ask the user to leave the branch in the other processes and retry. The
+binding is to that process incarnation and session file. Every operation re-resolves
 its current endpoint, so reloads are transparent, and input and Stop stay addressed to it. The view
 follows the attached Pi's reported leaf as soon as the saved projection contains it, even when
 the report arrives after Inspire has already read that file revision. When the attached Pi exits,

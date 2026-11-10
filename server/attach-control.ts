@@ -307,15 +307,18 @@ export class AttachControlRegistry {
   }
 }
 
-/** Prefer idle instances, then the most recent activity. */
-export function preferredInstance(
+/** A heartbeat shows presence, but does not say which Pi the user meant. */
+export function unambiguousInstance(
   records: readonly AttachControlRecord[],
 ): AttachControlRecord | undefined {
-  return [...records].sort(
-    (a, b) =>
-      Number(a.activity !== "idle") - Number(b.activity !== "idle") ||
-      b.updatedAt - a.updatedAt,
-  )[0];
+  const [record, other] = records;
+  if (other)
+    throw requestError(
+      "Several Pi processes are using this branch. Leave this branch in the other Pi processes, then try again.",
+      409,
+      { code: "EXTERNAL_PI_AMBIGUOUS" },
+    );
+  return record?.endpoint ? record : undefined;
 }
 
 function stateOf(state: AttachControlState): ExternalSessionState {

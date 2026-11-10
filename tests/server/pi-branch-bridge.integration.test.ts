@@ -86,6 +86,127 @@ afterEach(async () => {
 });
 
 describe("installed Pi branch extension bridge", () => {
+  it.each(["user", "custom_message"] as const)(
+    "restores the exact saved %s position before opening the next worker",
+    async (type) => {
+      const directory = await mkdtemp(
+        join(tmpdir(), "inspire-saved-position-"),
+      );
+      directories.push(directory);
+      const path = join(directory, "saved.jsonl");
+      const source =
+        [
+          {
+            type: "session",
+            version: 3,
+            id: SESSION_ID,
+            timestamp: "2026-08-01T00:00:00.000Z",
+            cwd: directory,
+          },
+          {
+            type: "thinking_level_change",
+            id: "thinking",
+            parentId: null,
+            timestamp: new Date(0).toISOString(),
+            thinkingLevel: "off",
+          },
+          message("root", "thinking", "user", "Root question", 1),
+          message("older", "root", "assistant", "Root answer", 2),
+          type === "user"
+            ? message("saved", "older", "user", "Unanswered question", 3)
+            : {
+                type,
+                id: "saved",
+                parentId: "older",
+                timestamp: new Date(3).toISOString(),
+                customType: "saved-note",
+                content: "Saved extension message",
+                display: true,
+              },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n") + "\n";
+      await writeFile(path, source);
+      const record: SessionRecord = {
+        id: SESSION_ID,
+        cwd: directory,
+        path,
+        source: null,
+        created: new Date(),
+        modified: new Date(),
+        messageCount: 3,
+        firstMessage: "Root question",
+      };
+      const catalog: SessionCatalogLike = {
+        refresh: async () => [record],
+        get: async (id) => (id === SESSION_ID ? record : undefined),
+        list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
+        listByIds: async () => [],
+        listByCwds: async () => [],
+        invalidate() {},
+      };
+      const attachments = new AttachmentStore(join(directory, "uploads"));
+      const workers: PiRpcProcess[] = [];
+      const runtime = new RuntimeController(catalog, attachments, {
+        createProcess: (options) => {
+          const worker = new PiRpcProcess({
+            ...options,
+            args: ["--no-extensions", ...(options.args ?? [])],
+            env: {
+              ...options.env,
+              PI_ATTACH_CONTROL: "0",
+              PI_OFFLINE: "1",
+            },
+          });
+          workers.push(worker);
+          return worker;
+        },
+      });
+      try {
+        await runtime.openSession(SESSION_ID);
+        await vi.waitFor(async () =>
+          expect((await runtime.snapshot()).active?.commands).toBeDefined(),
+        );
+        const start = await runtime.branchTree(SESSION_ID);
+        const earlier = await runtime.navigateBranch({
+          sessionId: SESSION_ID,
+          targetId: "older",
+          mode: "switch",
+          revision: start.revision,
+        });
+        expect(earlier.snapshot.active).toMatchObject({
+          durableLeafId: "saved",
+          effectiveLeafId: "older",
+          navigationLeased: true,
+        });
+        const tree = await runtime.branchTree(SESSION_ID);
+        const restored = await runtime.navigateBranch({
+          sessionId: SESSION_ID,
+          targetId: "saved",
+          mode: "switch",
+          revision: tree.revision,
+        });
+        expect(restored.editorText).toBeUndefined();
+        expect(restored.snapshot.active).toMatchObject({
+          effectiveLeafId: "saved",
+          navigationLeased: false,
+        });
+        expect(workers).toHaveLength(1);
+        expect(workers[0]!.available).toBe(false);
+        await runtime.setAutoRetry(SESSION_ID, false);
+        expect(workers).toHaveLength(2);
+        expect(
+          await workers[1]!.request({ type: "get_entries" }),
+        ).toMatchObject({ leafId: "saved" });
+        expect(await readFile(path, "utf8")).toBe(source);
+      } finally {
+        await runtime.close();
+        await attachments.close();
+      }
+    },
+    15_000,
+  );
+
   it("fails a response-bearing session_start UI request before Pi RPC is ready", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-real-startup-ui-"));
     directories.push(directory);
