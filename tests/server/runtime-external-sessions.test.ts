@@ -162,7 +162,9 @@ function attachedRuntime(
     { createProcess: spawn, openSessionProjection: preview },
   )
     .setExternalSessionPresence(async () => [null])
-    .setExternalSessionConnector(connect);
+    .setExternalSessionConnector(async (id, file, match, idleOnly) =>
+      idleOnly ? null : connect(id, file, match, idleOnly),
+    );
 }
 
 /** Opening shows the live Pi read-only; Take over attaches to it. */
@@ -394,6 +396,7 @@ describe("continue an externally owned Pi", () => {
 
   it("restores an addressed view read-only when a live Pi owns its branch", async () => {
     const f = nativeFixture();
+    f.setState({ status: "working", leafId: null });
     const create = vi.fn(
       (options) => new FakeRpc(options) as unknown as PiRpcProcess,
     );
@@ -411,6 +414,7 @@ describe("continue an externally owned Pi", () => {
         "a",
         expect.any(String),
         true,
+        expect.any(Function),
       );
       expect(create).not.toHaveBeenCalled();
       await expect(
@@ -425,7 +429,105 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
-  it.each([null, "not-in-projection"])(
+  it.each(["open", "reconnect"] as const)(
+    "automatically attaches a sole idle Pi on %s",
+    async (entry) => {
+      const session = await persistedRecord("a");
+      const f = nativeFixture();
+      f.setState({ status: "idle", leafId: "u1" });
+      const create = vi.fn(() => {
+        throw new Error("must not launch Pi");
+      });
+      const runtime = new RuntimeController(
+        catalog([session]),
+        trackedAttachmentStore(),
+        {
+          createProcess: create,
+        },
+      )
+        .setExternalSessionPresence(async () => ["u1"])
+        .setExternalSessionConnector(async (_id, _file, match, idleOnly) => {
+          expect(idleOnly).toBe(true);
+          expect(match("u1")).toBe("continues");
+          return f.native;
+        });
+      const release = runtime.retainSessionView("a");
+      try {
+        if (entry === "open") await runtime.openSession("a");
+        else await runtime.snapshot("a");
+        await vi.waitFor(async () => {
+          const snapshot = await runtime.snapshot("a");
+          expect(snapshot.active?.readOnlyReason).toBeUndefined();
+          expect(snapshot.sessionStatuses.a?.external).toBe(true);
+        });
+        expect(create).not.toHaveBeenCalled();
+        if (entry === "reconnect") expect(runtime.activeSessionId).toBeNull();
+      } finally {
+        release();
+        await runtime.close();
+      }
+    },
+  );
+
+  it("opens the current branch when the live Pi confirms it is still on an older node", async () => {
+    const session = await persistedRecord("a");
+    await appendFile(session.path, branchMessage("saved-current", "u1"));
+    const create = vi.fn(
+      (options) => new FakeRpc(options) as unknown as PiRpcProcess,
+    );
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: create,
+      },
+    ).setExternalSessionPresence(async (_id, _file, _fresh, isAncestor) => {
+      expect(isAncestor("u1")).toBe(true);
+      return ["u1"];
+    });
+    try {
+      const preview = await runtime.openSession("a");
+      expect(preview.active?.effectiveLeafId).toBe("saved-current");
+      await waitForReady(runtime);
+      expect(create).toHaveBeenCalledOnce();
+      const snapshot = await runtime.snapshot("a");
+      expect(snapshot.active?.readOnlyReason).toBeUndefined();
+      expect(snapshot.active?.effectiveLeafId).toBe("saved-current");
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("leaves takeover manual when the selected Pi started work after reporting idle", async () => {
+    const session = await persistedRecord("a");
+    const f = nativeFixture();
+    f.setState({ status: "working", leafId: "u1" });
+    const runtime = new RuntimeController(
+      catalog([session]),
+      trackedAttachmentStore(),
+      {
+        createProcess: () => {
+          throw new Error("must not launch Pi");
+        },
+      },
+    )
+      .setExternalSessionPresence(async () => ["u1"])
+      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) => {
+        expect(idleOnly).toBe(true);
+        return f.native;
+      });
+    const release = runtime.retainSessionView("a");
+    try {
+      const snapshot = await runtime.snapshot("a");
+      expect(snapshot.active?.readOnlyReason).toBe("external-active");
+      expect(f.native.close).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await runtime.close();
+    }
+  });
+
+  it.each([null, "not-in-projection", undefined])(
     "keeps a live Pi with unavailable attachment and leaf %s read-only",
     async (leaf) => {
       const presence = vi.fn(async () => [leaf]);
@@ -442,7 +544,12 @@ describe("continue an externally owned Pi", () => {
         await expect(runtime.takeOverSession("a")).rejects.toMatchObject({
           code: "EXTERNAL_PI_WRITER_ACTIVE",
         });
-        expect(presence).toHaveBeenCalledWith("a", expect.any(String), true);
+        expect(presence).toHaveBeenCalledWith(
+          "a",
+          expect.any(String),
+          true,
+          expect.any(Function),
+        );
         expect(connect).toHaveBeenCalledOnce();
         expect(create).not.toHaveBeenCalled();
         expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
@@ -877,7 +984,9 @@ describe("continue an externally owned Pi", () => {
       },
     )
       .setExternalSessionPresence(async () => ["chosen", "other"])
-      .setExternalSessionConnector(async () => f.native);
+      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
+        idleOnly ? null : f.native,
+      );
     try {
       await openAttached(runtime, "a");
       await expect(runtime.selectBranch("a", "other")).rejects.toMatchObject({
@@ -1118,7 +1227,9 @@ describe("continue an externally owned Pi", () => {
       },
     )
       .setExternalSessionPresence(async () => ["u1"])
-      .setExternalSessionConnector(async () => f.native);
+      .setExternalSessionConnector(async (_id, _file, _match, idleOnly) =>
+        idleOnly ? null : f.native,
+      );
     const events: Array<{ type: string; sessionId: string }> = [];
     runtime.on("event", (event) => events.push(event));
     try {
@@ -1388,9 +1499,10 @@ describe("continue an externally owned Pi", () => {
       },
     )
       .setExternalSessionPresence(async () => [null])
-      .setExternalSessionConnector(async (id) =>
-        id === "a" ? f.native : nativeFixture().native,
-      );
+      .setExternalSessionConnector(async (id, _file, _match, idleOnly) => {
+        if (id === "a") return idleOnly ? null : f.native;
+        return nativeFixture().native;
+      });
     try {
       await openAttached(runtime, "a");
       await vi.waitFor(async () =>

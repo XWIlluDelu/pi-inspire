@@ -204,25 +204,27 @@ worker or starting it at that leaf. An attached Pi is released when another bran
 Admission reads live [attach-control](../../docs/extensions.md#share-sessions-with-terminal-pi)
 records for each decision. Activity badges can reuse recent observations. Cold writer admission,
 restored browser views, branch selection, takeover and deletion check current process identity.
-Waiting for a Pi to exit checks its process. A record matching session id and physical file
-from a live process incarnation corresponds to the view when its leaf lies on the viewed
-root-to-leaf line: an ancestor (a report may lag one append) or a continuation.
+Waiting for a Pi to exit checks its process. A live instance of the same session file owns a
+view when its leaf is at or beyond the viewed position on that branch. An older reported leaf
+triggers a live check because the record can lag an append. If the check confirms that Pi is
+still at the older node, Inspire can start its own worker for the viewed branch.
 
 - No corresponding instance: the view is editable and Inspire's own worker starts directly. A
   worker started for a non-default view first navigates to it, so displayed conversation and model
   context agree.
-- One or more: the view is read-only (`external-active`) with that Pi's progress and **Take over**.
-- A live owner with a reported leaf still missing from the refreshed projection blocks cold writer
-  admission until Inspire can determine which branch that Pi owns. Read-only views recheck about
-  every two seconds and become editable once there is no corresponding instance.
+- Opening a session or reconnecting a browser view attaches automatically when exactly one Pi
+  could own the branch, its control endpoint is available, and live state confirms it is idle.
+  Otherwise the view is read-only (`external-active`) with progress and **Take over**.
+- An unavailable live check or a reported leaf still missing from the refreshed projection
+  blocks cold writer admission. Read-only views recheck about every two seconds.
 
 Inspire's own workers load attach-control with a tag bound to the worker launcher. The owning Host
 excludes those records from external admission. Sessions worked on in Inspire keep their viewed
 position across idle reclamation and navigation. Starting a replacement worker checks live
 ownership again, including after an attachment ends or the browser restores an addressed view.
 A session only warmed by viewing can return to read-only on re-entry if a live Pi now runs its branch.
-An addressed browser reconnect can recover a read-only view without selecting it for other browsers
-or starting a worker.
+An addressed browser reconnect restores the view and checks for an external Pi without selecting
+the session for other browsers or starting a worker.
 
 ### Takeover
 

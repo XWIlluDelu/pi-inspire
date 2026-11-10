@@ -14,11 +14,12 @@ import {
   addAttachmentContext,
   resolveProjectFiles,
 } from "./attachments.js";
-import type {
-  AttachmentEnd,
-  ConnectExternalSession,
-  ExternalSessionConnection,
-  ExternalSessionState,
+import {
+  type AttachmentEnd,
+  type ConnectExternalSession,
+  type ExternalSessionConnection,
+  type ExternalSessionState,
+  PI_STATE_OBSERVATION_TIMEOUT_MS,
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 import {
@@ -192,10 +193,10 @@ export class RuntimeExternalSessions {
     return this.connections.get(slot)?.state.status === "blocked";
   }
 
-  async connect(slot: RuntimeSlot): Promise<boolean> {
+  async connect(slot: RuntimeSlot, idleOnly = false): Promise<boolean> {
     const pending = this.connecting.get(slot);
     if (pending) return pending;
-    const operation = this.connectInside(slot);
+    const operation = this.connectInside(slot, idleOnly);
     this.connecting.set(slot, operation);
     try {
       return await operation;
@@ -204,7 +205,10 @@ export class RuntimeExternalSessions {
     }
   }
 
-  private async connectInside(slot: RuntimeSlot): Promise<boolean> {
+  private async connectInside(
+    slot: RuntimeSlot,
+    idleOnly: boolean,
+  ): Promise<boolean> {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
@@ -212,15 +216,20 @@ export class RuntimeExternalSessions {
         return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
     }
-    const native = await this.connector(slot.id, slot.sessionPath, (leaf) => {
-      if (this.host.continues(slot, leaf)) return "continues";
-      if (
-        this.host.corresponds(slot, leaf) ||
-        (leaf !== null && !slot.projection?.entry(leaf))
-      )
-        return "possible";
-      return "other";
-    });
+    const native = await this.connector(
+      slot.id,
+      slot.sessionPath,
+      (leaf) => {
+        if (this.host.continues(slot, leaf)) return "continues";
+        if (
+          this.host.corresponds(slot, leaf) ||
+          (leaf !== null && !slot.projection?.entry(leaf))
+        )
+          return "possible";
+        return "other";
+      },
+      idleOnly,
+    );
     if (native === null) return false;
     if (this.closed || !this.host.current(slot) || slot.process) {
       native.close();
@@ -228,7 +237,9 @@ export class RuntimeExternalSessions {
     }
     let state: Awaited<ReturnType<ExternalSessionConnection["read"]>>;
     try {
-      state = await native.read();
+      state = await native.read(
+        idleOnly ? PI_STATE_OBSERVATION_TIMEOUT_MS : undefined,
+      );
       await this.reconcileReportedLeaf(slot, state);
     } catch (error) {
       // Not attached: a retried takeover or the next open decides again.
@@ -237,6 +248,7 @@ export class RuntimeExternalSessions {
     }
     if (
       "ended" in state ||
+      (idleOnly && state.status !== "idle") ||
       !this.host.continues(slot, state.leafId ?? null) ||
       this.closed ||
       !this.host.current(slot) ||

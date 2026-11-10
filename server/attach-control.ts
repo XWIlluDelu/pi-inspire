@@ -11,10 +11,11 @@ import {
   processIdentity,
   requestAttachControl,
 } from "../extensions/attach-control.js";
-import type {
-  ExternalSessionConnection,
-  ExternalSessionState,
-  MatchExternalLeaf,
+import {
+  type ExternalSessionConnection,
+  type ExternalSessionState,
+  type MatchExternalLeaf,
+  PI_STATE_OBSERVATION_TIMEOUT_MS,
 } from "./external-session.js";
 import { requestError } from "./request-error.js";
 
@@ -242,6 +243,35 @@ export class AttachControlRegistry {
     });
   }
 
+  /** Refresh only reports that may describe an earlier position on the same
+   * branch. An unavailable read leaves that instance's branch unknown. */
+  async branchLeaves(
+    sessionId: string,
+    sessionFile: string,
+    {
+      observe,
+      isAncestor,
+    }: { observe: boolean; isAncestor: (leaf: string | null) => boolean },
+  ): Promise<(string | null | undefined)[]> {
+    const records = await this.forSession(sessionId, sessionFile, { observe });
+    const leaves = await Promise.all(
+      records.map(async (record) => {
+        if (!isAncestor(record.leafId)) return [record.leafId];
+        if (!record.endpoint) return [undefined];
+        try {
+          const state = await new AttachControlConnection(this, record).read(
+            PI_STATE_OBSERVATION_TIMEOUT_MS,
+          );
+          if (!("ended" in state)) return [state.leafId];
+          return state.ended === "unreachable" ? [undefined] : [];
+        } catch {
+          return [undefined];
+        }
+      }),
+    );
+    return leaves.flat();
+  }
+
   /** Deletion targets the whole session, across every reported branch. A
    * reply is not exit evidence; leave the file in place until each Pi exits. */
   async stopSession(sessionId: string, sessionFile: string): Promise<void> {
@@ -312,7 +342,16 @@ export class AttachControlRegistry {
 export function takeoverCandidate(
   records: readonly AttachControlRecord[],
   matchLeaf: MatchExternalLeaf,
+  idleOnly = false,
 ): AttachControlRecord | undefined {
+  if (idleOnly) {
+    const [candidate, other] = records.filter(
+      (record) => matchLeaf(record.leafId) !== "other",
+    );
+    return !other && candidate?.endpoint && candidate.activity === "idle"
+      ? candidate
+      : undefined;
+  }
   const candidates = records
     .filter((record) => record.endpoint)
     .map((record) => ({ record, match: matchLeaf(record.leafId) }));
@@ -394,6 +433,7 @@ export class AttachControlConnection implements ExternalSessionConnection {
     beforeSend?: () => void,
     expectedLeafId?: string | null,
     observed?: AttachControlRecord,
+    timeoutMs?: number,
   ): Promise<Extract<AttachControlResponse, { ok: true }>> {
     const record = observed ?? (await this.current());
     if ("ended" in record)
@@ -410,12 +450,16 @@ export class AttachControlConnection implements ExternalSessionConnection {
         code: "ATTACH_CONTROL_OUTCOME_UNKNOWN",
         outcomeUnknown: true,
       });
-    const response = await requestAttachControl(record.endpoint, {
-      ...operation,
-      token: record.token,
-      sessionFile: record.sessionFile,
-      ...(expectedLeafId !== undefined ? { expectedLeafId } : {}),
-    }).catch((error: unknown) => {
+    const response = await requestAttachControl(
+      record.endpoint,
+      {
+        ...operation,
+        token: record.token,
+        sessionFile: record.sessionFile,
+        ...(expectedLeafId !== undefined ? { expectedLeafId } : {}),
+      },
+      timeoutMs,
+    ).catch((error: unknown) => {
       if (error instanceof AttachControlError && error.outcomeUnknown)
         throw unknown(error.message);
       if (error instanceof AttachControlError && error.code === "TOO_LARGE")
@@ -477,7 +521,9 @@ export class AttachControlConnection implements ExternalSessionConnection {
 
   /** Failures within the grace period (such as a reload) are transient; a
    * lasting one ends the binding as "unreachable". */
-  async read(): Promise<
+  async read(
+    timeoutMs?: number,
+  ): Promise<
     ExternalSessionState | { ended: "exited" | "left-session" | "unreachable" }
   > {
     try {
@@ -486,8 +532,15 @@ export class AttachControlConnection implements ExternalSessionConnection {
         "ended" in record
           ? record
           : stateOf(
-              (await this.send({ op: "state" }, undefined, undefined, record))
-                .state,
+              (
+                await this.send(
+                  { op: "state" },
+                  undefined,
+                  undefined,
+                  record,
+                  timeoutMs,
+                )
+              ).state,
             );
       this.failingSince = null;
       return state;

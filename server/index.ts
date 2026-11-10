@@ -187,24 +187,26 @@ const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
   diagnostics,
 })
   .setModelMetadataCatalog(modelMetadata)
-  .setExternalSessionConnector(async (sessionId, sessionFile, match) => {
-    const instance = takeoverCandidate(
-      await attachControl.forSession(sessionId, sessionFile),
-      match,
-    );
-    return instance
-      ? new AttachControlConnection(attachControl, instance)
-      : null;
-  })
+  .setExternalSessionConnector(
+    async (sessionId, sessionFile, match, idleOnly) => {
+      const instance = takeoverCandidate(
+        await attachControl.forSession(sessionId, sessionFile),
+        match,
+        idleOnly,
+      );
+      return instance
+        ? new AttachControlConnection(attachControl, instance)
+        : null;
+    },
+  )
   .setExternalSessionTerminator((sessionId, sessionFile) =>
     attachControl.stopSession(sessionId, sessionFile),
   )
-  .setExternalSessionPresence(async (sessionId, sessionFile, fresh) =>
-    (
-      await attachControl.forSession(sessionId, sessionFile, {
-        observe: !fresh,
-      })
-    ).map((record) => record.leafId),
+  .setExternalSessionPresence((sessionId, sessionFile, fresh, isAncestor) =>
+    attachControl.branchLeaves(sessionId, sessionFile, {
+      observe: !fresh,
+      isAncestor,
+    }),
   )
   .on("worker_status", (rpc: PiRpcProcess, status: RuntimeWorkerStatus) => {
     herdr.updateWorkerStatus(rpc, status);

@@ -375,9 +375,8 @@ async function setup(
     stageFork: stageFork ?? fakeStageFork(directory),
   });
   if (externallyOwned)
-    // A live Pi at the session root continues every branch of it.
     runtime.setExternalSessionPresence(async (id) =>
-      id === SESSION_ID ? [null] : [],
+      id === SESSION_ID ? ["a2"] : [],
     );
   await runtime.openSession(SESSION_ID);
   if (externallyOwned) {
@@ -838,6 +837,9 @@ describe("stock RPC branch bridge", () => {
         // browser captured its view/endpoint but before copy admission.
         const appended = `${JSON.stringify(entry("later", "a2", "assistant", "later progress", 50))}\n`;
         await appendFile(path, appended);
+        runtime.setExternalSessionPresence(async (id) =>
+          id === SESSION_ID ? ["later"] : [],
+        );
         const copied = await (mode === "fork"
           ? runtime.forkBranch(request)
           : runtime.cloneBranch(request));
@@ -1415,7 +1417,6 @@ describe("stock RPC branch bridge", () => {
     const release = runtime.retainSessionView(SESSION_ID);
     try {
       // A live Pi runs the a2 branch; someone else starts another branch.
-      runtime.setExternalSessionPresence(async () => ["a2"]);
       await appendFile(
         path,
         `${JSON.stringify(entry("alt", "a1", "user", "alternative", 5))}\n${JSON.stringify(entry("alt-a", "alt", "assistant", "alternative answer", 6))}\n`,

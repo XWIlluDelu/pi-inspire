@@ -181,6 +181,48 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     expect(await registry.list()).toEqual([]);
   });
 
+  it("verifies reported ancestors while retaining uncertainty when Pi cannot answer", async () => {
+    const root = await directory();
+    const endpoint = join(root, "pi.sock");
+    const live = await record({ endpoint, leafId: "old" });
+    await save(root, live);
+    const registry = new AttachControlRegistry(root);
+    const request = vi.fn();
+    const server = createServer((socket) => {
+      socket.once("data", (line) => {
+        request(JSON.parse(line.toString()));
+        socket.end(
+          `${JSON.stringify({
+            ok: true,
+            state: { ...live, leafId: "current" },
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(endpoint, resolve);
+    });
+    const leaves = (isAncestor: (leaf: string | null) => boolean) =>
+      registry.branchLeaves(live.sessionId, live.sessionFile, {
+        observe: false,
+        isAncestor,
+      });
+    try {
+      expect(await leaves(() => false)).toEqual(["old"]);
+      expect(request).not.toHaveBeenCalled();
+      expect(await leaves((leaf) => leaf === "old")).toEqual(["current"]);
+      expect(request).toHaveBeenCalledExactlyOnceWith({
+        op: "state",
+        token: live.token,
+        sessionFile: live.sessionFile,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    expect(await leaves((leaf) => leaf === "old")).toEqual([undefined]);
+  });
+
   it("distinguishes registry scan failure from no instances", async () => {
     const path = join(await directory(), "not-a-directory");
     await writeFile(path, "");
@@ -202,6 +244,22 @@ describe("takeoverCandidate", () => {
     );
     expect(takeoverCandidate([ancestor], match)).toBe(ancestor);
     expect(takeoverCandidate([presenceOnly], match)).toBeUndefined();
+  });
+
+  it("only automatically takes over a single plausible idle instance with an endpoint", async () => {
+    const idle = await record({ endpoint: "/work/idle" });
+    const busy = await record({ endpoint: "/work/busy", activity: "working" });
+    const endpointless = await record({ leafId: "ancestor" });
+    const unrelated = await record({ leafId: "sibling" });
+    const match = (leaf: string | null) => {
+      if (leaf === "leaf") return "continues";
+      return leaf === "ancestor" ? "possible" : "other";
+    };
+    expect(takeoverCandidate([idle, unrelated], match, true)).toBe(idle);
+    expect(
+      takeoverCandidate([idle, endpointless], match, true),
+    ).toBeUndefined();
+    expect(takeoverCandidate([busy], match, true)).toBeUndefined();
   });
 });
 

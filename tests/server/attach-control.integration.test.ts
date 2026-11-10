@@ -37,6 +37,7 @@ import { RuntimeController } from "../../server/runtime.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
 import { deleteSessionFile } from "../../server/session-delete.js";
 import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
+import { catalog } from "./fixtures/runtime.js";
 
 const herdrAvailable =
   process.platform === "linux" &&
@@ -52,6 +53,52 @@ afterEach(async () => {
 const NAVIGATE = "tests/fixtures/pi-navigate-extension.ts";
 const RELOAD = "tests/fixtures/pi-resource-reload-extension.ts";
 const ATTACH_PROMPT = "tests/fixtures/pi-attach-prompt-extension.ts";
+
+function replacementRuntime({
+  registry,
+  id,
+  sessionFile,
+  root,
+}: {
+  registry: AttachControlRegistry;
+  id: string;
+  sessionFile: string;
+  root: string;
+}) {
+  const session: SessionRecord = {
+    id,
+    path: sessionFile,
+    cwd: root,
+    source: null,
+    created: new Date(),
+    modified: new Date(),
+    messageCount: 2,
+    firstMessage: "first",
+  };
+  const attachments = new AttachmentStore(join(root, "uploads"));
+  const spawn = vi.fn(() => {
+    throw new Error("A restart must reuse the surviving Pi");
+  });
+  const runtime = new RuntimeController(catalog([session]), attachments, {
+    createProcess: spawn,
+  })
+    .setExternalSessionPresence((id, file, fresh, isAncestor) =>
+      registry.branchLeaves(id, file, { observe: !fresh, isAncestor }),
+    )
+    .setExternalSessionConnector(async (id, file, match, idleOnly) => {
+      const candidate = takeoverCandidate(
+        await registry.forSession(id, file),
+        match,
+        idleOnly,
+      );
+      return candidate
+        ? new AttachControlConnection(registry, candidate)
+        : null;
+    });
+  cleanup.push(() => attachments.close());
+  cleanup.push(() => runtime.close());
+  return { runtime, spawn };
+}
 
 /** A real Pi with attach-control loaded, as a user's terminal Pi would be. */
 async function livePi(
@@ -534,10 +581,11 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     expect(await readFile(sessionFile, "utf8")).toBe(before);
   }, 60_000);
 
-  it("keeps a detached worker running and controllable after its Host lets go", async () => {
-    const { pi, registry, id, sessionFile } = await livePi({
+  it("automatically attaches to an idle detached worker in a replacement Host", async () => {
+    const fixture = await livePi({
       PI_ATTACH_CONTROL_TAG: "worker-one",
     });
+    const { pi, registry, id, sessionFile } = fixture;
     const [record] = await vi.waitFor(
       async () => {
         const found = await registry.forSession(id, sessionFile);
@@ -564,13 +612,18 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     });
     // A Host-only restart detaches instead of stopping: Pi's input stays open.
     await pi.detach();
-    const connection = new AttachControlConnection(registry, record!);
+    const { runtime, spawn } = replacementRuntime(fixture);
+    const release = runtime.retainSessionView(id);
+    cleanup.push(async () => release());
     await vi.waitFor(
-      async () =>
-        expect(await connection.read()).toMatchObject({ status: "idle" }),
+      async () => {
+        const snapshot = await runtime.snapshot(id);
+        expect(snapshot.sessionStatuses[id]?.external).toBe(true);
+        expect(snapshot.active?.readOnlyReason).toBeUndefined();
+      },
       { timeout: 10_000 },
     );
-    await connection.rename("Survived the Host");
+    await runtime.rename(id, "Survived the Host");
     await vi.waitFor(
       async () =>
         expect(await readFile(sessionFile, "utf8")).toContain(
@@ -578,18 +631,23 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         ),
       { timeout: 5_000 },
     );
+    expect(spawn).not.toHaveBeenCalled();
+    expect((await registry.forSession(id, sessionFile))[0]?.pid).toBe(
+      record!.pid,
+    );
   }, 60_000);
 
   for (const backend of ["direct", "herdr"] as const) {
     it.skipIf(backend === "herdr" && !herdrAvailable)(
       `${backend}: restores a pending RPC dialog and subsequent answers in a replacement Host`,
       async () => {
-        const { pi, registry, id, sessionFile, root } = await livePi(
+        const fixture = await livePi(
           {},
           ["docs/examples/native-ui.ts"],
           undefined,
           backend,
         );
+        const { pi, registry, id, sessionFile, root } = fixture;
         const record = await vi.waitFor(
           async () => {
             const [found] = await registry.forSession(id, sessionFile);
@@ -628,46 +686,13 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         );
         await pi.detach();
         await pending;
-        const session: SessionRecord = {
-          id,
-          path: sessionFile,
-          cwd: root,
-          source: null,
-          created: new Date(),
-          modified: new Date(),
-          messageCount: 2,
-          firstMessage: "first",
-        };
-        const attachments = new AttachmentStore(join(root, "uploads"));
-        const spawn = vi.fn(() => {
-          throw new Error("A restart must reuse the surviving Pi");
-        });
-        const runtime = new RuntimeController(
-          {
-            get: async (sessionId) => (sessionId === id ? session : undefined),
-            refresh: async () => [session],
-            list: async () => ({
-              sessions: [],
-              total: 0,
-              offset: 0,
-              limit: 40,
-            }),
-            listByIds: async () => [],
-            listByCwds: async () => [],
-            invalidate() {},
-          },
-          attachments,
-          { createProcess: spawn },
-        )
-          .setExternalSessionPresence(async () =>
-            (await registry.forSession(id, sessionFile)).map(
-              (item) => item.leafId,
-            ),
-          )
-          .setExternalSessionConnector(async () => native);
-        cleanup.push(() => attachments.close());
-        cleanup.push(() => runtime.close());
+        const { runtime, spawn } = replacementRuntime(fixture);
         await runtime.openSession(id);
+        await vi.waitFor(async () =>
+          expect((await runtime.snapshot(id)).active?.readOnlyReason).toBe(
+            "external-active",
+          ),
+        );
         await runtime.takeOverSession(id);
         expect(
           (await runtime.snapshot(id)).pendingExtensionUiRequests?.[0]?.id,
