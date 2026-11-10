@@ -138,7 +138,8 @@ With attach-control installed:
   several such Pi processes, Inspire picks an idle one, then the most recently active, and stays
   with it.
 - If the attached Pi exits, moves to another session or branch, or stops answering for longer than a
-  reload takes, Inspire continues the same view with its own Pi and says which of these happened.
+  reload takes, Inspire says which of these happened. It continues the same view with its own Pi
+  once the branch is available.
   It does not claim a task failed: a Pi that moved or stopped answering may still be working, and
   a task interrupted by an exit is reported as ended with an unknown outcome.
 - A read-only view follows the branch it opened on, even when another branch becomes the default.
@@ -149,11 +150,15 @@ With attach-control installed:
 Limits of attaching to another Pi:
 
 - Input queued in that Pi is not listed in Inspire's Pending; Pi has no public queue interface.
-- Stop interrupts agent work. A `!` shell started in the terminal is interrupted there.
+- Stop interrupts agent work. Run Pi slash commands and start or stop terminal shell commands
+  from the attached Pi's own interface.
 - A terminal Pi's native dialogs are answered there. Inspire-owned RPC workers preserved by
   `inspire restart --host-only` recover their pending questions in the browser after **Take over**.
   Select, confirm, input and editor answers continue through the original worker's RPC channel.
-- A receipt means Pi accepted the call, not that the work completed. Pi reports later errors itself.
+- A prompt receipt requires evidence that Pi started processing that input. If Pi queues or
+  handles input without observable admission, or if the receipt is lost, Inspire retains the draft
+  and checks the original receipt on retry. Stop requests agent interruption and reports an
+  uncertain outcome while earlier input may still be in Pi's input hooks.
 - A Pi without attach-control is invisible to Inspire; both can still append to the same session.
 
 **Protocol.** Each live session context writes a record (session ID and file, current branch

@@ -2,6 +2,7 @@ import type {
   ModelCatalog as NativeModelCatalog,
   ModelSelection as NativeModelSelection,
 } from "../extensions/attach-control.js";
+import { parseCommandInvocation } from "../shared/commands.js";
 import {
   type ComposerHistoryEntry,
   isBusyRunState,
@@ -211,30 +212,9 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
-      const read = ++this.readSequence;
-      const selectionRevision = previous.selectionRevision;
-      let state:
-        | Awaited<ReturnType<ExternalSessionConnection["read"]>>
-        | undefined;
-      try {
-        state = await previous.native.read();
-      } catch {
-        // A transient failure keeps the attachment; its poll continues.
-      }
+      if (await this.refreshConnection(slot, previous, accepts, false))
+        return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
-      // The owner poll may have retired this connection during the read.
-      if (this.connections.get(slot) === previous) {
-        // A newer poll may already have advanced the same attachment.
-        if (state === undefined || read < previous.latestRead) return true;
-        previous.latestRead = read;
-        if (!("ended" in state) && accepts(state.leafId ?? null)) {
-          previous.failing = false;
-          this.applyState(slot, previous, state, false, selectionRevision);
-          return true;
-        }
-        // Another corresponding instance may still be attached below.
-        this.end(slot, "ended" in state ? state.ended : "left-branch", false);
-      }
     }
     const native = await this.connector(slot.id, slot.sessionPath, accepts);
     if (native === null) return false;
@@ -245,6 +225,7 @@ export class RuntimeExternalSessions {
     let state: Awaited<ReturnType<ExternalSessionConnection["read"]>>;
     try {
       state = await native.read();
+      await this.reconcileReportedLeaf(slot, state);
     } catch (error) {
       // Not attached: a retried takeover or the next open decides again.
       native.close();
@@ -275,6 +256,81 @@ export class RuntimeExternalSessions {
     this.schedule(slot, connection);
     this.host.emit(slot, { type: "runtime_ready" });
     return true;
+  }
+
+  private async reconcileReportedLeaf(
+    slot: RuntimeSlot,
+    state: Awaited<ReturnType<ExternalSessionConnection["read"]>>,
+  ): Promise<void> {
+    if (
+      !("ended" in state) &&
+      state.leafId &&
+      slot.projection &&
+      !slot.projection.entry(state.leafId)
+    )
+      await this.host.reconcile(slot, false);
+  }
+
+  private async refreshConnection(
+    slot: RuntimeSlot,
+    connection: Connection,
+    accepts: (leaf: string | null) => boolean,
+    release: boolean,
+  ): Promise<boolean> {
+    const read = ++this.readSequence;
+    const selectionRevision = connection.selectionRevision;
+    let state:
+      | Awaited<ReturnType<ExternalSessionConnection["read"]>>
+      | undefined;
+    try {
+      state = await connection.native.read();
+    } catch {
+      // A transient failure keeps the attachment; its poll continues.
+    }
+    if (state) await this.reconcileReportedLeaf(slot, state);
+    if (
+      this.closed ||
+      !this.host.current(slot) ||
+      slot.process ||
+      this.connections.get(slot) !== connection
+    )
+      return false;
+    if (!state || read < connection.latestRead) return true;
+    connection.latestRead = read;
+    if ("ended" in state || !accepts(state.leafId ?? null)) {
+      this.end(slot, "ended" in state ? state.ended : "left-branch", release);
+      return false;
+    }
+    connection.failing = false;
+    this.applyState(slot, connection, state, false, selectionRevision);
+    return true;
+  }
+
+  private refreshAttached(
+    slot: RuntimeSlot,
+    connection: Connection,
+  ): Promise<boolean> {
+    return this.refreshConnection(
+      slot,
+      connection,
+      (leaf) => this.host.corresponds(slot, leaf),
+      true,
+    );
+  }
+
+  /** Revalidate the current receiver without attaching or starting another Pi. */
+  async withAttachment<T>(
+    slot: RuntimeSlot,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const connection = this.connections.get(slot);
+    if (
+      !connection ||
+      !(await this.refreshAttached(slot, connection)) ||
+      this.connections.get(slot) !== connection
+    )
+      throw requestError("The external Pi connection has ended.", 409);
+    return operation();
   }
 
   private applyState(
@@ -385,15 +441,7 @@ export class RuntimeExternalSessions {
         this.detach(slot);
         return;
       }
-      // Load saved appends before deciding whether the reported leaf diverged.
-      // A just-written continuation is not yet in the cached tree.
-      if (
-        !("ended" in state) &&
-        state.leafId &&
-        slot.projection &&
-        !slot.projection.entry(state.leafId)
-      )
-        await this.host.reconcile(slot, false);
+      await this.reconcileReportedLeaf(slot, state);
       if (
         this.closed ||
         this.connections.get(slot) !== connection ||
@@ -447,13 +495,21 @@ export class RuntimeExternalSessions {
     this.host.released(slot);
   }
 
-  async prompt(
-    slot: RuntimeSlot,
-    request: PromptRequest,
-    epoch = slot.inputStopEpoch,
-  ): Promise<ComposerHistoryEntry | null> {
+  bindPrompt(slot: RuntimeSlot) {
     const connection = this.connections.get(slot);
-    if (!connection)
+    if (!connection) return undefined;
+    return (request: PromptRequest, epoch: number, assertView: () => void) =>
+      this.prompt(slot, connection, request, epoch, assertView);
+  }
+
+  private async prompt(
+    slot: RuntimeSlot,
+    connection: Connection,
+    request: PromptRequest,
+    epoch: number,
+    assertView: () => void,
+  ): Promise<ComposerHistoryEntry | null> {
+    if (this.connections.get(slot) !== connection)
       throw requestError("The external Pi connection has ended.", 409);
     if (slot.readOnlyReason === "workspace-unavailable")
       throw requestError(
@@ -464,21 +520,24 @@ export class RuntimeExternalSessions {
     const message = request.message.trim();
     if (message.length > MAX_PROMPT_CHARS)
       throw requestError("Message is too long", 413);
-    if (
-      (message.startsWith("/") || message.startsWith("!")) &&
-      (request.attachmentIds?.length ||
-        request.projectFiles?.length ||
-        request.historyArtifacts)
-    )
+    const command = parseCommandInvocation(message);
+    if (message.startsWith("!") || command)
       throw requestError(
-        "Pi commands cannot include attachments or project-file references",
+        command
+          ? `/${command.name} is unavailable while this session is attached to another Pi.`
+          : "Shell commands are unavailable while this session is attached to another Pi.",
         409,
+        { code: "NATIVE_ACTION_UNSUPPORTED" },
       );
-    const prepared = await this.attachments.resolveForPrompt(
-      request.attachmentIds,
-    );
+    assertView();
+    if (!(await this.refreshAttached(slot, connection)))
+      throw requestError("The external Pi connection has ended.", 409);
+    assertView();
+    const originalIds = request.attachmentIds ?? [];
+    const prepared = await this.attachments.resolveForPrompt(originalIds);
     const copied: string[] = [];
     let delivered = false;
+    let uncertain = false;
     try {
       const history = await resolveComposerHistoryArtifacts(
         slot,
@@ -502,21 +561,25 @@ export class RuntimeExternalSessions {
           .reduce((size, file) => size + file.size, 0) + history.fileBytes,
         [...prepared.images, ...history.images],
       );
-      // Recalled images need managed files for the native receiver. Uploaded
-      // images already have leased copies; neither becomes a text reference.
-      const stagedImages = await this.attachments.stageImages(history.images);
-      copied.push(...stagedImages.map((image) => image.id));
-      const recovered = await this.attachments.resolveForPrompt(copied);
+      // The receiver may outlive a lost receipt. Its image copies have a
+      // separate lifetime from the editor's original upload handles.
+      const transportImages = await this.attachments.prepareTransportImages([
+        ...prepared.images,
+        ...history.images,
+      ]);
+      copied.push(...transportImages.map((image) => image.id));
       const files = [...prepared.files, ...history.files].filter(
         (file) => file.kind === "file",
       );
-      const images = [...prepared.files, ...recovered.files]
-        .filter((file) => file.kind === "image")
-        .map(({ path, mimeType }) => ({ path, mimeType }));
+      const images = transportImages.map(({ path, mimeType }) => ({
+        path,
+        mimeType,
+      }));
       const fullMessage = addAttachmentContext(message, files, projectFiles);
       if (!fullMessage && images.length === 0)
         throw requestError("Message or attachment is required", 400);
       const beforeSend = () => {
+        assertView();
         if (
           this.connections.get(slot) !== connection ||
           !this.host.current(slot) ||
@@ -550,7 +613,7 @@ export class RuntimeExternalSessions {
             .catch((error) => this.host.log(slot, error));
         }
       } catch (error) {
-        delivered = Boolean(
+        uncertain = Boolean(
           (error as { outcomeUnknown?: boolean })?.outcomeUnknown,
         );
         if (
@@ -566,11 +629,12 @@ export class RuntimeExternalSessions {
       }
       return null;
     } finally {
-      const ids = [...(request.attachmentIds ?? []), ...copied];
-      if (delivered) {
-        await this.attachments.releaseConsumed(ids);
+      if (uncertain) {
+        this.attachments.restageUncertainPrompt(originalIds, copied);
+      } else if (delivered) {
+        await this.attachments.releaseConsumed([...originalIds, ...copied]);
       } else {
-        this.attachments.restage(ids);
+        this.attachments.restage([...originalIds, ...copied]);
         await Promise.allSettled(
           copied.map((id) => this.attachments.remove(id)),
         );
@@ -589,16 +653,19 @@ export class RuntimeExternalSessions {
     });
   }
 
-  async abort(slot: RuntimeSlot): Promise<void> {
+  async abort(slot: RuntimeSlot, requireBranch = false): Promise<void> {
     const connection = this.connections.get(slot);
     if (!connection)
       throw requestError("The external Pi connection has ended.", 409);
+    const leafId = connection.state.leafId;
+    if (requireBranch && typeof leafId !== "string")
+      throw requestError("Cannot verify the branch of the attached Pi.", 409);
     if (slot.stoppingInput)
       throw requestError("Stop is already in progress", 409);
     slot.inputStopEpoch += 1;
     slot.stoppingInput = true;
     try {
-      await connection.native.abort(connection.state.leafId);
+      await connection.native.abort(leafId);
     } finally {
       slot.stoppingInput = false;
     }

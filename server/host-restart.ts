@@ -12,7 +12,7 @@ export interface HostRestartBackend {
   prepare(): Promise<void>;
   request(
     all: boolean,
-    commit: () => boolean,
+    commit: () => boolean | Promise<boolean>,
   ): Promise<{ code: number; issued?: boolean }>;
 }
 
@@ -20,6 +20,8 @@ const UNAVAILABLE =
   "Page restart requires the Inspire launcher or this Host's installed Linux systemd services.";
 const ALL_UNAVAILABLE =
   "Restart all requires this Host's installed Linux systemd services.";
+const WORK_BUSY =
+  "Finish Pi work and pending operations before restarting, or choose Stop work and restart.";
 
 /** One process-scoped operation, shared by all observers. Only preparation and
  * proven non-issuance can reopen admission; HTTP observation is never authority. */
@@ -31,7 +33,7 @@ export class HostRestartController {
 
   constructor(
     private readonly runtime: RestartLeaseOwner &
-      Pick<RuntimeLike, "stopAttachedPiWork">,
+      Pick<RuntimeLike, "checkAttachedRestartWork" | "stopAttachedPiWork">,
     private readonly backend: HostRestartBackend,
   ) {}
 
@@ -114,7 +116,7 @@ export class HostRestartController {
         throw new Error(
           reservation.reason === "restart-pending"
             ? "Another restart is already pending."
-            : "Finish Pi work and pending operations before restarting, or choose Stop work and restart.",
+            : WORK_BUSY,
         );
       }
       leaseId = reservation.leaseId;
@@ -122,11 +124,26 @@ export class HostRestartController {
         await this.runtime.stopAttachedPiWork();
       const result = await this.backend.request(
         operation.scope === "all",
-        () => {
+        async () => {
+          if (!preserveWork && !operation.interruptWork) {
+            const busy = await this.runtime.checkAttachedRestartWork();
+            if (busy) {
+              operation.busyReason = busy;
+              return false;
+            }
+          }
           const committed = this.runtime.commitMaintenanceRestart(
             reservation.leaseId,
           );
-          if (committed.kind !== "committed") return false;
+          if (committed.kind !== "committed") {
+            if (
+              committed.kind === "skipped" &&
+              (committed.reason === "active-work" ||
+                committed.reason === "in-flight-operation")
+            )
+              operation.busyReason = committed.reason;
+            return false;
+          }
           mayHaveIssued = true;
           // Publish domain state before submission can disconnect this observer.
           operation.phase = "submitted";
@@ -136,9 +153,11 @@ export class HostRestartController {
       if (result.issued === false) mayHaveIssued = false;
       if (result.code !== 0 || result.issued === false)
         throw new Error(
-          mayHaveIssued
-            ? "Restart outcome is unknown. Check the Host launcher or service."
-            : "Restart was not issued. Check the Host launcher or service configuration.",
+          operation.busyReason
+            ? WORK_BUSY
+            : mayHaveIssued
+              ? "Restart outcome is unknown. Check the Host launcher or service."
+              : "Restart was not issued. Check the Host launcher or service configuration.",
         );
     } catch (error) {
       if (!mayHaveIssued && leaseId) {

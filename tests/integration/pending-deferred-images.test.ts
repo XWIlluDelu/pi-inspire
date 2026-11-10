@@ -11,7 +11,6 @@ import {
   waitForReady,
 } from "../server/fixtures/runtime";
 import {
-  activeSnapshot,
   bootstrapPayload,
   deferred,
   installFakeWebSocket,
@@ -60,7 +59,7 @@ describe("Host-deferred image handoff", () => {
             return {
               body: bootstrapPayload({
                 snapshot: {
-                  ...activeSnapshot({ sessionId: "a" }),
+                  ...(await f.runtime.snapshot()),
                   runState: "compacting",
                 },
               }),

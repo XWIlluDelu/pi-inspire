@@ -381,16 +381,20 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
 - **Restart Host** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
   loaded settings. Pi exposes reload in its command context, so a terminal Pi reloads through its
   own `/reload` command. **Restart all** also restarts the terminal service. A busy taken-over Pi
-  counts as active work for both scopes. Only an explicit **Stop work and restart** interrupts
-  its agent work through attach-control. The Host logs a failed interruption and continues the restart.
+  counts as active work for both scopes. Before submission, the Host reads the attached Pi
+  directly. An unavailable observation leaves the ordinary restart blocked. Only an explicit
+  **Stop work and restart** interrupts its agent work through attach-control. The interruption
+  must identify the attached branch. The Host logs a failed interruption and continues the restart.
 - `inspire restart --host-only` preserves every Pi process and its running work, including
   Inspire's workers. Running work can continue during restart because the closing Host detaches
   its workers. After any restart, sessions return to ordinary admission, so preserved workers
   appear as live Pi with **Take over**.
-- `inspire restart` and `inspire restart --host-only` send a signed `restart-prepare` local-control
-  request before restarting. `host-only` makes the closing Host detach its workers. A running Host
-  must acknowledge the requested scope before the CLI stops or restarts it. Failed or unavailable
-  preparation aborts the restart and leaves the Host running. An absent or exited Host needs no preparation.
+- Ordinary CLI restart uses signed `restart-prepare` local control before stopping a running Host.
+  `--host-only` authenticates the running Host and binds worker preservation to the signed
+  shutdown request for that exact process. Start the replacement only after the old Host exits
+  with a clean signed receipt for that request. For an active installed service, verify the service
+  invocation and wait for it to exit, then start the Host unit. The terminal unit stays running.
+  A running Host that predates scoped shutdown requires one ordinary restart before `--host-only`.
 
 ### Submission and recovery
 

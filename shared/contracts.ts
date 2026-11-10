@@ -1416,6 +1416,8 @@ export interface PromptRequest {
   /** Target session: writes never fall back to the host's current selection,
    * so a concurrent navigation cannot redirect a prompt. */
   sessionId: string;
+  /** Branch view observed by the sending browser. */
+  expectedViewId?: string;
   message: string;
   attachmentIds?: string[];
   historyArtifacts?: ComposerHistoryArtifactsRequest;

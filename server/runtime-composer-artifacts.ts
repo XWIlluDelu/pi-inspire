@@ -19,7 +19,7 @@ import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import { effectiveRuntimeLeaf, type RuntimeSlot } from "./runtime-slot.js";
 
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
@@ -41,9 +41,7 @@ function historyProjection(
   effectiveLeafId: string | null;
 } {
   const projection = slot.projection;
-  const effectiveLeafId = slot.navigationLease
-    ? slot.navigationLease.effectiveLeafId
-    : (projection?.leafId ?? null);
+  const effectiveLeafId = effectiveRuntimeLeaf(slot);
   if (
     !projection ||
     selection.viewId !== slot.viewId ||

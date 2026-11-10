@@ -116,7 +116,11 @@ describe("composer delivery and artifacts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(host.promptBodies.length).toBe(before + 2));
     expect(host.promptBodies.slice(before)).toEqual([
-      expect.objectContaining({ message: "", attachmentIds: ["att-1"] }),
+      expect.objectContaining({
+        message: "",
+        attachmentIds: ["att-1"],
+        expectedViewId: store.getState().transcriptViewId,
+      }),
       expect.objectContaining({ message: "", attachmentIds: ["att-1"] }),
     ]);
 

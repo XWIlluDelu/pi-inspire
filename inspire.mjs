@@ -757,6 +757,54 @@ async function prepareRestart() {
     );
 }
 
+async function restartHostOnly(context, serviceStatus) {
+  const owner = await inspect(context);
+  if (owner.kind !== "healthy") {
+    if (owner.kind === "unavailable" || serviceStatus === 0)
+      throw new Error(
+        "Cannot verify the running Host for a Host-only restart.",
+      );
+    return startHost(serviceStatus === 5);
+  }
+  if (!owner.state.scopedShutdown)
+    throw new Error(
+      "This Host predates scoped shutdown. Restart it normally to enable --host-only.",
+    );
+
+  const invocationId = owner.state.systemdInvocationId;
+  const control =
+    serviceStatus === 0
+      ? await import(pathToFileURL(hostServiceController).href)
+      : null;
+  if (
+    serviceStatus === 5 ||
+    (control &&
+      (await control.inspectBrowserRestart(root, { invocationId })).kind !==
+        "managed")
+  )
+    throw new Error(
+      "The running Host does not match the requested service. The Host was not stopped.",
+    );
+
+  const stopped = await stopManagedInstance(
+    context.statePath,
+    expected(context),
+    { scopedOwner: owner.state },
+  );
+  if (stopped.kind !== "stopped")
+    throw new Error(
+      "The Host did not confirm a clean Host-only shutdown. No replacement was started.",
+    );
+  if (control) {
+    if (!(await control.waitForHostServiceExit(invocationId)))
+      throw new Error(
+        "The old Host service did not finish stopping. No replacement was started.",
+      );
+    return (await manageHostService("start")).code;
+  }
+  return startHost(false);
+}
+
 async function restartHost(all = false, hostOnly = false) {
   if (all && process.env.INSPIRE_TERMINAL_ID)
     throw new Error(
@@ -779,13 +827,12 @@ async function restartHost(all = false, hostOnly = false) {
     console.log("Full restart will close project terminals in the installed service.");
   console.log("Preparing restart…");
   await prepareRestart();
-  // Same scopes as the page: an ordinary restart reloads taken-over Pi so
-  // they apply current settings; --host-only keeps every Pi running.
   const context = instanceContext();
+  if (hostOnly) return restartHostOnly(context, inspected.code);
   await prepareInstanceRestart(
     context.statePath,
     expected(context),
-    hostOnly ? "host-only" : "host",
+    "host",
     { processMarker: distribution ? "build/server/index.js" : "server/index.ts" },
   );
   const service = await manageHostService(all ? "restart-all" : "restart");

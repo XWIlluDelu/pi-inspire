@@ -19,7 +19,6 @@ import {
   waitForReady,
 } from "../server/fixtures/runtime";
 import {
-  activeSnapshot,
   bootstrapPayload,
   deferred,
   installFakeWebSocket,
@@ -78,7 +77,7 @@ describe("recovered images retain later user intent", () => {
             return {
               body: bootstrapPayload({
                 snapshot: {
-                  ...activeSnapshot({ sessionId: "a" }),
+                  ...(await f.runtime.snapshot()),
                   runState: "compacting",
                 },
               }),

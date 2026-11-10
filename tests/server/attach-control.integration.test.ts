@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  access,
   lstat,
   mkdir,
   mkdtemp,
@@ -12,9 +13,14 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
+import attachControl, {
   type AttachControlRequest,
+  attachControlDirectory,
   requestAttachControl,
 } from "../../extensions/attach-control.js";
 import {
@@ -44,6 +50,7 @@ afterEach(async () => {
 
 const NAVIGATE = "tests/fixtures/pi-navigate-extension.ts";
 const RELOAD = "tests/fixtures/pi-resource-reload-extension.ts";
+const ATTACH_PROMPT = "tests/fixtures/pi-attach-prompt-extension.ts";
 
 /** A real Pi with attach-control loaded, as a user's terminal Pi would be. */
 async function livePi(
@@ -90,7 +97,7 @@ async function livePi(
       providers: {
         fixture: {
           api: "openai-completions",
-          apiKey: "synthetic",
+          apiKey: "$INSPIRE_TEST_ATTACH_API_KEY",
           baseUrl: "http://127.0.0.1:1/v1",
           models: [
             {
@@ -211,6 +218,7 @@ async function livePi(
       PI_OFFLINE: "1",
       PI_SKIP_VERSION_CHECK: "1",
       PI_TELEMETRY: "0",
+      INSPIRE_TEST_ATTACH_API_KEY: "synthetic",
       ...env,
     }),
   });
@@ -224,7 +232,180 @@ async function livePi(
   return { pi, registry, id, sessionFile, root };
 }
 
+async function promptFixture() {
+  const fixture = await livePi({}, [ATTACH_PROMPT]);
+  const { registry, id, sessionFile, root } = fixture;
+  const record = await vi.waitFor(
+    async () => {
+      const [found] = await registry.forSession(id, sessionFile);
+      expect(found?.endpoint).toBeTruthy();
+      return found!;
+    },
+    { timeout: 5_000 },
+  );
+  const enter = async (name: string) => {
+    const release = () => writeFile(join(root, `${name}.release`), "");
+    cleanup.push(release);
+    await vi.waitFor(() => access(join(root, `${name}.entered`)), {
+      timeout: 5_000,
+    });
+    return release;
+  };
+  return {
+    ...fixture,
+    enter,
+    connection: new AttachControlConnection(registry, record),
+  };
+}
+
+const UNKNOWN_OUTCOME = {
+  code: "ATTACH_CONTROL_OUTCOME_UNKNOWN",
+  outcomeUnknown: true,
+};
+
 describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
+  it("witnesses ordinary input and reports unknown after Pi rejects a handed-off input", async () => {
+    const { pi, connection, enter, sessionFile } = await promptFixture();
+    await connection.prompt("normal attached input");
+    await vi.waitFor(async () => {
+      expect(await connection.read()).toMatchObject({ status: "idle" });
+    });
+    const before = await readFile(sessionFile, "utf8");
+    expect(before).toContain("normal attached input");
+
+    const failures: unknown[] = [];
+    pi.on("event", (event) => {
+      if (
+        event.type === "extension_error" &&
+        event.event === "send_user_message"
+      )
+        failures.push(event.error);
+    });
+    const result = expect(connection.prompt("lost auth")).rejects.toMatchObject(
+      UNKNOWN_OUTCOME,
+    );
+    const release = await enter("lost auth");
+    await release();
+    await result;
+    expect(failures).toEqual([expect.stringContaining("No API key found")]);
+    expect(await readFile(sessionFile, "utf8")).toBe(before);
+  }, 20_000);
+
+  it("reports an uncertain Stop during native preflight and aborts its matching late start", async () => {
+    const { pi, connection, enter, root } = await promptFixture();
+    const message = "gated input";
+    const result = connection.prompt(message);
+    void result.catch(() => {});
+    const release = await enter(message);
+
+    // An independent native submit with identical text is not the witness.
+    await pi.request({ type: "prompt", message });
+    const requests = join(root, "provider-requests");
+    await vi.waitFor(async () => {
+      expect(await readFile(requests, "utf8")).toBe("request\n");
+      expect(await connection.read()).toMatchObject({ status: "idle" });
+    });
+    await expect(connection.abort()).rejects.toMatchObject(UNKNOWN_OUTCOME);
+    await release();
+    await result;
+    await vi.waitFor(async () => {
+      expect(await connection.read()).toMatchObject({ status: "idle" });
+    });
+    expect(await readFile(requests, "utf8")).toBe("request\n");
+    await connection.abort();
+  }, 20_000);
+
+  it("reports unknown for Steer and Follow up queued by native Pi", async () => {
+    const { pi, connection, enter } = await promptFixture();
+    const run = pi.request({ type: "prompt", message: "gated run" });
+    void run.catch(() => {});
+    const release = await enter("gated run");
+    await Promise.all([
+      expect(
+        connection.prompt("next steering input", "steer"),
+      ).rejects.toMatchObject(UNKNOWN_OUTCOME),
+      expect(
+        connection.prompt("later follow up", "followUp"),
+      ).rejects.toMatchObject(UNKNOWN_OUTCOME),
+    ]);
+    await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
+      pendingMessageCount: 2,
+    });
+    await release();
+    await run;
+  }, 20_000);
+
+  it("rejects unauthenticated prompts and fences an input still in preflight when stopped", async () => {
+    const root = await mkdtemp(join(await realpath("/tmp"), "pi-gate-"));
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    vi.stubEnv("HOME", root);
+    vi.stubEnv("XDG_RUNTIME_DIR", root);
+    vi.stubEnv("PI_ATTACH_CONTROL", undefined);
+    vi.stubEnv("PI_ATTACH_CONTROL_RPC_UI", undefined);
+    vi.stubEnv("PI_ATTACH_CONTROL_TAG", "inherited-worker");
+    vi.stubEnv("PI_ATTACH_CONTROL_TAG_PARENT_PID", "0");
+    cleanup.push(async () => vi.unstubAllEnvs());
+
+    let resolveAuth!: (auth: undefined) => void;
+    const auth = new Promise<undefined>((resolve) => {
+      resolveAuth = resolve;
+    });
+    const getProviderAuth = vi.fn(() => auth);
+    const abort = vi.fn();
+    const sendUserMessage = vi.fn();
+    const hooks = new Map<
+      string,
+      (event: unknown, ctx: ExtensionContext) => unknown
+    >();
+    attachControl({
+      on: (
+        event: string,
+        callback: (event: unknown, ctx: ExtensionContext) => unknown,
+      ) => hooks.set(event, callback),
+      getThinkingLevel: () => "off",
+      sendUserMessage,
+    } as unknown as ExtensionAPI);
+    const sessionFile = join(root, "session.jsonl");
+    const ctx = {
+      cwd: root,
+      mode: "tui",
+      model: { provider: "fixture", id: "offline" },
+      modelRegistry: { hasConfiguredAuth: () => false, getProviderAuth },
+      isIdle: () => true,
+      abort,
+      sessionManager: {
+        getSessionId: () => "session",
+        getSessionFile: () => sessionFile,
+        getLeafId: () => null,
+        getSessionName: () => "fixture",
+      },
+    } as unknown as ExtensionContext;
+    await hooks.get("session_start")?.({}, ctx);
+    cleanup.push(async () => {
+      await hooks.get("session_shutdown")?.({}, ctx);
+    });
+
+    const registry = new AttachControlRegistry(attachControlDirectory());
+    const [record] = await registry.forSession("session", sessionFile);
+    expect(record?.endpoint).toBeTruthy();
+    expect(record?.tag).toBeUndefined();
+    const connection = new AttachControlConnection(registry, record!);
+    const stopped = expect(
+      connection.prompt("before stop"),
+    ).rejects.toMatchObject({
+      code: "ATTACH_CONTROL_STOPPED",
+    });
+    await vi.waitFor(() => expect(getProviderAuth).toHaveBeenCalledOnce());
+    await connection.abort();
+    resolveAuth(undefined);
+    await stopped;
+    await expect(connection.prompt("after stop")).rejects.toMatchObject({
+      code: "ATTACH_CONTROL_NO_AUTH",
+    });
+    expect(abort).toHaveBeenCalledOnce();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+
   it("publishes presence and controls the live Pi through its socket", async () => {
     const { pi, registry, id, sessionFile } = await livePi({}, [
       NAVIGATE,
@@ -259,6 +440,18 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     expect((await connection.setThinkingLevel("high")).thinkingLevel).toBe(
       "high",
     );
+    await expect(
+      connection.prompt(
+        "empty branch already advanced",
+        undefined,
+        undefined,
+        undefined,
+        null,
+      ),
+    ).rejects.toMatchObject({ code: "ATTACH_CONTROL_BRANCH_CHANGED" });
+    await expect(connection.abort(null)).rejects.toMatchObject({
+      code: "ATTACH_CONTROL_BRANCH_CHANGED",
+    });
 
     // The terminal user moves to another entry. The receiver checks the
     // submitted branch at the actual input/Stop boundary.
@@ -317,6 +510,22 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         sessionFile,
       } as unknown as AttachControlRequest),
     ).resolves.toMatchObject({ ok: false, code: "UNSUPPORTED" });
+
+    // Escaping can grow a prompt far past the old 64 KiB wire limit. The
+    // complete request reaches validation without executing the command.
+    for (const message of [
+      " /attach-control old-id",
+      `!!${"\u0000".repeat(499_998)}`,
+    ]) {
+      await expect(
+        requestAttachControl(record!.endpoint, {
+          op: "prompt",
+          token: record!.token,
+          sessionFile,
+          message,
+        }),
+      ).resolves.toMatchObject({ ok: false, code: "NATIVE_INPUT_UNSUPPORTED" });
+    }
 
     await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
       isStreaming: false,

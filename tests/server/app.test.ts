@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_PROMPT_CHARS } from "../../shared/contracts.js";
 
 import {
   closeHostApiFixture,
@@ -38,6 +39,20 @@ describe("typed Host API", () => {
     } = fixture);
   });
   afterEach(async () => closeHostApiFixture(fixture));
+
+  it("accepts an escaped prompt at the character limit", async () => {
+    const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue(null);
+    const message = "\u0000".repeat(MAX_PROMPT_CHARS);
+    await request(application.server)
+      .post("/api/prompt")
+      .set("Authorization", `Bearer ${token}`)
+      .send(promptDelivery({ sessionId: "fixture-active", message }))
+      .expect(202);
+    expect(prompt).toHaveBeenCalledExactlyOnceWith({
+      sessionId: "fixture-active",
+      message,
+    });
+  });
 
   it("sets production HTTP behavior without overriding the user's NODE_ENV", () => {
     expect(application.app.get("env")).toBe("production");

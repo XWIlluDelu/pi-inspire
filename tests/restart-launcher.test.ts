@@ -68,12 +68,17 @@ fs.appendFileSync(process.env.FIXTURE_LOG, args.join(' ') + '\\n');
 const root = process.env.FIXTURE_ROOT;
 const terminal = args.includes('inspire-terminal.service');
 const unit = terminal ? 'inspire-terminal.service' : 'inspire-host.service';
+if (args[1] === 'start') fs.writeFileSync(root + '/started', '');
+const oldExited = fs.existsSync(root + '/old-host-exited');
+const started = fs.existsSync(root + '/started');
+const active = terminal || !oldExited || started;
 if (args[1] === 'show') console.log([
   'LoadState=loaded', 'FragmentPath=' + process.env.XDG_CONFIG_HOME + '/systemd/user/' + unit,
   'WorkingDirectory=' + root,
   'ExecStart={ path=' + root + '/inspire ; argv[]=' + root + '/inspire' + (terminal ? ' terminal-daemon --root ' + root + ' --host 127.0.0.1 --port 4587' : '') + ' ; }',
   'ExecStartPost={ path=' + root + '/inspire ; argv[]=' + root + '/inspire wait-ready ; }',
-  'Wants=inspire-terminal.service', 'After=inspire-terminal.service', 'ActiveState=active', 'UnitFileState=enabled', 'SubState=running'
+  'Wants=inspire-terminal.service', 'After=inspire-terminal.service', 'ActiveState=' + (active ? 'active' : 'inactive'), 'UnitFileState=enabled', 'SubState=running',
+  'InvocationID=' + (started ? 'b'.repeat(32) : 'a'.repeat(32))
 ].join('\\n'));
 `,
   );
@@ -158,27 +163,93 @@ describe.runIf(process.platform === "linux")(
       expect(f.run(["restart"])).toContain("Terminals remain running");
       expect(await f.log()).toContain("--user restart inspire-host.service");
     });
-    it.each([{ args: [] }, { args: ["--host-only"] }])(
-      "does not stop a service when Pi restart preparation fails: $args",
-      async ({ args }) => {
+    it("does not stop a service when Pi restart preparation fails", async () => {
+      const f = await fixture(false);
+      const path = join(f.root, "build/server", "instance-state.mjs");
+      const original = await readFile(path, "utf8");
+      await writeFile(
+        path,
+        original.replace(
+          "export async function prepareInstanceRestart(path, expected, scope, options = {}) {",
+          'export async function prepareInstanceRestart(path, expected, scope, options = {}) { throw new Error("Pi restart preparation failed");',
+        ),
+      );
+      expect(() => f.run(["restart"])).toThrow(/Pi restart preparation failed/);
+      expect(
+        (await f.log())
+          .split("\n")
+          .filter((line) => /--user (stop|restart)/u.test(line)),
+      ).toEqual([]);
+    });
+    it("rejects Host-only restart of an active service without an authenticated owner", async () => {
+      const f = await fixture(false);
+      expect(() => f.run(["restart", "--host-only"])).toThrow(
+        /Cannot verify the running Host/,
+      );
+      expect(await f.log()).not.toMatch(/--user (start|stop|restart)/u);
+    });
+    it.each([
+      {
+        case: "legacy Host",
+        scopedShutdown: false,
+        invocation: "a",
+        error: /predates scoped shutdown/,
+      },
+      {
+        case: "different invocation",
+        scopedShutdown: true,
+        invocation: "b",
+        error: /does not match the requested service/,
+      },
+      {
+        case: "matching invocation",
+        scopedShutdown: true,
+        invocation: "a",
+        error: null,
+      },
+    ])(
+      "binds Host-only restart to the service owner ($case)",
+      async ({ scopedShutdown, invocation, error }) => {
         const f = await fixture(false);
         const path = join(f.root, "build/server", "instance-state.mjs");
         const original = await readFile(path, "utf8");
+        const owner = {
+          pid: 321,
+          scopedShutdown,
+          systemdInvocationId: invocation.repeat(32),
+        };
         await writeFile(
           path,
-          original.replace(
-            "export async function prepareInstanceRestart(path, expected, scope, options = {}) {",
-            'export async function prepareInstanceRestart(path, expected, scope, options = {}) { throw new Error("Pi restart preparation failed");',
-          ),
+          original
+            .replace(
+              "export async function inspectInstance(path, expected, options = {}) {",
+              `export async function inspectInstance(path, expected, options = {}) {
+            return { kind: "healthy", state: ${JSON.stringify(owner)} };`,
+            )
+            .replace(
+              "export async function stopManagedInstance(path, expected, options = {}) {",
+              `export async function stopManagedInstance(path, expected, options = {}) {
+            if (JSON.stringify(options.scopedOwner) !== ${JSON.stringify(JSON.stringify(owner))}) throw new Error("Missing scoped owner");
+            await writeFile(join(expected.root, "old-host-exited"), "");
+            await (await import("node:fs/promises")).appendFile(process.env.FIXTURE_LOG, "scoped shutdown\\n");
+            return { kind: "stopped", state: options.scopedOwner };`,
+            ),
         );
-        expect(() => f.run(["restart", ...args])).toThrow(
-          /Pi restart preparation failed/,
-        );
-        expect(
-          (await f.log())
-            .split("\n")
-            .filter((line) => /--user (stop|restart)/u.test(line)),
-        ).toEqual([]);
+        if (error) {
+          expect(() => f.run(["restart", "--host-only"])).toThrow(error);
+          expect(await f.log()).not.toMatch(
+            /scoped shutdown|--user (start|stop|restart)/u,
+          );
+        } else {
+          f.run(["restart", "--host-only"]);
+          const log = await f.log();
+          expect(log.match(/^--user (?:start|stop|restart).*$/gmu)).toEqual([
+            "--user start inspire-host.service",
+          ]);
+          expect(log.indexOf("scoped shutdown")).toBeLessThan(
+            log.indexOf("--user start"),
+          );
+        }
       },
     );
     it("keeps inherited default instance values under the installed service", async () => {

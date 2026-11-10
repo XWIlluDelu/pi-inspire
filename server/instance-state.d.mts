@@ -10,6 +10,8 @@ export interface InstanceState {
   startedAt: string;
   processStartTime: string;
   shutdownControlVersion?: 1;
+  scopedShutdown?: true;
+  systemdInvocationId?: string;
   httpControlVersion?: 1;
 }
 
@@ -43,10 +45,10 @@ export function removeInstanceState(
   owner: InstanceState,
 ): Promise<void>;
 export function consumeStopRequest(path: string): Promise<boolean>;
-export function requestInstanceShutdown(path:string,state:InstanceState,timeoutMs?:number):Promise<void>;
-export function completeInstanceShutdown(path:string,state:InstanceState,clean:boolean):Promise<void>;
+export function requestInstanceShutdown(path:string,state:InstanceState,timeoutMs?:number,scope?:"host-only"):Promise<string>;
+export function completeInstanceShutdown(path:string,state:InstanceState,clean:boolean,requestNonce?:string):Promise<void>;
 export function instanceShutdownRequested(path:string,state:InstanceState):Promise<boolean>;
-export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:()=>Promise<void>):()=>void;
+export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:(request:{nonce:string;scope?:"host-only"})=>Promise<void>):()=>void;
 export function inspectInstance(
   path: string,
   expected: ExpectedInstance,
@@ -65,6 +67,7 @@ export function stopManagedInstance(
     processMarker?: string;
     healthTimeoutMs?: number;
     timeoutMs?: number;
+    scopedOwner?: InstanceState;
   },
 ): Promise<StopResult>;
 export function portAvailable(host: string, port: number): Promise<boolean>;

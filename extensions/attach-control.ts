@@ -10,8 +10,14 @@
  * Install: pi install /absolute/path/to/attach-control.ts
  * Disable for one process: PI_ATTACH_CONTROL=0
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile as execFileCallback } from "node:child_process";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
 import { statSync } from "node:fs";
 import {
   lstat,
@@ -33,8 +39,10 @@ import type {
 export const ATTACH_CONTROL_HEARTBEAT_MS = 2_000;
 export const ATTACH_CONTROL_STALE_MS = 8_000;
 export const ATTACH_CONTROL_MODEL_READ_TIMEOUT_MS = 15_000;
-const MAX_REQUEST_BYTES = 64 * 1024;
+// A 500,000-character prompt can exceed 3 MB after JSON escaping and metadata.
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const PROMPT_OBSERVATION_MS = 5_000;
 const execFile = promisify(execFileCallback);
 
 export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
@@ -226,7 +234,7 @@ export type AttachControlRequest = AttachControlOperation & {
   token: string;
   /** Rejects the operation if the session context changed since discovery. */
   sessionFile?: string;
-  /** The displayed branch must still be an ancestor of the live position. */
+  /** The displayed entry must still be an ancestor, or an empty leaf must stay empty. */
   expectedLeafId?: string | null;
 };
 
@@ -246,6 +254,8 @@ export type AttachControlResponse =
       ok: true;
       state: AttachControlState;
       models?: ModelOption[];
+      /** Prompt reached a native message, or Stop had no unresolved handoff. */
+      witnessed?: true;
     }
   | { ok: false; code: string; error: string };
 
@@ -264,6 +274,7 @@ export class AttachControlError extends Error {
   constructor(
     readonly code: string,
     message: string,
+    readonly outcomeUnknown = false,
   ) {
     super(message);
   }
@@ -291,9 +302,16 @@ export function requestAttachControl<Response = AttachControlResponse>(
   timeoutMs = 20_000,
 ): Promise<Response> {
   return new Promise((resolvePromise, reject) => {
+    const payload = JSON.stringify(request);
+    if (Buffer.byteLength(payload) > MAX_REQUEST_BYTES) {
+      reject(new AttachControlError("TOO_LARGE", "Request exceeds the limit."));
+      return;
+    }
     const socket = connect(endpoint);
     let buffer = "";
+    let bytes = 0;
     let settled = false;
+    let written = false;
     const finish = (error: Error | null, value?: Response) => {
       if (settled) return;
       settled = true;
@@ -302,35 +320,53 @@ export function requestAttachControl<Response = AttachControlResponse>(
       if (error) reject(error);
       else resolvePromise(value!);
     };
+    const fail = (code: string, message: string) =>
+      finish(new AttachControlError(code, message, written));
     const timer = setTimeout(
-      () =>
-        finish(
-          new AttachControlError("TIMEOUT", "The Pi did not answer in time."),
-        ),
+      () => fail("TIMEOUT", "The Pi did not answer in time."),
       timeoutMs,
     );
     socket.setEncoding("utf8");
-    socket.on("connect", () => socket.write(`${JSON.stringify(request)}\n`));
+    socket.on("connect", () => {
+      if (settled) return;
+      // Once handed to the socket, a request can take effect even if its reply is lost.
+      written = true;
+      socket.write(`${payload}\n`);
+    });
     socket.on("data", (chunk: string) => {
-      buffer += chunk;
-      if (buffer.length > MAX_RESPONSE_BYTES)
-        return finish(
-          new AttachControlError("TOO_LARGE", "Response exceeds the limit."),
-        );
-      const end = buffer.indexOf("\n");
+      const end = chunk.indexOf("\n");
+      const part = end < 0 ? chunk : chunk.slice(0, end);
+      bytes += Buffer.byteLength(part);
+      if (bytes > MAX_RESPONSE_BYTES)
+        return fail("INVALID_RESPONSE", "Response exceeds the limit.");
+      buffer += part;
       if (end < 0) return;
       try {
-        finish(null, JSON.parse(buffer.slice(0, end)));
+        finish(null, JSON.parse(buffer));
       } catch {
-        finish(new AttachControlError("INVALID_RESPONSE", "Invalid response."));
+        fail("INVALID_RESPONSE", "Invalid response.");
       }
     });
-    socket.on("error", (error) => finish(error));
-    socket.on("close", () =>
-      finish(new AttachControlError("CLOSED", "The Pi closed the connection.")),
-    );
+    socket.on("error", (error) => fail("CONNECTION", error.message));
+    socket.on("close", () => fail("CLOSED", "The Pi closed the connection."));
   });
 }
+
+interface NativePromptState {
+  outstanding: number;
+  stopEpoch: number;
+}
+
+interface PromptObservation {
+  session: NativePromptState;
+  digest: string;
+  stopEpoch: number;
+  pending: boolean;
+  starting: boolean;
+  observed?: () => void;
+}
+
+type PromptImage = { type: "image"; mimeType: string; data: string };
 
 /** A user install and a launcher's explicit copy publish one record per Pi. */
 const shared = ((globalThis as Record<symbol, unknown>)[
@@ -339,7 +375,69 @@ const shared = ((globalThis as Record<symbol, unknown>)[
   owners: new WeakMap<object, ExtensionAPI>(),
 }) as {
   owners: WeakMap<object, ExtensionAPI>;
+  nativePrompts?: WeakMap<object, NativePromptState>;
+  promptOrigin?: AsyncLocalStorage<PromptObservation>;
 };
+const nativePrompts = (shared.nativePrompts ??= new WeakMap());
+const promptOrigin = (shared.promptOrigin ??= new AsyncLocalStorage());
+
+function promptDigest(
+  text: string,
+  images: readonly PromptImage[] = [],
+): string {
+  const hash = createHash("sha256")
+    .update(`${text.length}:`)
+    .update(text, "utf16le");
+  for (const { mimeType, data } of images)
+    hash.update(`${mimeType}:${data.length}:`).update(data, "utf16le");
+  return hash.digest("hex");
+}
+
+function nativePromptState(ctx: ExtensionContext): NativePromptState {
+  const key = ctx.sessionManager;
+  let state = nativePrompts.get(key);
+  if (!state) {
+    state = { outstanding: 0, stopEpoch: 0 };
+    nativePrompts.set(key, state);
+  }
+  return state;
+}
+
+function observePrompt(
+  ctx: ExtensionContext,
+  digest: string,
+  dispatch: () => void,
+): Promise<boolean> {
+  return new Promise((resolvePromise, reject) => {
+    const session = nativePromptState(ctx);
+    const observation: PromptObservation = {
+      session,
+      digest,
+      stopEpoch: session.stopEpoch,
+      pending: true,
+      starting: false,
+      observed: () => {
+        clearTimeout(deadline);
+        resolvePromise(true);
+      },
+    };
+    const deadline = setTimeout(() => {
+      observation.observed = undefined;
+      resolvePromise(false);
+    }, PROMPT_OBSERVATION_MS);
+    deadline.unref();
+    session.outstanding += 1;
+    try {
+      promptOrigin.run(observation, dispatch);
+    } catch (error) {
+      if (observation.pending) session.outstanding -= 1;
+      observation.pending = false;
+      observation.observed = undefined;
+      clearTimeout(deadline);
+      reject(error);
+    }
+  });
+}
 
 export default function attachControl(pi: ExtensionAPI) {
   if (process.env.PI_ATTACH_CONTROL === "0") return;
@@ -359,7 +457,14 @@ export default function attachControl(pi: ExtensionAPI) {
   let taskOutcome: TaskResult["outcome"] = "completed";
   let settledTasks: TaskResult[] = [];
   let catalogEpoch = 0;
+  let promptEpoch = 0;
   const catalogReads = new Set<AbortController>();
+  // Shells started by a worker can launch a separate Pi with its environment.
+  const ownerParent = process.env.PI_ATTACH_CONTROL_TAG_PARENT_PID;
+  const ownerTag =
+    !ownerParent || ownerParent === String(process.ppid)
+      ? process.env.PI_ATTACH_CONTROL_TAG
+      : undefined;
   // Optional launcher-side relay for a Pi started in native RPC mode. TUI
   // instances keep their ordinary terminal dialogs.
   const rpcUi = (() => {
@@ -508,13 +613,15 @@ export default function attachControl(pi: ExtensionAPI) {
       const expected = request.expectedLeafId;
       if (
         expected !== undefined &&
-        expected !== null &&
         ctx.sessionManager.getLeafId() !== expected &&
-        !ctx.sessionManager.getBranch().some((entry) => entry.id === expected)
+        (expected === null ||
+          !ctx.sessionManager
+            .getBranch()
+            .some((entry) => entry.id === expected))
       )
         throw new AttachControlError(
           "BRANCH_CHANGED",
-          "Pi moved to another branch. Review the current conversation before retrying.",
+          "The attached Pi's conversation changed. Review it before retrying.",
         );
     };
     assertBranch();
@@ -529,6 +636,19 @@ export default function attachControl(pi: ExtensionAPI) {
         uiRequests = await relayUi({ op: "state" });
         break;
       case "prompt": {
+        const epoch = promptEpoch;
+        const assertReady = () => {
+          if (!unchanged())
+            throw new AttachControlError("CHANGED", "Pi changed session.");
+          assertBranch();
+          if (epoch !== promptEpoch)
+            throw new AttachControlError("STOPPED", "Stopped before sending.");
+          if (waiting)
+            throw new AttachControlError(
+              "BLOCKED",
+              "Pi is waiting for an answer in its terminal.",
+            );
+        };
         if (
           typeof request.message !== "string" ||
           (request.behavior !== undefined &&
@@ -536,12 +656,48 @@ export default function attachControl(pi: ExtensionAPI) {
             request.behavior !== "followUp")
         )
           throw new AttachControlError("INVALID", "Invalid prompt.");
+        const input = request.message.trimStart();
+        const command = /^\/(\S+)/u.exec(input)?.[1];
+        if (
+          input.startsWith("!") ||
+          (command &&
+            (/^[A-Za-z][A-Za-z0-9:_-]*$/u.test(command) ||
+              pi.getCommands().some(({ name }) => name === command)))
+        )
+          throw new AttachControlError(
+            "NATIVE_INPUT_UNSUPPORTED",
+            "Run this command directly in the attached Pi.",
+          );
         const images = request.images ?? [];
         if (!Array.isArray(images) || images.length > 8)
           throw new AttachControlError("INVALID", "Invalid image references.");
-        const content: Parameters<ExtensionAPI["sendUserMessage"]>[0] = [
-          { type: "text", text: request.message },
-        ];
+        assertReady();
+        if (ctx.isIdle()) {
+          const model = ctx.model;
+          if (!model)
+            throw new AttachControlError(
+              "NO_MODEL",
+              "No model is selected in Pi.",
+            );
+          if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
+            const auth = await ctx.modelRegistry
+              .getProviderAuth(model.provider)
+              .catch(() => {
+                assertReady();
+                throw new AttachControlError(
+                  "AUTH_UNAVAILABLE",
+                  "Could not check authentication for the selected model's provider.",
+                );
+              });
+            assertReady();
+            if (!auth)
+              throw new AttachControlError(
+                "NO_AUTH",
+                "Authentication is not configured for the selected model's provider.",
+              );
+          }
+        }
+        const loadedImages: PromptImage[] = [];
         let total = 0;
         for (const image of images) {
           if (
@@ -551,7 +707,14 @@ export default function attachControl(pi: ExtensionAPI) {
             !IMAGE_TYPES.includes(image.mimeType)
           )
             throw new AttachControlError("INVALID", "Invalid image reference.");
-          const info = await lstat(image.path);
+          const unavailable = () => {
+            assertReady();
+            throw new AttachControlError(
+              "INVALID_IMAGE",
+              "An attached image is unavailable.",
+            );
+          };
+          const info = await lstat(image.path).catch(unavailable);
           total += info.size;
           if (
             !info.isFile() ||
@@ -562,27 +725,42 @@ export default function attachControl(pi: ExtensionAPI) {
               "TOO_LARGE",
               "Images exceed the budget.",
             );
-          content.push({
+          loadedImages.push({
             type: "image",
             mimeType: image.mimeType,
-            data: (await readFile(image.path)).toString("base64"),
+            data: (await readFile(image.path).catch(unavailable)).toString(
+              "base64",
+            ),
           });
         }
-        if (!unchanged())
-          throw new AttachControlError("CHANGED", "Pi changed session.");
-        assertBranch();
-        if (waiting)
+        assertReady();
+        // Pi returns no native admission result. A matching message from
+        // this call's async chain can prove admission, but a queue or an
+        // input hook can defer, transform, or reject it without a witness.
+        const witnessed = await observePrompt(
+          ctx,
+          promptDigest(request.message, loadedImages),
+          () => {
+            pi.sendUserMessage(
+              loadedImages.length
+                ? [{ type: "text", text: request.message }, ...loadedImages]
+                : request.message,
+              {
+                deliverAs: request.behavior ?? "steer",
+                expandPromptTemplates: false,
+              },
+            );
+          },
+        );
+        if (!witnessed || !unchanged())
           throw new AttachControlError(
-            "BLOCKED",
-            "Pi is waiting for an answer in its terminal.",
+            "OUTCOME_UNKNOWN",
+            "The attached Pi received the input, but its admission could not be confirmed. Check the conversation before sending again.",
           );
-        pi.sendUserMessage(images.length ? content : request.message, {
-          deliverAs: request.behavior ?? "steer",
-          expandPromptTemplates: true,
-        });
         break;
       }
       case "shutdown": {
+        promptEpoch += 1;
         const state = currentState(ctx);
         setImmediate(() => {
           ctx.shutdown();
@@ -592,11 +770,20 @@ export default function attachControl(pi: ExtensionAPI) {
         });
         return { ok: true, state };
       }
-      case "abort":
+      case "abort": {
+        promptEpoch += 1;
         catalogEpoch += 1;
         for (const read of catalogReads) read.abort(new Error("Stopped"));
+        const native = nativePromptState(ctx);
+        native.stopEpoch += 1;
         ctx.abort();
+        if (native.outstanding)
+          throw new AttachControlError(
+            "OUTCOME_UNKNOWN",
+            "Stop was requested, but an earlier input may still be waiting in the attached Pi.",
+          );
         break;
+      }
       case "rename":
         if (typeof request.name !== "string")
           throw new AttachControlError("INVALID", "Invalid name.");
@@ -637,6 +824,9 @@ export default function attachControl(pi: ExtensionAPI) {
         ...(uiRequests ? { uiRequests } : {}),
       },
       ...(models ? { models } : {}),
+      ...(request.op === "prompt" || request.op === "abort"
+        ? { witnessed: true as const }
+        : {}),
     };
   };
 
@@ -644,23 +834,33 @@ export default function attachControl(pi: ExtensionAPI) {
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
     let buffer = "";
+    let bytes = 0;
+    let handled = false;
     socket.setEncoding("utf8");
     const reply = (response: AttachControlResponse) => {
       if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
     };
     socket.on("error", () => {});
     socket.on("data", (chunk: string) => {
-      if (buffer.includes("\n")) return;
-      buffer += chunk;
-      if (buffer.length > MAX_REQUEST_BYTES) {
-        socket.destroy();
+      if (handled) return;
+      const end = chunk.indexOf("\n");
+      const part = end < 0 ? chunk : chunk.slice(0, end);
+      bytes += Buffer.byteLength(part);
+      if (bytes > MAX_REQUEST_BYTES) {
+        handled = true;
+        reply({
+          ok: false,
+          code: "TOO_LARGE",
+          error: "Request exceeds the limit.",
+        });
         return;
       }
-      const end = buffer.indexOf("\n");
+      buffer += part;
       if (end < 0) return;
+      handled = true;
       let request: AttachControlRequest;
       try {
-        request = JSON.parse(buffer.slice(0, end));
+        request = JSON.parse(buffer);
       } catch {
         reply({ ok: false, code: "INVALID", error: "Invalid request." });
         return;
@@ -737,9 +937,7 @@ export default function attachControl(pi: ExtensionAPI) {
       leafId: null,
       activity: "idle",
       updatedAt: 0,
-      ...(process.env.PI_ATTACH_CONTROL_TAG
-        ? { tag: process.env.PI_ATTACH_CONTROL_TAG.slice(0, 200) }
-        : {}),
+      ...(ownerTag ? { tag: ownerTag.slice(0, 200) } : {}),
       endpoint: server ? endpoint : "",
       token: randomBytes(24).toString("base64url"),
       taskRuns: { instanceId, activeRunId, settled: [] },
@@ -762,6 +960,36 @@ export default function attachControl(pi: ExtensionAPI) {
     activeRunId ??= randomUUID();
     taskOutcome = "completed";
     void publish();
+  });
+  const promptObservation = (ctx: ExtensionContext) => {
+    const observation = promptOrigin.getStore();
+    return observation?.pending &&
+      observation.session === nativePrompts.get(ctx.sessionManager)
+      ? observation
+      : undefined;
+  };
+  pi.on("before_agent_start", (event, ctx) => {
+    const observation = promptObservation(ctx);
+    if (
+      !observation ||
+      event.messageType !== "user" ||
+      promptDigest(event.prompt, event.images) !== observation.digest
+    )
+      return;
+    observation.starting = true;
+    if (observation.stopEpoch !== observation.session.stopEpoch) {
+      // Pi may start this run after Stop returned an unknown outcome. Now
+      // that the matching run is starting, Stop can reach it before a request.
+      ctx.abort();
+    }
+  });
+  pi.on("message_start", (event, ctx) => {
+    const observation = promptObservation(ctx);
+    if (!observation?.starting || event.message.role !== "user") return;
+    observation.pending = false;
+    observation.session.outstanding -= 1;
+    observation.observed?.();
+    observation.observed = undefined;
   });
   pi.on("message_end", (event, ctx) => {
     if (!track(ctx)) return;

@@ -1,7 +1,8 @@
-import { lstat, readdir, readFile, rm } from "node:fs/promises";
+import { lstat, readdir, readFile, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   ATTACH_CONTROL_STALE_MS,
+  AttachControlError,
   type AttachControlOperation,
   type AttachControlRecord,
   type AttachControlResponse,
@@ -20,6 +21,19 @@ const RECORD_NAME = /^[1-9]\d*-[0-9a-f-]{36}\.json$/;
 const MAX_RECORD_BYTES = 32_768;
 const IDENTITY_CACHE_MS = 10_000;
 const OBSERVATION_MAX_AGE_MS = 1_000;
+
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | null)?.code;
+}
+
+async function sessionFileStat(path: string) {
+  try {
+    return await stat(path, { bigint: true });
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return null;
+    throw error;
+  }
+}
 
 function isAttachControlRecord(value: unknown): value is AttachControlRecord {
   if (!value || typeof value !== "object") return false;
@@ -45,6 +59,31 @@ function isAttachControlRecord(value: unknown): value is AttachControlRecord {
   );
 }
 
+async function matchingSessionRecords(
+  records: readonly AttachControlRecord[],
+  sessionId: string,
+  sessionFile: string,
+): Promise<AttachControlRecord[]> {
+  const file = resolve(sessionFile);
+  const candidates = records.filter((record) => record.sessionId === sessionId);
+  if (candidates.every((record) => resolve(record.sessionFile) === file))
+    return candidates;
+  const target = await sessionFileStat(file);
+  const matches = await Promise.all(
+    candidates.map(async (record) => {
+      if (resolve(record.sessionFile) === file) return true;
+      if (!target?.isFile() || target.ino === 0n) return false;
+      const candidate = await sessionFileStat(record.sessionFile);
+      return (
+        candidate?.isFile() &&
+        candidate.dev === target.dev &&
+        candidate.ino === target.ino
+      );
+    }),
+  );
+  return candidates.filter((_record, index) => matches[index]);
+}
+
 /** Live attach-control records of this OS user. Observation only: reading
  * never starts, stops or writes a Pi session. */
 export class AttachControlRegistry {
@@ -65,18 +104,35 @@ export class AttachControlRegistry {
       false,
   ) {}
 
-  private async liveIdentity(pid: number): Promise<string | null> {
-    const cached = this.identities.get(pid);
+  private async liveIdentity(
+    pid: number,
+    cachedIdentity = false,
+  ): Promise<string | null> {
+    const cached = cachedIdentity ? this.identities.get(pid) : undefined;
     if (cached && Date.now() - cached.checkedAt < IDENTITY_CACHE_MS)
       return cached.identity;
-    const identity = await processIdentity(pid).catch(() => null);
+    const identity = await processIdentity(pid).catch((error: unknown) => {
+      if (errorCode(error) === "ESRCH") return null;
+      // On some platforms an exited process yields a generic lookup error.
+      // Probe its presence before treating an identity failure as absence.
+      try {
+        process.kill(pid, 0);
+      } catch (probeError) {
+        if (errorCode(probeError) === "ESRCH") return null;
+      }
+      throw error;
+    });
     this.identities.set(pid, { identity, checkedAt: Date.now() });
     if (this.identities.size > 512)
       this.identities.delete(this.identities.keys().next().value!);
     return identity;
   }
 
-  private async readRecord(name: string): Promise<AttachControlRecord | null> {
+  private async readRecord(
+    name: string,
+    relevant: ((record: AttachControlRecord) => Promise<boolean>) | undefined,
+    cachedIdentity: boolean,
+  ): Promise<AttachControlRecord | null> {
     const path = join(this.directory, name);
     try {
       const info = await lstat(path);
@@ -84,37 +140,52 @@ export class AttachControlRegistry {
       const record: unknown = JSON.parse(await readFile(path, "utf8"));
       if (!isAttachControlRecord(record) || !name.startsWith(`${record.pid}-`))
         return null;
-      if ((await this.liveIdentity(record.pid)) !== record.processIdentity) {
+      if (this.ignore(record) || (relevant && !(await relevant(record))))
+        return null;
+      if (
+        (await this.liveIdentity(record.pid, cachedIdentity)) !==
+        record.processIdentity
+      ) {
         // A crashed or replaced process cannot remove its own record.
-        this.identities.delete(record.pid);
-        if ((await this.liveIdentity(record.pid)) !== record.processIdentity)
+        if (
+          !cachedIdentity ||
+          (await this.liveIdentity(record.pid)) !== record.processIdentity
+        )
           await rm(path, { force: true }).catch(() => {});
         return null;
       }
       const age = Date.now() - record.updatedAt;
       return age >= 0 && age < ATTACH_CONTROL_STALE_MS ? record : null;
-    } catch {
-      return null;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT" || error instanceof SyntaxError)
+        return null;
+      throw error;
     }
   }
 
-  private async scan(
-    include: (name: string) => boolean = () => true,
-  ): Promise<AttachControlRecord[]> {
+  private async scan({
+    include = () => true,
+    relevant,
+    cachedIdentity = false,
+  }: {
+    include?: (name: string) => boolean;
+    relevant?: (record: AttachControlRecord) => Promise<boolean>;
+    cachedIdentity?: boolean;
+  } = {}): Promise<AttachControlRecord[]> {
     let names: string[];
     try {
       names = (await readdir(this.directory)).filter(
         (name) => RECORD_NAME.test(name) && include(name),
       );
-    } catch {
-      return [];
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return [];
+      throw error;
     }
     return (
-      await Promise.all(names.map((name) => this.readRecord(name)))
-    ).filter(
-      (record): record is AttachControlRecord =>
-        record !== null && !this.ignore(record),
-    );
+      await Promise.all(
+        names.map((name) => this.readRecord(name, relevant, cachedIdentity)),
+      )
+    ).filter((record): record is AttachControlRecord => record !== null);
   }
 
   /** A fresh scan of every live record. */
@@ -134,13 +205,14 @@ export class AttachControlRegistry {
     )
       return observation.records;
     const next: NonNullable<typeof this.observation> = {
-      records: this.scan(),
+      records: this.scan({ cachedIdentity: true }),
       settledAt: null,
     };
     this.observation = next;
-    void next.records.finally(() => {
+    const settle = () => {
       next.settledAt = Date.now();
-    });
+    };
+    void next.records.then(settle, settle);
     return next.records;
   }
 
@@ -150,11 +222,23 @@ export class AttachControlRegistry {
     sessionFile: string,
     { observe = false }: { observe?: boolean } = {},
   ): Promise<AttachControlRecord[]> {
-    const file = resolve(sessionFile);
-    return (await (observe ? this.observe() : this.list())).filter(
-      (record) =>
-        record.sessionId === sessionId && resolve(record.sessionFile) === file,
-    );
+    if (observe) {
+      try {
+        return await matchingSessionRecords(
+          await this.observe(),
+          sessionId,
+          sessionFile,
+        );
+      } catch {
+        // An unrelated process can fail activity discovery. Try the
+        // requested session alone before making an ownership decision.
+      }
+    }
+    return this.scan({
+      relevant: async (record) =>
+        (await matchingSessionRecords([record], sessionId, sessionFile))
+          .length > 0,
+    });
   }
 
   /** Deletion targets the whole session, across every reported branch. A
@@ -200,7 +284,6 @@ export class AttachControlRegistry {
 
   /** Fresh exit evidence for one process incarnation; reads no records. */
   async alive(pid: number, identity: string): Promise<boolean> {
-    this.identities.delete(pid);
     return (await this.liveIdentity(pid)) === identity;
   }
 
@@ -214,9 +297,12 @@ export class AttachControlRegistry {
       return { alive: false, records: [] };
     return {
       alive: true,
-      records: (await this.scan((name) => name.startsWith(`${pid}-`))).filter(
-        (record) => record.processIdentity === identity,
-      ),
+      records: (
+        await this.scan({
+          include: (name) => name.startsWith(`${pid}-`),
+          cachedIdentity: true,
+        })
+      ).filter((record) => record.processIdentity === identity),
     };
   }
 }
@@ -247,6 +333,7 @@ function stateOf(state: AttachControlState): ExternalSessionState {
 export class AttachControlConnection implements ExternalSessionConnection {
   readonly pid: number;
   private readonly identity: string;
+  private readonly sessionId: string;
   private readonly sessionFile: string;
   private failingSince: number | null = null;
 
@@ -257,6 +344,7 @@ export class AttachControlConnection implements ExternalSessionConnection {
   ) {
     this.pid = record.pid;
     this.identity = record.processIdentity;
+    this.sessionId = record.sessionId;
     this.sessionFile = resolve(record.sessionFile);
   }
 
@@ -268,15 +356,21 @@ export class AttachControlConnection implements ExternalSessionConnection {
       this.identity,
     );
     if (!alive) return { ended: "exited" };
-    const record = records.find(
-      (candidate) => resolve(candidate.sessionFile) === this.sessionFile,
+    const matching = await matchingSessionRecords(
+      records,
+      this.sessionId,
+      this.sessionFile,
     );
-    if (record?.endpoint) return record;
+    const record = matching.find((candidate) => candidate.endpoint);
+    if (record) return record;
     // A reload briefly removes the record; another session means this Pi
     // moved away.
-    if (records.length > 0) return { ended: "left-session" };
+    if (records.length > 0 && matching.length === 0)
+      return { ended: "left-session" };
     throw requestError(
-      "The attached Pi is reloading. Try again shortly.",
+      matching.length
+        ? "The attached Pi has no available control endpoint."
+        : "The attached Pi is reloading. Try again shortly.",
       409,
       {
         code: "SESSION_OWNER_UNAVAILABLE",
@@ -300,12 +394,23 @@ export class AttachControlConnection implements ExternalSessionConnection {
         },
       );
     beforeSend?.();
+    const unknown = (message: string) =>
+      requestError(message, 502, {
+        code: "ATTACH_CONTROL_OUTCOME_UNKNOWN",
+        outcomeUnknown: true,
+      });
     const response = await requestAttachControl(record.endpoint, {
       ...operation,
       token: record.token,
       sessionFile: record.sessionFile,
       ...(expectedLeafId !== undefined ? { expectedLeafId } : {}),
     }).catch((error: unknown) => {
+      if (error instanceof AttachControlError && error.outcomeUnknown)
+        throw unknown(error.message);
+      if (error instanceof AttachControlError && error.code === "TOO_LARGE")
+        throw requestError(error.message, 413, {
+          code: "ATTACH_CONTROL_TOO_LARGE",
+        });
       throw requestError(
         error instanceof Error
           ? error.message
@@ -314,15 +419,48 @@ export class AttachControlConnection implements ExternalSessionConnection {
         { code: "SESSION_OWNER_UNAVAILABLE" },
       );
     });
-    if (!response.ok)
-      throw requestError(response.error, 409, {
-        code:
-          response.code === "BLOCKED"
-            ? "NATIVE_INPUT_BLOCKED"
-            : response.code === "CHANGED"
-              ? "SESSION_OWNER_UNAVAILABLE"
-              : `ATTACH_CONTROL_${response.code}`,
-      });
+    if (
+      response?.ok === false &&
+      typeof response.code === "string" &&
+      typeof response.error === "string"
+    ) {
+      if (
+        response.code === "OUTCOME_UNKNOWN" ||
+        (operation.op === "prompt" && response.code === "FAILED")
+      )
+        throw unknown(response.error);
+      throw requestError(
+        response.error,
+        response.code === "TOO_LARGE" ? 413 : 409,
+        {
+          code:
+            response.code === "BLOCKED"
+              ? "NATIVE_INPUT_BLOCKED"
+              : response.code === "CHANGED"
+                ? "SESSION_OWNER_UNAVAILABLE"
+                : `ATTACH_CONTROL_${response.code}`,
+        },
+      );
+    }
+    if (
+      response?.ok !== true ||
+      response.state?.sessionId !== record.sessionId ||
+      response.state.sessionFile !== record.sessionFile ||
+      !response.state.taskRuns ||
+      !response.state.modelSelection
+    )
+      throw unknown("Invalid response from the attached Pi.");
+    // Older attach-control receivers acknowledge the void Pi API call,
+    // which proves neither prompt admission nor the disposition of Stop.
+    if (
+      (operation.op === "prompt" || operation.op === "abort") &&
+      response.witnessed !== true
+    )
+      throw unknown(
+        operation.op === "prompt"
+          ? "The attached Pi received the input, but its admission could not be confirmed. Check the conversation before sending again."
+          : "Stop was requested, but the attached Pi could not confirm its outcome.",
+      );
     return response;
   }
 

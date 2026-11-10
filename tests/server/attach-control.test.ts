@@ -1,4 +1,14 @@
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import {
+  link,
+  mkdtemp,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -103,6 +113,56 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     expect(await readdir(root)).toContain(other);
   });
 
+  it("rechecks process identity for ownership even after an observation", async () => {
+    const root = await directory();
+    const child = spawn(process.execPath, [
+      "-e",
+      "setInterval(() => {}, 1000)",
+    ]);
+    try {
+      await once(child, "spawn");
+      const live = await record({
+        pid: child.pid!,
+        processIdentity: await processIdentity(child.pid!),
+      });
+      const name = await save(root, live);
+      const registry = new AttachControlRegistry(root);
+      expect(await registry.observe()).toEqual([live]);
+
+      const exit = once(child, "exit");
+      child.kill("SIGKILL");
+      await exit;
+      expect(
+        await registry.forSession(live.sessionId, live.sessionFile),
+      ).toEqual([]);
+      expect(await readdir(root)).not.toContain(name);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null)
+        child.kill("SIGKILL");
+    }
+  });
+
+  it("identifies symlink and hardlink aliases by file identity within one session", async () => {
+    const root = await directory();
+    const file = join(root, "session.jsonl");
+    const symlinked = join(root, "alias.jsonl");
+    const hardlinked = join(root, "hardlink.jsonl");
+    const copied = join(root, "copy.jsonl");
+    await writeFile(file, "same content\n");
+    await Promise.all([
+      symlink(file, symlinked),
+      link(file, hardlinked),
+      writeFile(copied, "same content\n"),
+    ]);
+    const live = await record({ sessionFile: symlinked });
+    await save(root, live);
+    const registry = new AttachControlRegistry(root);
+    expect(await registry.forSession("one", file)).toEqual([live]);
+    expect(await registry.forSession("one", hardlinked)).toEqual([live]);
+    expect(await registry.forSession("one", copied)).toEqual([]);
+    expect(await registry.forSession("another", file)).toEqual([]);
+  });
+
   it("shares a recent scan among observers while list stays fresh", async () => {
     const root = await directory();
     const registry = new AttachControlRegistry(root);
@@ -119,6 +179,14 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
   it("treats a missing directory as no instances", async () => {
     const registry = new AttachControlRegistry(join(await directory(), "none"));
     expect(await registry.list()).toEqual([]);
+  });
+
+  it("distinguishes registry scan failure from no instances", async () => {
+    const path = join(await directory(), "not-a-directory");
+    await writeFile(path, "");
+    const registry = new AttachControlRegistry(path);
+    await expect(registry.observe()).rejects.toMatchObject({ code: "ENOTDIR" });
+    await expect(registry.list()).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 });
 
@@ -203,4 +271,48 @@ describe("AttachControlConnection", () => {
     });
     await expect(connection.read()).resolves.toEqual({ ended: "left-session" });
   });
+
+  it.skipIf(process.platform === "win32")(
+    "distinguishes a lost or invalid reply from an explicit refusal or a failed connect",
+    async () => {
+      const endpoint = join(await directory(), "pi.sock");
+      const live = await record({ endpoint });
+      const registry = {
+        forProcess: async () => ({ alive: true, records: [live] }),
+      } as unknown as AttachControlRegistry;
+      const connection = new AttachControlConnection(registry, live);
+      await expect(connection.prompt("hello")).rejects.toMatchObject({
+        code: "SESSION_OWNER_UNAVAILABLE",
+      });
+
+      const replies: Array<(socket: Socket) => void> = [
+        (socket) => socket.destroy(),
+        (socket) => socket.end('{"ok":true}\n'),
+        (socket) =>
+          socket.end('{"ok":false,"code":"BLOCKED","error":"waiting"}\n'),
+      ];
+      const server = createServer((socket) => {
+        socket.once("data", () => replies.shift()?.(socket));
+      });
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(endpoint, resolve);
+      });
+      try {
+        for (let i = 0; i < 2; i += 1) {
+          await expect(connection.prompt("hello")).rejects.toMatchObject({
+            code: "ATTACH_CONTROL_OUTCOME_UNKNOWN",
+            outcomeUnknown: true,
+          });
+        }
+        await expect(connection.prompt("hello")).rejects.toMatchObject({
+          code: "NATIVE_INPUT_BLOCKED",
+          message: "waiting",
+        });
+        expect(replies).toEqual([]);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 });

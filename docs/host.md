@@ -178,8 +178,9 @@ that Pi to apply the update.
 | **Restart Host** | Restarts Inspire and its own Pi workers. Attached Pi processes keep their loaded settings. To apply changes in a terminal Pi, run `/reload` in its terminal. |
 | **Restart all** | Like Restart Host, and also restarts the installed Linux terminal service, closing its project terminals. |
 
-Restart Host and Restart all check for unfinished work first. After a workload refusal, the same
-row offers **Stop work and restart**. Clicking it interrupts the work and discards Pending input.
+Restart Host and Restart all check for unfinished work before submitting the restart. After a
+workload refusal, the same row offers **Stop work and restart**. Clicking it interrupts the work
+and discards Pending input.
 Idle workers do not block a restart. After a restart, a session a terminal Pi is running
 opens read-only with **Take over**, and the rest continue directly. After a disconnect, the browser
 keeps tracking the submitted restart without sending another.
@@ -204,10 +205,12 @@ Restarts leave connection services running. `inspire restart --all` requires the
 services and an external OS terminal, since the project terminal running the command could close
 before it shows the result. Settings shows the availability of both restart scopes.
 
-CLI restart requires the running Host to confirm the requested scope over authenticated HTTP
-before it stops the process. If the listener is down, use `inspire stop` with the running Host's
-port and state-path overrides, then start Inspire again after shutdown completes. Stopping an
-installed service also ends its project terminals.
+Ordinary CLI restart requires authenticated preparation from the running Host. `--host-only`
+ties worker preservation to an authenticated shutdown request and starts the replacement after
+that Host confirms clean shutdown. If the running Host predates this support, restart it once
+with `inspire restart` before using `--host-only`. If the listener is down, use `inspire stop`
+with the running Host's port and state-path overrides, then start Inspire again after shutdown
+completes. Stopping an installed service also ends its project terminals.
 
 ### Terminal-service maintenance
 

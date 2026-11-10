@@ -104,6 +104,8 @@ async function run(): Promise<void> {
 
     ui = await createPiRpcUiRelay();
     if (ui) environment.PI_ATTACH_CONTROL_RPC_UI = ui.environment;
+    if (environment.PI_ATTACH_CONTROL_TAG)
+      environment.PI_ATTACH_CONTROL_TAG_PARENT_PID = String(process.pid);
     child = spawn(grant.executable, grant.args, {
       cwd: grant.cwd,
       env: environment,

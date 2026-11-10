@@ -210,7 +210,7 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     ]);
     calls.length = 0;
     expect(
-      await requestBrowserRestart(root, false, () => false, options),
+      await requestBrowserRestart(root, false, async () => false, options),
     ).toMatchObject({ issued: false });
     expect(calls.every((args) => args[1] === "show")).toBe(true);
   });
