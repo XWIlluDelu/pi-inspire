@@ -61,7 +61,6 @@ function nativeFixture() {
       model: null,
       thinkingLevel: "off" as const,
     })),
-    reload: vi.fn(async () => {}),
     close: vi.fn(),
   };
   return {

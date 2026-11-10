@@ -161,7 +161,7 @@ leaf, activity, model, process identity, endpoint and token) to `pi-attach-contr
 `$XDG_RUNTIME_DIR` (else `~/.cache`), `~/Library/Caches` on macOS or `%LOCALAPPDATA%` on Windows.
 The endpoint is a private local socket (a named pipe on Windows). A client sends one JSON line,
 `{"token": …, "op": …}`, and reads one reply. Operations are `state`, `prompt`, `abort`,
-`rename`, `models`, `set_model`, `set_thinking`, `reload`, `shutdown` and
+`rename`, `models`, `set_model`, `set_thinking`, `shutdown` and
 `ui_response` (for a retained RPC UI channel). Requests can include `sessionFile` and
 `expectedLeafId`; input and Stop reject a changed session or a live position outside the expected
 branch. Session deletion uses `shutdown` across all discovered branches, then waits for exit.

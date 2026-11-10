@@ -394,9 +394,5 @@ export class AttachControlConnection implements ExternalSessionConnection {
       .modelSelection;
   }
 
-  async reload(): Promise<void> {
-    await this.send({ op: "reload" });
-  }
-
   close(): void {}
 }

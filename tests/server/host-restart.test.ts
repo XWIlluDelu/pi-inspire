@@ -20,7 +20,7 @@ function fixture(overrides: Partial<HostRestartBackend> = {}) {
       leaseId: "lease",
     })),
     releaseMaintenanceRestart: vi.fn(() => ({ kind: "released" as const })),
-    refreshAttachedPi: vi.fn(async (_interruptWork: boolean) => {}),
+    stopAttachedPiWork: vi.fn(async () => {}),
   };
   const backend: HostRestartBackend = {
     inspect: vi.fn(async () => ({ host: true, all: true })),
@@ -42,14 +42,11 @@ async function intent(controller: HostRestartController) {
 }
 
 describe("manual Host restart ownership", () => {
-  it.each([
-    ["host", true],
-    ["all", true],
-    ["host-only", false],
-  ] as const)(
-    "%s restart reloads taken-over Pi (%s) or preserves every Pi",
-    async (scope, refreshes) => {
+  it.each(["host", "all", "host-only"] as const)(
+    "%s restart sends no command to taken-over Pi before submission",
+    async (scope) => {
       const f = fixture();
+      const preserveWork = scope === "host-only";
       f.controller.start({
         hostId: (await f.controller.status()).hostId,
         operationId: randomUUID(),
@@ -62,12 +59,10 @@ describe("manual Host restart ownership", () => {
       );
       expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
         false,
-        refreshes,
-        !refreshes,
+        !preserveWork,
+        preserveWork,
       );
-      expect(f.runtime.refreshAttachedPi).toHaveBeenCalledTimes(
-        refreshes ? 1 : 0,
-      );
+      expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
       expect(f.backend.request).toHaveBeenCalledWith(
         scope === "all",
         expect.any(Function),
@@ -150,6 +145,7 @@ describe("manual Host restart ownership", () => {
       }),
     );
     expect(f.backend.request).not.toHaveBeenCalled();
+    expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
     expect(() => f.controller.start({ ...safe, interruptWork: true })).toThrow(
       "does not match",
     );
@@ -167,6 +163,7 @@ describe("manual Host restart ownership", () => {
       true,
       false,
     );
+    expect(f.runtime.stopAttachedPiWork).toHaveBeenCalledOnce();
     expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");
     expect(f.backend.prepare).toHaveBeenCalledTimes(2);
     expect(f.backend.request).toHaveBeenCalledOnce();

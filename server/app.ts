@@ -877,7 +877,6 @@ export function createInspireServer(deps: AppDependencies): {
           .object({ scope: z.enum(["host", "host-only"]) })
           .parse(grant.request.payload);
         if (scope === "host-only") deps.runtime.preserveWorkersOnClose();
-        else await deps.runtime.refreshAttachedPi(false);
         result = { kind: "prepared", scope };
         break;
       }

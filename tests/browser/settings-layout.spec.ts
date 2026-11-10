@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { HostUpdateStatus } from "../../shared/contracts";
+import type {
+  HostRestartRequest,
+  HostRestartStatus,
+} from "../../shared/host-restart";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
 import { focusRingClipping } from "./support/focus-bounds";
@@ -156,6 +160,160 @@ test("update checks keep button geometry stable throughout checking and results"
   } finally {
     release?.();
   }
+});
+
+test("busy Host restarts submit directly with stable status through delayed receipts", async ({
+  page,
+}) => {
+  const readyStatus = (): HostRestartStatus => ({
+    hostId: crypto.randomUUID(),
+    available: true,
+    allAvailable: true,
+    operation: null,
+  });
+  let status = readyStatus();
+  const submitted: HostRestartRequest[] = [];
+  let getCount = 0;
+  let heldOldRead = false;
+  let postGate: Promise<void> | undefined;
+  let readGate: Promise<void> | undefined;
+  let releasePost: (() => void) | undefined;
+  let releaseRead: (() => void) | undefined;
+  await page.route("**/api/host/restart", async (route) => {
+    if (route.request().method() === "GET") {
+      getCount++;
+      const snapshot = status;
+      if (readGate && !heldOldRead && submitted.at(-1)?.interruptWork) {
+        heldOldRead = true;
+        await readGate;
+      }
+      await route.fulfill({ json: snapshot });
+      return;
+    }
+    expect(route.request().method()).toBe("POST");
+    const request = route.request().postDataJSON() as HostRestartRequest;
+    submitted.push(request);
+    const operation = {
+      id: request.operationId,
+      scope: request.scope,
+      ...(request.interruptWork
+        ? { phase: "submitted" as const, interruptWork: true as const }
+        : {
+            phase: "rejected" as const,
+            busyReason: "active-work" as const,
+            error:
+              "Finish Pi work and pending operations before restarting, or choose Stop work and restart.",
+          }),
+    };
+    if (request.interruptWork) await postGate;
+    status = { ...status, operation };
+    await route.fulfill({ json: operation });
+  });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
+  await openSettings(page);
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings
+    .getByRole("navigation", { name: "Settings categories" })
+    .getByRole("button", { name: "System", exact: true })
+    .click();
+  const row = settings.locator(".host-restart__status-row");
+  const message = row.locator(".host-restart__status");
+  const dialog = page.getByRole("alertdialog");
+  await expect(row).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  await row.evaluate((element) => {
+    new MutationObserver(() => {
+      if (element.textContent?.includes("Restart request not confirmed"))
+        element.setAttribute("data-unconfirmed-restart", "true");
+    }).observe(element, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  });
+
+  try {
+    for (const [width, scope, title] of [
+      [1280, "host", "Host"],
+      [320, "all", "all"],
+    ] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      const restart = settings.getByRole("button", {
+        name: `Restart ${title}`,
+        exact: true,
+      });
+      await expect(restart).toBeEnabled();
+      const before = (await row.boundingBox())!.height;
+      const stable = async (phase: string) =>
+        expect(
+          (await row.boundingBox())!.height,
+          `${width}px, ${phase}`,
+        ).toBeCloseTo(before, 1);
+
+      await restart.click();
+      await dialog.getByRole("button", { name: `Restart ${title}` }).click();
+      const field = settings.locator(".settings__field").filter({
+        has: page.getByText(`Restart ${title}`, { exact: true }),
+      });
+      const force = field.getByRole("button", {
+        name: `Stop work and restart ${title}`,
+        exact: true,
+      });
+      await expect(force).toBeVisible();
+      const idleAttempt = submitted.at(-1)!;
+      expect(idleAttempt.scope).toBe(scope);
+      expect(idleAttempt.interruptWork).toBeUndefined();
+      await stable("busy");
+
+      heldOldRead = false;
+      postGate = new Promise<void>((resolve) => {
+        releasePost = resolve;
+      });
+      readGate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      await force.click();
+      await expect(dialog).toHaveCount(0);
+      await expect.poll(() => submitted.at(-1)?.interruptWork).toBe(true);
+      expect(submitted.at(-1)).toMatchObject({
+        scope,
+        hostId: idleAttempt.hostId,
+      });
+      expect(submitted.at(-1)?.operationId).not.toBe(idleAttempt.operationId);
+      await expect(message).toHaveText("Preparing restart…");
+      await expect.poll(() => heldOldRead).toBe(true);
+      await stable("sending");
+
+      releasePost!();
+      await expect(message).toHaveText("Restart requested.");
+      await stable("submitted");
+      const beforeFreshRead = getCount;
+      releaseRead!();
+      await expect.poll(() => getCount).toBeGreaterThan(beforeFreshRead);
+      await expect(message).toHaveText("Restart requested.");
+      await stable("after the stale read");
+
+      status = readyStatus();
+      await row.getByRole("button", { name: "Recheck status" }).click();
+      await expect(message).toHaveText("Host reconnected.");
+      await expect(restart).toBeEnabled();
+      await expect(row).not.toHaveAttribute("data-unconfirmed-restart", "true");
+      await stable("reconnected");
+    }
+  } finally {
+    releasePost?.();
+    releaseRead?.();
+  }
+  expect(submitted).toHaveLength(4);
 });
 
 test("selected Settings categories remain visible across responsive layouts without trapping manual navigation scrolling", async ({

@@ -32,6 +32,7 @@ export class HostRestartClient {
   private loaded = false;
   private readonly listeners = new Set<() => void>();
   private observation: Promise<void> | null = null;
+  private receiptRevision = 0;
   constructor(
     private readonly api: Pick<
       ReturnType<typeof createApi>,
@@ -112,6 +113,7 @@ export class HostRestartClient {
     return this.observation;
   };
   private async observe(): Promise<void> {
+    const receiptRevision = this.receiptRevision;
     let restored = false;
     try {
       this.restore();
@@ -121,6 +123,12 @@ export class HostRestartClient {
     }
     try {
       const status = await this.api.hostRestartStatus();
+      // A pre-POST read of the same Host can still describe the last attempt.
+      if (
+        receiptRevision !== this.receiptRevision &&
+        status.hostId === this.state.status?.hostId
+      )
+        return;
       this.patch({ status, ...(restored ? { error: null } : {}) });
       if (!restored) return;
       const pending = this.state.pending;
@@ -139,7 +147,7 @@ export class HostRestartClient {
         this.patch({ pending: null });
       }
     } catch {
-      if (!this.state.blocked)
+      if (!this.state.blocked && receiptRevision === this.receiptRevision)
         this.patch({ error: "Host status unavailable. Recheck status." });
     }
   }
@@ -183,8 +191,8 @@ export class HostRestartClient {
         ...(interruptWork ? { interruptWork: true } : {}),
       };
       this.persist(pending);
-      this.patch({ pending, notice: null });
-      await this.retry();
+      this.patch({ pending, sending: true, notice: null });
+      await this.send(pending);
     } catch {
       /* Storage errors are already visible and never dispatch. */
     }
@@ -193,15 +201,38 @@ export class HostRestartClient {
     const pending = this.state.pending;
     if (!pending || this.state.sending || this.state.blocked) return;
     this.patch({ sending: true, error: null });
+    await this.send(pending);
+  };
+
+  private async send(pending: HostRestartRequest): Promise<void> {
+    const previousOperationId = this.state.status?.operation?.id;
     try {
       const receipt = await this.api.restartHost(pending);
+      const status = this.state.status;
       if (
-        receipt.id === pending.operationId &&
-        receipt.scope === pending.scope &&
-        Boolean(receipt.interruptWork) === Boolean(pending.interruptWork) &&
-        receipt.phase === "rejected" &&
-        this.state.pending === pending
+        this.state.pending !== pending ||
+        status?.hostId !== pending.hostId ||
+        receipt.id !== pending.operationId ||
+        receipt.scope !== pending.scope ||
+        Boolean(receipt.interruptWork) !== Boolean(pending.interruptWork)
+      )
+        return;
+
+      const operation = status.operation;
+      // A GET can already have seen a later phase, or another restart after
+      // this one was rejected. Keep that observation instead of regressing it.
+      if (
+        !operation ||
+        (operation.id === receipt.id &&
+          (operation.phase === "preparing" ||
+            (operation.phase === "submitted" &&
+              receipt.phase !== "preparing"))) ||
+        (operation.id === previousOperationId && operation.phase === "rejected")
       ) {
+        this.receiptRevision += 1;
+        this.patch({ status: { ...status, operation: receipt } });
+      }
+      if (receipt.phase === "rejected") {
         this.persist(null);
         this.patch({
           pending: null,
@@ -209,14 +240,17 @@ export class HostRestartClient {
         });
       }
     } catch {
-      if (!this.state.blocked)
+      if (!this.state.blocked && this.state.pending === pending)
         this.patch({
           error: "Couldn't confirm the restart request. Recheck status.",
         });
     } finally {
       this.patch({ sending: false });
+      // Any read already in flight may predate this receipt. Observe again
+      // after it settles so the browser can see the next authoritative phase.
+      await this.observation;
       await this.refresh();
     }
-  };
+  }
 }
 export const hostRestartClient = new HostRestartClient();

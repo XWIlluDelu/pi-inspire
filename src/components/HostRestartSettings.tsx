@@ -15,18 +15,15 @@ const RESTART_NAMES: Record<SettingsRestartScope, string> = {
 
 function RestartConfirmation({
   scope,
-  interruptWork,
   onClose,
   onConfirm,
 }: {
   scope: SettingsRestartScope;
-  interruptWork: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   const ref = useModalFocus<HTMLDivElement>(true, "host-restart", onClose);
   const name = RESTART_NAMES[scope];
-  const action = `Stop work and ${name.charAt(0).toLowerCase()}${name.slice(1)}`;
   return createPortal(
     <div className="overlay" role="presentation" onClick={onClose}>
       <div
@@ -40,17 +37,12 @@ function RestartConfirmation({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="dialog__title" id="host-restart-title">
-          {interruptWork ? `${action}?` : `${name}?`}
+          {name}?
         </h2>
         <p className="dialog__message" id="host-restart-description">
-          {interruptWork
-            ? "Stop active Pi work in Inspire and discard Pending messages. "
-            : null}
           {scope === "all"
             ? "This Host's project terminals will close."
-            : interruptWork
-              ? "Project terminals keep running."
-              : "Terminal Pi sessions you've taken over will reload."}{" "}
+            : "Inspire's Pi workers will restart. Project terminals keep running."}{" "}
           The page will briefly disconnect.
         </p>
         <div className="host-restart__actions">
@@ -66,7 +58,7 @@ function RestartConfirmation({
             className="button button--danger"
             onClick={onConfirm}
           >
-            {interruptWork ? action : name}
+            {name}
           </button>
         </div>
       </div>
@@ -87,7 +79,6 @@ export function HostRestartSettings({
   const [confirmation, setConfirmation] = useState<{
     scope: SettingsRestartScope;
     hostId: string;
-    interruptWork: boolean;
   } | null>(null);
   useEffect(() => {
     let retired = false;
@@ -113,63 +104,75 @@ export function HostRestartSettings({
     !!state.error;
   const hostDisabled = disabled || !state.status?.available;
   const allDisabled = disabled || !state.status?.allAvailable;
-  const canStopAndRestart =
-    !disabled &&
+  const busyScope =
     operation?.phase === "rejected" &&
     (operation.busyReason === "active-work" ||
-      operation.busyReason === "in-flight-operation");
+      operation.busyReason === "in-flight-operation")
+      ? operation.scope
+      : null;
+  const requestRestart = (scope: SettingsRestartScope) => {
+    if (!state.status) return;
+    const hostId = state.status.hostId;
+    if (scope === busyScope) void hostRestartClient.start(scope, hostId, true);
+    else setConfirmation({ scope, hostId });
+  };
+  const currentOperation =
+    !state.pending || operation?.id === state.pending.operationId
+      ? operation
+      : null;
   const unobserved =
+    !state.sending &&
     state.pending &&
     state.status?.hostId === state.pending.hostId &&
-    operation?.id !== state.pending.operationId;
-  const message =
+    !currentOperation;
+  const progress =
+    currentOperation?.phase === "submitted"
+      ? "Restart requested."
+      : state.sending || currentOperation?.phase === "preparing"
+        ? "Preparing restart…"
+        : null;
+  const failure =
     state.error ??
-    (operation?.phase === "rejected" && operation.error
-      ? `Last restart attempt: ${operation.error}`
-      : operation?.error) ??
-    (operation?.phase === "preparing"
-      ? "Preparing restart…"
-      : operation?.phase === "submitted"
-        ? "Restart requested."
-        : state.notice);
+    (currentOperation?.phase === "rejected"
+      ? currentOperation.busyReason === "active-work"
+        ? "Last restart attempt: Pi was busy."
+        : currentOperation.busyReason === "in-flight-operation"
+          ? "Last restart attempt: a request was still in progress."
+          : currentOperation.error &&
+            `Last restart attempt: ${currentOperation.error}`
+      : currentOperation?.error);
+  const message =
+    state.blocked && state.error
+      ? state.error
+      : (progress ??
+        failure ??
+        (unobserved ? "Restart request not confirmed." : state.notice));
+  const unavailable =
+    state.status?.available === false ? state.status.reason : null;
   return (
     <div id="settings-host-restart" className="host-restart">
       <SettingField
         label="Restart Host"
-        description="Reload Pi. Project terminals keep running."
+        description="Restart Inspire and its Pi workers. Project terminals keep running."
       >
-        {canStopAndRestart && !hostDisabled && operation?.scope === "host" ? (
-          <button
-            type="button"
-            className="button button--danger"
-            onClick={() =>
-              setConfirmation({
-                scope: "host",
-                hostId: state.status!.hostId,
-                interruptWork: true,
-              })
-            }
-          >
-            Stop work and restart Host
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="button button--danger-outline"
-            aria-label="Restart Host"
-            disabled={hostDisabled}
-            onClick={() =>
-              setConfirmation({
-                scope: "host",
-                hostId: state.status!.hostId,
-                interruptWork: false,
-              })
-            }
-          >
-            <RefreshCw size={13} aria-hidden />
-            Restart
-          </button>
-        )}
+        <button
+          type="button"
+          className="button button--danger-outline"
+          aria-label={
+            busyScope === "host" ? "Stop work and restart Host" : "Restart Host"
+          }
+          disabled={hostDisabled}
+          onClick={() => requestRestart("host")}
+        >
+          {busyScope === "host" ? (
+            "Stop work and restart"
+          ) : (
+            <>
+              <RefreshCw size={13} aria-hidden />
+              Restart
+            </>
+          )}
+        </button>
       </SettingField>
       <SettingField
         label="Restart all"
@@ -179,114 +182,87 @@ export function HostRestartSettings({
             : "Also close this Host's project terminals."
         }
       >
-        {canStopAndRestart && !allDisabled && operation?.scope === "all" ? (
-          <button
-            type="button"
-            className="button button--danger"
-            onClick={() =>
-              setConfirmation({
-                scope: "all",
-                hostId: state.status!.hostId,
-                interruptWork: true,
-              })
-            }
-          >
-            Stop work and restart all
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="button button--danger-outline"
-            aria-label="Restart all"
-            disabled={allDisabled}
-            onClick={() =>
-              setConfirmation({
-                scope: "all",
-                hostId: state.status!.hostId,
-                interruptWork: false,
-              })
-            }
-          >
-            <RefreshCw size={13} aria-hidden />
-            Restart all
-          </button>
-        )}
+        <button
+          type="button"
+          className="button button--danger-outline"
+          aria-label={
+            busyScope === "all" ? "Stop work and restart all" : "Restart all"
+          }
+          disabled={allDisabled}
+          onClick={() => requestRestart("all")}
+        >
+          {busyScope === "all" ? (
+            "Stop work and restart all"
+          ) : (
+            <>
+              <RefreshCw size={13} aria-hidden />
+              Restart all
+            </>
+          )}
+        </button>
       </SettingField>
-      {(state.status && !state.status.available) ||
-      message ||
-      unobserved ||
-      state.error ||
-      state.pending ||
-      active ? (
-        <div className="host-restart__status-row">
-          <div className="host-restart__status-copy">
-            {state.status && !state.status.available ? (
-              <p className="settings__field-help">{state.status.reason}</p>
-            ) : null}
-            {message ? (
-              <p
-                className="host-restart__status"
-                role={state.error || operation?.error ? "alert" : "status"}
-              >
-                {message}
-              </p>
-            ) : null}
-            {state.error && state.recoveryInvalid ? (
-              <button
-                type="button"
-                className="button button--quiet"
-                disabled={state.sending}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Clear this browser's restart record? Any restart already requested can still run. Recheck Host status before another restart.",
-                    )
+      <div className="host-restart__status-row">
+        <div className="host-restart__status-copy">
+          {unavailable ? (
+            <p className="settings__field-help">{unavailable}</p>
+          ) : null}
+          {message ? (
+            <p
+              className="host-restart__status"
+              role={message === failure ? "alert" : "status"}
+            >
+              {message}
+            </p>
+          ) : null}
+          {state.error && state.recoveryInvalid ? (
+            <button
+              type="button"
+              className="button button--quiet"
+              disabled={state.sending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Clear this browser's restart record? Any restart already requested can still run. Recheck Host status before another restart.",
                   )
-                    void hostRestartClient.clearRecovery();
-                }}
-              >
-                Reset restart recovery…
-              </button>
-            ) : null}
-            {unobserved ? (
-              <p className="settings__field-help">
-                Restart request not confirmed.
-              </p>
-            ) : null}
-          </div>
-          {state.error || state.pending || active ? (
-            <div className="host-restart__status-actions">
-              <button
-                type="button"
-                className="button button--quiet"
-                onClick={() => void hostRestartClient.refresh()}
-              >
-                Recheck status
-              </button>
-              {unobserved ? (
-                <button
-                  type="button"
-                  className="button"
-                  disabled={state.sending || state.blocked || !!active}
-                  onClick={() => void hostRestartClient.retry()}
-                >
-                  Retry same request
-                </button>
-              ) : null}
-            </div>
+                )
+                  void hostRestartClient.clearRecovery();
+              }}
+            >
+              Reset restart recovery…
+            </button>
           ) : null}
         </div>
-      ) : null}
+        {state.error || state.pending || active ? (
+          <div className="host-restart__status-actions">
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() => void hostRestartClient.refresh()}
+            >
+              Recheck status
+            </button>
+            {unobserved ? (
+              <button
+                type="button"
+                className="button"
+                disabled={state.sending || state.blocked || !!active}
+                onClick={() => void hostRestartClient.retry()}
+              >
+                Retry same request
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       {confirmation && !suspended ? (
         <RestartConfirmation
           scope={confirmation.scope}
-          interruptWork={confirmation.interruptWork}
           onClose={() => setConfirmation(null)}
           onConfirm={() => {
             void hostRestartClient.start(
               confirmation.scope,
               confirmation.hostId,
-              confirmation.interruptWork,
+              false,
             );
             setConfirmation(null);
           }}

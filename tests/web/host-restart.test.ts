@@ -6,6 +6,7 @@ import type {
   HostRestartStatus,
 } from "../../shared/host-restart";
 import { HostRestartClient } from "../../src/controllers/host-restart-controller";
+import { deferred } from "./helpers";
 
 beforeEach(() => sessionStorage.clear());
 function fixture() {
@@ -29,6 +30,64 @@ function fixture() {
 }
 
 describe("browser restart delivery", () => {
+  it("shows the accepted receipt while an older status read is still pending", async () => {
+    const f = fixture();
+    f.status.operation = {
+      id: crypto.randomUUID(),
+      scope: "host",
+      phase: "rejected",
+      busyReason: "active-work",
+    };
+    await f.client.refresh();
+    const staleStatus = structuredClone(f.status);
+    const stale = deferred<HostRestartStatus>();
+    f.api.hostRestartStatus.mockReturnValueOnce(stale.promise);
+    void f.client.refresh();
+    const observed: Array<ReturnType<HostRestartClient["snapshot"]>> = [];
+    f.client.subscribe(() => observed.push(f.client.snapshot()));
+    f.api.restartHost.mockImplementation(async (request) => {
+      f.status.operation = {
+        id: request.operationId,
+        scope: request.scope,
+        phase: "preparing",
+      };
+      return f.status.operation;
+    });
+
+    const sending = f.client.start("host", f.status.hostId);
+    expect(observed.find((state) => state.pending)?.sending).toBe(true);
+    await vi.waitFor(() =>
+      expect(f.client.snapshot().status?.operation).toEqual(f.status.operation),
+    );
+    observed.length = 0;
+    stale.resolve(staleStatus);
+    await sending;
+    expect(observed.map((state) => state.status?.operation)).not.toContainEqual(
+      staleStatus.operation,
+    );
+    expect(f.client.snapshot().status?.operation).toEqual(f.status.operation);
+  });
+
+  it("keeps a later observed phase when the initial receipt arrives late", async () => {
+    const f = fixture();
+    await f.client.refresh();
+    const receipt = deferred<HostRestartOperation>();
+    f.api.restartHost.mockReturnValueOnce(receipt.promise);
+    const sending = f.client.start("host", f.status.hostId);
+    const request = f.api.restartHost.mock.calls[0]![0];
+    const operation = { id: request.operationId, scope: request.scope };
+    f.status.operation = { ...operation, phase: "submitted" };
+    await f.client.refresh();
+    const observed: Array<HostRestartOperation["phase"] | undefined> = [];
+    f.client.subscribe(() =>
+      observed.push(f.client.snapshot().status?.operation?.phase),
+    );
+    receipt.resolve({ ...operation, phase: "preparing" });
+    await sending;
+    expect(observed).not.toContain("preparing");
+    expect(f.client.snapshot().status?.operation?.phase).toBe("submitted");
+  });
+
   it("persists before POST, keeps lost delivery across reload, and retries the identical request only explicitly", async () => {
     const f = fixture();
     f.api.restartHost.mockImplementation(async () => {

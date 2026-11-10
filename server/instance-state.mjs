@@ -524,9 +524,8 @@ async function waitForProcessExit(path, state, timeoutMs) {
   return false;
 }
 
-/** Tells a healthy Host which restart follows, so CLI restarts match the
- * page: `host` reloads the Pi it has taken over, `host-only` keeps every Pi
- * process, including its own workers, running. */
+/** Tells a healthy Host which restart follows. `host-only` keeps its own Pi
+ * workers running along with the Pi instances it has taken over. */
 export async function prepareInstanceRestart(path, expected, scope, options = {}) {
   const result = await inspectInstance(path, expected, options);
   if (result.kind === "unavailable")

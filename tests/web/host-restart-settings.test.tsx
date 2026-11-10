@@ -52,9 +52,11 @@ describe("Settings restart controls", () => {
     expect(restartAll).toBeDisabled();
     expect(restartAll).not.toHaveAttribute("aria-busy", "true");
     expect(container.querySelector(".pi-loading")).toBeNull();
-    expect(container.querySelector(".host-restart__status-row")).toBeNull();
+    const status = container.querySelector(".host-restart__status-row");
+    expect(status).toHaveTextContent(/^$/);
     fixture.state.status = ready;
     rerender(<HostRestartSettings />);
+    expect(container.querySelector(".host-restart__status-row")).toBe(status);
     expect(restart).toBeEnabled();
     expect(restartAll).toBeEnabled();
     expect(fixture.start).not.toHaveBeenCalled();
@@ -95,7 +97,7 @@ describe("Settings restart controls", () => {
     ["host", "active-work"],
     ["all", "in-flight-operation"],
   ] as const)(
-    "offers one explicit work-interruption confirmation for a busy %s attempt",
+    "replaces the busy %s action with a direct stop and restart",
     (scope, busyReason) => {
       fixture.state.status = {
         hostId: "fixture-host",
@@ -113,23 +115,20 @@ describe("Settings restart controls", () => {
       expect(screen.getByRole("alert").textContent).toContain(
         "Last restart attempt:",
       );
+      const restart = scope === "all" ? "Restart all" : "Restart Host";
+      expect(screen.queryByRole("button", { name: restart })).toBeNull();
       const label = `Stop work and restart ${scope === "all" ? "all" : "Host"}`;
-      fireEvent.click(screen.getByRole("button", { name: label }));
-      const dialog = screen.getByRole("alertdialog");
-      expect(dialog.textContent).toContain("Stop active Pi work in Inspire");
-      expect(dialog.textContent).toContain("discard Pending messages");
-      expect(dialog.textContent).toContain(
-        scope === "all"
-          ? "This Host's project terminals will close."
-          : "Project terminals keep running",
+      const stopAndRestart = screen.getByRole("button", { name: label });
+      expect(stopAndRestart.closest(".settings__field")).toHaveTextContent(
+        restart,
       );
-      fireEvent.click(dialog.querySelector("button")!);
-      expect(fixture.start).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: label }));
-      fireEvent.click(
-        screen.getByRole("alertdialog").querySelector(".button--danger")!,
+      fireEvent.click(stopAndRestart);
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+      expect(fixture.start).toHaveBeenCalledExactlyOnceWith(
+        scope,
+        "fixture-host",
+        true,
       );
-      expect(fixture.start).toHaveBeenCalledWith(scope, "fixture-host", true);
     },
   );
 
@@ -170,6 +169,33 @@ describe("Settings restart controls", () => {
     expect(screen.getByRole("status").textContent).toBe("Preparing restart…");
     expect(screen.getByRole("button", { name: "Restart Host" })).toBeDisabled();
     expect(screen.queryByText("Host reconnected.")).toBeNull();
+  });
+
+  it("shows preparation during a retry before the Host observes it", () => {
+    fixture.state.status = {
+      hostId: "fixture-host",
+      available: true,
+      allAvailable: true,
+      operation: {
+        id: "old-attempt",
+        scope: "host",
+        phase: "rejected",
+        error: "Pi work was active.",
+      },
+    };
+    fixture.state.pending = {
+      hostId: "fixture-host",
+      operationId: "new-attempt",
+      scope: "host",
+    };
+    fixture.state.sending = true;
+    render(<HostRestartSettings />);
+    expect(screen.getByRole("status")).toHaveTextContent("Preparing restart…");
+    expect(screen.queryByText(/Last restart attempt/)).toBeNull();
+    expect(screen.queryByText("Restart request not confirmed.")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Retry same request" }),
+    ).toBeNull();
   });
   it("keeps ordinary restart enabled and explains unsupported full restart", () => {
     fixture.state.status = {

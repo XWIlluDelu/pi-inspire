@@ -1,5 +1,5 @@
-/** `host` also reloads the Pi processes Inspire has taken over; `host-only`
- * leaves every Pi outside the Host as it is; `all` adds terminal services. */
+/** `host` restarts the Host and its own Pi workers. `host-only` preserves those
+ * workers, and `all` also restarts the terminal service. */
 export type HostRestartScope = "host" | "host-only" | "all";
 
 export interface HostRestartOperation {

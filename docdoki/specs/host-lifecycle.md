@@ -373,26 +373,24 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   exclusive idle lease. Idle live workers are allowed. A failed startup ceases to block once its
   worker has retired; preserve the original error for diagnosis. Pending or rejected actual-stop
   acknowledgements still block ordinary admission, even if the worker no longer appears live.
-- A workload refusal offers a separate confirmed **Stop work and restart** under the same scope.
-  The new operation authorizes interrupting Inspire-owned Pi work, and for Restart Host also
-  taken-over Pi work, and discarding Pending input. It bypasses workload checks, including active compaction
-  and session operations, while keeping preparation, service ownership, lease exclusivity, and
-  final commit. Automatic maintenance keeps its update and idle checks and restarts only the Host
-  service.
-- **Restart Host** reloads every taken-over Pi through attach-control after the idle lease and before
-  the restart request, so it applies current settings. Inspire's own workers restart with the Host.
-  **Restart all** also restarts the
-  terminal services. A busy taken-over Pi counts as active work for the scopes that reload it.
-  The Host logs a failed reload and continues the restart.
+- After a workload refusal, the affected restart row offers **Stop work and restart** and the
+  status row shows why the attempt stopped. Clicking the action authorizes interruption of active
+  Inspire-owned and taken-over Pi work in that scope without a second confirmation. It bypasses
+  workload checks while keeping preparation, service ownership, lease exclusivity and final commit.
+  Automatic maintenance keeps its update and idle checks and restarts only the Host service.
+- **Restart Host** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
+  loaded settings. Pi exposes reload in its command context, so a terminal Pi reloads through its
+  own `/reload` command. **Restart all** also restarts the terminal service. A busy taken-over Pi
+  counts as active work for both scopes. Only an explicit **Stop work and restart** interrupts
+  its agent work through attach-control. The Host logs a failed interruption and continues the restart.
 - `inspire restart --host-only` preserves every Pi process and its running work, including
   Inspire's workers. Running work can continue during restart because the closing Host detaches
   its workers. After any restart, sessions return to ordinary admission, so preserved workers
   appear as live Pi with **Take over**.
 - `inspire restart` and `inspire restart --host-only` send a signed `restart-prepare` local-control
-  request before restarting. The `host` scope reloads taken-over Pi, and `host-only` makes the
-  closing Host detach its workers. A running Host must acknowledge the requested scope before the
-  CLI stops or restarts it. Failed or unavailable preparation aborts the restart and leaves the
-  Host running. An already absent or exited Host needs no preparation.
+  request before restarting. `host-only` makes the closing Host detach its workers. A running Host
+  must acknowledge the requested scope before the CLI stops or restarts it. Failed or unavailable
+  preparation aborts the restart and leaves the Host running. An absent or exited Host needs no preparation.
 
 ### Submission and recovery
 
@@ -403,7 +401,7 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   normal exit into a restart.
 - The browser persists identity in tab-session storage before POST; invalid or unavailable storage
   blocks dispatch, not read-only Host observation. Recheck retries local recovery and clears the
-  browser's blocked state once storage recovers. Explicit retry keeps the same identity.
+  browser's blocked state once storage recovers. Retrying an unconfirmed request keeps its identity.
   A new Host identity or a matching rejected operation automatically retires browser tracking;
   uncertain requests keep their identity. Only malformed saved data offers **Reset restart
   recovery…**, beside its error and with confirmation; normal pending/recovery controls and
@@ -411,7 +409,9 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   tracking, neither sending nor cancelling a restart; the Host's pending operation still fences new
   admission. Failed local cleanup preserves the record and reports a storage problem, not an
   unknown restart. A rejected receipt is labelled **last attempt**, because it is historical rather
-  than a current busy check.
+  than a current busy check. A new submission replaces the old result with preparation immediately.
+  A POST receipt establishes the operation before polling catches up. The status row reserves room
+  for ordinary progress and refusal so these transitions keep their layout.
 - The CLI checks readiness after restart; the browser reports reconnection to a new Host.
 
 ## Atomic browser-build publication
