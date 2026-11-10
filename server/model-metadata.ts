@@ -2,7 +2,12 @@ import { fork } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PiCommand } from "../shared/commands.js";
-import type { ModelOption, NewSessionDefaults } from "../shared/contracts.js";
+import {
+  type ModelOption,
+  type NewSessionDefaults,
+  THINKING_LEVELS,
+  type ThinkingLevel,
+} from "../shared/contracts.js";
 import { getAgentDir, piInstallation } from "./pi-runtime.js";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
 
@@ -12,21 +17,31 @@ export interface ModelMetadata {
   defaults: NewSessionDefaults;
   /** Registered definitions, including routers whose physical provider lacks auth. */
   virtualModels: ModelOption[];
+  enabledModelPatterns?: string[];
   warning?: string;
 }
 
-async function queryModelWorker(
+interface NativeModelSettingsRead {
+  effective: Record<string, unknown>;
+  projectOverrides: string[];
+  globalError: boolean;
+  projectError: boolean;
+}
+
+async function queryModelWorker<Result>(
   cwd: string,
   agentDir: string,
-  validationPath?: string,
-): Promise<ModelMetadata | null> {
+  args: string[],
+  accept: (result: unknown) => result is Result,
+  processCwd = cwd,
+): Promise<Result> {
   const ownPath = fileURLToPath(import.meta.url);
   const source = ownPath.endsWith(".ts");
   const child = fork(
     join(dirname(ownPath), `model-metadata-worker.${source ? "ts" : "js"}`),
-    [cwd, ...(validationPath ? [validationPath] : [])],
+    [cwd, ...args],
     {
-      cwd,
+      cwd: processCwd,
       execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
       env: {
         ...process.env,
@@ -39,7 +54,7 @@ async function queryModelWorker(
     },
   );
   return new Promise((resolve, reject) => {
-    let result: ModelMetadata | null | undefined;
+    let result: Result | undefined;
     let timedOut = false;
     let retirement: Promise<void> | undefined;
     const retire = () =>
@@ -48,13 +63,10 @@ async function queryModelWorker(
       timedOut = true;
       void retire();
     }, 15_000);
-    child.on(
-      "message",
-      (message: { ok?: boolean; result?: ModelMetadata | null }) => {
-        if (message.ok) result = message.result;
-        if (typeof message.ok === "boolean") void retire();
-      },
-    );
+    child.on("message", (message: { ok?: boolean; result?: unknown }) => {
+      if (message.ok && accept(message.result)) result = message.result;
+      if (typeof message.ok === "boolean") void retire();
+    });
     child.once("error", (error) => {
       clearTimeout(timer);
       reject(error);
@@ -62,16 +74,7 @@ async function queryModelWorker(
     child.once("close", async () => {
       clearTimeout(timer);
       await retire();
-      if (
-        !timedOut &&
-        (validationPath
-          ? result === null
-          : result &&
-            result.defaults.cwd === cwd &&
-            Array.isArray(result.models) &&
-            Array.isArray(result.virtualModels))
-      )
-        resolve(result ?? null);
+      if (!timedOut && result !== undefined) resolve(result);
       else
         reject(
           new Error(
@@ -85,7 +88,56 @@ async function queryModelWorker(
 }
 
 export async function queryModelMetadata(cwd: string): Promise<ModelMetadata> {
-  return (await queryModelWorker(cwd, getAgentDir())) as ModelMetadata;
+  return queryModelWorker(
+    cwd,
+    getAgentDir(),
+    ["catalog"],
+    (result): result is ModelMetadata => {
+      const metadata = result as Partial<ModelMetadata> | null | undefined;
+      return (
+        metadata?.defaults?.cwd === cwd &&
+        Array.isArray(metadata.models) &&
+        Array.isArray(metadata.virtualModels)
+      );
+    },
+  );
+}
+
+export function readNativeModelSettings(
+  cwd: string,
+  agentDir: string,
+): Promise<NativeModelSettingsRead> {
+  return queryModelWorker(
+    cwd,
+    agentDir,
+    ["settings"],
+    (result): result is NativeModelSettingsRead => {
+      const settings = result as
+        | Partial<NativeModelSettingsRead>
+        | null
+        | undefined;
+      return Boolean(
+        settings?.effective && Array.isArray(settings.projectOverrides),
+      );
+    },
+    process.cwd(),
+  );
+}
+
+export function queryModelThinkingLevel(
+  cwd: string,
+  provider: string,
+  modelId: string,
+  current: ThinkingLevel,
+): Promise<ThinkingLevel> {
+  return queryModelWorker(
+    cwd,
+    getAgentDir(),
+    ["thinking", provider, modelId, current],
+    (result): result is ThinkingLevel =>
+      THINKING_LEVELS.includes(result as ThinkingLevel),
+    process.cwd(),
+  );
 }
 
 /** Validate a candidate with the same native resources and trust as discovery. */
@@ -94,7 +146,12 @@ export async function validateModelConfig(
   agentDir: string,
   path: string,
 ): Promise<void> {
-  await queryModelWorker(cwd, agentDir, path);
+  await queryModelWorker(
+    cwd,
+    agentDir,
+    ["validate", path],
+    (result): result is null => result === null,
+  );
 }
 
 /** Catalog and default previews share one native query per actual target cwd.

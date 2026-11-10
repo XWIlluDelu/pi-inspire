@@ -1,8 +1,10 @@
 import { join } from "node:path";
+import type { ThinkingLevel } from "../shared/contracts.js";
 import {
   availableModelOptions,
   modelOption,
   modelSettings,
+  modelSwitchThinkingLevel,
   resolveNewSessionDefaults,
 } from "./model-catalog.js";
 import {
@@ -70,6 +72,7 @@ async function discover(cwd: string, validationPath?: string) {
       warnings.push("Model refresh incomplete; showing Pi's available models.");
     return {
       models,
+      enabledModelPatterns: settings.getEnabledModels() ?? [],
       // Use the same public registries as native get_commands, including Pi's
       // resolved invocation names for colliding extension commands.
       commands: [
@@ -101,11 +104,45 @@ async function discover(cwd: string, validationPath?: string) {
   }
 }
 
+function readSettings(cwd: string) {
+  const settings = modelSettings(cwd);
+  const project = settings.getProjectSettings();
+  const errors = settings.drainErrors();
+  return {
+    effective: {
+      defaultProvider: settings.getDefaultProvider(),
+      defaultModel: settings.getDefaultModel(),
+      defaultThinkingLevel: settings.getDefaultThinkingLevel(),
+      enabledModels: settings.getEnabledModels(),
+    },
+    projectOverrides: [
+      "defaultProvider",
+      "defaultModel",
+      "defaultThinkingLevel",
+      "enabledModels",
+    ].filter((key) => Object.hasOwn(project, key)),
+    globalError: errors.some(({ scope }) => scope === "global"),
+    projectError: errors.some(({ scope }) => scope === "project"),
+  };
+}
+
 // Keep the group leader alive until the parent retires the whole tree, including
 // any factory-created descendants. IPC disconnect also retires an orphan query.
 process.on("disconnect", () => process.exit(0));
 try {
-  const result = await discover(process.argv[2]!, process.argv[3]);
+  const [, , cwd, mode, ...args] = process.argv;
+  if (!cwd) throw new Error("Model worker workspace is required");
+  const result =
+    mode === "settings"
+      ? readSettings(cwd)
+      : mode === "thinking"
+        ? modelSwitchThinkingLevel(
+            cwd,
+            args[0]!,
+            args[1]!,
+            args[2] as ThinkingLevel,
+          )
+        : await discover(cwd, mode === "validate" ? args[0] : undefined);
   process.send?.({ ok: true, result });
 } catch {
   // Factory errors may contain credentials. Keep the wire result diagnostic-only.

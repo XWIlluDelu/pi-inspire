@@ -19,6 +19,25 @@ import { baseRoutes, initStore } from "./store-fixture";
 
 describe("model catalog ownership", () => {
   beforeEach(() => installFakeWebSocket());
+  it("clears a previous Pi's choices when the current catalog is explicitly empty", async () => {
+    const previous = [{ provider: "fixture", id: "previous-pi" }];
+    installFetch((url) => {
+      if (url.startsWith("/api/bootstrap"))
+        return {
+          body: bootstrapPayload({
+            availableModels: previous,
+            snapshot: activeSnapshot({ availableModels: [] }),
+          }),
+        };
+      if (url.startsWith("/api/models"))
+        return { status: 503, body: { error: "catalog offline" } };
+      return undefined;
+    });
+    const store = new AppStore();
+    await store.init("token");
+    await expect(store.refreshModels()).rejects.toThrow("catalog offline");
+    expect(store.getState().availableModels).toEqual([]);
+  });
   it("retains cached choices on failure and never changes active model/effort on refresh", async () => {
     let fail = false;
     installFetch((url) => {

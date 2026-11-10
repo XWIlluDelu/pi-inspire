@@ -46,6 +46,20 @@ let newSessionBody: Record<string, unknown> | null;
 let promptBody: Record<string, unknown> | null;
 let promptGate: Promise<RouteResponse> | null = null;
 const canonicalProjectCwd = "/canonical/proj";
+const welcomeModels = [
+  {
+    provider: "plain",
+    id: "text-only",
+    name: "Text only",
+    reasoning: false,
+  },
+  {
+    provider: "anthropic",
+    id: "claude-sonnet-4",
+    name: "Claude Sonnet 4",
+    reasoning: true,
+  },
+];
 let defaultModelCwd: string | null;
 let defaultModelAvailable: boolean;
 let projectFileCwd: string | null;
@@ -71,20 +85,7 @@ beforeAll(async () => {
     if (url.startsWith("/api/bootstrap"))
       return {
         body: bootstrapPayload({
-          availableModels: [
-            {
-              provider: "plain",
-              id: "text-only",
-              name: "Text only",
-              reasoning: false,
-            },
-            {
-              provider: "anthropic",
-              id: "claude-sonnet-4",
-              name: "Claude Sonnet 4",
-              reasoning: true,
-            },
-          ],
+          availableModels: welcomeModels,
         }),
       };
     if (url.startsWith("/api/new-session/thinking")) {
@@ -119,7 +120,7 @@ beforeAll(async () => {
             code: "SESSION_WORKSPACE_UNAVAILABLE",
           },
         };
-      if (directoryFailure)
+      if (directoryFailure && parsed.searchParams.has("cwd"))
         return {
           status: 400,
           body:
@@ -133,7 +134,7 @@ beforeAll(async () => {
       defaultModelCwd = parsed.searchParams.get("cwd");
       return {
         body: {
-          models: store.getState().availableModels,
+          models: welcomeModels,
           defaults: {
             cwd: defaultModelCwd,
             model: defaultModelAvailable
@@ -539,9 +540,9 @@ describe("new-session start surface", () => {
       });
       fireEvent.click(screen.getByRole("button", { name: "Model" }));
       fireEvent.click(
-        within(
+        await within(
           screen.getByRole("listbox", { name: "Available models" }),
-        ).getByRole("option", { name: /Claude Sonnet 4/ }),
+        ).findByRole("option", { name: /Claude Sonnet 4/ }),
       );
       await waitFor(() =>
         expect(
@@ -817,7 +818,9 @@ describe("new-session start surface", () => {
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
     let models = screen.getByRole("listbox", { name: "Available models" });
     fireEvent.click(
-      within(models).getByRole("option", { name: /Text only.*No thinking/ }),
+      await within(models).findByRole("option", {
+        name: /Text only.*No thinking/,
+      }),
     );
     expect(
       screen.getByRole("combobox", { name: "Thinking level" }),
@@ -1243,6 +1246,7 @@ describe("new-session start surface", () => {
         type: "snapshot",
         data: activeSnapshot({
           model: { provider: "anthropic", id: "claude-sonnet-4" },
+          availableModels: welcomeModels,
         }),
       });
     });

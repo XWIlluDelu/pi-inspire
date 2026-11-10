@@ -59,7 +59,8 @@ import type {
   MaintenanceRestartOutcome,
   MaintenanceRestartTransition,
 } from "./maintenance-restart.js";
-import { modelSwitchThinkingLevel } from "./model-catalog.js";
+import { queryModelThinkingLevel } from "./model-metadata.js";
+import { commonModelOptions } from "./model-settings.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
@@ -1238,10 +1239,12 @@ export function createInspireServer(deps: AppDependencies): {
       : ((await deps.modelMetadata?.(cwd!, true)) ?? { models: [] });
     const catalogCwd = sessionId ? deps.runtime.sessionCwd(sessionId) : cwd;
     const commonModels =
-      deps.modelSettings && catalogCwd
-        ? (await deps.modelSettings.read(catalogCwd, result.models))
-            .commonModels
-        : [];
+      "enabledModelPatterns" in result &&
+      Array.isArray(result.enabledModelPatterns)
+        ? await commonModelOptions(result.enabledModelPatterns, result.models)
+        : deps.modelSettings && catalogCwd
+          ? await deps.modelSettings.readCommonModels(catalogCwd, result.models)
+          : [];
     response.json({
       models: result.models,
       ...("commands" in result ? { commands: result.commands } : {}),
@@ -1265,7 +1268,7 @@ export function createInspireServer(deps: AppDependencies): {
       .parse(request.query);
     const cwd = await resolveProjectDirectory(query.cwd);
     response.json({
-      level: modelSwitchThinkingLevel(
+      level: await queryModelThinkingLevel(
         cwd,
         query.provider,
         query.modelId,

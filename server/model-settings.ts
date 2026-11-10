@@ -15,8 +15,10 @@ import {
   editConfigurationFile,
   readConfigurationText as textAt,
 } from "./configuration-file.js";
-import { modelSettings } from "./model-catalog.js";
-import { validateModelConfig } from "./model-metadata.js";
+import {
+  readNativeModelSettings,
+  validateModelConfig,
+} from "./model-metadata.js";
 import {
   getAgentDir,
   ModelRuntime,
@@ -177,6 +179,15 @@ export async function commonModelOptions(
 export class ModelSettingsService {
   private nativeApiProviders: Promise<string[]> | undefined;
   constructor(private readonly agentDir = getAgentDir()) {}
+
+  async readCommonModels(cwd: string, models: ModelOption[]) {
+    if (models.length === 0) return [];
+    const native = await readNativeModelSettings(cwd, this.agentDir);
+    return commonModelOptions(
+      preferences(native.effective).enabledModels,
+      models,
+    );
+  }
   private readNativeApiProviders(): Promise<string[]> {
     return (this.nativeApiProviders ??= ModelRuntime.create({
       modelsPath: null,
@@ -198,8 +209,11 @@ export class ModelSettingsService {
     cwd: string,
     models: ModelOption[],
   ): Promise<ModelSettingsSnapshot> {
-    const settingsText = await textAt(join(this.agentDir, "settings.json"));
-    const configText = await textAt(join(this.agentDir, "models.json"));
+    const [settingsText, configText, native] = await Promise.all([
+      textAt(join(this.agentDir, "settings.json")),
+      textAt(join(this.agentDir, "models.json")),
+      readNativeModelSettings(cwd, this.agentDir),
+    ]);
     let global: JsonObject = {},
       config: JsonObject = {};
     let settingsError: string | undefined, configError: string | undefined;
@@ -214,37 +228,20 @@ export class ModelSettingsService {
     } catch {
       configError = "models.json is invalid. Repair the file before saving.";
     }
-    const settings = modelSettings(cwd, this.agentDir);
-    const project = settings.getProjectSettings();
-    const effective = preferences({
-      defaultProvider: settings.getDefaultProvider(),
-      defaultModel: settings.getDefaultModel(),
-      defaultThinkingLevel: settings.getDefaultThinkingLevel(),
-      enabledModels: settings.getEnabledModels(),
-    });
-    const settingsErrors = settings.drainErrors();
-    if (settingsErrors.some((error) => error.scope === "global"))
+    const effective = preferences(native.effective);
+    if (native.globalError)
       settingsError ??=
         "Global Pi settings could not be loaded. Repair settings.json before saving.";
-    const projectSettingsError = settingsErrors.some(
-      (error) => error.scope === "project",
-    )
+    const projectSettingsError = native.projectError
       ? "Project settings could not be loaded. Showing global defaults; global settings remain editable. Repair this project's .pi/settings.json to restore its overrides."
       : undefined;
-    const saved = preferences(
-      settingsError ? global : (settings.getGlobalSettings() as JsonObject),
-    );
+    const saved = preferences(global);
     return {
       settingsRevision: revision(settingsText),
       configRevision: revision(configText),
       saved,
       effective,
-      projectOverrides: [
-        "defaultProvider",
-        "defaultModel",
-        "defaultThinkingLevel",
-        "enabledModels",
-      ].filter((key) => Object.hasOwn(project, key)),
+      projectOverrides: native.projectOverrides,
       providers: declarationProjection(config),
       nativeApiProviders: await this.readNativeApiProviders(),
       models,
