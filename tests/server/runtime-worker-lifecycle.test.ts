@@ -30,6 +30,62 @@ beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
+  it("warms only the current selection and starts a superseded preview on demand", async () => {
+    const source = catalog([record("a", TEST_CWD), record("b", TEST_CWD)]);
+    const get = source.get.bind(source);
+    const entered = deferredSignal();
+    const resume = deferredSignal();
+    source.get = async (id) => {
+      if (id === "a") {
+        entered.resolve();
+        await resume.promise;
+      }
+      return get(id);
+    };
+    const workers: FakeRpc[] = [];
+    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
+      createProcess: (options) => {
+        const worker = new FakeRpc(options);
+        workers.push(worker);
+        return worker as unknown as PiRpcProcess;
+      },
+      openSessionProjection: preview,
+    });
+    const opening = runtime.openSession("a");
+    try {
+      await entered.promise;
+      await runtime.openSession("b");
+      await waitForReady(runtime, "b");
+      resume.resolve();
+
+      expect((await opening).active?.sessionId).toBe("a");
+      expect(runtime.activeSessionId).toBe("b");
+      const lease = runtime.reserveMaintenanceRestart();
+      expect(lease.kind).toBe("ready");
+      if (lease.kind === "ready")
+        runtime.releaseMaintenanceRestart(lease.leaseId);
+      expect(workers.map((worker) => worker.sessionId)).toEqual(["b"]);
+
+      const release = runtime.retainSessionView("a");
+      try {
+        const snapshot = await runtime.snapshot("a");
+        await runtime.prompt({
+          sessionId: "a",
+          expectedViewId: snapshot.active?.transcriptPage.viewId,
+          message: "Continue in this view",
+        });
+        expect(workers.map((worker) => worker.sessionId)).toEqual(["b", "a"]);
+        expect(runtime.activeSessionId).toBe("b");
+      } finally {
+        release();
+      }
+    } finally {
+      resume.resolve();
+      await opening.catch(() => undefined);
+      await runtime.close();
+    }
+  });
+
   it("keeps existing and new sessions usable when project discovery cannot be saved", async () => {
     const attachments = trackedAttachmentStore();
     const source = catalog([record("a", TEST_CWD)]);
