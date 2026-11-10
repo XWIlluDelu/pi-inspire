@@ -2924,9 +2924,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           childPid: slot.process?.pid,
         });
         this.scheduleIdleWorkerEviction();
+        if (!ready && slot.readOnlyReason !== "workspace-unavailable")
+          void this.ensureProcess(slot).catch(() => undefined);
       }
-      if (!ready && slot.readOnlyReason !== "workspace-unavailable")
-        void this.ensureProcess(slot).catch(() => undefined);
       return snapshot;
     } finally {
       const remaining = (this.selectionReservations.get(id) ?? 1) - 1;
