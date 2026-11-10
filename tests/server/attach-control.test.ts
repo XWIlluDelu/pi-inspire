@@ -20,7 +20,7 @@ import {
 import {
   AttachControlConnection,
   AttachControlRegistry,
-  unambiguousInstance,
+  takeoverCandidate,
 } from "../../server/attach-control.js";
 import { PiSessionActivity } from "../../server/pi-session-activity.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
@@ -190,16 +190,18 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
   });
 });
 
-describe("unambiguousInstance", () => {
-  it("takes over a single endpoint and reports multiple branch owners", async () => {
-    const busy = await record({ activity: "working", endpoint: "/work/busy" });
-    const offline = await record({ activity: "idle" });
-    expect(() => unambiguousInstance([busy, offline])).toThrow(
-      "Several Pi processes are using this branch",
+describe("takeoverCandidate", () => {
+  it("chooses the branch's available endpoint over an ancestor or a presence-only record", async () => {
+    const current = await record({ endpoint: "/work/current" });
+    const ancestor = await record({ leafId: "old", endpoint: "/work/old" });
+    const presenceOnly = await record();
+    const match = (leaf: string | null) =>
+      leaf === "leaf" ? "continues" : "possible";
+    expect(takeoverCandidate([ancestor, presenceOnly, current], match)).toBe(
+      current,
     );
-    expect(unambiguousInstance([busy])).toBe(busy);
-    expect(unambiguousInstance([offline])).toBeUndefined();
-    expect(unambiguousInstance([])).toBeUndefined();
+    expect(takeoverCandidate([ancestor], match)).toBe(ancestor);
+    expect(takeoverCandidate([presenceOnly], match)).toBeUndefined();
   });
 });
 

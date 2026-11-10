@@ -26,7 +26,7 @@ import attachControl, {
 import {
   AttachControlConnection,
   AttachControlRegistry,
-  unambiguousInstance,
+  takeoverCandidate,
 } from "../../server/attach-control.js";
 import { AttachmentStore } from "../../server/attachments.js";
 import { assertHerdrWorkerScopesAvailable } from "../../server/herdr-process-group.js";
@@ -749,7 +749,9 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     );
     expect(records[0]?.leafId).not.toBeNull();
     expect(records[0]?.leafId).toBe(records[1]?.leafId);
-    expect(() => unambiguousInstance(records)).toThrow(/Several Pi processes/);
+    expect(() => takeoverCandidate(records, () => "continues")).toThrow(
+      /Several Pi processes/,
+    );
     await otherBranch.pi.request({
       type: "prompt",
       message: "/test-navigate u1",

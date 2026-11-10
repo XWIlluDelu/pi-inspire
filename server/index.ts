@@ -6,7 +6,7 @@ import { createInspireServer } from "./app.js";
 import {
   AttachControlConnection,
   AttachControlRegistry,
-  unambiguousInstance,
+  takeoverCandidate,
 } from "./attach-control.js";
 import { AttachmentStore } from "./attachments.js";
 import { openBrowser } from "./browser-opener.js";
@@ -187,11 +187,10 @@ const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
   diagnostics,
 })
   .setModelMetadataCatalog(modelMetadata)
-  .setExternalSessionConnector(async (sessionId, sessionFile, accepts) => {
-    const instance = unambiguousInstance(
-      (await attachControl.forSession(sessionId, sessionFile)).filter(
-        (record) => accepts(record.leafId),
-      ),
+  .setExternalSessionConnector(async (sessionId, sessionFile, match) => {
+    const instance = takeoverCandidate(
+      await attachControl.forSession(sessionId, sessionFile),
+      match,
     );
     return instance
       ? new AttachControlConnection(attachControl, instance)

@@ -226,6 +226,10 @@ export class PreviewProjection
     return leafId === other;
   }
 
+  continues(leafId: string | null, from: string | null): boolean {
+    return leafId === from;
+  }
+
   latestContinuation(leafId: string | null): string | null {
     return leafId;
   }
