@@ -30,6 +30,7 @@ import {
   type InstanceState,
   instanceUrl,
   processStartIdentity,
+  refuseInstanceShutdown,
   removeInstanceState,
   watchInstanceShutdown,
   writeInstanceState,
@@ -311,6 +312,7 @@ const application = createInspireServer({
       restart: () =>
         shutdown("launcher-owned Host restart", HOST_RESTART_EXIT_CODE),
     }),
+    () => !herdr.needsOwnershipRelease,
   ),
   updateCoordinator,
   bootstrapModels: () => modelMetadata.peek(process.cwd())?.models ?? [],
@@ -338,12 +340,36 @@ let statePublication: Promise<void> | null = null;
 let publishedState: InstanceState | null = null;
 let shuttingDown = false;
 let closeShutdownControl: (() => void) | undefined;
+let scopedShutdownPreparation: Promise<boolean> | null = null;
+
+async function prepareScopedHerdrShutdown(): Promise<boolean> {
+  let leaseId: string | undefined;
+  try {
+    const reservation = runtime.reserveMaintenanceRestart(false, false, true);
+    if (reservation.kind !== "ready") throw new Error(reservation.reason);
+    leaseId = reservation.leaseId;
+    if (runtime.commitMaintenanceRestart(leaseId).kind !== "committed")
+      throw new Error("The Host could not reserve ownership release");
+    await herdr.prepareOwnershipRelease();
+    return true;
+  } catch (error) {
+    if (leaseId) runtime.releaseMaintenanceRestart(leaseId);
+    console.error("Unable to release enhanced Pi ownership", error);
+    return false;
+  }
+}
 
 async function shutdown(
   reason: string,
   requestedExitCode = 0,
   preserveWorkersRequest?: string,
 ): Promise<void> {
+  if (
+    !preserveWorkersRequest &&
+    scopedShutdownPreparation &&
+    (await scopedShutdownPreparation)
+  )
+    return;
   if (shuttingDown) return;
   shuttingDown = true;
   closeShutdownControl?.();
@@ -421,6 +447,7 @@ async function announceStarted(): Promise<void> {
       ? {
           shutdownControlVersion: 1 as const,
           scopedShutdown: true as const,
+          durableWorkerRelease: true as const,
           httpControlVersion: 1 as const,
         }
       : {}),
@@ -444,12 +471,27 @@ async function announceStarted(): Promise<void> {
     closeShutdownControl = watchInstanceShutdown(
       statePath,
       instanceState,
-      (request) =>
-        shutdown(
+      async (request) => {
+        const scoped = request.scope === "host-only";
+        if (scoped && herdr.enhancedWorkersEnabled) {
+          scopedShutdownPreparation = prepareScopedHerdrShutdown();
+          const prepared = await scopedShutdownPreparation;
+          scopedShutdownPreparation = null;
+          if (!prepared) {
+            await refuseInstanceShutdown(
+              statePath,
+              instanceState,
+              request.nonce,
+            );
+            return false;
+          }
+        }
+        await shutdown(
           "authenticated local shutdown",
           0,
-          request.scope === "host-only" ? request.nonce : undefined,
-        ),
+          scoped ? request.nonce : undefined,
+        );
+      },
     );
   diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = application.launchUrl(new URL(instanceUrl(instanceState)).origin);

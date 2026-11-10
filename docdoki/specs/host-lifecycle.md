@@ -272,8 +272,9 @@ Inspire's own Pi workers are child processes the Host owns; terminal Pi and atta
 - Direct workers run under `server/pi-worker-keeper.mjs`, which passes RPC bytes through and, after
   a `detach` control message, keeps Pi's input open when the Host goes away. Under a systemd service
   the keeper starts in its own transient scope so the Host unit's restart does not end it. Herdr
-  workers detach in their pane bridge and release their ownership lease, so no later recovery pass
-  stops them. Without `detach`, losing the Host ends Pi's input.
+  workers detach in their pane bridge after one durable release for all ready enhanced workers,
+  so a retained lease never makes their new owner stop them. Without a detach or release, losing
+  the Host ends Pi's input.
 - Both launch backends retain response-bearing native RPC dialogs beside Pi. After Host-only
   restart, attach-control exposes pending questions with their original IDs and deadlines and
   routes answers into the original RPC stdin. The replacement Host uses the existing browser
@@ -394,7 +395,8 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   shutdown request for that exact process. Start the replacement only after the old Host exits
   with a clean signed receipt for that request. For an active installed service, verify the service
   invocation and wait for it to exit, then start the Host unit. The terminal unit stays running.
-  A running Host that predates scoped shutdown requires one ordinary restart before `--host-only`.
+  A running Host that predates scoped shutdown with durable worker release requires one ordinary
+  restart before `--host-only`.
 
 ### Submission and recovery
 

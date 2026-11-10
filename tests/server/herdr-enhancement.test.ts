@@ -1,6 +1,8 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrEnhancement } from "../../server/herdr-enhancement.js";
@@ -198,6 +200,76 @@ describe.skipIf(process.platform !== "linux")(
       expect(restore).not.toHaveBeenCalled();
       expect(closePane).not.toHaveBeenCalled();
       expect(await registry.list()).toEqual([owned]);
+    });
+
+    it("publishes the entire ownership release or leaves all leases owned", async () => {
+      const { lease, registry } = await harness();
+      const owned = await Promise.all([lease(), lease()]);
+      const workers = await Promise.all(
+        owned.map((item) => registry.grant(item, item.owner)),
+      );
+      await expect(
+        registry.release(workers, () => {
+          throw new Error("Release write failed");
+        }),
+      ).rejects.toThrow("Release write failed");
+      expect(
+        await Promise.all(workers.map((item) => registry.wasReleased(item))),
+      ).toEqual([false, false]);
+      await registry.release(workers);
+      expect(
+        await Promise.all(workers.map((item) => registry.wasReleased(item))),
+      ).toEqual([true, true]);
+      const [released] = workers;
+      expect(
+        await registry.wasReleased({
+          ...released!,
+          owner: { ...released!.owner, birth: "0" },
+        }),
+      ).toBe(false);
+    });
+
+    it("recovers only unreleased work after the old Host exits, even when released leases cannot be deleted", async () => {
+      const { enhancement, root, registry, closePane } = await harness();
+      await promisify(execFileCallback)(process.execPath, [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "-e",
+        `const { HerdrWorkerRegistry } = await import(process.argv[1]);
+        const { mkdtemp } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const registry = new HerdrWorkerRegistry(process.argv[2]);
+        const root = process.argv[3];
+        const workers = [];
+        for (const paneId of ["first", "second", "owned"]) {
+          const lease = await registry.create(root, { serverId: "old", workspaceId: "w", tabId: "t", paneId }, await mkdtemp(join(root, "inspire-herdr-")));
+          if (paneId !== "owned") workers.push(await registry.grant(lease, lease.owner));
+        }
+        await registry.release(workers);`,
+        new URL("../../server/herdr-worker-registry.ts", import.meta.url).href,
+        registry.directory,
+        root,
+      ]);
+      const retained = (await registry.list()).filter((item) => item.group);
+      expect(retained).toHaveLength(2);
+      const remove = registry.remove.bind(registry);
+      vi.spyOn(registry, "remove").mockImplementation(async (item) => {
+        if (item.group)
+          throw Object.assign(new Error("Read-only leases"), { code: "EROFS" });
+        await remove(item);
+      });
+      const stop = vi.spyOn(workerScopes, "stopHerdrProcessGroup");
+      await enhancement.initialize();
+      expect(stop).not.toHaveBeenCalled();
+      expect(closePane).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ paneId: "owned" }),
+      );
+      expect(await registry.list()).toEqual(retained);
+      expect(
+        await Promise.all(retained.map((item) => registry.wasReleased(item))),
+      ).toEqual([true, true]);
+      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
     });
 
     it("fences admission during recovery even when switching back to direct mode", async () => {

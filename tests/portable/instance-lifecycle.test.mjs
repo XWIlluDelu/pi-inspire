@@ -16,15 +16,15 @@ after(async () => {
   );
 });
 
-function childServer(path, token, acknowledgeScope) {
+function childServer(path, token, scopeResult) {
   const source = String.raw`
     import { createServer } from "node:http";
     const { InstanceHttpControl } = await import(process.argv[1]);
     const { processStartIdentity, writeInstanceState, completeInstanceShutdown,
-      removeInstanceState, watchInstanceShutdown } = await import(process.argv[2]);
+      refuseInstanceShutdown, removeInstanceState, watchInstanceShutdown } = await import(process.argv[2]);
     const path = process.argv[3];
     const token = process.argv[4];
-    const acknowledgeScope = process.argv[5] === "true";
+    const scopeResult = process.argv[5];
     const control = new InstanceHttpControl();
     let state;
     const server = createServer(async (request, response) => {
@@ -48,9 +48,13 @@ function childServer(path, token, acknowledgeScope) {
       };
       await writeInstanceState(path, state);
       const close = watchInstanceShutdown(path, state, async (request) => {
+        if (scopeResult === "refuse" && request.scope === "host-only") {
+          await refuseInstanceShutdown(path, state, request.nonce);
+          return false;
+        }
         close();
         server.close(async () => {
-          const nonce = acknowledgeScope && request.scope === "host-only" ? request.nonce : undefined;
+          const nonce = scopeResult === "acknowledge" && request.scope === "host-only" ? request.nonce : undefined;
           await completeInstanceShutdown(path, state, true, nonce);
           await removeInstanceState(path, state);
           process.exit(0);
@@ -69,7 +73,7 @@ function childServer(path, token, acknowledgeScope) {
       new URL("../../server/instance-state.mjs", import.meta.url).href,
       path,
       token,
-      String(acknowledgeScope),
+      scopeResult,
     ],
     { stdio: ["ignore", "pipe", "inherit"] },
   );
@@ -98,11 +102,11 @@ async function firstLine(stream) {
   });
 }
 
-async function fixture(context, acknowledgeScope = false) {
+async function fixture(context, scopeResult = "ordinary") {
   const directory = await mkdtemp(join(tmpdir(), "inspire-instance-proof-"));
   directories.push(directory);
   const path = join(directory, "instance.json");
-  const child = childServer(path, "portable-lifecycle-token", acknowledgeScope);
+  const child = childServer(path, "portable-lifecycle-token", scopeResult);
   context.after(async () => {
     if (child.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise((resolve) => child.once("exit", resolve));
@@ -128,7 +132,7 @@ test("inspects a proven Host and stops it without sending a bearer", async (cont
 });
 
 test("requires an exact owner and request receipt for Host-only shutdown", async (context) => {
-  const { path, expected, state } = await fixture(context, true);
+  const { path, expected, state } = await fixture(context, "acknowledge");
   const wrongOwner = { ...state, processStartTime: "different-birth" };
   const rejected = await stopManagedInstance(path, expected, {
     scopedOwner: wrongOwner,
@@ -141,6 +145,20 @@ test("requires an exact owner and request receipt for Host-only shutdown", async
     timeoutMs: 5_000,
   });
   assert.equal(stopped.kind, "stopped");
+});
+
+test("a signed scoped refusal leaves the owner running and permits a fresh stop", async (context) => {
+  const { path, expected, state } = await fixture(context, "refuse");
+  const refused = await stopManagedInstance(path, expected, {
+    scopedOwner: state,
+    timeoutMs: 5_000,
+  });
+  assert.equal(refused.kind, "cleanup-failed");
+  assert.equal((await inspectInstance(path, expected)).state.pid, state.pid);
+  assert.equal(
+    (await stopManagedInstance(path, expected, { timeoutMs: 5_000 })).kind,
+    "stopped",
+  );
 });
 
 test("an unscoped clean exit does not acknowledge a concurrent Host-only request", async (context) => {

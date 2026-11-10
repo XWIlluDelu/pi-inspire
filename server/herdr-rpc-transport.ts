@@ -99,6 +99,8 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
   private directory: string | null = null;
   private pane: HerdrWorkerPane | null = null;
   private lease: HerdrWorkerLease | null = null;
+  private released = false;
+  private releasePending: Promise<void> | null = null;
   private group: HerdrProcessGroup | null = null;
   private rpc: Socket | null = null;
   private errors: Socket | null = null;
@@ -284,7 +286,14 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     this.assertStarting();
     // Retain stderr even if Pi fails before its ready record can be inspected.
     errors.pipe(this.stderr);
-    writeHerdrBridgeRecord(rpc, this.launch);
+    writeHerdrBridgeRecord(rpc, {
+      ...this.launch,
+      release: {
+        directory: this.options.registry.directory,
+        owner: this.lease.owner,
+        leaseId: this.lease.id,
+      },
+    });
     const ready = herdrBridgeReadySchema.parse(
       await readHerdrBridgeRecord(rpc, this.startup.signal, 1_024),
     );
@@ -297,24 +306,46 @@ export class HerdrRpcTransport extends EventEmitter implements PiRpcTransport {
     this.resolveHandshake();
   }
 
-  /** Leave Pi running in its pane beyond this Host. The pane is no longer
-   * Inspire's, so its lease goes too and no later recovery pass stops it. */
+  leaseForRelease(): HerdrWorkerLease {
+    if (!this.connected || this.stopping || !this.lease?.group)
+      throw new Error(
+        "The enhanced Pi worker is not ready for ownership release",
+      );
+    return this.lease;
+  }
+
+  holdForRelease(pending: Promise<void>): void {
+    this.releasePending = pending;
+  }
+
+  finishRelease(released: boolean): void {
+    this.releasePending = null;
+    this.released = released;
+    if (released) this.stopping = true;
+  }
+
+  /** The bridge makes the same decision from the durable release record even
+   * when Host exit beats socket notification. */
   async detach(): Promise<void> {
-    if (this.stopPromise || !this.connected) return this.stop(true, () => {});
+    if (!this.released) {
+      if (this.stopPromise || !this.connected) return this.stop(true, () => {});
+      throw new Error(
+        "The enhanced Pi worker has no durable ownership release",
+      );
+    }
     this.stopping = true;
     this.connected = false;
-    const errors = this.errors;
-    await new Promise<void>((resolve) =>
-      errors ? errors.end("detach\n", () => resolve()) : resolve(),
-    );
     for (const socket of this.sockets) socket.destroy();
     if (this.server)
       await new Promise<void>((resolve) => this.server!.close(() => resolve()));
-    if (this.lease)
-      await this.options.registry.remove(this.lease).catch(() => {});
+    // The next owner retires the old lease as released. It keeps the marker
+    // until the bridge and any lease whose cleanup failed are both gone.
   }
 
   stop(graceful: boolean, diagnostic: PiRpcStopDiagnostic): Promise<void> {
+    if (this.releasePending)
+      return this.releasePending.then(() => this.stop(graceful, diagnostic));
+    if (this.released) return this.detach();
     if (this.stopPromise) return this.stopPromise;
     this.stopping = true;
     this.connected = false;

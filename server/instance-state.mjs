@@ -78,6 +78,7 @@ function validState(value) {
       value.processStartTime.length > 0 &&
       (value.shutdownControlVersion === undefined || value.shutdownControlVersion === 1) &&
       (value.scopedShutdown === undefined || value.scopedShutdown === true) &&
+      (value.durableWorkerRelease === undefined || value.durableWorkerRelease === true) &&
       (value.systemdInvocationId === undefined ||
         (typeof value.systemdInvocationId === "string" &&
           /^[a-f0-9]{32}$/u.test(value.systemdInvocationId))) &&
@@ -268,20 +269,30 @@ export async function requestInstanceShutdown(path, state, timeoutMs = 15_000, s
   return nonce;
 }
 
-/** Called only after application/worker cleanup, before state removal and exit.
- * A signed failure must not authorize a replacement even if the Host exits. */
-export async function completeInstanceShutdown(path, state, clean, requestNonce) {
-  await writeControl(path + ".shutdown-result", state, {
+function writeShutdownResult(path, state, clean, requestNonce) {
+  return writeControl(path + ".shutdown-result", state, {
     version: 1,
     kind: "result",
     target: shutdownTarget(state),
     clean,
     ...(requestNonce === undefined ? {} : { requestNonce }),
   });
+}
+
+/** Called only after application/worker cleanup, before state removal and exit.
+ * A signed failure must not authorize a replacement even if the Host exits. */
+export async function completeInstanceShutdown(path, state, clean, requestNonce) {
+  await writeShutdownResult(path, state, clean, requestNonce);
   // This incarnation still owns the launcher lease; no successor can have
   // published a request yet. Leave unknown/foreign files alone.
   if (await readControl(path + ".shutdown-request", state, "request", true))
     await rm(path + ".shutdown-request", { force: true }).catch(() => {});
+}
+
+/** The same Host remains live and may receive a fresh request. Leave the
+ * request mailbox untouched so a concurrent writer cannot lose its request. */
+export function refuseInstanceShutdown(path, state, requestNonce) {
+  return writeShutdownResult(path, state, false, requestNonce);
 }
 
 export async function instanceShutdownRequested(path, state) {
@@ -293,16 +304,19 @@ export async function instanceShutdownRequested(path, state) {
 export function watchInstanceShutdown(path, state, onShutdown) {
   let closed = false;
   let pending = false;
+  let lastRequestNonce;
   const poll = async () => {
     if (closed || pending) return;
     pending = true;
     try {
       const request = await readControl(path + ".shutdown-request", state, "request");
-      if (request) {
+      if (request && request.nonce !== lastRequestNonce) {
         if (closed) return;
-        closed = true;
-        clearInterval(timer);
-        await onShutdown(request);
+        lastRequestNonce = request.nonce;
+        if ((await onShutdown(request)) !== false) {
+          closed = true;
+          clearInterval(timer);
+        }
       }
     } finally {
       pending = false;
@@ -525,14 +539,14 @@ export async function inspectInstance(path, expected, options = {}) {
   return { kind: "unavailable", state };
 }
 
-async function waitForProcessExit(path, state, timeoutMs) {
+async function waitForProcessExit(path, state, timeoutMs, requestNonce) {
   const deadline = Date.now() + timeoutMs;
   let nextIdentityCheck = 0;
   while (Date.now() < deadline) {
     // State/socket disappearance is not proof that this process has exited.
     if (!(await processAlive(state.pid))) {
       await removeInstanceState(path, state);
-      return true;
+      return "exited";
     }
     if (Date.now() >= nextIdentityCheck) {
       nextIdentityCheck = Date.now() + 500;
@@ -541,16 +555,21 @@ async function waitForProcessExit(path, state, timeoutMs) {
           (await processStartIdentity(state.pid)) !== state.processStartTime
         ) {
           await removeInstanceState(path, state);
-          return true;
+          return "exited";
         }
       } catch {
         // An inaccessible process identity is not proof of exit. Continue to
         // wait for the PID or its exact process-birth identity to disappear.
       }
     }
+    if (requestNonce) {
+      const result = await readControl(path + ".shutdown-result", state, "result");
+      if (result?.requestNonce === requestNonce && !result.clean)
+        return "failed";
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  return false;
+  return "timeout";
 }
 
 /** Ordinary CLI restart preparation remains compatible with older Hosts. */
@@ -599,7 +618,9 @@ export async function stopManagedInstance(path, expected, options = {}) {
       timeoutMs,
       scoped ? "host-only" : undefined,
     );
-    if (!(await waitForProcessExit(path, state, timeoutMs)))
+    const exit = await waitForProcessExit(path, state, timeoutMs, scoped ? requestNonce : undefined);
+    if (exit === "failed") return { kind: "cleanup-failed", state };
+    if (exit === "timeout")
       return { kind: "timeout", state };
     const result = await readControl(
       path + ".shutdown-result",
@@ -633,7 +654,7 @@ export async function stopManagedInstance(path, expected, options = {}) {
   } catch {
     return { kind: "unavailable", state };
   }
-  return (await waitForProcessExit(path, state, timeoutMs))
+  return (await waitForProcessExit(path, state, timeoutMs)) === "exited"
     ? { kind: "stopped", state }
     : { kind: "timeout", state };
 }

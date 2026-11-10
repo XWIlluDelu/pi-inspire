@@ -11,6 +11,7 @@ export interface InstanceState {
   processStartTime: string;
   shutdownControlVersion?: 1;
   scopedShutdown?: true;
+  durableWorkerRelease?: true;
   systemdInvocationId?: string;
   httpControlVersion?: 1;
 }
@@ -47,8 +48,9 @@ export function removeInstanceState(
 export function consumeStopRequest(path: string): Promise<boolean>;
 export function requestInstanceShutdown(path:string,state:InstanceState,timeoutMs?:number,scope?:"host-only"):Promise<string>;
 export function completeInstanceShutdown(path:string,state:InstanceState,clean:boolean,requestNonce?:string):Promise<void>;
+export function refuseInstanceShutdown(path:string,state:InstanceState,requestNonce:string):Promise<void>;
 export function instanceShutdownRequested(path:string,state:InstanceState):Promise<boolean>;
-export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:(request:{nonce:string;scope?:"host-only"})=>Promise<void>):()=>void;
+export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:(request:{nonce:string;scope?:"host-only"})=>Promise<void | false>):()=>void;
 export function inspectInstance(
   path: string,
   expected: ExpectedInstance,
