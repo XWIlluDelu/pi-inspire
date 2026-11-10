@@ -25,6 +25,7 @@ export function ContextTabStrip({
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const overflowRef = useRef<HTMLDivElement>(null);
+  const overflowFocusFrom = useRef<Element | null>(null);
   const [overflow, setOverflow] = useState<OverflowTab[]>([]);
 
   useLayoutEffect(() => {
@@ -35,6 +36,7 @@ export function ContextTabStrip({
     const measure = () => {
       const width = shell.clientWidth;
       if (!width) return;
+      const focused = document.activeElement;
       const tabs = [...strip.querySelectorAll<HTMLElement>(".ctx__file-tab")];
       // Measure the natural, capped widths before excluding overflow from flex
       // layout. This also covers terminal title changes and inline rename.
@@ -57,10 +59,7 @@ export function ContextTabStrip({
         let active = tabs.findIndex((tab) =>
           tab.classList.contains("ctx__file-tab--active"),
         );
-        if (active < 0)
-          active = tabs.findIndex((tab) =>
-            tab.contains(document.activeElement),
-          );
+        if (active < 0) active = tabs.findIndex((tab) => tab.contains(focused));
         if (active < 0 && tabs.length > 0) active = 0;
         if (active >= 0) {
           visible.add(tabs[active]!);
@@ -77,22 +76,27 @@ export function ContextTabStrip({
       for (const tab of tabs) {
         tab.hidden = !visible.has(tab);
         const button = tab.querySelector<HTMLButtonElement>('[role="tab"]');
-        if (tab.hidden && button)
+        if (tab.hidden && button) {
+          if (tab.contains(focused)) overflowFocusFrom.current = focused;
           next.push({
             button,
             label:
               button.getAttribute("aria-label") ?? button.textContent ?? "",
             title: button.title,
           });
+        }
       }
       trigger.hidden = next.length === 0;
-      if (!next.length && trigger.contains(document.activeElement))
-        strip
-          .closest(".ctx__tabs")
-          ?.querySelector<HTMLButtonElement>(
-            '[role="tab"][aria-selected="true"]',
-          )
-          ?.focus({ preventScroll: true });
+      if (!next.length) {
+        overflowFocusFrom.current = null;
+        if (trigger.contains(focused))
+          strip
+            .closest(".ctx__tabs")
+            ?.querySelector<HTMLButtonElement>(
+              '[role="tab"][aria-selected="true"]',
+            )
+            ?.focus({ preventScroll: true });
+      }
       strip.scrollLeft = 0;
       setOverflow((current) =>
         current.length === next.length &&
@@ -126,6 +130,18 @@ export function ContextTabStrip({
       document.fonts?.removeEventListener("loadingdone", measure);
     };
   }, [stripRef]);
+
+  // The overflow list renders the trigger, so transfer focus after it mounts.
+  useLayoutEffect(() => {
+    const from = overflowFocusFrom.current;
+    overflowFocusFrom.current = null;
+    if (!from || !overflow.length) return;
+    const focused = document.activeElement;
+    if (focused === from || focused === document.body)
+      overflowRef.current
+        ?.querySelector("button")
+        ?.focus({ preventScroll: true });
+  }, [overflow]);
 
   return (
     <div className="ctx__file-tabs-shell" ref={shellRef}>

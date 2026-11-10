@@ -156,6 +156,9 @@ export const Welcome = memo(function Welcome({
   const [projectFileRoot, setProjectFileRoot] = useState<string | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
+    null,
+  );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -516,14 +519,15 @@ export const Welcome = memo(function Welcome({
           owns,
         );
         if (!owns()) return;
-        if (!result.selection) {
+        const selection = result.selection ?? result.defaults;
+        if (!selection) {
           setModelStatus("error");
           return;
         }
-        setResolvedInheritance({ sessionId, selection: result.selection });
-        setPickedModel(result.selection.model);
+        setResolvedInheritance({ sessionId, selection });
+        setPickedModel(selection.model);
         setModelWarning(result.warning ?? null);
-        setModelStatus(result.selection.model ? "ready" : "idle");
+        setModelStatus(selection.model ? "ready" : "idle");
       } catch (error) {
         if (!owns()) return;
         setModelWarning(
@@ -921,6 +925,7 @@ export const Welcome = memo(function Welcome({
             event.preventDefault();
             void start();
           }}
+          sizeActionSlot={sizeActionSlot}
         />
         <div className="composer__meta">
           <div className="composer__selectors">
@@ -1032,6 +1037,7 @@ export const Welcome = memo(function Welcome({
           >
             <Paperclip size={14} aria-hidden />
           </button>
+          <span className="composer__action-slot" ref={setSizeActionSlot} />
           <span className="composer__spacer" />
           <button
             type="submit"

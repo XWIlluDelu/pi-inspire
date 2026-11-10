@@ -370,6 +370,34 @@ describe("hidden project directories", () => {
     expect(toggle()).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("refreshes hidden folders without discarding an unsubmitted address", async () => {
+    const refresh = deferred<HostDirListing>();
+    const browse = vi
+      .mocked(store.browseHostDirs)
+      .mockImplementation((path, hidden) =>
+        path === project.path
+          ? Promise.resolve(project)
+          : hidden
+            ? refresh.promise
+            : Promise.resolve(home),
+      );
+    const onPick = vi.fn();
+    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
+    await screen.findByRole("button", { name: "project" });
+    const input = screen.getByRole("textbox", { name: "Project directory" });
+    const draft = ` ${project.path} `;
+    fireEvent.change(input, { target: { value: draft } });
+    fireEvent.click(toggle());
+    expect(browse).toHaveBeenLastCalledWith(home.path, true);
+    expect(input).toHaveValue(draft);
+    await act(async () => refresh.resolve(hiddenHome));
+    expect(screen.getByRole("button", { name: ".hidden" })).toBeVisible();
+    expect(input).toHaveValue(draft);
+    fireEvent.click(confirm());
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith(project.path));
+    expect(browse).toHaveBeenLastCalledWith(project.path, true);
+  });
+
   it("retains the destination when toggled during navigation and ignores the superseded response", async () => {
     const oldNavigation = deferred<HostDirListing>();
     const newNavigation = deferred<HostDirListing>();

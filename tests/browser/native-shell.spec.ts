@@ -10,7 +10,7 @@ for (const touch of [false, true]) {
       deviceScaleFactor: touch ? 2 : 1,
       contextOptions: { reducedMotion: "reduce" },
     });
-    test("fits the output notice without shrinking touch targets or losing the log action", async ({
+    test("fits the compact output notice and opens the full log", async ({
       page,
     }) => {
       const send = await openEventSession(
@@ -41,7 +41,7 @@ for (const touch of [false, true]) {
         await action.scrollIntoViewIfNeeded();
         await page.evaluate(() => document.fonts.ready);
         expect((await action.boundingBox())!.height).toBeCloseTo(
-          touch ? 44 : 24,
+          touch ? 32 : 24,
           1,
         );
         expect(
@@ -51,7 +51,7 @@ for (const touch of [false, true]) {
       await page.setViewportSize({ width: 1280, height: 900 });
       const note = card.locator(".shell-execution__note");
       expect((await note.boundingBox())!.height).toBeCloseTo(
-        touch ? 60 : 40,
+        touch ? 48 : 40,
         1,
       );
       await expect(action).toHaveAttribute(

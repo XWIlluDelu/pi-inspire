@@ -6,10 +6,10 @@ import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
+  openConversationSearch,
   openFixtureSession,
   pairedPage,
   reloadSession,
-  openConversationSearch,
 } from "./support/navigation";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
@@ -337,6 +337,9 @@ test("reads native-shaped shell History and inspects saved images", async ({
   const fullLog = shellPreview.getByRole("button", {
     name: "View full shell output",
   });
+  await page.setViewportSize({ width: 600, height: 900 });
+  await expect(fullLog).toBeVisible();
+  expect((await fullLog.boundingBox())!.height).toBeCloseTo(24, 1);
   const reference = (await fullLog.getAttribute("data-file-path"))!;
   const resolvedLog = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/api/resources/resolve",

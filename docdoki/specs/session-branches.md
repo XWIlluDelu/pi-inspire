@@ -48,9 +48,9 @@ History search matches the whole trimmed query as a case-insensitive literal phr
 uses whitespace-separated terms. Match emphasis preserves text and accessible role labels. Activity
 disclosures keep complete accessible names and expanded state, without counts or ordinals inferred
 from a bounded page. Keep route marks/current-route metadata aligned with their entry. Empty results
-use shared pane states without repeating the query in the state title. On coarse pointers,
-selectable History rows, disclosures and preview actions keep a minimum 44px height at every
-viewport width. Narrow detail padding remains a separate width-based layout choice.
+use shared pane states without repeating the query in the state title. On coarse pointers, History's
+selectable rows, disclosures and standalone preview actions are at least 44px high at every viewport
+width. Narrow detail padding remains a separate width-based layout choice.
 
 Read complete retained entries in bounded chunks. Ordinary assistant/tool content stays rich;
 native shell records show command, output, status and context inclusion as Shell activity rather
@@ -60,8 +60,9 @@ Markdown, syntax highlighting or terminal-insertion controls. The History body o
 Shell output does not introduce a nested viewport.
 
 Shell Copy reads the complete retained entry and removes transport fences. Once the bounded reader
-is complete, separate Host full-output metadata may offer authorized file preview; keep its path
-available in the tooltip and copied record. Text printed in stdout never becomes that metadata.
+is complete, separate Host full-output metadata may offer authorized file preview. The inline action
+uses the compact output sizing in [[design-system]] and keeps the path available in the tooltip and
+copied record. Text printed in stdout never becomes that metadata.
 History text uses the same authorized file-preview actions as Transcript.
 
 ### Copy, images and read recovery

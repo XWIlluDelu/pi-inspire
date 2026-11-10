@@ -14,6 +14,43 @@ async function openFile(page: Page, path: string) {
   await pane.locator(`[data-workspace-path="${path}"]`).click();
 }
 
+test("@cross-browser keeps tab focus as a context tab moves through overflow", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1500, height: 850 });
+  await page.addInitScript(() =>
+    localStorage.setItem("inspire.ctx-width", "680"),
+  );
+  await pairedPage(page);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await openFile(page, "src/components/TerminalSettingsDialog.tsx");
+  await openFile(page, "tests/browser/fixtures/file-previews/document.md");
+  const pane = page.locator(".ctx");
+  const selected = pane.getByRole("tab", { name: "document.md", exact: true });
+  const closeOther = pane.getByRole("button", {
+    name: "Close TerminalSettingsDialog.tsx",
+    exact: true,
+  });
+  const overflow = pane.getByRole("combobox", {
+    name: "More tabs",
+    exact: true,
+  });
+  await selected.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(closeOther).toBeFocused();
+
+  await page.setViewportSize({ width: 901, height: 850 });
+  await expect(closeOther).toBeHidden();
+  await expect(overflow).toBeFocused();
+  await expect(selected).toHaveAttribute("aria-selected", "true");
+
+  await page.setViewportSize({ width: 1500, height: 850 });
+  await expect(overflow).toBeHidden();
+  await expect(closeOther).toBeVisible();
+  await expect(selected).toBeFocused();
+});
+
 for (const hasTouch of [false, true]) {
   test.describe(`shared file tabs · ${hasTouch ? "touch" : "mouse"}`, () => {
     test.use({ hasTouch });

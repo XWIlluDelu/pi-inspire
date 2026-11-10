@@ -240,6 +240,14 @@ const CATEGORIES: Array<{
   },
 ];
 
+function revealCategory(category: HTMLElement) {
+  category.scrollIntoView({
+    block: "nearest",
+    inline: "nearest",
+    behavior: "instant",
+  });
+}
+
 /** Persistent workbench preferences grouped by user purpose, with secondary
  * install/about/reset utilities kept outside the settings taxonomy. */
 export const SettingsContent = memo(function SettingsContent({
@@ -313,12 +321,7 @@ export const SettingsContent = memo(function SettingsContent({
       '[aria-current="location"]',
     );
     if (!sidebar || !selected) return;
-    const reveal = () =>
-      selected.scrollIntoView({
-        block: "nearest",
-        inline: "nearest",
-        behavior: "instant",
-      });
+    const reveal = () => revealCategory(selected);
     reveal();
     // A viewport change can turn this sidebar into a clipped horizontal strip.
     // Re-reveal only on size/navigation changes, not deliberate strip scrolling.
@@ -345,6 +348,10 @@ export const SettingsContent = memo(function SettingsContent({
                 className={`settings__nav-item ${
                   active ? "settings__nav-item--active" : ""
                 }`}
+                onFocus={(event) => {
+                  if (event.currentTarget.matches(":focus-visible"))
+                    revealCategory(event.currentTarget);
+                }}
                 onClick={() => navigate(category.id)}
               >
                 <span className="settings__nav-icon">{category.icon}</span>

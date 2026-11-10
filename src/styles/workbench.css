@@ -1368,6 +1368,43 @@ button.res__more:hover {
   flex: 1 1 auto;
 }
 
+@container context-pane (max-width: 420px) {
+  .res__row:has(> .changes__source) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    height: auto;
+    row-gap: 2px;
+    padding-block: var(--space-1);
+  }
+
+  .res__row:has(> .changes__source) > :is(svg, .git-mark) {
+    margin-block-start: 2px;
+  }
+
+  .res__row > .changes__source {
+    grid-area: 2 / 2 / auto / -1;
+    display: block;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .changes__source > span:first-child {
+    margin-inline-end: var(--space-1);
+  }
+
+  .res__row:has(> .changes__source) .resource-path__visible {
+    display: block;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .res__row > .changes__source .resource-path,
+  .res__row > .changes__source .resource-path__visible {
+    display: inline;
+  }
+}
+
 .changes__stats,
 .changes__jump {
   display: inline-flex;

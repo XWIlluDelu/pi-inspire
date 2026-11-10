@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { ComposerInput } from "../../src/components/ComposerInput";
@@ -336,22 +337,30 @@ describe("Composer editing and keyboard behavior", () => {
         return new DOMRect(0, 0, 800, height);
       },
     );
-    render(
-      <main>
-        <div className="composer-dock">
-          <div className="composer">
-            <ComposerInput
-              value={"long wrapped text\n".repeat(60)}
-              onChange={vi.fn()}
-              commands={[]}
-              label="Message"
-              placeholder="Message Pi…"
-            />
-            <div className="composer__toolbar" />
+    function VisualViewportComposer() {
+      const [sizeActionSlot, setSizeActionSlot] =
+        useState<HTMLSpanElement | null>(null);
+      return (
+        <main>
+          <div className="composer-dock">
+            <div className="composer">
+              <ComposerInput
+                value={"long wrapped text\n".repeat(60)}
+                onChange={vi.fn()}
+                commands={[]}
+                label="Message"
+                placeholder="Message Pi…"
+                sizeActionSlot={sizeActionSlot}
+              />
+              <div className="composer__toolbar">
+                <span ref={setSizeActionSlot} />
+              </div>
+            </div>
           </div>
-        </div>
-      </main>,
-    );
+        </main>
+      );
+    }
+    render(<VisualViewportComposer />);
     const input = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(input.style.height).toBe("360px");
     fireEvent.click(screen.getByRole("button", { name: "Expand editor" }));

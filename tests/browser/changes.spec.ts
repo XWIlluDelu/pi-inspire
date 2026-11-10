@@ -5,6 +5,73 @@ import type { GitDiffResponse } from "../../shared/contracts";
 import { focusRingClipping } from "./support/focus-bounds";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
+test("@cross-browser keeps destination and origin readable in compact Changes rows", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+  const name = "calibration-observation-summary.json";
+  const path = (display: string) => ({
+    id: Buffer.from(display).toString("base64url"),
+    display,
+    utf8Path: display,
+    workspacePath: display,
+  });
+  const changes = (["renamed", "copied"] as const).map((kind) => ({
+    path: path(`packages/calibration/${kind}/observations/${name}`),
+    worktree: {
+      kind,
+      originalPath: path(`packages/calibration/previous/observations/${name}`),
+    },
+    untracked: false,
+  }));
+  await page.route("**/api/git/status**", (route) =>
+    route.fulfill({
+      json: {
+        kind: "repository",
+        head: {
+          kind: "branch",
+          name: "review/calibration",
+          oid: "b".repeat(40),
+        },
+        files: changes,
+        total: changes.length,
+        truncated: false,
+      },
+    }),
+  );
+  await pairedPage(page);
+  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const pane = page.getByRole("dialog", { name: "Context panel" });
+  await pane.getByRole("tab", { name: "Changes", exact: true }).click();
+  await page.evaluate(() => document.fonts.ready);
+  for (const change of changes) {
+    const { kind, originalPath } = change.worktree;
+    const row = pane.getByRole("button", {
+      name: `${change.path.display}, ${kind}, ${kind} from ${originalPath.display}`,
+      exact: true,
+    });
+    const destination = row.locator(".res__row-name");
+    const origin = row.locator(".changes__source");
+    const destinationBox = (await destination.boundingBox())!;
+    expect((await origin.boundingBox())!.y).toBeGreaterThanOrEqual(
+      destinationBox.y + destinationBox.height,
+    );
+    for (const label of await row.locator(".resource-path__visible").all()) {
+      expect(
+        await label.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return Array.from(range.getClientRects()).every(
+            (rect) => rect.left >= box.left - 1 && rect.right <= box.right + 1,
+          );
+        }),
+      ).toBe(true);
+    }
+  }
+});
+
 for (const touch of [false, true]) {
   test.describe(`resource navigation focus · ${touch ? "coarse" : "fine"} pointer`, () => {
     test.use({

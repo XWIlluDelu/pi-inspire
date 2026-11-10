@@ -566,8 +566,10 @@ test("prompt map navigates user turns and adapts to the narrow workbench", async
   );
   const matches = page.getByLabel("Transcript search matches");
   await expect(matches).toHaveText("0 matches");
+  const count = page.locator(".transcript-search__count");
+  await expect(count).toHaveText("0");
   expect(
-    await matches.evaluate(
+    await count.evaluate(
       (element) => element.scrollWidth - element.clientWidth,
     ),
   ).toBeLessThanOrEqual(1);

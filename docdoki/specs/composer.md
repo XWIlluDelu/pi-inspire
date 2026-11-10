@@ -55,13 +55,15 @@ authority. Append-only transcript updates preserve the active textarea, focus an
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
 delivery is unavailable.
 
-The textarea grows with content. Expand appears at the top right when the compact input scrolls
-and the reading-stage budget leaves room to grow. It expands the same input within the main column,
-preserving text, artifacts, focus and selection. Collapse stays available after the text becomes
-shorter and restores the compact layout. No hidden control reserves an overlay gutter. Wrapping,
-container width and visual-viewport changes update the height budget, which reserves space for
-controls. The Expand/Collapse controls have 44px touch targets and take no Escape ownership from
-completion, modals or Stop.
+The textarea grows with content and follows live typography changes. Empty and fitting input has
+no vertical scrollbar. When the dock compresses the editor, the textarea scrolls if its content
+exceeds the space it actually received. Fractional line heights must not create spurious overflow.
+Expand appears with the existing toolbar actions when the compact input scrolls and the reading
+stage leaves room to grow. It expands the same input, preserving text, artifacts, focus and
+selection. Collapse stays available after the text becomes shorter and restores the compact
+layout. The action uses the surrounding controls' sizing and leaves the writing width unchanged.
+Wrapping, container width and visual-viewport changes update the height budget, which reserves
+space for controls. Expand and Collapse take no Escape ownership from completion, modals or Stop.
 
 ### Retained prompt history
 
@@ -108,8 +110,9 @@ candidates and never adds a reference. Persistent failures keep local feedback.
 The explicit picker in Composer and Welcome uses compact single-line rows with weight-500 filenames
 and parent-directory labels under [[design-system]]. A secondary `@` cue precedes same-line directory
 captions; it is visual only and excluded from paths, titles, accessible names and matching. Long
-filenames elide without overflowing. The search row's bottom boundary spans the input and
-hidden-files toggle; only input focus applies its accent color.
+filenames elide without overflowing. The search row stays on the edge nearest the toolbar trigger
+as the results change. Its boundary against the results spans the input and hidden-files toggle
+and uses the accent color only while the input is focused.
 
 Both searches offer default-off Show hidden files for dot names and native hidden attributes,
 independently of Git ignore. New keeps this filter choice across directory edits while clearing
@@ -458,8 +461,9 @@ session another Pi is running, the notice states that its progress shows here an
 readout shares the notice's left edge and the normal toolbar's Model/Thinking terminology. Readout
 and notice form a content-width group centered in the composer dock, with left-aligned text. The
 group stays within the normal composer width and available viewport space and wraps on narrow
-screens, without adding a card or changing the dock's vertical spacing. It uses the session
-snapshot, not Host defaults or physical response identity. An unknown model stays unavailable
+screens, without adding a card or changing the dock's vertical spacing. The Take over button is
+centered below the text group; notice and error text keep the group's left alignment. It uses the
+session snapshot, not Host defaults or physical response identity. An unknown model stays unavailable
 instead of borrowing a catalog choice. The readout exposes no selection controls and initiates no
 discovery, writes or ownership acquisition.
 
@@ -491,7 +495,8 @@ The first-message editor receives initial autofocus. Directory Enter does not su
 confirmation stays native. The directory browser recovers temporary level/drive reads without
 switching the requested target to Home; only a confirmed invalid or inaccessible initial path
 permits that fallback. Same-scope reloads keep a successful listing, and drive discovery never blocks
-selection. Navigation, visibility, transport changes and dismissal retire obsolete reads.
+selection. Changing hidden-folder visibility refreshes the listing and preserves unsubmitted address
+edits. Navigation, visibility, transport changes and dismissal retire obsolete reads.
 
 A missing typed directory offers one contextual **Create folder and start** action, with no further
 confirmation. Only that action authorizes recursive directory creation; Send, Enter, browsing and
@@ -513,7 +518,8 @@ commands from Pi's public registries, respecting its resource and trust settings
 session-start hooks. Controls and first-message completion use that shared target-owned inventory;
 directory/transport changes immediately retire stale observations. Fresh discovery replaces the
 inherited inventory, including resources removed from that directory. Read-only sources keep known
-choices, but New queries the prospective directory instead of starting source discovery. Unresolved
+choices. If a source becomes read-only, changes owner, or disappears during discovery, New checks
+the prospective directory and uses its defaults for any unresolved selection. Unresolved
 source selection keeps its loading feedback alongside the missing-folder action while recovering,
 and offers Retry only after persistent failure. Existing-session built-ins appear after creation;
 Host Compact also works before the first message.

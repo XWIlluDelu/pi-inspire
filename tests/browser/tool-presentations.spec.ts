@@ -69,6 +69,53 @@ async function openReview(
   });
 }
 
+test("wheels through a fitting CodeMode result into the transcript", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const send = await openReview(page);
+  const call = tool("codemode", { code: 'text("Review summary");' });
+  send(
+    {
+      type: "message_end",
+      message: {
+        ...assistant([]),
+        __inspireMessageId: "before-short-result",
+        content: [{ type: "text", text: "Review notes.\n\n".repeat(40) }],
+      },
+    },
+    { type: "message_end", message: assistant([call]) },
+    {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: call.id,
+        toolName: "codemode",
+        isError: false,
+        content: [{ type: "text", text: "Review summary" }],
+      },
+    },
+  );
+  const conversation = page.getByRole("log");
+  const output = toolCard(page, "codemode").getByRole("group", {
+    name: "Result output",
+  });
+  await expect(output).toContainText("Review summary");
+  await expect(conversation.locator(".rich-text--assistant p")).toHaveCount(40);
+  await page.evaluate(() => document.fonts.ready);
+  await expect(output).toBeInViewport({ ratio: 1 });
+  expect(await output.evaluate((el) => el.scrollHeight - el.clientHeight)).toBe(
+    0,
+  );
+
+  await output.hover();
+  const scrollTop = () => conversation.evaluate((el) => el.scrollTop);
+  const beforeWheel = await scrollTop();
+  expect(beforeWheel).toBeGreaterThan(120);
+  await page.mouse.wheel(0, -120);
+  await expect.poll(scrollTop).toBeLessThan(beforeWheel);
+});
+
 for (const mobile of [false, true]) {
   test.describe(mobile ? "mobile child calls" : "desktop child calls", () => {
     test.use(
@@ -111,8 +158,8 @@ for (const mobile of [false, true]) {
           center: action.y + action.height / 2 - box.y - box.height / 2,
         };
       });
-      expect(layout.height).toBeCloseTo(mobile ? 48 : 28, 1);
-      expect(layout.actionHeight).toBeCloseTo(mobile ? 44 : 24, 1);
+      expect(layout.height).toBeCloseTo(mobile ? 36 : 28, 1);
+      expect(layout.actionHeight).toBeCloseTo(mobile ? 32 : 24, 1);
       expect(Math.abs(layout.center)).toBeLessThanOrEqual(0.5);
       const script = card.getByText("Script", { exact: true });
       await script.click();
@@ -1365,7 +1412,7 @@ test("saved tool images and full logs reopen through the authorized viewers on d
       const coarse = await page.evaluate(
         () => matchMedia("(pointer: coarse)").matches,
       );
-      expect(actionBox!.height).toBeGreaterThanOrEqual(coarse ? 44 : 24);
+      expect(actionBox!.height).toBeGreaterThanOrEqual(coarse ? 32 : 24);
       expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(
         (await page.viewportSize())!.width,
       );
