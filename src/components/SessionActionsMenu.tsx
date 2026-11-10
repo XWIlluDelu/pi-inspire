@@ -33,7 +33,7 @@ import {
   type FloatingMenuConstraints,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
-import { store } from "../store";
+import { shallowEqual, store, useAppState } from "../store";
 import { useSessionActionReorder } from "../use-session-action-reorder";
 import { ButtonLabel } from "./ButtonLabel";
 import { CopyFeedback } from "./CopyFeedback";
@@ -54,6 +54,10 @@ const ACTION_ICONS = {
   "switch-branch": GitFork,
   export: Download,
 };
+
+type BranchListResult =
+  | { branches: BranchLeavesResponse; error?: never }
+  | { branches?: never; error: string };
 
 export function SessionActionsMenu({
   anchorRef,
@@ -84,19 +88,48 @@ export function SessionActionsMenu({
   const overflowRef = useRef<HTMLButtonElement | null>(null);
   const focusRevealed = useRef(false);
   const [expanded, setExpanded] = useState(false);
-  // Quick branch switching; History keeps the full tree.
-  const [branches, setBranches] = useState<BranchLeavesResponse | null>(null);
+  const { viewId, revision, leafId } = useAppState(
+    (state) =>
+      state.sessionId === sessionId
+        ? {
+            viewId: state.transcriptViewId,
+            revision: state.transcriptRevision,
+            leafId: state.transcriptEffectiveLeafId,
+          }
+        : { viewId: null, revision: null, leafId: null },
+    shallowEqual,
+  );
+  const [retry, setRetry] = useState(0);
+  const branchReadKey = JSON.stringify([
+    sessionId,
+    viewId,
+    revision,
+    leafId,
+    retry,
+  ]);
+  const [branchRead, setBranchRead] = useState<{
+    key: string;
+    result: BranchListResult;
+  } | null>(null);
+  const result = branchRead?.key === branchReadKey ? branchRead.result : null;
+  const branches = result?.branches;
   const [choosingBranch, setChoosingBranch] = useState(false);
   useEffect(() => {
     let current = true;
     void store.branchLeaves(sessionId).then(
-      (result) => current && setBranches(result),
-      () => current && setBranches({ leaves: [], total: 0 }),
+      (branches) =>
+        current && setBranchRead({ key: branchReadKey, result: { branches } }),
+      () =>
+        current &&
+        setBranchRead({
+          key: branchReadKey,
+          result: { error: "Could not load branches." },
+        }),
     );
     return () => {
       current = false;
     };
-  }, [sessionId]);
+  }, [branchReadKey, sessionId]);
   const branchViewChanged = useRef(false);
   useLayoutEffect(() => {
     // Opening keeps the menu's own focus; only switching views moves it.
@@ -104,11 +137,17 @@ export function SessionActionsMenu({
       branchViewChanged.current = true;
       return;
     }
-    const target = menuRef.current?.querySelector<HTMLButtonElement>(
-      choosingBranch
-        ? ".session-actions-menu__branch"
-        : '[data-session-action-id="switch-branch"] [data-session-action]',
-    );
+    const menu = menuRef.current;
+    const target = choosingBranch
+      ? (menu?.querySelector<HTMLButtonElement>(
+          ".session-actions-menu__branch",
+        ) ??
+        menu?.querySelector<HTMLButtonElement>(
+          ".session-actions-menu__branch-back",
+        ))
+      : (menu?.querySelector<HTMLButtonElement>(
+          '[data-session-action-id="switch-branch"] [data-session-action]:not(:disabled)',
+        ) ?? overflowRef.current);
     target?.focus({ preventScroll: true });
     target?.scrollIntoView({ block: "nearest" });
   }, [choosingBranch]);
@@ -129,7 +168,7 @@ export function SessionActionsMenu({
     clone: { run: onClone, disabled: cloneDisabled },
     "switch-branch": {
       run: () => setChoosingBranch(true),
-      disabled: !branches || branches.total < 2,
+      disabled: !result || Boolean(branches && branches.total < 2),
       title:
         branches && branches.total < 2
           ? "This session has no other branch"
@@ -255,44 +294,76 @@ export function SessionActionsMenu({
         }
       }}
     >
-      {choosingBranch && branches ? (
+      {choosingBranch ? (
         <>
           <button
             type="button"
             role="menuitem"
-            className="session-actions-menu__overflow"
+            className="session-actions-menu__overflow session-actions-menu__branch-back"
             onClick={() => setChoosingBranch(false)}
           >
             <ChevronLeft size={14} aria-hidden />
             <span>Back to actions</span>
           </button>
-          {branches.leaves.map((leaf) => (
-            <button
-              key={leaf.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={leaf.isCurrent}
-              className="session-actions-menu__branch"
-              onClick={() => {
-                if (leaf.isCurrent) return onClose();
-                void store.selectBranch(sessionId, leaf.id).then((done) => {
-                  if (done) onClose();
-                });
-              }}
-            >
-              <span className="session-actions-menu__branch-mark">
-                {leaf.isCurrent ? <Check size={14} aria-hidden /> : null}
-              </span>
-              <span className="session-actions-menu__branch-text">
-                <span>{leaf.excerpt || "No message"}</span>
-                <span className="session-actions-menu__branch-meta">
-                  {relativeTime(leaf.updatedAt)}
-                  {leaf.isDefault ? " · Default" : ""}
+          {!result ? (
+            <p className="session-actions-menu__note" role="status">
+              Loading branches…
+            </p>
+          ) : result.error ? (
+            <>
+              <p className="session-actions-menu__note" role="alert">
+                {result.error}
+              </p>
+              <button
+                type="button"
+                role="menuitem"
+                className="session-actions-menu__branch"
+                onClick={() => {
+                  menuRef.current
+                    ?.querySelector<HTMLButtonElement>(
+                      ".session-actions-menu__branch-back",
+                    )
+                    ?.focus();
+                  setRetry((count) => count + 1);
+                }}
+              >
+                Retry
+              </button>
+            </>
+          ) : branches && branches.total < 2 ? (
+            <p className="session-actions-menu__note">
+              This session has no other branch.
+            </p>
+          ) : null}
+          {branches &&
+            branches.total >= 2 &&
+            branches.leaves.map((leaf) => (
+              <button
+                key={leaf.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={leaf.isCurrent}
+                className="session-actions-menu__branch"
+                onClick={() => {
+                  if (leaf.isCurrent) return onClose();
+                  void store.selectBranch(sessionId, leaf.id).then((done) => {
+                    if (done) onClose();
+                  });
+                }}
+              >
+                <span className="session-actions-menu__branch-mark">
+                  {leaf.isCurrent ? <Check size={14} aria-hidden /> : null}
                 </span>
-              </span>
-            </button>
-          ))}
-          {branches.total > branches.leaves.length ? (
+                <span className="session-actions-menu__branch-text">
+                  <span>{leaf.excerpt || "No message"}</span>
+                  <span className="session-actions-menu__branch-meta">
+                    {relativeTime(leaf.updatedAt)}
+                    {leaf.isDefault ? " · Default" : ""}
+                  </span>
+                </span>
+              </button>
+            ))}
+          {branches && branches.total > branches.leaves.length ? (
             <p className="session-actions-menu__note">
               History shows all {branches.total} branches.
             </p>

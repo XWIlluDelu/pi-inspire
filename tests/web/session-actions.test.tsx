@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   SESSION_ACTION_IDS,
   type SessionActionId,
@@ -85,6 +85,11 @@ describe("Session headings", () => {
 });
 
 describe("Session actions", () => {
+  beforeEach(() => {
+    vi.spyOn(store, "branchLeaves").mockResolvedValue({ total: 1, leaves: [] });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
   it("copies the complete ID in read-only sessions and reports clipboard failure before retry", async () => {
     const user = userEvent.setup();
     let completeCopy!: () => void;
@@ -194,6 +199,62 @@ describe("Session actions", () => {
     } finally {
       leaves.mockRestore();
       select.mockRestore();
+    }
+  });
+
+  it("retries unavailable branches and refreshes changes to the same session", async () => {
+    const sessionId = "01a163f4-8e43-71df-9bd6-71efa60bd123";
+    const previous = store.getState();
+    const set = (patch: Partial<typeof previous>) =>
+      act(() => (store as unknown as { set(value: unknown): void }).set(patch));
+    const leaves = vi
+      .spyOn(store, "branchLeaves")
+      .mockRejectedValueOnce(new Error("Branch service unavailable"))
+      .mockResolvedValueOnce({ total: 1, leaves: [] })
+      .mockResolvedValue({
+        total: 2,
+        leaves: [
+          {
+            id: "other",
+            excerpt: "Another branch",
+            updatedAt: "2026-08-01T12:00:00Z",
+            isCurrent: false,
+            isDefault: true,
+          },
+        ],
+      });
+    try {
+      set({ sessionId, transcriptRevision: 1 });
+      const user = userEvent.setup();
+      render(<Harness />);
+      await user.click(screen.getByRole("button", { name: "Session title" }));
+      await user.click(screen.getByRole("menuitem", { name: "More actions" }));
+      const switchBranch = screen.getByRole("menuitem", {
+        name: "Switch branch…",
+      });
+      await waitFor(() => expect(switchBranch).toBeEnabled());
+      await user.click(switchBranch);
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Could not load branches",
+      );
+      expect(
+        screen.queryByText("This session has no other branch."),
+      ).toBeNull();
+      await user.click(screen.getByRole("menuitem", { name: "Retry" }));
+      expect(
+        await screen.findByText("This session has no other branch."),
+      ).toBeVisible();
+      set({ transcriptRevision: 2 });
+      expect(
+        await screen.findByRole("menuitemradio", { name: /Another branch/ }),
+      ).toBeVisible();
+      expect(leaves).toHaveBeenCalledTimes(3);
+    } finally {
+      leaves.mockRestore();
+      set({
+        sessionId: previous.sessionId,
+        transcriptRevision: previous.transcriptRevision,
+      });
     }
   });
 

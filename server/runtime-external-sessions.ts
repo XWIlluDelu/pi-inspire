@@ -216,7 +216,14 @@ export class RuntimeExternalSessions {
         return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
     }
-    const native = await this.connector(slot.id, slot.sessionPath, accepts);
+    // An as-yet unprojected leaf may still be on this branch. Include it in
+    // candidate selection, then require a confirmed match after reading Pi.
+    const native = await this.connector(
+      slot.id,
+      slot.sessionPath,
+      (leaf) =>
+        accepts(leaf) || (leaf !== null && !slot.projection?.entry(leaf)),
+    );
     if (native === null) return false;
     if (this.closed || !this.host.current(slot) || slot.process) {
       native.close();

@@ -241,7 +241,10 @@ all acquired handles close. [[composer]] owns the dialog and typed receipts.
 
 When a worker holds a navigation lease away from the latest saved point, show a compact notice above
 the transcript explaining that new messages continue from earlier history. **Restore saved position**
-refreshes the runtime-owned branch projection and restores where the next message will continue.
+refreshes the runtime-owned branch projection and restores where the next message will continue. If
+the saved point is a user or custom message, restoring it retires the idle owned worker and the next
+local action opens Pi at the exact saved point. Other branch ends that Pi can only edit are still
+available through **Edit from here** in History.
 The notice is available with History closed. Dismissing it hides it for the current view and leaves
 the continuation in place. The command palette still offers the restore action. **Clone current branch**
 in the session menu copies through the displayed point without changing the source session.

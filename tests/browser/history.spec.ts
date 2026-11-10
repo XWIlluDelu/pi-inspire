@@ -72,6 +72,10 @@ test("History read failure keeps Retry reachable in short panes", async ({
     [320, 320],
   ]) {
     await page.setViewportSize({ width, height });
+    await expect(pane).toHaveAttribute(
+      "role",
+      width <= 900 ? "dialog" : "complementary",
+    );
     await retry.focus();
     await retry.scrollIntoViewIfNeeded();
     const box = await retry.boundingBox();

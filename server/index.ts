@@ -3,6 +3,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { createInspireServer } from "./app.js";
+import {
+  AttachControlConnection,
+  AttachControlRegistry,
+  unambiguousInstance,
+} from "./attach-control.js";
 import { AttachmentStore } from "./attachments.js";
 import { openBrowser } from "./browser-opener.js";
 import {
@@ -46,11 +51,6 @@ import {
   piInstallation,
   SettingsManager,
 } from "./pi-runtime.js";
-import {
-  AttachControlConnection,
-  AttachControlRegistry,
-  preferredInstance,
-} from "./attach-control.js";
 import { PiSessionActivity } from "./pi-session-activity.js";
 import { PiUpdateChecker } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
@@ -187,9 +187,9 @@ const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
 })
   .setModelMetadataCatalog(modelMetadata)
   .setExternalSessionConnector(async (sessionId, sessionFile, accepts) => {
-    const instance = preferredInstance(
+    const instance = unambiguousInstance(
       (await attachControl.forSession(sessionId, sessionFile)).filter(
-        (record) => record.endpoint && accepts(record.leafId),
+        (record) => accepts(record.leafId),
       ),
     );
     return instance

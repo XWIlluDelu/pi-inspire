@@ -750,6 +750,43 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
+  it("does not silently edit a non-default user-message branch end", async () => {
+    const { runtime, workers, path } = await setup(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    try {
+      await appendFile(
+        path,
+        `${JSON.stringify(entry("unfinished", "a1", "user", "Unanswered side branch", 5))}\n` +
+          `${JSON.stringify(entry("saved", "a2", "assistant", "Saved default", 6))}\n`,
+      );
+      runtime.setExternalSessionPresence(async () => []);
+      await runtime.takeOverSession(SESSION_ID);
+      await expect(
+        runtime.selectBranch(SESSION_ID, "unfinished"),
+      ).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining("Use Edit from here"),
+      });
+      expect(workers[0]!.leafId).toBe("saved");
+      const tree = await runtime.branchTree(SESSION_ID);
+      const edited = await runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        targetId: "unfinished",
+        mode: "edit",
+        revision: tree.revision,
+      });
+      expect(edited.editorText).toBe("Unanswered side branch");
+      expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it.each(["wrong-nonce", "wrong-worker", "malformed", "duplicate"] as const)(
     "fails closed for a %s result and stops the ambiguous worker",
     async (mode) => {
