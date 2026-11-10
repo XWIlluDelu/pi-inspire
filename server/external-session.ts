@@ -51,8 +51,6 @@ export interface ExternalSessionConnection {
     level: NativeModelCatalog["thinkingLevel"],
     beforeSend?: () => void,
   ): Promise<NativeModelSelection>;
-  /** Reload settings, extensions and resources in the attached Pi. */
-  reload(): Promise<void>;
   /** Release Host resources only; never terminate Pi or close its terminal. */
   close(): void;
 }

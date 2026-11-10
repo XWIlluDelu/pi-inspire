@@ -231,14 +231,15 @@ exceeds its limit.
 
 ### attach-control
 
-`extensions/attach-control.ts` is a generic, user-installed Pi extension, independent of Inspire,
-the launcher and Herdr; the Host never installs or injects it. Each live session context publishes
-a private record (session id/file, current leaf, activity, model, process birth identity, endpoint
-and token) and serves a local socket for public-API operations: state, prompt, abort, rename,
-models, model and thinking, reload (through its own command so Pi applies command semantics),
-dialog answers and shutdown. Records are written atomically, removed on session
-shutdown, and dropped by readers when their process identity no longer matches. `PI_ATTACH_CONTROL=0`
-disables it; Inspire sets this for its own workers. The former bridge paths forward to it.
+`extensions/attach-control.ts` is a generic Pi extension. Users can install it for terminal sessions,
+and Inspire loads it with a worker tag for its own Pi workers. Each live session context publishes
+a private record with its session id and file, current leaf, activity, model, process birth identity,
+endpoint and token. The local socket supports state, prompt, abort, rename, model discovery and
+selection, thinking level, dialog answers and shutdown through Pi's public API. It rejects the
+retired reload request because Pi's prompt API can deliver unresolved commands as user messages.
+Records are written atomically, removed on session shutdown, and dropped by readers when their
+process identity no longer matches. `PI_ATTACH_CONTROL=0` disables the extension. The former bridge
+paths forward to it.
 See the [extension guide](../../docs/extensions.md#share-sessions-with-terminal-pi).
 
 Final settlement, not `agent_end`, clears work so retries and queued continuations stay busy.

@@ -21,6 +21,7 @@
 }
 
 .host-restart__status {
+  margin: 0;
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
@@ -2288,6 +2289,7 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: var(--space-2);
+  min-block-size: calc(3lh + var(--space-4));
   padding: var(--space-2) var(--space-3);
   /* The preceding field already supplies the divider. Match the outer border's inner curve. */
   border-radius: 0 0 calc(var(--radius-surface) - 1px)
@@ -2295,6 +2297,23 @@
   background: var(--bg-control);
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
+}
+
+.host-restart__status-copy {
+  flex: 1 1 13rem;
+  min-inline-size: 0;
+}
+
+.host-restart__status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+@container settings-card (max-width: 439px) {
+  .host-restart__status-row {
+    min-block-size: calc(4lh + var(--set-control-h) + var(--space-6));
+  }
 }
 
 /* --- Terminal Settings stepper --- */

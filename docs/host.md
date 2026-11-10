@@ -117,7 +117,7 @@ compare the same page and theme in an ordinary Chrome tab.
 | `inspire` | Start or reopen the matching instance. |
 | `inspire status` | Check the managed Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
-| `inspire restart` | Prepare the next build/runtime, then restart as **Restart Host** does: the Host and its own Pi workers restart, and taken-over Pi reload their settings. Project terminals keep running. |
+| `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
 | `inspire restart --host-only` | Restart Inspire while every Pi process, including Inspire's workers, keeps running with its work. |
 | `inspire restart --all` | Restart this installation's Linux Host and terminal services, closing project terminals in the installed terminal service. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
@@ -167,7 +167,7 @@ subscription secrets, is stored beside the preferences file as
 
 A terminal Pi reports completion, failure and cancellation through
 [attach-control](extensions.md#share-sessions-with-terminal-pi). After updating it, run `/reload` in
-that Pi; a Host-only restart does not reload it.
+that Pi to apply the update.
 
 ## Host and terminal maintenance
 
@@ -175,12 +175,12 @@ that Pi; a Host-only restart does not reload it.
 
 | Action | Effect |
 | --- | --- |
-| **Restart Host** | Restarts Inspire and its own Pi workers, and reloads every terminal Pi it has taken over so they apply current settings. Use it after changing settings or extensions. |
+| **Restart Host** | Restarts Inspire and its own Pi workers. Attached Pi processes keep their loaded settings. To apply changes in a terminal Pi, run `/reload` in its terminal. |
 | **Restart all** | Like Restart Host, and also restarts the installed Linux terminal service, closing its project terminals. |
 
-Restart Host and Restart all check for unfinished work first. If work is running, they offer a
-separately confirmed **Stop work and restart**, which interrupts that work and discards Pending
-input. Idle workers do not block a restart. After a restart, a session a terminal Pi is running
+Restart Host and Restart all check for unfinished work first. After a workload refusal, the same
+row offers **Stop work and restart**. Clicking it interrupts the work and discards Pending input.
+Idle workers do not block a restart. After a restart, a session a terminal Pi is running
 opens read-only with **Take over**, and the rest continue directly. After a disconnect, the browser
 keeps tracking the submitted restart without sending another.
 

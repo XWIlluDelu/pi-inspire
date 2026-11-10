@@ -262,9 +262,9 @@ updates after the next reply.
 
 For an idle Inspire-owned session, `/reload` replaces its worker to reload extensions, skills,
 prompts and context files, resetting worker-local extension state. Other sessions and the Host stay
-unchanged. **Restart Host** replaces all Inspire-owned workers, reloads taken-over terminal Pi
-processes, and applies changed Host configuration. `inspire restart --host-only` keeps every Pi
-process, including Inspire's own workers, and its running work.
+unchanged. **Restart Host** replaces Inspire-owned workers and applies changed Host configuration.
+For an attached terminal Pi, run `/reload` in its terminal. `inspire restart --host-only` keeps every
+Pi process, including Inspire's own workers, and its running work.
 
 <a id="updates"></a>
 
@@ -274,8 +274,8 @@ Settings → System checks Inspire, the installed Pi version and global/user ext
 It reports available releases and installation commands; checking does not install them. After installing
 updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
 older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
-Extension **No updates** describes installation only; use `/reload` in an idle session to load changed
-resources. Terminal Pi sessions you have not taken over keep their own reload lifecycle.
+Extension **No updates** describes installation only. Use `/reload` in an idle session to load changed
+resources. Terminal Pi sessions keep their own reload lifecycle even after Take over.
 
 ## Sessions and terminal use
 

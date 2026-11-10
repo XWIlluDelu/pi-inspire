@@ -14,6 +14,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type AttachControlRequest,
+  requestAttachControl,
+} from "../../extensions/attach-control.js";
+import {
   AttachControlConnection,
   AttachControlRegistry,
 } from "../../server/attach-control.js";
@@ -39,6 +43,7 @@ afterEach(async () => {
 });
 
 const NAVIGATE = "tests/fixtures/pi-navigate-extension.ts";
+const RELOAD = "tests/fixtures/pi-resource-reload-extension.ts";
 
 /** A real Pi with attach-control loaded, as a user's terminal Pi would be. */
 async function livePi(
@@ -221,7 +226,10 @@ async function livePi(
 
 describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
   it("publishes presence and controls the live Pi through its socket", async () => {
-    const { pi, registry, id, sessionFile } = await livePi({}, [NAVIGATE]);
+    const { pi, registry, id, sessionFile } = await livePi({}, [
+      NAVIGATE,
+      RELOAD,
+    ]);
     const [record] = await vi.waitFor(
       async () => {
         const found = await registry.forSession(id, sessionFile);
@@ -273,8 +281,9 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       code: "ATTACH_CONTROL_BRANCH_CHANGED",
     });
 
-    // Reload replaces the extension instance; the binding follows the process.
-    await connection.reload();
+    // Reloading through Pi itself replaces the extension instance, and the
+    // attachment follows the same process to the new socket.
+    await pi.request({ type: "prompt", message: "/fixture-reload" });
     await vi.waitFor(
       async () => {
         const [next] = await registry.forSession(id, sessionFile);
@@ -284,6 +293,35 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       { timeout: 15_000 },
     );
     expect(await connection.read()).toMatchObject({ status: "idle" });
+  }, 60_000);
+
+  it("rejects legacy remote reload without sending a prompt when two copies are loaded", async () => {
+    const { pi, registry, id, sessionFile } = await livePi({}, [
+      "docs/examples/session-activity.ts",
+    ]);
+    const [record] = await vi.waitFor(
+      async () => {
+        const found = await registry.forSession(id, sessionFile);
+        expect(found).toHaveLength(1);
+        return found;
+      },
+      { timeout: 15_000 },
+    );
+    const before = await readFile(sessionFile, "utf8");
+
+    // An old Host sends an operation outside today's typed protocol.
+    await expect(
+      requestAttachControl(record!.endpoint, {
+        op: "reload",
+        token: record!.token,
+        sessionFile,
+      } as unknown as AttachControlRequest),
+    ).resolves.toMatchObject({ ok: false, code: "UNSUPPORTED" });
+
+    await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
+      isStreaming: false,
+    });
+    expect(await readFile(sessionFile, "utf8")).toBe(before);
   }, 60_000);
 
   it("keeps a detached worker running and controllable after its Host lets go", async () => {
@@ -590,9 +628,6 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         return found;
       },
       { timeout: 15_000 },
-    );
-    const { requestAttachControl } = await import(
-      "../../extensions/attach-control.js"
     );
     expect(
       await requestAttachControl(record!.endpoint, {

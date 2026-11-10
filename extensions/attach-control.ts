@@ -4,8 +4,8 @@
  * Each session context publishes a small presence record (session, current
  * branch leaf, activity, model) and serves a private local socket. A client
  * that can read the record (same OS user) can send input, Stop, rename, change
- * model or thinking, compact, reload or move to another point in the tree,
- * all through Pi's public extension API. It adds no tools or model context.
+ * model or thinking, all through Pi's public extension API. It adds no tools
+ * or model context.
  *
  * Install: pi install /absolute/path/to/attach-control.ts
  * Disable for one process: PI_ATTACH_CONTROL=0
@@ -27,7 +27,6 @@ import { isAbsolute, join, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import type {
   ExtensionAPI,
-  ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
@@ -36,7 +35,6 @@ export const ATTACH_CONTROL_STALE_MS = 8_000;
 export const ATTACH_CONTROL_MODEL_READ_TIMEOUT_MS = 15_000;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
-const COMMAND = "attach-control";
 const execFile = promisify(execFileCallback);
 
 export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
@@ -222,8 +220,7 @@ export type AttachControlOperation =
   | { op: "rename"; name: string }
   | { op: "models" }
   | { op: "set_model"; provider: string; modelId: string }
-  | { op: "set_thinking"; level: ThinkingLevel }
-  | { op: "reload" };
+  | { op: "set_thinking"; level: ThinkingLevel };
 
 export type AttachControlRequest = AttachControlOperation & {
   token: string;
@@ -335,17 +332,13 @@ export function requestAttachControl<Response = AttachControlResponse>(
   });
 }
 
-/** Shared by every copy loaded in this process: a user install and a
- * launcher's explicit copy publish once, and either copy's command finds the
- * pending request. */
+/** A user install and a launcher's explicit copy publish one record per Pi. */
 const shared = ((globalThis as Record<symbol, unknown>)[
   Symbol.for("pi.attachControl")
 ] ??= {
   owners: new WeakMap<object, ExtensionAPI>(),
-  requests: new Map<string, (ctx: ExtensionCommandContext) => Promise<void>>(),
 }) as {
   owners: WeakMap<object, ExtensionAPI>;
-  requests: Map<string, (ctx: ExtensionCommandContext) => Promise<void>>;
 };
 
 export default function attachControl(pi: ExtensionAPI) {
@@ -367,7 +360,6 @@ export default function attachControl(pi: ExtensionAPI) {
   let settledTasks: TaskResult[] = [];
   let catalogEpoch = 0;
   const catalogReads = new Set<AbortController>();
-  const commandRequests = shared.requests;
   // Optional launcher-side relay for a Pi started in native RPC mode. TUI
   // instances keep their ordinary terminal dialogs.
   const rpcUi = (() => {
@@ -504,32 +496,6 @@ export default function attachControl(pi: ExtensionAPI) {
     }
   };
 
-  /** Session-tree operations need a command context: run through our own
-   * command so Pi applies its ordinary command semantics. */
-  const viaCommand = (
-    run: (ctx: ExtensionCommandContext) => Promise<void>,
-  ): Promise<void> =>
-    new Promise((resolvePromise, reject) => {
-      const nonce = randomUUID();
-      commandRequests.set(nonce, async (ctx) => {
-        try {
-          await run(ctx);
-          resolvePromise();
-        } catch (error) {
-          reject(error);
-        }
-      });
-      setTimeout(() => {
-        if (commandRequests.delete(nonce))
-          reject(
-            new AttachControlError("TIMEOUT", "Pi did not run the request."),
-          );
-      }, 30_000).unref();
-      pi.sendUserMessage(`/${COMMAND} ${nonce}`, {
-        expandPromptTemplates: true,
-      });
-    });
-
   const perform = async (
     request: AttachControlRequest,
     ctx: ExtensionContext,
@@ -658,14 +624,6 @@ export default function attachControl(pi: ExtensionAPI) {
           throw new AttachControlError("INVALID", "Invalid thinking level.");
         pi.setThinkingLevel(request.level);
         break;
-      case "reload": {
-        // The reply goes out first: reload replaces this extension instance.
-        const state = currentState(ctx);
-        setImmediate(() => {
-          void viaCommand((command) => command.reload()).catch(() => {});
-        });
-        return { ok: true, state };
-      }
       default:
         throw new AttachControlError("UNSUPPORTED", "Unsupported operation.");
     }
@@ -735,22 +693,6 @@ export default function attachControl(pi: ExtensionAPI) {
       );
     });
   };
-
-  pi.registerCommand(COMMAND, {
-    description: "Used by attached clients (attach-control)",
-    handler: async (args, ctx) => {
-      const run = commandRequests.get(args.trim());
-      if (!run) {
-        ctx.ui.notify(
-          "attach-control: this command is used by attached clients.",
-          "info",
-        );
-        return;
-      }
-      commandRequests.delete(args.trim());
-      await run(ctx);
-    },
-  });
 
   pi.on("session_start", async (_event, ctx) => {
     const owner = shared.owners.get(ctx.sessionManager);

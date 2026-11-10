@@ -415,8 +415,8 @@ export interface RuntimeLike extends RestartLeaseOwner {
   ): Promise<BranchNavigateResponse>;
   forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
   resourceContext(sessionId: string): Promise<ResourceContext>;
-  /** Reload every taken-over Pi so it applies current settings. */
-  refreshAttachedPi(interruptWork: boolean): Promise<void>;
+  /** Abort active work in taken-over Pi after explicit confirmation. */
+  stopAttachedPiWork(): Promise<void>;
   /** The coming close is a Host-only restart: keep every worker running. */
   preserveWorkersOnClose(): void;
   close(): Promise<void>;
@@ -935,17 +935,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return { kind: "ready", leaseId, expiresAt };
   }
 
-  async refreshAttachedPi(interruptWork: boolean): Promise<void> {
+  async stopAttachedPiWork(): Promise<void> {
     await Promise.all(
       [...this.slots.values()].map(async (slot) => {
         const connection = this.externalSessions?.connection(slot);
-        if (!connection) return;
+        if (!connection || !isBusyRunState(slot.runState)) return;
         try {
-          if (interruptWork && isBusyRunState(slot.runState))
-            await connection.abort();
-          await connection.reload();
+          await connection.abort();
         } catch (error) {
-          this.logRuntimeError(slot.id, error, "attached_pi_reload");
+          this.logRuntimeError(slot.id, error, "attached_pi_abort");
         }
       }),
     );

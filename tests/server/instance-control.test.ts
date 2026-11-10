@@ -496,7 +496,7 @@ describe("Host local-control ingress", () => {
       ).toBe("released");
       expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
       // CLI restarts declare their scope like the page does.
-      const refresh = vi.spyOn(f.runtime, "refreshAttachedPi");
+      const stopAttachedWork = vi.spyOn(f.runtime, "stopAttachedPiWork");
       // Stubbed: the fixture Host must still stop its test workers.
       const preserve = vi
         .spyOn(f.runtime, "preserveWorkersOnClose")
@@ -513,7 +513,7 @@ describe("Host local-control ingress", () => {
           .expect(200);
         expect(prepared.body.result).toEqual({ kind: "prepared", scope });
       }
-      expect(refresh).toHaveBeenCalledExactlyOnceWith(false);
+      expect(stopAttachedWork).not.toHaveBeenCalled();
       expect(preserve).toHaveBeenCalledOnce();
       owner = null;
       await request(f.application.server)

@@ -127,8 +127,8 @@ session/directory/Host ownership changes; stale asynchronous results cannot popu
 A successful write reports saved-to-file, not applied. For an Inspire-owned session, the optional,
 confirmed **Reload selected session** uses the existing idle-worker Reload path. Busy, unready or
 read-only targets are unavailable with an explanation; a declined dispatch is not reported as sent.
-A taken-over Pi instead receives guidance to run `/reload` in its terminal, or Restart Host
-reloads it. Other workers are unchanged; new workers read the saved configuration.
+For a taken-over terminal Pi, the panel directs the user to run `/reload` in its terminal.
+New workers read the saved configuration.
 Save failure keeps the draft. A successful save followed by a read failure still reports the
 successful commit and asks for Refresh.
 
