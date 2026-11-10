@@ -37,3 +37,4 @@ export function prepareStaticAssetCache(
   cacheDirectory: string,
   options?: StaticAssetCacheOptions,
 ): Promise<StaticAssetCacheResult>;
+export function isCompressibleStaticAsset(path: string): boolean;

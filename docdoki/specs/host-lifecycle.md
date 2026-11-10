@@ -437,6 +437,8 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   Clean release packaging exactly mirrors staged output and omits that outgoing generation from
   the artifact after archiving it. A production Host also registers the active generation in an
   installation-scoped user cache before accepting browser traffic.
+  Builds precompress hashed JavaScript and CSS. The Host serves a matching Brotli or gzip
+  representation when accepted and retains those variants with their original assets.
 
   The active `dist/assets` always wins. Complete prior generations remain available for seven days
   under a 64 MiB stale-asset ceiling, so an already-open page can perform its first deferred import

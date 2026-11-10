@@ -11,9 +11,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { buildWeb } from "../../scripts/build-web.mjs";
 import { publishWebBuild } from "../../scripts/web-build-output.mjs";
 import { sourceBuildHash } from "../../scripts/source-build-hash.mjs";
+import {
+  currentStaticAssetPaths,
+  prepareStaticAssetCache,
+} from "../../server/static-asset-cache.mjs";
 
 const temporaryDirectories = [];
 
@@ -112,6 +117,45 @@ export default {
 });
 
 describe("web build publication", () => {
+  it("publishes and retains gzip and Brotli sidecars with their executable generation", async () => {
+    const dist = await directory("inspire-published-encoded-");
+    const staging = await directory("inspire-staged-encoded-");
+    const cache = await directory("inspire-cached-encoded-");
+    const name = join("nested", "index-hashed.js");
+    const source = 'console.log("fixture");\n'.repeat(100);
+    await put(staging, "index.html", "index\n");
+    await put(staging, join("assets", name), source);
+    await put(staging, "assets/tiny-hashed.css", "body {}\n");
+    await publishWebBuild(staging, dist);
+    const assetPaths = await currentStaticAssetPaths(dist);
+    assert.deepEqual(assetPaths, [
+      name,
+      `${name}.br`,
+      `${name}.gz`,
+      "tiny-hashed.css",
+    ]);
+    const retained = await prepareStaticAssetCache(
+      join(dist, "assets"),
+      cache,
+      { assetPaths },
+    );
+    for (const directory of [
+      join(dist, "assets"),
+      retained.generationDirectories[0],
+    ]) {
+      const original = await readFile(join(directory, name));
+      assert.equal(original.toString(), source);
+      for (const [suffix, decode] of [
+        [".br", brotliDecompressSync],
+        [".gz", gunzipSync],
+      ]) {
+        const compressed = await readFile(join(directory, `${name}${suffix}`));
+        assert.ok(compressed.length < original.length);
+        assert.deepEqual(decode(compressed), original);
+      }
+    }
+  });
+
   it("switches staged output while retaining one outgoing executable generation", async () => {
     const dist = await directory("inspire-published-dist-");
     const firstStaging = await directory("inspire-staged-web-");

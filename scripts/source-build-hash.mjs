@@ -17,6 +17,7 @@ const buildInputs = [
   "package-lock.json",
   "scripts/build-web.mjs",
   "scripts/web-build-output.mjs",
+  "server/static-asset-cache.mjs",
   "scripts/vite-license-notices.ts",
   "scripts/vite-pdf-assets.ts",
   "scripts/licenses",
