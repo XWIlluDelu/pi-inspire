@@ -25,8 +25,9 @@ Settings opens from the topbar as a modal, leaving session navigation in place. 
 Conversation, Behavior, Models, MCP, Adapters and System are separate category views; only the
 selected category is visible, focusable and exposed to assistive technology. Category navigation starts its content at the top;
 scrolling within a category does not change the selection. Drafts, model browsing state and pending
-login attempts remain intact across category switches. Model and credential destinations reveal their
-owning category before locating the requested section.
+login attempts remain intact across category switches. Keyboard focus reveals the whole category
+in the narrow strip without selecting it. Model and credential destinations reveal their owning
+category before locating the requested section.
 
 [[design-system]] owns field-card layout, shared control sizing, selection markers and feedback
 presentation. These rules also apply to Terminal settings.

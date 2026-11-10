@@ -3173,10 +3173,28 @@ export class AppStore {
     inherit = false,
   ): Promise<ModelCatalogResponse> => {
     const api = this.api;
-    const transport = this.transportGeneration;
+    const transport = this.state.transportGeneration;
     if (!api) throw new Error("The Host is unavailable");
-    const result = await api.refreshModels(sessionId, cwd, inherit);
-    if (this.api !== api || this.transportGeneration !== transport)
+    const result = await api
+      .refreshModels(sessionId, cwd, inherit)
+      .catch((error) => {
+        // New may inherit a session's catalog, but creating a new session does
+        // not require ownership of the source or access to its saved history.
+        if (
+          this.api === api &&
+          this.state.transportGeneration === transport &&
+          sessionId &&
+          cwd &&
+          error instanceof ApiError &&
+          (error.status === 404 ||
+            error.code === "EXTERNAL_PI_WRITER_ACTIVE" ||
+            error.code === "SESSION_OWNER_UNAVAILABLE" ||
+            error.code === "SESSION_WORKSPACE_UNAVAILABLE")
+        )
+          return api.refreshModels(undefined, cwd);
+        throw error;
+      });
+    if (this.api !== api || this.state.transportGeneration !== transport)
       throw new Error("The Host connection changed");
     return result;
   };

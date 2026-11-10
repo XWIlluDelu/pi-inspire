@@ -85,8 +85,7 @@ structure; ordinary prose starting with `+` or `-` is not recolored. Native trun
 and result-limit metadata appears as a separate notice. When Pi records a full shell-output file,
 that notice offers “View full output” through the existing session-authorized file viewer.
 Notices read as compact output footnotes, with centered text/actions, a short semantic side rule
-and wrapping when needed. Desktop actions use 24px targets inside 28px single-line notices;
-coarse-pointer actions keep 44px targets. Output-to-Script order and disclosure behavior do not change.
+and wrapping when needed. Inline actions use the compact output sizing in [[design-system]].
 
 Streaming/interrupted edit previews accept incomplete fields and newly started array items without
 discarding earlier typed replacements. Missing old/new sides render no rows; an explicit empty string

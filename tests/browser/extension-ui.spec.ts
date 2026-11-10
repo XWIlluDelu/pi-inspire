@@ -811,11 +811,13 @@ test.describe("short touch workbench", () => {
               const transcript = bounds(".transcript");
               const above = bounds(".extension-dock--above");
               const composer = bounds(".composer");
+              const toolbar = bounds(".composer__meta");
               const below = bounds(".extension-dock--below");
               return (
                 transcript.bottom <= above.top &&
                 above.bottom <= composer.top &&
                 composer.bottom <= below.top &&
+                toolbar.bottom <= composer.bottom &&
                 below.bottom <= stage.bottom &&
                 transcript.height >= 48
               );
@@ -823,6 +825,26 @@ test.describe("short touch workbench", () => {
           )
           .toBe(true);
         await expect(input).toHaveValue(draft);
+        if ((width === 844 || width === 568) && lines.length > 1) {
+          await input.fill("First line of the draft\nSecond line of the draft");
+          await input.evaluate((element: HTMLTextAreaElement) => {
+            element.setSelectionRange(0, 0);
+            element.scrollTop = 0;
+          });
+          await input.hover();
+          await page.mouse.wheel(0, 100);
+          await expect
+            .poll(() =>
+              input.evaluate(
+                (element) =>
+                  element.scrollHeight -
+                  element.clientHeight -
+                  element.scrollTop,
+              ),
+            )
+            .toBeLessThanOrEqual(1);
+          await input.fill(draft);
+        }
         await page
           .getByRole("button", { name: "Send message", exact: true })
           .click({ trial: true });

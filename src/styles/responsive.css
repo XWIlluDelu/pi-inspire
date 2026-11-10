@@ -292,31 +292,14 @@ body.srail-dragging {
   }
 
   .transcript-search--open {
-    max-width: none;
     z-index: 5;
     top: var(--space-2);
     right: max(var(--space-3), var(--safe-right));
     left: max(var(--space-3), var(--safe-left));
     display: flex;
     width: auto;
-    height: auto;
     min-height: 44px;
     padding: 5px var(--space-2);
-    justify-content: flex-start;
-    border-radius: var(--radius-control);
-    background: var(--bg-surface);
-    box-shadow: var(--shadow-1);
-    cursor: default;
-    overflow: visible;
-  }
-
-  .transcript-search input {
-    width: 100%;
-    min-width: 40px;
-  }
-
-  .transcript-search output {
-    min-width: 4em;
   }
 
   .transcript-search > .transcript-search__close {
@@ -480,18 +463,6 @@ body.srail-dragging {
   .prompt-map__toggle {
     width: 44px;
     min-height: 44px;
-  }
-}
-
-@media (max-width: 600px), (pointer: coarse) {
-  .transcript-search input {
-    min-width: 40px;
-  }
-
-  .transcript-search > button {
-    flex: 0 0 36px;
-    width: 36px;
-    height: 36px;
   }
 }
 
@@ -733,14 +704,13 @@ body.srail-dragging {
     flex: 0 0 auto;
     border-right: 0;
     border-bottom: 1px solid var(--hairline);
-    padding: var(--space-2) 12px;
+    padding: var(--space-2) var(--space-4);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    scroll-snap-type: x proximity;
-    scroll-padding-inline: 16px;
-    mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
-    -webkit-mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
+    scroll-padding-inline: var(--space-4);
+    mask-image: linear-gradient(to right, transparent, black var(--space-4), black calc(100% - var(--space-4)), transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black var(--space-4), black calc(100% - var(--space-4)), transparent);
   }
 
   .settings__sidebar::-webkit-scrollbar {
@@ -762,7 +732,10 @@ body.srail-dragging {
     padding: var(--space-1) var(--space-2);
     font-size: var(--text-xs);
     white-space: nowrap;
-    scroll-snap-align: nearest;
+  }
+
+  .settings__nav-item:focus-visible {
+    outline-offset: -2px;
   }
 
   .settings__nav-item--active,
@@ -827,16 +800,6 @@ body.srail-dragging {
     gap: 2px;
   }
 
-  .transcript-search {
-    gap: 2px;
-  }
-
-  .transcript-search output {
-    flex-shrink: 0;
-    width: min-content;
-    white-space: normal;
-  }
-
   .settings__nav-icon {
     display: none;
   }
@@ -844,7 +807,11 @@ body.srail-dragging {
   .welcome__row-project {
     display: none;
   }
+}
 
+/* Leave the selectors a readable row when the tool row includes editor size,
+   usage, and both delivery actions. */
+@media (max-width: 460px) {
   .composer__meta {
     flex-wrap: wrap;
   }

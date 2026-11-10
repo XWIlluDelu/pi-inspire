@@ -470,7 +470,7 @@ function TakeOverNotice({ sessionId }: { sessionId: string }) {
     }
   };
   return (
-    <div role="status">
+    <div className="composer-readonly__notice" role="status">
       <p>Running in another Pi.</p>
       <button
         type="button"

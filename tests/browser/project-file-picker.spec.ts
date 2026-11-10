@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { pairedPage } from "./support/navigation";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(touch ? "touch file picker" : "desktop file picker", () => {
@@ -97,3 +97,51 @@ for (const touch of [false, true]) {
     });
   });
 }
+
+test("keeps the project-file search field still while results refresh @cross-browser", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const files = Array.from({ length: 24 }, (_, index) => ({
+    name: `candidate-${index}.ts`,
+    path: `src/candidate-${index}.ts`,
+    kind: "file",
+  }));
+  await page.route("**/api/files?**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("q") === "candidate")
+      await pending;
+    await route.fulfill({ json: { files, truncated: false } });
+  });
+  await pairedPage(page);
+  await openFixtureSession(page, /Review extension event lifecycle/);
+  await page
+    .getByRole("button", { name: "Add project files", exact: true })
+    .click();
+  const menu = page.getByRole("dialog", { name: "Add project files" });
+  const search = menu.getByRole("combobox", { name: "Search project files" });
+  const options = menu.getByRole("option");
+  await expect(menu).toHaveAttribute("data-placement", "up");
+  await expect(options).toHaveCount(files.length);
+  const initialTop = (await search.boundingBox())!.y;
+  try {
+    await search.fill("candidate");
+    await expect(menu.getByText("Searching…", { exact: true })).toBeVisible();
+    await expect(options).toHaveCount(0);
+    expect(Math.abs((await search.boundingBox())!.y - initialTop)).toBeLessThan(
+      1,
+    );
+    await expect(search).toBeFocused();
+  } finally {
+    release();
+  }
+  await expect(options).toHaveCount(files.length);
+  expect(Math.abs((await search.boundingBox())!.y - initialTop)).toBeLessThan(
+    1,
+  );
+  await expect(search).toBeFocused();
+});

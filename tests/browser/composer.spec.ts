@@ -6,7 +6,11 @@ import {
 } from "../../shared/contracts";
 import { renderedColors } from "./support/colors";
 import { routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  openSettings,
+  pairedPage,
+} from "./support/navigation";
 
 for (const touch of [false, true]) {
   test.describe(`failed-delivery recovery · ${touch ? "touch" : "mouse"}`, () => {
@@ -254,13 +258,14 @@ test("composer selectors stay readable in narrow desktop panes without moving or
   await expect(
     composer.getByRole("textbox", { name: "Message", exact: true }),
   ).toHaveValue("Keep the same pane-sized editor");
-  // The desktop fix must not move the phone layout's existing wrap threshold.
-  await page.setViewportSize({ width: 430, height: 844 });
+  // Compact phones give the selectors their own row before editor actions crowd them.
+  await page.setViewportSize({ width: 480, height: 844 });
   await page
     .getByRole("dialog", { name: "Context panel", exact: true })
     .press("Escape");
   for (const [width, display] of [
-    [430, "contents"],
+    [480, "contents"],
+    [430, "flex"],
     [390, "flex"],
   ] as const) {
     await page.setViewportSize({ width, height: 844 });
@@ -389,6 +394,31 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
     name: "Collapse editor",
     exact: true,
   });
+  const inputOverflow = () =>
+    input.evaluate((element) => element.scrollHeight - element.clientHeight);
+  // Fitting text must not acquire a scrollbar from integer scrollHeight
+  // rounding, and clearing a long draft must restore the same empty height.
+  for (const width of [1440, 480]) {
+    await page.setViewportSize({ width, height: 960 });
+    for (const size of ["compact", "comfortable", "large"]) {
+      await page.evaluate((size) => {
+        document.documentElement.dataset.contentTextSize = size;
+      }, size);
+      await input.fill("Short input");
+      await input.fill("");
+      await expect.poll(inputOverflow).toBe(0);
+      const emptyHeight = (await input.boundingBox())!.height;
+      await input.fill("Long draft line\n".repeat(80));
+      await expect.poll(inputOverflow).toBeGreaterThan(1);
+      await input.fill("");
+      await expect.poll(inputOverflow).toBe(0);
+      expect((await input.boundingBox())!.height).toBe(emptyHeight);
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.dataset.contentTextSize = "comfortable";
+  });
+  await page.setViewportSize({ width: 1440, height: 960 });
   await input.fill("short input");
   await expect(expand).toHaveCount(0);
   const padding = await input.evaluate((element) => ({
@@ -409,10 +439,11 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
     )
     .toBe(true);
   expect(
-    await input.evaluate((element) =>
-      Number.parseFloat(getComputedStyle(element).paddingRight),
-    ),
-  ).toBeGreaterThan(Number.parseFloat(padding.right));
+    await input.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return style.paddingRight === style.paddingLeft;
+    }),
+  ).toBe(true);
   await page.setViewportSize({ width: 1440, height: 960 });
   await expect(expand).toHaveCount(0);
   await page.locator(".composer__file-input").setInputFiles({
@@ -550,13 +581,18 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
     });
     await expect(touchExpand).toBeVisible();
     const bounds = await touchExpand.boundingBox();
-    expect(bounds!.width).toBeGreaterThanOrEqual(44);
-    expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    const attach = await touch
+      .locator(".composer__meta")
+      .getByRole("button", { name: "Attach files", exact: true })
+      .boundingBox();
+    expect(bounds!.width).toBe(attach!.width);
+    expect(bounds!.height).toBe(attach!.height);
     expect(
-      await touchInput.evaluate(
-        (element) => getComputedStyle(element).paddingRight,
-      ),
-    ).toBe("48px");
+      await touchInput.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return style.paddingLeft === style.paddingRight;
+      }),
+    ).toBe(true);
     await touchExpand.tap();
     await expect(
       touch.getByRole("button", { name: "Collapse editor", exact: true }),
@@ -579,5 +615,51 @@ test("composer expansion follows real wrapping and preserves the same editor, ar
     ).toBe(true);
   } finally {
     await touchContext.close();
+  }
+});
+
+test("live Content text size changes reflow the current draft @cross-browser", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await pairedPage(page);
+  await openFixtureSession(page, /Review extension event lifecycle/);
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const changeSize = async (name: string) => {
+    await openSettings(page);
+    const settings = page.getByRole("dialog", {
+      name: "Settings",
+      exact: true,
+    });
+    await settings
+      .getByRole("button", { name: "Display", exact: true })
+      .click();
+    await settings
+      .getByRole("group", { name: "Content text size", exact: true })
+      .getByRole("button", { name, exact: true })
+      .click();
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeHidden();
+  };
+  const draft = "Preserve every line while text grows.\n".repeat(4).trimEnd();
+  try {
+    await changeSize("Compact");
+    await input.fill(draft);
+    const compactHeight = (await input.boundingBox())!.height;
+    await changeSize("Large");
+    await expect(input).toHaveValue(draft);
+    await expect
+      .poll(async () => (await input.boundingBox())!.height)
+      .toBeGreaterThan(compactHeight);
+    await expect
+      .poll(() =>
+        input.evaluate(
+          (element) => element.scrollHeight - element.clientHeight,
+        ),
+      )
+      .toBe(0);
+  } finally {
+    await changeSize("Comfortable");
+    await input.fill("");
   }
 });

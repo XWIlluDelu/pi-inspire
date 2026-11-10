@@ -50,6 +50,7 @@ let defaultModelCwd: string | null;
 let defaultModelAvailable: boolean;
 let projectFileCwd: string | null;
 let directoryFailure: "missing" | "file" | null = null;
+let sourceWriterActive = false;
 
 beforeAll(async () => {
   newSessionBody = null;
@@ -100,6 +101,15 @@ beforeAll(async () => {
     }
     if (url.startsWith("/api/models")) {
       const parsed = new URL(url, "http://local");
+      if (sourceWriterActive && parsed.searchParams.has("sessionId"))
+        return {
+          status: 409,
+          body: {
+            error:
+              "This session is open in another Pi. Take over to continue it here.",
+            code: "EXTERNAL_PI_WRITER_ACTIVE",
+          },
+        };
       if (directoryFailure && parsed.searchParams.has("sessionId"))
         return {
           status: 409,
@@ -211,6 +221,7 @@ beforeEach(mockModelMenuLayout);
 
 afterEach(() => {
   directoryFailure = null;
+  sourceWriterActive = false;
   defaultModelAvailable = true;
   promptGate = null;
   setStartDraft("");
@@ -400,6 +411,47 @@ describe("new-session start surface", () => {
         ).toBeNull();
         expect(start).not.toHaveBeenCalled();
       }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps New usable when its optional catalog source changes owner (model resolving: %s)",
+    async (modelDiscovery) => {
+      defaultModelCwd = null;
+      newSessionBody = null;
+      sourceWriterActive = true;
+      act(() =>
+        FakeWebSocket.instances.at(-1)!.emit({
+          type: "snapshot",
+          data: { active: null, runState: "idle", sessionStatuses: {} },
+        }),
+      );
+      render(
+        <Welcome
+          inherited={{
+            sessionId: "source",
+            cwd: "/same-project",
+            model: modelDiscovery
+              ? null
+              : { provider: "plain", id: "text-only", reasoning: false },
+            modelDiscovery: modelDiscovery ? "loading" : null,
+            thinkingLevel: "off",
+            commands: [],
+          }}
+        />,
+      );
+      const message = screen.getByRole("textbox", { name: "First message" });
+      await waitFor(() => expect(defaultModelCwd).toBe("/same-project"));
+      expect(message).toHaveValue("");
+      expect(screen.queryByText(/open in another Pi/)).toBeNull();
+      fireEvent.change(message, { target: { value: "Independent work" } });
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeEnabled(),
+      );
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(newSessionBody).toBeNull();
     },
   );
 
@@ -755,7 +807,12 @@ describe("new-session start surface", () => {
       value: 180,
     });
     fireEvent.change(message, { target: { value: "Investigate the runtime" } });
-    await waitFor(() => expect(message.style.height).toBe("180px"));
+    await waitFor(() => {
+      const measuredHeight = Number.parseFloat(message.style.height);
+      expect(measuredHeight).toBeGreaterThanOrEqual(message.scrollHeight);
+      expect(measuredHeight).toBeLessThanOrEqual(message.scrollHeight + 1);
+    });
+    const fittedHeight = message.style.height;
 
     fireEvent.click(screen.getByRole("button", { name: "Model" }));
     let models = screen.getByRole("listbox", { name: "Available models" });
@@ -781,6 +838,8 @@ describe("new-session start surface", () => {
         { name: "High" },
       ),
     );
+    expect(screen.getByLabelText("First message")).toBe(message);
+    expect(message.style.height).toBe(fittedHeight);
 
     const pasted = new File(["png"], "image.png", { type: "image/png" });
     fireEvent.paste(message, {

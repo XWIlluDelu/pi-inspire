@@ -400,8 +400,10 @@ Workspace search keeps an opaque surface fill and fine resting border. Conversat
 opaque fill distinct from the reading stage, the shared control radius, a quiet boundary and the
 light shadow; hover strengthens the ink, and focus or a non-empty query uses the accent boundary,
 without changing geometry or letting scrolling text show through.
-Conversation search keeps 36px action targets on touch screens at every width; its input
-can yield space to the match count and actions when both side panes are open.
+Conversation search takes its width from the reading stage. The field's leading edge and the
+navigation buttons stay anchored as the query changes. The field can yield trailing space to a
+compact numeric count with a full accessible announcement. Navigation buttons keep at least 24px
+targets, with 36px targets for touch and phone layouts, clear of the count.
 Workspace and History search share a 34px field, 13px search icon, 12px inner inset and
 8px icon/text gap, starting 4px below the contextual tool header.
 
@@ -427,6 +429,9 @@ without shrinking or rewrapping them; bubbles and attachments stay within the re
 Actions use centered 13px glyphs, 24px mouse or 32px narrow/touch targets and a 4px inter-action
 gap; assistant response Copy uses the same target sizes. Visibility follows
 [Action-button presentation](#action-button-presentation).
+
+User-bubble prose starts flush left and uses a 1.5 line height. Adjacent paragraphs have an 8px gap.
+Single line breaks and automatic wrapping follow the same line height.
 
 Assistant prose and expanded Thinking use open reading flow. Activity headers are transparent
 disclosure rows; [[activity-presentation]] owns their guides, density and reading rhythm. Context
@@ -462,15 +467,17 @@ Attachment file chips put filenames and state ahead of technical metadata. Pendi
 emphasis follows [Action-button presentation](#action-button-presentation); [[composer]] owns
 bounded summaries and action semantics.
 
-Toolbar order is Model, Thinking, project files and attachments, context usage, optional Stop, and
-rightmost Send. Send is icon-only; Stop has a square glyph and filled error-color treatment, including
-compaction and shell cancellation. DOM/tab order follows visual order. On phones, Model and Thinking
-share the first row, with file tools, context and Send/Stop below. At widths up to 420px, selectors
-stay adjacent with an 8px token gap: Thinking keeps its full width and Model shrinks without
-filling spare space. Long model labels truncate inside their trigger. Steer/Queue split their row
-equally. Constrained desktop panes use the compact arrangement under [[workspace-layout]], keeping
-Thinking at full width while long model labels yield. Completion titles wrap without displacing
-adjacent path hints; model badges and selected rows keep AA contrast.
+Toolbar order is Model, Thinking, project files and attachments, optional Expand or Collapse,
+context usage, optional Stop, and rightmost Send. Expand and Collapse use the local utility-button
+size and keep the writing width fixed. Context usage fits the same toolbar row as Send and preserves
+the empty composer's height. Send is icon-only. Stop has a square glyph and filled error-color
+treatment, including compaction and shell cancellation. DOM and tab order follow visual order.
+At viewport widths up to 460px, Model and Thinking share the first row, with file tools, editor
+size, context and Send/Stop below. Selectors in the compact arrangement stay adjacent with an 8px
+gap. Thinking keeps its full width and Model shrinks without filling spare space. Long model labels
+truncate inside their trigger. Steer/Queue split their row equally. Constrained desktop panes also use the
+compact arrangement under [[workspace-layout]]. Completion titles wrap without displacing
+adjacent path hints. Model badges and selected rows keep AA contrast.
 
 Running uses a close, low-opacity theme halo with a 3.6-second opacity cycle. It intercepts no pointer
 input and changes neither geometry nor shadow properties; the normal border and independent focus
@@ -775,9 +782,10 @@ result updates and viewport resizing must not steal focus from a field the user 
 Icon-only actions have centered, nonshrinking square glyphs without native button padding. Code-block
 Copy and Insert in terminal use 13px glyphs in separate 24px mouse / 36px coarse-pointer targets,
 with an 8px touch gap. Focus rings stay inside the compact header, clear of its separator. Hover is
-mouse-only; touch uses local pressed feedback. Direct-shell inline metadata actions use 24px fine-
-pointer / 44px coarse-pointer targets. Tool-result notice actions use the same 24px/44px target tiers;
-a single-line notice with an action adds only 2px vertical padding per side (28px/48px total).
+mouse-only; touch uses local pressed feedback. Inline full-output actions in tool notices and shell
+records use 24px fine-pointer and 32px coarse-pointer targets, including in History. Tool notices
+add 2px vertical padding per side. Shell records keep their own footer padding, and notices wrap
+when their text and actions need more room.
 
 Copy, Fork, Pending Return/Clear and similar actions share three presentation types:
 

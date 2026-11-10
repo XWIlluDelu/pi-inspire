@@ -106,7 +106,8 @@ cap for longer names, bounded by strip width, with matching close slots and labe
 tabs are reachable through a trailing ellipsis that uses the existing dropdown's keyboard and modal
 behavior. The selected tab stays visible, and selecting an overflow entry preserves the underlying
 order. Opening, closing, renaming and resizing recompute the visible subset without unmounting
-readers or terminal processes. Compact pane spacing leaves room for a full tab and the overflow
+readers or terminal processes. If a focused tab control moves into overflow, focus follows to
+More tabs. Compact pane spacing leaves room for a full tab and the overflow
 trigger. Drawers up to 384px and desktop touch panes with up to 342px of content width put the
 tab strip on its own row, keeping the selected tab, overflow and tool targets complete. Fine-pointer
 desktop panes keep one row and tighten the tool widths at their minimum pane size.
@@ -131,7 +132,9 @@ Recent and workspace and the existing item heights. Changes section headings use
 and 12px text origin. The Changes branch-summary row uses the search row's 8px top inset and 34px
 desktop / 40px narrow height, aligning Changes with Recent without an empty placeholder row. List
 surfaces use a 4px outer inset plus their own content padding; both lists reserve the same stable
-native-scrollbar gutter. History's first turn has no duplicate top padding, even when Earlier
+native-scrollbar gutter. In a compact Changes pane, renamed and copied paths put the destination
+above the quieter origin and allow both to wrap so their directories stay distinguishable.
+History's first turn has no duplicate top padding, even when Earlier
 conversation or route navigation precedes it. Fine-pointer desktop History turns and prompts use
 4px vertical padding; Activity keeps its full target, and multiline/current markers keep their
 hierarchy. Earlier conversation is a compact secondary navigation control aligned to the 12px text

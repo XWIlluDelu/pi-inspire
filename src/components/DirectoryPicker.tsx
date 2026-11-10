@@ -25,7 +25,9 @@ export function DirectoryPicker({
   onPick: (path: string) => void;
 }) {
   const [listing, setListing] = useState<HostDirListing | null>(null);
-  const [path, setPath] = useState(initial?.trim() ?? "");
+  const [location, setLocation] = useState(initial?.trim() ?? "");
+  const [draftPath, setDraftPath] = useState<string | null>(null);
+  const path = draftPath ?? location;
   const [roots, setRoots] = useState<HostDirEntry[]>([]);
   const [rootsUnavailable, setRootsUnavailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +88,7 @@ export function DirectoryPicker({
     restoreListFocus.current = Boolean(
       listRef.current?.contains(document.activeElement),
     );
-    setPath(path ?? "");
+    setLocation(path ?? "");
     if (
       listing?.path !== path ||
       hidden !== showHidden ||
@@ -120,7 +122,7 @@ export function DirectoryPicker({
         requested.current = { path: result.path };
         listingTransport.current = transportGeneration;
         setListing(result);
-        setPath(result.path);
+        setLocation(result.path);
         return result;
       })
       .catch((cause: unknown) => {
@@ -140,6 +142,11 @@ export function DirectoryPicker({
       });
   };
 
+  const navigate = (target?: string) => {
+    setDraftPath(null);
+    return load(target);
+  };
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: transport replacement revalidates the live path; navigation and visibility own their own reads.
   useEffect(() => {
     const request = new AbortController();
@@ -147,6 +154,7 @@ export function DirectoryPicker({
     const owns = () =>
       !request.signal.aborted &&
       store.getState().transportGeneration === transportGeneration;
+    setDraftPath(null);
     void load(pathRef.current.trim() || undefined, {
       fallbackHome: initialTransport.current === transportGeneration,
     });
@@ -218,7 +226,7 @@ export function DirectoryPicker({
             readOnly={loading}
             aria-busy={loading}
             onChange={(event) => {
-              setPath(event.target.value);
+              setDraftPath(event.target.value);
               setError(null);
             }}
             onKeyDown={(event) => {
@@ -227,7 +235,7 @@ export function DirectoryPicker({
                 !isComposingKeyboardEvent(event.nativeEvent)
               ) {
                 event.preventDefault();
-                if (path.trim() && !loading) void load(path.trim());
+                if (path.trim() && !loading) void navigate(path.trim());
               }
             }}
           />
@@ -250,7 +258,7 @@ export function DirectoryPicker({
                 type="button"
                 className="dirpicker__root button--quiet"
                 title={`Browse ${root.path}`}
-                onClick={() => void load(root.path)}
+                onClick={() => void navigate(root.path)}
               >
                 <HardDrive size={13} aria-hidden />
                 <span>{root.name}</span>
@@ -271,7 +279,7 @@ export function DirectoryPicker({
               type="button"
               className="dirpicker__row"
               disabled={loading}
-              onClick={() => void load(listing.parent ?? undefined)}
+              onClick={() => void navigate(listing.parent ?? undefined)}
             >
               <CornerLeftUp size={13} aria-hidden />
               <span className="dirpicker__name">..</span>
@@ -283,7 +291,7 @@ export function DirectoryPicker({
               type="button"
               className="dirpicker__row"
               disabled={loading}
-              onClick={() => void load(entry.path)}
+              onClick={() => void navigate(entry.path)}
             >
               <Folder size={13} aria-hidden />
               <span className="dirpicker__name">{entry.name}</span>
@@ -319,7 +327,7 @@ export function DirectoryPicker({
             onClick={() => {
               if (listing && path.trim() === listing.path) onPick(listing.path);
               else
-                void load(path.trim()).then((result) => {
+                void navigate(path.trim()).then((result) => {
                   if (result) onPick(result.path);
                 });
             }}

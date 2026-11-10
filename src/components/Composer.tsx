@@ -248,6 +248,9 @@ export const Composer = memo(function Composer() {
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [dropActive, setDropActive] = useState(false);
+  const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
+    null,
+  );
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -532,6 +535,7 @@ export const Composer = memo(function Composer() {
         label="Message"
         onKeyDown={onKeyDown}
         onPaste={onPaste}
+        sizeActionSlot={sizeActionSlot}
       />
       {deliveryBusy ? (
         <div className="composer__delivery">
@@ -628,6 +632,7 @@ export const Composer = memo(function Composer() {
         >
           <Paperclip size={14} aria-hidden />
         </button>
+        <span className="composer__action-slot" ref={setSizeActionSlot} />
         <span className="composer__spacer" />
         <ContextMeter />
         {abortable ? (

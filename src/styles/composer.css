@@ -35,8 +35,17 @@
   margin: 0;
 }
 
+.composer-readonly__notice {
+  text-align: center;
+}
+
+.composer-readonly__notice > p {
+  text-align: left;
+}
+
 .composer-readonly__settings {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-4);
   margin: 0 0 var(--space-2);
@@ -442,8 +451,8 @@
 }
 
 .composer {
-  /* Boxes (fields, attachments, Send) sit on the content edge; writing,
-     delivery and their labels share the model label's inner column. */
+  /* Fields and Send sit on the outer content edge; attachments, writing
+     and delivery share the model label's inner column. */
   --composer-content-inset: calc(var(--space-2) + 1px);
   position: relative;
   max-width: var(--composer-max);
@@ -540,60 +549,36 @@
 }
 
 .composer__input-wrap {
-  position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 32px;
   min-width: 0;
   padding: var(--space-1);
 }
 
-.composer__expand.icon-button {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  color: var(--muted);
+.composer-dock > .composer .composer__input-wrap {
+  /* The dock can compress this row. The textarea and form keep one line. */
+  min-height: 0;
 }
 
-.composer__expand.icon-button:hover:where(:not(:disabled)) {
-  background: var(--bg-inset);
-  color: var(--ink);
+.composer__action-slot {
+  display: contents;
 }
 
-.composer__expand.icon-button:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 1px;
-}
-
-.composer__input-wrap:has(.composer__expand) .composer__input {
-  padding-right: 32px;
-}
-
-@media (hover: none) and (pointer: coarse) {
-  .composer__expand.icon-button {
-    width: 44px;
-    height: 44px;
-  }
-
-  .composer__input-wrap:has(.composer__expand) .composer__input {
-    padding-right: 48px;
-  }
+.composer__size-action {
+  align-self: center;
 }
 
 .composer__input {
-  min-height: 24px;
+  min-height: calc(1lh + 4px);
   width: 100%;
+  padding-block: 2px;
   border: 0;
   background: transparent;
   resize: none;
+  overflow-y: auto;
   outline: none;
   font-size: var(--text-reading);
   line-height: 1.5;
-  max-height: 40dvh;
 }
 
 .composer .composer__input {
@@ -970,7 +955,6 @@
 @media (hover: none) and (pointer: coarse) {
   .meter {
     min-width: 44px;
-    min-height: 44px;
   }
 }
 
@@ -1064,9 +1048,7 @@
 .composer__attachments {
   list-style: none;
   margin: 0;
-  /* On the box edge: a chip's border and padding land its name on the
-     writing column, and thumbnails line up with the project field. */
-  padding: 0;
+  padding: 0 var(--composer-content-inset);
   display: flex;
   align-items: flex-start;
   flex-wrap: wrap;
@@ -1208,8 +1190,14 @@
   transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
+.picker--files[data-placement="up"] > .file-search-controls {
+  order: 1;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 0;
+}
+
 .picker > .file-search-controls:has(.picker__input:focus) {
-  border-bottom-color: var(--accent-focus);
+  border-color: var(--accent-focus);
 }
 
 @keyframes float-in {

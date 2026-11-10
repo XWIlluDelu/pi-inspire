@@ -344,6 +344,7 @@ export function ComposerInput({
   initialCaretAtEnd = false,
   onPaste,
   onKeyDown,
+  sizeActionSlot,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -375,6 +376,7 @@ export function ComposerInput({
   initialCaretAtEnd?: boolean;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
+  sizeActionSlot: HTMLSpanElement | null;
 }) {
   const completionId = useId();
   const editorId = useId();
@@ -482,6 +484,8 @@ export function ComposerInput({
     const main = wrap.closest("main");
     const composer = wrap.closest(".composer");
     const dock = wrap.closest(".composer-dock");
+    const lineMinimum =
+      Number.parseFloat(getComputedStyle(element).minHeight) || 0;
     let chrome = 0;
     let readingLimit = Infinity;
     if (composer) {
@@ -523,7 +527,10 @@ export function ComposerInput({
     if (composer instanceof HTMLElement && dock) {
       // Flex layout can share a short dock with widgets, but never compress the
       // toolbar or the editor below one readable line.
-      composer.style.setProperty("--composer-min-height", `${chrome + 24}px`);
+      composer.style.setProperty(
+        "--composer-min-height",
+        `${chrome + lineMinimum}px`,
+      );
       const stage = dock.closest<HTMLElement>(".reading-stage");
       if (stage) {
         const dockStyle = getComputedStyle(dock);
@@ -550,7 +557,7 @@ export function ComposerInput({
           (Number.parseFloat(dockStyle.paddingBottom) || 0);
         const readingMinimum = Math.max(
           0,
-          Math.min(144, height * 0.28, editorAndReadingSpace - 24),
+          Math.min(144, height * 0.28, editorAndReadingSpace - lineMinimum),
         );
         stage.style.setProperty("--reading-min-height", `${readingMinimum}px`);
         readingLimit = editorAndReadingSpace - readingMinimum;
@@ -562,7 +569,7 @@ export function ComposerInput({
           composer.getBoundingClientRect().height
         : 0;
     const available = Math.max(
-      48,
+      lineMinimum,
       Math.min(
         viewportHeight * 0.8,
         readingLimit,
@@ -579,13 +586,19 @@ export function ComposerInput({
     const limit = expanded ? available : compactLimit;
     const scrollTop = element.scrollTop;
     element.style.maxHeight = `${limit}px`;
+    // Measure without a scrollbar changing line wrapping. scrollHeight is an
+    // integer; one pixel of room keeps fractional line boxes from overflowing.
+    element.style.overflowY = "hidden";
     element.style.height = "auto";
-    element.style.height = `${expanded ? limit : Math.min(element.scrollHeight, limit)}px`;
+    element.style.height = `${
+      expanded ? limit : Math.min(element.scrollHeight + 1, limit)
+    }px`;
+    // The dock may shrink the editor below its requested height. Let native
+    // overflow follow that final height without affecting the fit measurement.
+    const overflowing = element.scrollHeight > element.clientHeight;
+    element.style.removeProperty("overflow-y");
     element.scrollTop = scrollTop;
-    setCanExpand(
-      available > compactLimit + 1 &&
-        element.scrollHeight > element.clientHeight + 1,
-    );
+    setCanExpand(available > compactLimit + 1 && overflowing);
   }, [expanded, maxHeightRatio]);
 
   useLayoutEffect(() => {
@@ -599,7 +612,7 @@ export function ComposerInput({
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let frame = 0;
     const schedule = () => {
       cancelAnimationFrame(frame);
@@ -614,14 +627,21 @@ export function ComposerInput({
       const dock = wrap.closest(".composer-dock");
       if (dock) observer.observe(dock);
     }
+    const typography = new MutationObserver(schedule);
+    typography.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-content-text-size"],
+    });
     window.addEventListener("resize", schedule);
     window.visualViewport?.addEventListener("resize", schedule);
-    void document.fonts?.ready.then(schedule);
+    document.fonts?.addEventListener("loadingdone", schedule);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      typography.disconnect();
       window.removeEventListener("resize", schedule);
       window.visualViewport?.removeEventListener("resize", schedule);
+      document.fonts?.removeEventListener("loadingdone", schedule);
     };
   }, [resizeEditor]);
 
@@ -983,7 +1003,7 @@ export function ComposerInput({
     <>
       <div
         ref={inputWrapRef}
-        className={`composer__input-wrap${expanded ? " composer__input-wrap--expanded" : ""}`}
+        className="composer__input-wrap"
         role="combobox"
         aria-label={completionLabel}
         aria-haspopup="listbox"
@@ -1050,38 +1070,41 @@ export function ComposerInput({
           autoCorrect="off"
           data-modal-autofocus={autoFocus || undefined}
         />
-        {expanded || canExpand ? (
-          <button
-            type="button"
-            className="composer__expand icon-button"
-            aria-label={expanded ? "Collapse editor" : "Expand editor"}
-            title={expanded ? "Collapse editor" : "Expand editor"}
-            aria-expanded={expanded}
-            aria-controls={editorId}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const element = textareaRef.current;
-              const start = element?.selectionStart ?? 0;
-              const end = element?.selectionEnd ?? start;
-              const direction = element?.selectionDirection ?? "none";
-              setExpanded((current) => !current);
-              element?.focus({ preventScroll: true });
-              element?.setSelectionRange(start, end, direction);
-            }}
-          >
-            {expanded ? (
-              <Minimize2 size={16} aria-hidden />
-            ) : (
-              <Maximize2 size={16} aria-hidden />
-            )}
-          </button>
-        ) : null}
       </div>
       {commandUsageHint(value, includeNativeCommands) ? (
         <div className="composer__usage" role="note">
           {commandUsageHint(value, includeNativeCommands)}
         </div>
       ) : null}
+      {sizeActionSlot && (expanded || canExpand)
+        ? createPortal(
+            <button
+              type="button"
+              className="composer__size-action icon-button"
+              aria-label={expanded ? "Collapse editor" : "Expand editor"}
+              title={expanded ? "Collapse editor" : "Expand editor"}
+              aria-expanded={expanded}
+              aria-controls={editorId}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const element = textareaRef.current;
+                const start = element?.selectionStart ?? 0;
+                const end = element?.selectionEnd ?? start;
+                const direction = element?.selectionDirection ?? "none";
+                setExpanded((current) => !current);
+                element?.focus({ preventScroll: true });
+                element?.setSelectionRange(start, end, direction);
+              }}
+            >
+              {expanded ? (
+                <Minimize2 size={16} aria-hidden />
+              ) : (
+                <Maximize2 size={16} aria-hidden />
+              )}
+            </button>,
+            sizeActionSlot,
+          )
+        : null}
       {completion
         ? createPortal(
             <CompletionMenu

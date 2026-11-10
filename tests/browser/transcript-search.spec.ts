@@ -110,6 +110,78 @@ test("compact code actions keep square centered icons before and after copying",
   await checkIcons();
 });
 
+test("@cross-browser conversation search keeps its anchor and separates results from navigation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 850 });
+  const emit = await openEventSession(
+    page,
+    "Conversation search geometry",
+    configuration,
+    {},
+  );
+  const text = Array.from({ length: 12 }, () => "calibration").join(" ");
+  emit({
+    type: "message_end",
+    message: { role: "user", content: text, timestamp: 1 },
+  });
+  const input = await openConversationSearch(page);
+  await page.evaluate(() => document.fonts.ready);
+  const search = page.getByRole("search", { name: "Search conversation" });
+  const result = search.getByRole("status", {
+    name: "Transcript search matches",
+  });
+  const count = search.locator(".transcript-search__count");
+  const previous = search.getByRole("button", {
+    name: "Previous transcript match",
+  });
+  const next = search.getByRole("button", { name: "Next transcript match" });
+  const before = await search.boundingBox();
+  const fieldStart = (await input.boundingBox())!.x;
+  const nextStart = (await next.boundingBox())!.x;
+
+  await input.fill("calibration");
+  await expect(result).toHaveText("12 matches");
+  expect(await search.boundingBox()).toEqual(before);
+  expect((await input.boundingBox())!.x).toBe(fieldStart);
+  expect((await next.boundingBox())!.x).toBe(nextStart);
+
+  await page.setViewportSize({ width: 901, height: 850 });
+  const expand = page.getByRole("button", {
+    name: "Expand navigation",
+    exact: true,
+  });
+  if (await expand.isVisible()) await expand.click();
+  const context = page.getByRole("button", {
+    name: "Toggle resources panel",
+  });
+  if ((await context.getAttribute("aria-expanded")) !== "true")
+    await context.click();
+  await expect(page.locator(".ctx")).toBeVisible();
+  await expect(count).toHaveText("12");
+  const previousBox = (await previous.boundingBox())!;
+  const nextBox = (await next.boundingBox())!;
+  expect(previousBox.width).toBeGreaterThanOrEqual(24);
+  expect(previousBox.height).toBeGreaterThanOrEqual(24);
+  expect(nextBox.width).toBeGreaterThanOrEqual(24);
+  expect(nextBox.height).toBeGreaterThanOrEqual(24);
+  expect(
+    await count.evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().right;
+    }),
+  ).toBeLessThan(previousBox.x);
+  await input.focus();
+  await page.keyboard.press("Tab");
+  await expect(previous).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(next).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(result).toHaveText("1 of 12");
+  await expect(count).toHaveText("1/12");
+});
+
 test("composition keys do not navigate transcript matches or dismiss search", async ({
   page,
 }) => {

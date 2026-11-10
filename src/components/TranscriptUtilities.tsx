@@ -37,6 +37,12 @@ export function TranscriptUtilities({
   onOpenMobile: (tool: MobileTranscriptTool) => void;
   onClose: (restoreFocus?: boolean) => void;
 }) {
+  const matchCount = search.matches.length;
+  const currentMatch = Math.min(search.currentMatch + 1, matchCount);
+  const matchStatus = currentMatch
+    ? `${currentMatch} of ${matchCount}`
+    : `${matchCount} ${matchCount === 1 ? "match" : "matches"}`;
+
   return (
     <>
       <div className="transcript-mobile-toolbar">
@@ -112,19 +118,26 @@ export function TranscriptUtilities({
           aria-label="Search conversation"
           title="Search loaded conversation messages"
         />
-        <output aria-live="polite" aria-label="Transcript search matches">
-          {search.query
-            ? search.matches.length > 0
-              ? search.currentMatch >= 0
-                ? `${search.currentMatch + 1} of ${search.matches.length}`
-                : `${search.matches.length} ${search.matches.length === 1 ? "match" : "matches"}`
-              : "0 matches"
-            : ""}
+        <output
+          className="sr-only"
+          aria-live="polite"
+          aria-label="Transcript search matches"
+        >
+          {search.query ? matchStatus : ""}
         </output>
+        {search.query ? (
+          <span
+            className="transcript-search__count"
+            aria-hidden="true"
+            title={matchStatus}
+          >
+            {currentMatch ? `${currentMatch}/${matchCount}` : matchCount}
+          </span>
+        ) : null}
         <button
           type="button"
           aria-label="Previous transcript match"
-          disabled={search.matches.length === 0}
+          disabled={matchCount === 0}
           onClick={() => search.navigate(-1)}
         >
           <ChevronUp size={13} aria-hidden />
@@ -132,7 +145,7 @@ export function TranscriptUtilities({
         <button
           type="button"
           aria-label="Next transcript match"
-          disabled={search.matches.length === 0}
+          disabled={matchCount === 0}
           onClick={() => search.navigate(1)}
         >
           <ChevronDown size={13} aria-hidden />

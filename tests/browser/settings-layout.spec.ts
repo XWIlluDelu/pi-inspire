@@ -252,6 +252,42 @@ test("selected Settings categories remain visible across responsive layouts with
   await expect(
     navigation.getByRole("button", { name: "Display", exact: true }),
   ).toHaveAttribute("aria-current", "location");
+
+  await page.setViewportSize({ width: 320, height: 640 });
+  for (const name of [
+    "Conversation",
+    "Behavior",
+    "Models",
+    "MCP",
+    "Adapters",
+    "System",
+  ]) {
+    await page.keyboard.press("Tab");
+    await expect(
+      navigation.getByRole("button", { name, exact: true }),
+    ).toBeFocused();
+  }
+  const system = navigation.getByRole("button", {
+    name: "System",
+    exact: true,
+  });
+  await expect(navigation.locator('[aria-current="location"]')).toHaveText(
+    "Display",
+  );
+  await expect
+    .poll(() => system.evaluate(focusRingClipping))
+    .toBeLessThanOrEqual(0.5);
+  await expect
+    .poll(() =>
+      system.evaluate((button) => {
+        const strip = button.closest("nav")!;
+        return (
+          strip.getBoundingClientRect().right -
+          button.getBoundingClientRect().right
+        );
+      }),
+    )
+    .toBeGreaterThanOrEqual(15.5);
 });
 
 test("Settings headings sit outside their cards and nested fills follow the border", async ({
