@@ -2,6 +2,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -346,6 +347,82 @@ describe("Host browser authentication and asset access", () => {
       .set("X-Forwarded-Proto", "https")
       .send({ certificate: paired.body.certificate })
       .expect(401);
+  });
+
+  it("negotiates build-time compression without changing asset types, validators, or ranges", async () => {
+    const dist = await mkdtemp(join(tmpdir(), "inspire-auth-encoding-"));
+    const retained = join(dist, "retained");
+    const assets = join(dist, "assets");
+    const source = 'console.log("fixture");\n'.repeat(100);
+    const css = ".fixture { display: block; }\n".repeat(100);
+    await Promise.all([mkdir(assets), mkdir(retained)]);
+    await Promise.all([
+      writeFile(join(dist, "index.html"), "index"),
+      writeFile(join(assets, "app-hashed.js"), source),
+      writeFile(join(assets, "app-hashed.js.br"), brotliCompressSync(source)),
+      writeFile(join(assets, "app-hashed.js.gz"), gzipSync(source)),
+      writeFile(join(retained, "old-hashed.css"), css),
+      writeFile(join(retained, "old-hashed.css.gz"), gzipSync(css)),
+    ]);
+    const served = await hostApiFixture({
+      distDir: dist,
+      staticAssetCacheDirs: [retained],
+    });
+    try {
+      const url = `${served.baseUrl}/assets/app-hashed.js?v=1`;
+      const br = await fetch(url, {
+        headers: { "Accept-Encoding": "br, gzip" },
+      });
+      expect(br.status).toBe(200);
+      expect(br.headers.get("content-type")).toMatch(/^text\/javascript/);
+      expect(br.headers.get("content-encoding")).toBe("br");
+      expect(br.headers.get("cache-control")).toContain("immutable");
+      expect(br.headers.get("vary")).toBe("Accept-Encoding");
+      expect(Number(br.headers.get("content-length"))).toBeLessThan(
+        Buffer.byteLength(source),
+      );
+      expect(await br.text()).toBe(source);
+
+      const head = await request(served.application.server)
+        .head("/assets/app-hashed.js")
+        .set("Accept-Encoding", "gzip, br;q=0.5")
+        .expect(200);
+      expect(head.headers["content-encoding"]).toBe("gzip");
+      expect(head.headers.etag).not.toBe(br.headers.get("etag"));
+      await request(served.application.server)
+        .get("/assets/app-hashed.js")
+        .set("Accept-Encoding", "br")
+        .set("If-None-Match", br.headers.get("etag")!)
+        .expect(304)
+        .expect("Vary", "Accept-Encoding");
+
+      const identity = await fetch(url, {
+        headers: { "Accept-Encoding": "br;q=0, gzip;q=0" },
+      });
+      expect(identity.headers.get("content-encoding")).toBeNull();
+      expect(identity.headers.get("vary")).toBe("Accept-Encoding");
+      expect(await identity.text()).toBe(source);
+      const range = await fetch(url, {
+        headers: { "Accept-Encoding": "br, gzip", Range: "bytes=0-6" },
+      });
+      expect(range.status).toBe(206);
+      expect(range.headers.get("content-encoding")).toBeNull();
+      expect(range.headers.get("content-range")).toBe(
+        `bytes 0-6/${Buffer.byteLength(source)}`,
+      );
+      expect(await range.text()).toBe(source.slice(0, 7));
+
+      const old = await fetch(`${served.baseUrl}/assets/old-hashed.css`, {
+        headers: { "Accept-Encoding": "gzip" },
+      });
+      expect(old.status).toBe(200);
+      expect(old.headers.get("content-type")).toMatch(/^text\/css/);
+      expect(old.headers.get("content-encoding")).toBe("gzip");
+      expect(await old.text()).toBe(css);
+    } finally {
+      await closeHostApiFixture(served);
+      await rm(dist, { recursive: true, force: true });
+    }
   });
 
   it("serves current/retained assets and exchanges only direct launch URLs for one-use fragments", async () => {

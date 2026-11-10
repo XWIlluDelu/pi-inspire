@@ -77,6 +77,7 @@ import type { ResourceStore } from "./resources.js";
 import type { RuntimeLike } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
+import { staticWebAssets } from "./static-web-assets.js";
 import {
   type NotificationPrincipal,
   pushSubscriptionSchema,
@@ -2086,20 +2087,9 @@ export function createInspireServer(deps: AppDependencies): {
     // Content-hashed bundles under /assets are safe to cache forever. Serve
     // the active build first, then bounded prior generations so a connected
     // old page can still perform its first lazy import after a Host rebuild.
-    const immutableAssets = {
-      immutable: true,
-      maxAge: "1y",
-      fallthrough: true,
-    } as const;
-    app.use(
-      "/assets",
-      express.static(join(distDir, "assets"), immutableAssets),
-    );
+    app.use("/assets", staticWebAssets(join(distDir, "assets")));
     for (const cacheDirectory of deps.staticAssetCacheDirs ?? [])
-      app.use(
-        "/assets",
-        express.static(resolve(cacheDirectory), immutableAssets),
-      );
+      app.use("/assets", staticWebAssets(resolve(cacheDirectory)));
     // A missing module is an asset error, never a client-side route. Returning
     // index.html here both hides the cause and lets a Service Worker cache HTML
     // under a JavaScript URL.

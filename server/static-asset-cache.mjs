@@ -23,6 +23,19 @@ const STATIC_ASSET_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_STALE_STATIC_ASSET_BYTES = 64 * 1024 * 1024;
 const GENERATION_ID = /^[a-f0-9]{64}$/u;
 
+export function isCompressibleStaticAsset(path) {
+  return /\.(?:m?js|css)$/iu.test(path);
+}
+
+function isCacheableAsset(path) {
+  const extension = extname(path).toLowerCase();
+  return (
+    CACHEABLE_EXTENSIONS.has(extension) ||
+    ((extension === ".br" || extension === ".gz") &&
+      isCompressibleStaticAsset(path.slice(0, -extension.length)))
+  );
+}
+
 function rootKey(root) {
   return createHash("sha256").update(root).digest("hex");
 }
@@ -52,10 +65,7 @@ async function cacheableFiles(root, relativePath = "") {
   for (const entry of entries) {
     const child = join(relativePath, entry.name);
     if (entry.isDirectory()) files.push(...(await cacheableFiles(root, child)));
-    else if (
-      entry.isFile() &&
-      CACHEABLE_EXTENSIONS.has(extname(entry.name).toLowerCase())
-    ) {
+    else if (entry.isFile() && isCacheableAsset(entry.name)) {
       const info = await stat(join(root, child));
       files.push({ relativePath: child, size: info.size });
     }
@@ -68,11 +78,7 @@ async function cacheableFiles(root, relativePath = "") {
 async function selectedCacheableFiles(root, relativePaths) {
   const selected = [...new Set(relativePaths)].sort();
   if (
-    !selected.every(
-      (path) =>
-        safeRelativePath(path) &&
-        CACHEABLE_EXTENSIONS.has(extname(path).toLowerCase()),
-    )
+    !selected.every((path) => safeRelativePath(path) && isCacheableAsset(path))
   )
     throw new Error("Static asset selection contains an invalid path");
   return Promise.all(
@@ -101,9 +107,7 @@ export async function currentStaticAssetPaths(distDirectory) {
       Array.isArray(parsed.assets) &&
       parsed.assets.every(safeRelativePath)
     )
-      return parsed.assets.filter((path) =>
-        CACHEABLE_EXTENSIONS.has(extname(path).toLowerCase()),
-      );
+      return parsed.assets.filter(isCacheableAsset);
   } catch {
     // Builds created before the manifest existed had a clean assets directory,
     // so scanning it is the correct migration fallback.

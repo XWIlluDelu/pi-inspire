@@ -10,10 +10,42 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import { brotliCompress, constants, gzip } from "node:zlib";
 import {
   CURRENT_WEB_ASSETS_MANIFEST,
   currentStaticAssetPaths,
+  isCompressibleStaticAsset,
 } from "../server/static-asset-cache.mjs";
+
+const brotli = promisify(brotliCompress);
+const gzipBytes = promisify(gzip);
+const MIN_COMPRESSIBLE_BYTES = 1_024;
+
+async function precompressAssets(directory, paths) {
+  const encodedPaths = [];
+  for (const relativePath of paths) {
+    if (!isCompressibleStaticAsset(relativePath)) continue;
+    const file = join(directory, relativePath);
+    if ((await stat(file)).size < MIN_COMPRESSIBLE_BYTES) continue;
+    const bytes = await readFile(file);
+    const [br, gz] = await Promise.all([
+      brotli(bytes, {
+        params: { [constants.BROTLI_PARAM_QUALITY]: 6 },
+      }),
+      gzipBytes(bytes),
+    ]);
+    for (const [suffix, encoded] of [
+      [".br", br],
+      [".gz", gz],
+    ]) {
+      if (encoded.length >= bytes.length) continue;
+      await writeFile(`${file}${suffix}`, encoded);
+      encodedPaths.push(`${relativePath}${suffix}`);
+    }
+  }
+  return encodedPaths;
+}
 
 async function regularFiles(root, relativePath = "") {
   const entries = await readdir(join(root, relativePath), {
@@ -78,7 +110,12 @@ export async function publishWebBuild(
   const outgoing = retainOutgoing
     ? await currentStaticAssetPaths(distDirectory)
     : [];
-  const stagingAssets = await regularFiles(join(stagingDirectory, "assets"));
+  const stagingRoot = join(stagingDirectory, "assets");
+  const stagedAssets = await regularFiles(stagingRoot);
+  const encodedAssets = await precompressAssets(stagingRoot, stagedAssets);
+  const stagingAssets = [
+    ...new Set([...stagedAssets, ...encodedAssets]),
+  ].sort();
   const keep = new Set([...stagingAssets, ...outgoing]);
 
   for (const relativePath of stagingAssets) {
