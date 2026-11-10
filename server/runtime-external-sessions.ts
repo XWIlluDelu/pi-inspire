@@ -208,7 +208,8 @@ export class RuntimeExternalSessions {
     if (this.closed || slot.process || !slot.sessionPath) return false;
     const previous = this.connections.get(slot);
     if (previous) {
-      if (await this.refreshConnection(slot, previous, false)) return true;
+      if (await this.refreshConnection(slot, previous, { release: false }))
+        return true;
       if (this.closed || !this.host.current(slot) || slot.process) return false;
     }
     const native = await this.connector(slot.id, slot.sessionPath, (leaf) => {
@@ -277,7 +278,10 @@ export class RuntimeExternalSessions {
   private async refreshConnection(
     slot: RuntimeSlot,
     connection: Connection,
-    release = true,
+    {
+      release = true,
+      requireObservation = false,
+    }: { release?: boolean; requireObservation?: boolean } = {},
   ): Promise<boolean> {
     const read = ++this.readSequence;
     const selectionRevision = connection.selectionRevision;
@@ -286,7 +290,8 @@ export class RuntimeExternalSessions {
       | undefined;
     try {
       state = await connection.native.read();
-    } catch {
+    } catch (error) {
+      if (requireObservation) throw error;
       // A transient failure keeps the attachment; its poll continues.
     }
     if (state) await this.reconcileReportedLeaf(slot, state);
@@ -646,13 +651,20 @@ export class RuntimeExternalSessions {
     });
   }
 
-  async abort(slot: RuntimeSlot, requireBranch = false): Promise<void> {
+  async abort(slot: RuntimeSlot, forRestart = false): Promise<void> {
     const connection = this.connections.get(slot);
     if (!connection)
       throw requestError("The external Pi connection has ended.", 409);
-    const leafId = connection.state.leafId;
-    if (requireBranch && typeof leafId !== "string")
-      throw requestError("Cannot verify the branch of the attached Pi.", 409);
+    let leafId = connection.state.leafId;
+    if (forRestart) {
+      const attached = await this.refreshConnection(slot, connection, {
+        requireObservation: true,
+      });
+      if (!attached || connection.state.status === "idle") return;
+      leafId ??= connection.state.leafId;
+      if (leafId === undefined)
+        throw requestError("Cannot verify the branch of the attached Pi.", 409);
+    }
     if (slot.stoppingInput)
       throw requestError("Stop is already in progress", 409);
     slot.inputStopEpoch += 1;
