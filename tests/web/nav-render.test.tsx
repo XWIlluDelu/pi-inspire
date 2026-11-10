@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -49,6 +50,29 @@ const groupNames = () =>
   );
 /** Ordinary sessions, excluding the separately docked Hidden drawer. */
 const list = () => within(document.querySelector(".nav__list") as HTMLElement);
+
+it("updates a mounted row's relative age without a session update", () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date(alpha.modified));
+    const row = render(
+      <SessionRow
+        session={alpha}
+        selectedSessionId={null}
+        onSelect={() => {}}
+      />,
+    );
+    try {
+      expect(screen.getByText("now")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(120_000));
+      expect(screen.getByText("2m")).toBeInTheDocument();
+    } finally {
+      row.unmount();
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 let deletedSessions: Set<string>;
 let extraSessions: (typeof alpha)[];
