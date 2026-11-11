@@ -43,7 +43,6 @@ import { BrandLogo, Wordmark } from "./Wordmark";
 
 export const Nav = memo(function Nav({
   collapsed,
-  selectedSessionId,
   isModal = false,
   onClose,
   onOpenSettings,
@@ -53,7 +52,6 @@ export const Nav = memo(function Nav({
   searchInputRef,
 }: {
   collapsed: boolean;
-  selectedSessionId?: string | null;
   isModal?: boolean;
   onClose?: () => void;
   /** Narrow drawers own Settings so the header can favor session identity. */
@@ -70,7 +68,7 @@ export const Nav = memo(function Nav({
     curatedHiddenSessionIds,
     hiddenProjectCwds,
     collapsedGroupCwds,
-    activeSessionId,
+    selectedSessionId,
     openingSessionId,
     sessionStatuses,
     externalSessionActivities,
@@ -94,7 +92,7 @@ export const Nav = memo(function Nav({
       curatedHiddenSessionIds: state.prefs.hiddenSessionIds,
       hiddenProjectCwds: state.prefs.hiddenProjectCwds,
       collapsedGroupCwds: state.prefs.navCollapsedGroups,
-      activeSessionId: state.sessionId,
+      selectedSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
       externalSessionActivities: state.externalSessionActivities,
@@ -114,8 +112,6 @@ export const Nav = memo(function Nav({
     shallowEqual,
   );
 
-  const visibleSessionId =
-    selectedSessionId === undefined ? activeSessionId : selectedSessionId;
   const internalNavRef = useRef<HTMLElement>(null);
   const modalNavRef = useModalFocus<HTMLDivElement>(
     isModal,
@@ -176,14 +172,14 @@ export const Nav = memo(function Nav({
         sections.visible,
         sessionStatuses,
         externalSessionActivities,
-        visibleSessionId ?? null,
+        selectedSessionId,
         retainedNeed,
       ),
     [
       sections.visible,
       sessionStatuses,
       externalSessionActivities,
-      visibleSessionId,
+      selectedSessionId,
       retainedNeed,
     ],
   );
@@ -278,7 +274,6 @@ export const Nav = memo(function Nav({
         <div className="nav__header nav__header--rail">
           <NavigationToggle
             className="nav__brand-rail nav__toggle"
-            selectedSessionId={visibleSessionId}
             onClick={onToggleNavigation}
             title="Expand navigation (Ctrl+B)"
             aria-label="Expand navigation"
@@ -332,9 +327,6 @@ export const Nav = memo(function Nav({
       : sessionListOperation === "older"
         ? "Loading older sessions…"
         : "Loading sessions…";
-  // Hidden is a curation drawer, not a browsing group: it opens on demand and
-  // starts closed again next time. Search reveals matches inside it without
-  // reclassifying them out of Hidden.
   const hiddenSessions = [
     ...hiddenGroups.flatMap((group) => group.sessions),
     ...hidden,
@@ -343,7 +335,6 @@ export const Nav = memo(function Nav({
   const hiddenCount = hiddenSessions.length;
   const deletionState = {
     openingSessionId,
-    sessionStatuses,
     sessionQuery,
     sessionListLoading,
     sessionListLoadingOlder,
@@ -533,7 +524,7 @@ export const Nav = memo(function Nav({
                   key={session.id}
                   session={session}
                   searchQuery={sessionQuery}
-                  selectedSessionId={visibleSessionId}
+                  selectedSessionId={selectedSessionId}
                   highlightedSessionId={highlightedSessionId}
                   showProject
                   onSelect={selectSession}
@@ -572,7 +563,7 @@ export const Nav = memo(function Nav({
                 key={session.id}
                 session={session}
                 searchQuery={sessionQuery}
-                selectedSessionId={visibleSessionId}
+                selectedSessionId={selectedSessionId}
                 highlightedSessionId={highlightedSessionId}
                 showProject
                 onSelect={onSelectSession}
@@ -582,21 +573,18 @@ export const Nav = memo(function Nav({
         ) : null}
         {needsYouMode
           ? null
-          : folders.map((group, groupIndex) => {
-              return (
-                <ProjectGroup
-                  key={group.cwd}
-                  group={group}
-                  headingId={`nav-group-title-${groupIndex}`}
-                  searching={searching}
-                  searchQuery={sessionQuery}
-                  showContext={(nameCounts.get(group.name) ?? 0) > 1}
-                  selectedSessionId={visibleSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  onSelectSession={onSelectSession}
-                />
-              );
-            })}
+          : folders.map((group) => (
+              <ProjectGroup
+                key={group.cwd}
+                group={group}
+                searching={searching}
+                searchQuery={sessionQuery}
+                showContext={(nameCounts.get(group.name) ?? 0) > 1}
+                selectedSessionId={selectedSessionId}
+                highlightedSessionId={highlightedSessionId}
+                onSelectSession={onSelectSession}
+              />
+            ))}
         {sessionListIssues.length ? (
           <div className="nav__pagination">
             <details className="nav__source-issues">
@@ -737,22 +725,21 @@ export const Nav = memo(function Nav({
                   key={session.id}
                   session={session}
                   searchQuery={sessionQuery}
-                  selectedSessionId={visibleSessionId}
+                  selectedSessionId={selectedSessionId}
                   highlightedSessionId={highlightedSessionId}
                   showProject
                   onSelect={onSelectSession}
                   onDelete={setDeleteCandidate}
                 />
               ))}
-              {hiddenGroups.map((group, groupIndex) => (
+              {hiddenGroups.map((group) => (
                 <ProjectGroup
                   key={group.cwd}
                   group={group}
-                  headingId={`nav-hidden-group-title-${groupIndex}`}
                   searching={searching}
                   searchQuery={sessionQuery}
                   showContext={(nameCounts.get(group.name) ?? 0) > 1}
-                  selectedSessionId={visibleSessionId}
+                  selectedSessionId={selectedSessionId}
                   highlightedSessionId={highlightedSessionId}
                   hidden
                   onSelectSession={onSelectSession}

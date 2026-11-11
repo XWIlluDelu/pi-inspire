@@ -11,7 +11,12 @@ import { clipboardLines } from "./support/clipboard";
 import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
-import { openSettings, pairedPage, reloadSession } from "./support/navigation";
+import {
+  openCommandPalette,
+  openSettings,
+  pairedPage,
+  reloadSession,
+} from "./support/navigation";
 
 // Audit settled dialog colors, not intermediate entrance-animation opacity.
 test.use({
@@ -286,6 +291,9 @@ test("Escape cancels an extension question during work and aborts during a proje
   await expect(
     page.getByRole("button", { name: "Abort running task" }),
   ).toBeVisible();
+  const palette = await openCommandPalette(page);
+  const filter = palette.getByRole("combobox", { name: "Filter commands" });
+  await filter.fill("history");
   demo.question({
     id: "during-run",
     method: "confirm",
@@ -293,10 +301,16 @@ test("Escape cancels an extension question during work and aborts during a proje
   });
   const normal = page.getByRole("dialog", { name: "Continue work?" });
   await expect(normal).toBeVisible();
+  await page.keyboard.press("Control+k");
+  await expect(palette).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(normal).toHaveCount(0);
   expect(demo.responses).toMatchObject([{ id: "during-run", cancelled: true }]);
   expect(aborts).toBe(0);
+  await expect(filter).toHaveValue("history");
+  await expect(filter).toBeFocused();
+  await filter.press("Escape");
+  await expect(palette).toHaveCount(0);
 
   demo.question({
     id: "during-conflict",
@@ -698,6 +712,19 @@ test("native dialog keyboard/pointer flow, deadline reconnect and content-first 
     id: "confirm",
     cancelled: true,
   });
+  for (const [button, confirmed] of [
+    ["No", false],
+    ["Yes", true],
+  ] as const) {
+    fixture.question({
+      id: button,
+      method: "confirm",
+      title: "Prepare this review?",
+    });
+    await confirm.getByRole("button", { name: button, exact: true }).click();
+    await expect(confirm).toHaveCount(0);
+    expect(fixture.responses.at(-1)).toMatchObject({ id: button, confirmed });
+  }
   fixture.question({ id: "input", method: "input", title: "Review name" });
   await page
     .getByRole("textbox", { name: "Review name", exact: true })

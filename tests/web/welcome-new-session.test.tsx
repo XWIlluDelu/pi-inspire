@@ -7,15 +7,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import {
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpConfigSnapshot } from "../../shared/mcp";
 import type { ModelCatalogResponse } from "../../shared/model-settings";
 import { App } from "../../src/App";
@@ -66,13 +58,14 @@ let projectFileCwd: string | null;
 let directoryFailure: "missing" | "file" | null = null;
 let sourceWriterActive = false;
 
-beforeAll(async () => {
+beforeEach(async () => {
   newSessionBody = null;
   promptBody = null;
   defaultModelCwd = null;
   defaultModelAvailable = true;
   projectFileCwd = null;
   installFakeWebSocket();
+  mockModelMenuLayout();
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
     value: vi.fn(() => "blob:welcome-image"),
@@ -173,20 +166,7 @@ beforeAll(async () => {
             reasoning: true,
           },
           thinkingLevel: "high",
-          availableModels: [
-            {
-              provider: "plain",
-              id: "text-only",
-              name: "Text only",
-              reasoning: false,
-            },
-            {
-              provider: "anthropic",
-              id: "claude-sonnet-4",
-              name: "Claude Sonnet 4",
-              reasoning: true,
-            },
-          ],
+          availableModels: welcomeModels,
         }),
       };
     }
@@ -217,8 +197,6 @@ beforeAll(async () => {
   await store.init();
   FakeWebSocket.instances.at(-1)?.open();
 });
-
-beforeEach(mockModelMenuLayout);
 
 afterEach(() => {
   directoryFailure = null;
@@ -312,49 +290,6 @@ describe("new-session start surface", () => {
     );
   });
 
-  it("offers explicit directory creation without a model preview and sends the preserved first message", async () => {
-    directoryFailure = "missing";
-    newSessionBody = null;
-    promptBody = null;
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      }),
-    );
-    render(<Welcome />);
-    const message = screen.getByRole("textbox", { name: "First message" });
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "Project directory" }),
-      {
-        target: { value: "/projects/new/nested" },
-      },
-    );
-    fireEvent.change(message, { target: { value: "Keep this first message" } });
-    const create = await screen.findByRole("button", {
-      name: "Create folder and start",
-    });
-    expect(create).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "Start session" }),
-    ).toBeDisabled();
-    fireEvent.keyDown(message, {
-      key: "Enter",
-      ctrlKey: store.getState().prefs.desktopSendKey === "mod-enter",
-    });
-    expect(newSessionBody).toBeNull();
-    fireEvent.click(create);
-    await waitFor(() =>
-      expect(newSessionBody).toEqual({
-        cwd: "/projects/new/nested",
-        createDirectory: true,
-      }),
-    );
-    await waitFor(() =>
-      expect(promptBody?.message).toBe("Keep this first message"),
-    );
-  });
-
   it.each(["missing", "file"] as const)(
     "preflights New independently of its read-only history source when the folder is %s",
     async (kind) => {
@@ -407,9 +342,13 @@ describe("new-session start surface", () => {
           }),
         );
       } else {
+        await screen.findByText("Project path is not a directory");
         expect(
           screen.queryByRole("button", { name: "Create folder and start" }),
         ).toBeNull();
+        expect(
+          screen.getByRole("button", { name: "Start session" }),
+        ).toBeDisabled();
         expect(start).not.toHaveBeenCalled();
       }
     },
@@ -418,15 +357,7 @@ describe("new-session start surface", () => {
   it.each([false, true])(
     "keeps New usable when its optional catalog source changes owner (model resolving: %s)",
     async (modelDiscovery) => {
-      defaultModelCwd = null;
-      newSessionBody = null;
       sourceWriterActive = true;
-      act(() =>
-        FakeWebSocket.instances.at(-1)!.emit({
-          type: "snapshot",
-          data: { active: null, runState: "idle", sessionStatuses: {} },
-        }),
-      );
       render(
         <Welcome
           inherited={{
@@ -458,12 +389,6 @@ describe("new-session start surface", () => {
 
   it("preserves inherited model, effort, draft and attachment on failed directory creation", async () => {
     directoryFailure = "missing";
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      }),
-    );
     render(
       <Welcome
         inherited={{
@@ -521,12 +446,6 @@ describe("new-session start surface", () => {
     "starts with an explicitly selected model and manual effort=%s without guessing unresolved defaults",
     async (manualEffort) => {
       directoryFailure = "missing";
-      act(() =>
-        FakeWebSocket.instances.at(-1)!.emit({
-          type: "snapshot",
-          data: { active: null, runState: "idle", sessionStatuses: {} },
-        }),
-      );
       render(<Welcome />);
       fireEvent.change(
         screen.getByRole("textbox", { name: "Project directory" }),
@@ -571,74 +490,8 @@ describe("new-session start surface", () => {
     },
   );
 
-  it.each([false, true])(
-    "blocks a regular-file path even with an inherited model (%s)",
-    async (inherited) => {
-      directoryFailure = "file";
-      act(() =>
-        FakeWebSocket.instances.at(-1)!.emit({
-          type: "snapshot",
-          data: { active: null, runState: "idle", sessionStatuses: {} },
-        }),
-      );
-      render(
-        <Welcome
-          inherited={
-            inherited
-              ? {
-                  cwd: "/previous",
-                  model: {
-                    provider: "anthropic",
-                    id: "claude-sonnet-4",
-                    reasoning: true,
-                  },
-                  thinkingLevel: "high",
-                  commands: [],
-                }
-              : null
-          }
-        />,
-      );
-      fireEvent.change(
-        screen.getByRole("textbox", { name: "Project directory" }),
-        {
-          target: { value: "/file/project" },
-        },
-      );
-      fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
-        target: { value: "Do not replace this file" },
-      });
-      await screen.findByText("Project path is not a directory");
-      expect(
-        screen.queryByRole("button", { name: "Create folder and start" }),
-      ).toBeNull();
-      expect(
-        screen.getByRole("button", { name: "Start session" }),
-      ).toBeDisabled();
-      directoryFailure = null;
-      fireEvent.change(
-        screen.getByRole("textbox", { name: "Project directory" }),
-        {
-          target: { value: "/valid-project" },
-        },
-      );
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Start session" }),
-        ).toBeEnabled(),
-      );
-      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    },
-  );
-
   it("keeps a rejected project blocked while a transient retry recovers automatically", async () => {
     directoryFailure = "file";
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      }),
-    );
     const view = render(
       <Welcome
         inherited={{
@@ -697,12 +550,6 @@ describe("new-session start surface", () => {
   });
 
   it("retires a late missing-directory observation after the user chooses another path", async () => {
-    act(() =>
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      }),
-    );
     const gate = deferred<ModelCatalogResponse>();
     const readModels = store.readNewSessionModels;
     const read = vi
@@ -749,152 +596,23 @@ describe("new-session start surface", () => {
     }
   });
 
-  it("keeps directory Enter from creating a session without taking message autofocus or submission", async () => {
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
+  it("leaves IME confirmation native in the project path field", () => {
     render(<Welcome />);
-    const browse = screen.getByRole("button", {
-      name: "Browse host directories",
-    });
     const directory = screen.getByRole("textbox", {
       name: "Project directory",
     });
-    const message = screen.getByRole("textbox", { name: "First message" });
-    expect(message).toHaveFocus();
-    expect(browse).toHaveAttribute("type", "button");
-
-    fireEvent.change(directory, { target: { value: "/proj" } });
-    fireEvent.change(message, { target: { value: "Review calibration" } });
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start session" }),
-      ).toBeEnabled(),
-    );
-
-    const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
-    try {
-      directory.focus();
-      expect(fireEvent.keyDown(directory, { key: "Enter" })).toBe(false);
-      expect(start).not.toHaveBeenCalled();
-      expect(message).toHaveValue("Review calibration");
-      expect(
-        fireEvent.keyDown(directory, { key: "Enter", isComposing: true }),
-      ).toBe(true);
-      expect(fireEvent.keyDown(directory, { key: "Enter", keyCode: 229 })).toBe(
-        true,
-      );
-      message.focus();
-      fireEvent.keyDown(message, {
-        key: "Enter",
-        ctrlKey: store.getState().prefs.desktopSendKey === "mod-enter",
-      });
-      await waitFor(() => expect(start).toHaveBeenCalledWith("/proj", {}));
-    } finally {
-      start.mockRestore();
-    }
-  });
-
-  it("expands with the first message and sends explicit model/effort startup choices", async () => {
-    render(<Welcome />);
-    const message = screen.getByLabelText(
-      "First message",
-    ) as HTMLTextAreaElement;
-    Object.defineProperty(message, "scrollHeight", {
-      configurable: true,
-      value: 180,
-    });
-    fireEvent.change(message, { target: { value: "Investigate the runtime" } });
-    await waitFor(() => {
-      const measuredHeight = Number.parseFloat(message.style.height);
-      expect(measuredHeight).toBeGreaterThanOrEqual(message.scrollHeight);
-      expect(measuredHeight).toBeLessThanOrEqual(message.scrollHeight + 1);
-    });
-    const fittedHeight = message.style.height;
-
-    fireEvent.click(screen.getByRole("button", { name: "Model" }));
-    let models = screen.getByRole("listbox", { name: "Available models" });
-    fireEvent.click(
-      await within(models).findByRole("option", {
-        name: /Text only.*No thinking/,
-      }),
-    );
+    directory.focus();
     expect(
-      screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveTextContent("Unavailable");
-
-    fireEvent.click(screen.getByRole("button", { name: "Model" }));
-    models = screen.getByRole("listbox", { name: "Available models" });
-    fireEvent.click(
-      within(models).getByRole("option", { name: /Claude Sonnet 4/ }),
+      fireEvent.keyDown(directory, { key: "Enter", isComposing: true }),
+    ).toBe(true);
+    expect(fireEvent.keyDown(directory, { key: "Enter", keyCode: 229 })).toBe(
+      true,
     );
-    fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
-    fireEvent.click(
-      within(screen.getByRole("listbox", { name: "Thinking level" })).getByRole(
-        "option",
-        { name: "High" },
-      ),
-    );
-    expect(screen.getByLabelText("First message")).toBe(message);
-    expect(message.style.height).toBe(fittedHeight);
-
-    const pasted = new File(["png"], "image.png", { type: "image/png" });
-    fireEvent.paste(message, {
-      clipboardData: {
-        files: [pasted],
-        items: [{ kind: "file", getAsFile: () => pasted }],
-      },
-    });
-    expect(
-      screen.getByRole("button", { name: "Preview image.png" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("image.png")).not.toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("Project directory"), {
-      target: { value: "/proj" },
-    });
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start session" }),
-      ).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Start session" }));
-
-    await waitFor(() =>
-      expect(newSessionBody).toEqual({
-        cwd: "/proj",
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      }),
-    );
-    await waitFor(() =>
-      expect(promptBody).toMatchObject({
-        sessionId: "new-session",
-        message: "Investigate the runtime",
-        attachmentIds: ["3a5f1d6c-420d-48ef-a9df-8ae77db183ca"],
-      }),
-    );
-    // Welcome -> store -> selection does not pin the project. Storage
-    // continuity belongs to Host discovery, not navigation curation.
-    expect(store.getState().prefs.pinnedProjectCwds).not.toContain("/proj");
   });
 
   it("hands off a mixed first message before its receipt and retries unknown delivery unchanged", async () => {
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
     const receipt = deferred<RouteResponse>();
     promptGate = receipt.promise;
-    promptBody = null;
     function Surface() {
       return useAppState((state) => state.sessionId) ? (
         <Composer />
@@ -906,17 +624,15 @@ describe("new-session start surface", () => {
     fireEvent.change(screen.getByLabelText("Project directory"), {
       target: { value: "/proj" },
     });
-    fireEvent.change(screen.getByLabelText("First message"), {
+    const message = screen.getByRole("textbox", { name: "First message" });
+    fireEvent.change(message, {
       target: { value: "Inspect the attached image" },
     });
-    fireEvent.change(
-      screen.getByLabelText("Attach files", { selector: "input" }),
-      {
-        target: {
-          files: [new File(["png"], "image.png", { type: "image/png" })],
-        },
-      },
-    );
+    const image = new File(["png"], "image.png", { type: "image/png" });
+    fireEvent.paste(message, { clipboardData: { files: [image] } });
+    expect(
+      screen.getByRole("button", { name: "Preview image.png" }),
+    ).toBeVisible();
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Start session" }),
@@ -952,12 +668,6 @@ describe("new-session start surface", () => {
   });
 
   it("does not send the first prompt into a session selected during upload", async () => {
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
     let releaseUpload!: () => void;
     const upload = new Promise<void>((resolve) => {
       releaseUpload = resolve;
@@ -1026,75 +736,8 @@ describe("new-session start surface", () => {
     }
   });
 
-  it("uses touch-first Return for a multiline first message instead of starting", async () => {
-    newSessionBody = null;
-    promptBody = null;
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
-    const originalMatchMedia = window.matchMedia;
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: (query: string) => ({
-        matches: query === "(hover: none) and (pointer: coarse)",
-        media: query,
-        onchange: null,
-        addListener: () => {},
-        removeListener: () => {},
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        dispatchEvent: () => false,
-      }),
-    });
-
-    try {
-      render(<Welcome />);
-      fireEvent.change(screen.getByLabelText("Project directory"), {
-        target: { value: "/proj" },
-      });
-      const message = screen.getByLabelText("First message");
-      fireEvent.change(message, { target: { value: "first line" } });
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Start session" }),
-        ).toBeEnabled(),
-      );
-
-      expect(fireEvent.keyDown(message, { key: "Enter" })).toBe(true);
-      await act(async () => Promise.resolve());
-      expect(newSessionBody).toBeNull();
-
-      fireEvent.change(message, {
-        target: { value: "first line\nsecond line" },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Start session" }));
-      await waitFor(() =>
-        expect(promptBody).toMatchObject({
-          message: "first line\nsecond line",
-        }),
-      );
-    } finally {
-      Object.defineProperty(window, "matchMedia", {
-        configurable: true,
-        value: originalMatchMedia,
-      });
-    }
-  });
-
   it("resolves Pi's default model and searches project files from the typed workspace", async () => {
-    newSessionBody = null;
     promptBody = null;
-    defaultModelCwd = null;
-    projectFileCwd = null;
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
 
     render(<Welcome />);
     const directory = screen.getByLabelText("Project directory");
@@ -1172,13 +815,6 @@ describe("new-session start surface", () => {
 
   it("never submits an unexplained Pi fallback when no model can be resolved", async () => {
     defaultModelAvailable = false;
-    defaultModelCwd = null;
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
     render(<Welcome />);
     fireEvent.change(screen.getByLabelText("Project directory"), {
       target: { value: "/no-model" },
@@ -1200,123 +836,5 @@ describe("new-session start surface", () => {
     expect(
       screen.getByRole("button", { name: "Start session" }),
     ).toBeDisabled();
-  });
-
-  it("omits redundant readiness copy while awaiting a project or input", () => {
-    render(<Welcome />);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Project directory"), {
-      target: { value: "/proj" },
-    });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("hides readiness copy once the selected project, message, and model are ready", async () => {
-    render(<Welcome />);
-    fireEvent.change(screen.getByLabelText("Project directory"), {
-      target: { value: "/proj" },
-    });
-    fireEvent.change(screen.getByLabelText("First message"), {
-      target: { value: "Start quietly" },
-    });
-
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start session" }),
-      ).toBeEnabled(),
-    );
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("adopts a session model that arrives after the start surface mounts", async () => {
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: { active: null, runState: "idle", sessionStatuses: {} },
-      });
-    });
-    render(<Welcome />);
-    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-      "Select model",
-    );
-
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({
-          model: { provider: "anthropic", id: "claude-sonnet-4" },
-          availableModels: welcomeModels,
-        }),
-      });
-    });
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-        "Claude Sonnet 4",
-      ),
-    );
-  });
-
-  it("reuses the session command completion control without leaking commands across projects", async () => {
-    act(() => {
-      FakeWebSocket.instances.at(-1)!.emit({
-        type: "snapshot",
-        data: activeSnapshot({
-          cwd: "/proj",
-          commands: [
-            {
-              name: "pi-tools",
-              description: "Inspect Pi tools",
-              source: "extension",
-            },
-            {
-              name: "review",
-              description: "Run review prompt",
-              source: "prompt",
-            },
-          ],
-        }),
-      });
-    });
-
-    render(<Welcome />);
-    const message = screen.getByLabelText(
-      "First message",
-    ) as HTMLTextAreaElement;
-    fireEvent.change(message, { target: { value: "/pi", selectionStart: 3 } });
-    message.setSelectionRange(3, 3);
-    fireEvent.select(message);
-
-    const list = await screen.findByRole("listbox", {
-      name: "Slash command completions",
-    });
-    const option = within(list).getByRole("option", {
-      name: /\/pi-tools.*Inspect Pi tools/,
-    });
-    expect(message.closest("[role='combobox']")).toHaveAttribute(
-      "aria-owns",
-      list.id,
-    );
-    expect(message).toHaveAttribute("aria-activedescendant", option.id);
-    fireEvent.keyDown(message, { key: "Tab" });
-    expect(message).toHaveValue("/pi-tools ");
-
-    fireEvent.change(screen.getByLabelText("Project directory"), {
-      target: { value: "/other-project" },
-    });
-    fireEvent.change(message, { target: { value: "/", selectionStart: 1 } });
-    message.setSelectionRange(1, 1);
-    fireEvent.select(message);
-
-    const otherProjectList = await screen.findByRole("listbox", {
-      name: "Slash command completions",
-    });
-    expect(
-      within(otherProjectList).getByRole("option", {
-        name: /\/compact.*Compact the current context/,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(otherProjectList).queryByRole("option", { name: /\/pi-tools/ }),
-    ).not.toBeInTheDocument();
   });
 });

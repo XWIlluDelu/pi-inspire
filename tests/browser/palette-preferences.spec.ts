@@ -2,7 +2,11 @@ import { expect, test } from "@playwright/test";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { PALETTE_LABELS } from "../../src/preference-labels";
 import { renderedColors, resolvedColor } from "./support/colors";
-import { openSettings, pairAndOpen } from "./support/navigation";
+import {
+  openCommandPalette,
+  openSettings,
+  pairAndOpen,
+} from "./support/navigation";
 
 test("botanical swatches persist independently of luminosity and fit narrow Settings", async ({
   page,
@@ -92,11 +96,31 @@ test("botanical swatches persist independently of luminosity and fit narrow Sett
   await expect(
     picker.getByRole("button", { name: "Wisteria", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  const palette = await openCommandPalette(page);
+  await palette.getByLabel("Filter commands").fill("Palette:");
+  for (const choice of PALETTE_PREFERENCES)
+    await expect(
+      palette.getByRole("option", {
+        name: new RegExp(`^Palette: ${PALETTE_LABELS[choice]}`),
+      }),
+    ).toBeVisible();
+  await expect(
+    palette.getByRole("option", { name: /^Palette: Wisteria/ }),
+  ).toContainText("current");
+  const paletteSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/preferences") &&
+      response.request().method() === "PATCH" &&
+      response.request().postDataJSON().palette === "mono",
+  );
+  await palette
+    .getByRole("option", { name: /^Palette: Carbon & Silicon/ })
+    .click();
+  expect((await paletteSaved).ok()).toBe(true);
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "mono");
   await page.reload();
   await expect(page.getByRole("main")).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-palette",
-    "wisteria",
-  );
+  await expect(page.locator("html")).toHaveAttribute("data-palette", "mono");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });

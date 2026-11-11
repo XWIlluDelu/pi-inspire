@@ -46,6 +46,7 @@ let prompts: Record<string, unknown>[];
 let failPrompt = false;
 let aborts = 0;
 let catalogQueries: string[] = [];
+let catalog: ReturnType<typeof sessionSummary>[];
 let promptGate: ReturnType<
   typeof deferred<{ status: number; body: { error: string } }>
 > | null = null;
@@ -57,6 +58,10 @@ beforeEach(async () => {
   failPrompt = false;
   aborts = 0;
   catalogQueries = [];
+  catalog = [
+    sessionSummary({ title: "Test session" }),
+    sessionSummary({ id: "s2", title: "Other session" }),
+  ];
   promptGate = null;
   installFakeWebSocket();
   installFetch((url, init) => {
@@ -117,16 +122,9 @@ beforeEach(async () => {
         };
     }
     if (url.startsWith("/api/sessions"))
-      return {
-        body: sessionPage(
-          [
-            sessionSummary({ title: "Test session" }),
-            sessionSummary({ id: "s2", title: "Other session" }),
-          ],
-          2,
-        ),
-      };
-    if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
+      return { body: sessionPage(catalog, catalog.length) };
+    if (url.startsWith("/api/preferences"))
+      return { body: { ...store.getState().prefs, ...jsonBody(init) } };
     if (url.startsWith("/api/git/status"))
       return { body: { kind: "not-repository" } };
     return undefined;
@@ -229,28 +227,72 @@ describe("command discovery and preparation", () => {
     expect(screen.getByText(/No task snapshot is loaded/)).toBeInTheDocument();
   });
 
-  it("keeps defaults compact, ranks destinations/aliases, and labels terminal limits", async () => {
+  it("does not select a palette result on composition-confirming Enter", async () => {
     render(<App />);
-    const input = await palette();
-    expect(screen.getAllByRole("option").length).toBeLessThan(20);
-    expect(screen.queryByRole("option", { name: /Theme:/ })).toBeNull();
-    fireEvent.change(input, { target: { value: "settings" } });
-    expect(screen.getAllByRole("option")[0]).toHaveTextContent("Settings");
-    expect(screen.getAllByRole("option")[0]).not.toHaveTextContent("Terminal");
-    fireEvent.change(input, { target: { value: "mdl" } });
-    expect(screen.getAllByRole("option")[0]).toHaveTextContent("Choose model");
-    fireEvent.change(input, { target: { value: "/new" } });
-    expect(
-      screen
-        .getAllByRole("option")
-        .filter((option) => option.textContent?.startsWith("New session")),
-    ).toHaveLength(1);
-    fireEvent.change(input, { target: { value: "share" } });
-    expect(screen.getAllByRole("option")[0]).toHaveTextContent("Terminal only");
+    const input = await palette("settings");
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
     expect(
       screen.getByRole("dialog", { name: "Command palette" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps hidden sessions and projects out of palette recents and results", async () => {
+    catalog.push(
+      sessionSummary({ id: "hidden", title: "Hidden session" }),
+      sessionSummary({
+        id: "archived",
+        title: "Archived session",
+        cwd: "/archive",
+      }),
+    );
+    await act(async () => {
+      await store.loadSessions("");
+      store.toggleSessionHidden("hidden");
+      store.toggleProjectHidden("/archive");
+    });
+    render(<App />);
+    const input = await palette();
+    for (const query of ["", "session"]) {
+      fireEvent.change(input, { target: { value: query } });
+      expect(
+        screen.getByRole("option", { name: /^Other session/ }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("option", { name: /^(Hidden|Archived) session/ }),
+      ).toBeNull();
+    }
+  });
+
+  it("preserves the filter and leaves a reopened palette rename with its own editor", async () => {
+    const acknowledgement = deferred<boolean>();
+    const rename = vi
+      .spyOn(store, "renameSession")
+      .mockReturnValue(acknowledgement.promise);
+    render(<App />);
+    const edit = () => {
+      fireEvent.click(screen.getByRole("option", { name: /Rename session/ }));
+      return screen.getByLabelText("New session name");
+    };
+    await palette("rename");
+    const unchanged = edit();
+    expect(unchanged).toHaveValue("Test session");
+    fireEvent.keyDown(unchanged, { key: "Enter" });
+    expect(
+      screen.queryByRole("dialog", { name: "Command palette" }),
+    ).toBeNull();
+    expect(rename).not.toHaveBeenCalled();
+
+    await palette("rename");
+    const oldEditor = edit();
+    fireEvent.change(oldEditor, { target: { value: "Old request" } });
+    fireEvent.keyDown(oldEditor, { key: "Enter" });
+    expect(rename).toHaveBeenCalledWith("s1", "Old request");
+    fireEvent.keyDown(oldEditor, { key: "Escape" });
+    expect(screen.getByLabelText("Filter commands")).toHaveValue("rename");
+    const currentEditor = edit();
+    fireEvent.change(currentEditor, { target: { value: "New draft" } });
+    await act(async () => acknowledgement.resolve(true));
+    expect(screen.getByLabelText("New session name")).toHaveValue("New draft");
   });
 
   it("copies the terminal resume command and shows Fork guidance for a missing project", async ({

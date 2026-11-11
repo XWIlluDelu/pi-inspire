@@ -19,13 +19,14 @@ import { selectAttachmentFiles } from "../attachment-selection";
 import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
+import { relativeTime } from "../format";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
 import {
   availableStatusControls,
   usePresentationAdapters,
 } from "../presentation-adapters";
-import { recoverableRead, RecoveryBackoff } from "../recovery-backoff";
+import { recoverableRead } from "../recovery-backoff";
 import {
   sessionDraft,
   setSessionDraft,
@@ -46,7 +47,6 @@ import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { ProjectFileChips, ProjectFileControl } from "./ProjectFiles";
 import { useComposerAttachmentInput } from "./use-composer-attachment-input";
-import { relativeTime } from "../format";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 const DIRECTORY_PREVIEW_DELAY_MS = 220;
@@ -84,7 +84,7 @@ export interface WelcomeInheritance {
  * and prompt lifecycle before the first message is delivered. */
 export const Welcome = memo(function Welcome({
   showRecent = true,
-  inherited,
+  inherited: inheritance = null,
   onDirectoryChange,
 }: {
   showRecent?: boolean;
@@ -93,14 +93,7 @@ export const Welcome = memo(function Welcome({
 }) {
   const state = useAppState(
     (source) => ({
-      sessionId: source.sessionId,
       transportGeneration: source.transportGeneration,
-      cwd: source.cwd,
-      model: source.model,
-      modelDiscovery: source.modelDiscovery,
-      readOnlyReason: source.readOnlyReason,
-      thinkingLevel: source.thinkingLevel,
-      commands: source.commands,
       sessions: source.sessions,
       availableModels: source.availableModels,
       prefs: source.prefs,
@@ -108,18 +101,6 @@ export const Welcome = memo(function Welcome({
     }),
     shallowEqual,
   );
-  const liveInheritance = state.cwd
-    ? ({
-        sessionId: state.sessionId ?? undefined,
-        cwd: state.cwd,
-        model: state.model,
-        modelDiscovery: state.modelDiscovery,
-        readOnlyReason: state.readOnlyReason,
-        thinkingLevel: state.thinkingLevel,
-        commands: state.commands,
-      } satisfies WelcomeInheritance)
-    : null;
-  const inheritance = liveInheritance ?? inherited ?? null;
   const [resolvedInheritance, setResolvedInheritance] = useState<{
     sessionId: string;
     selection: NewSessionDefaults;
@@ -131,9 +112,7 @@ export const Welcome = memo(function Welcome({
   const inheritedModel = inheritance?.model ?? sourceSelection?.model ?? null;
   const inheritedThinkingLevel = inheritance?.model
     ? inheritance.thinkingLevel
-    : (sourceSelection?.thinkingLevel ??
-      inheritance?.thinkingLevel ??
-      state.thinkingLevel);
+    : (sourceSelection?.thinkingLevel ?? inheritance?.thinkingLevel ?? "off");
   const sourcePending = Boolean(
     !inheritance?.readOnlyReason &&
       inheritance?.modelDiscovery &&
@@ -231,8 +210,9 @@ export const Welcome = memo(function Welcome({
       state.transportGeneration;
   const modelReadyRef = useRef(false);
   modelReadyRef.current = modelStatus === "ready";
-  const [catalogRecovery] = useState(() => new RecoveryBackoff());
-  const catalogRequest = useRef<AbortController | null>(null);
+  const catalogRequest = useRef<ReturnType<typeof recoverableRead> | null>(
+    null,
+  );
   const [catalog, setCatalog] = useState<ModelOption[] | null>(null);
   const [catalogCommands, setCatalogCommands] = useState<{
     cwd: string;
@@ -241,7 +221,6 @@ export const Welcome = memo(function Welcome({
   } | null>(null);
   const [pickedModel, setPickedModel] = useState<ModelOption | null>(null);
   const [commonModels, setCommonModels] = useState<ModelIdentity[]>([]);
-  const catalogGeneration = useRef(0);
   const thinkingInputGeneration = useRef(0);
   const thinkingTouchedRef = useRef(thinkingTouched);
   thinkingTouchedRef.current = thinkingTouched;
@@ -259,30 +238,23 @@ export const Welcome = memo(function Welcome({
   const refreshModels = useCallback(
     async (pick = false) => {
       catalogRequest.current?.abort();
-      catalogRecovery.reset();
-      const request = new AbortController();
-      catalogRequest.current = request;
-      const generation = ++catalogGeneration.current;
       const transportGeneration = state.transportGeneration;
-      const owns = () =>
-        !request.signal.aborted &&
-        catalogGeneration.current === generation &&
-        store.getState().transportGeneration === transportGeneration;
+      const request = recoverableRead(
+        () => store.getState().transportGeneration === transportGeneration,
+      );
+      catalogRequest.current = request;
       setCheckingDirectory(effectiveDirectory);
       const inputGeneration = thinkingInputGeneration.current;
       let result;
       try {
-        result = await catalogRecovery.read(
-          () =>
-            store.readNewSessionModels(
-              catalogSource,
-              effectiveDirectory || undefined,
-            ),
-          request.signal,
-          owns,
+        result = await request.read(() =>
+          store.readNewSessionModels(
+            catalogSource,
+            effectiveDirectory || undefined,
+          ),
         );
       } catch (error) {
-        if (!owns()) return undefined;
+        if (!request.current()) return undefined;
         const missing =
           error instanceof ApiError &&
           error.code === "PROJECT_DIRECTORY_MISSING";
@@ -328,7 +300,7 @@ export const Welcome = memo(function Welcome({
         if (missing) {
           if (pick) {
             const fallback = await store.readNewSessionModels();
-            if (owns()) {
+            if (request.current()) {
               setCatalog(fallback.models);
               setCommonModels(fallback.commonModels ?? []);
             }
@@ -338,13 +310,10 @@ export const Welcome = memo(function Welcome({
         }
         throw error;
       } finally {
-        if (owns()) setCheckingDirectory(null);
-        if (catalogRequest.current === request) {
-          catalogRequest.current = null;
-          catalogRecovery.reset();
-        }
+        if (request.current()) setCheckingDirectory(null);
+        if (catalogRequest.current === request) catalogRequest.current = null;
       }
-      if (!owns()) return undefined;
+      if (!request.current()) return undefined;
       confirmedDirectory.current = {
         path: effectiveDirectory,
         transportGeneration,
@@ -375,12 +344,7 @@ export const Welcome = memo(function Welcome({
       }
       return result.warning;
     },
-    [
-      catalogSource,
-      effectiveDirectory,
-      state.transportGeneration,
-      catalogRecovery,
-    ],
+    [catalogSource, effectiveDirectory, state.transportGeneration],
   );
   useEffect(() => {
     if (!modelOwnedRef.current) {
@@ -396,11 +360,9 @@ export const Welcome = memo(function Welcome({
       : undefined;
     return () => {
       clearTimeout(timer);
-      ++catalogGeneration.current;
       catalogRequest.current?.abort();
-      catalogRecovery.reset();
     };
-  }, [effectiveDirectory, refreshModels, catalogRecovery]);
+  }, [effectiveDirectory, refreshModels]);
   const refreshPickerModels = useCallback(
     () => refreshModels(true),
     [refreshModels],
@@ -540,9 +502,8 @@ export const Welcome = memo(function Welcome({
     state.transportGeneration,
   ]);
 
-  // Until the user chooses explicitly, an inherited session model is the
-  // preferred source. The explicit inheritance survives host deselection, and
-  // a live model still closes the snapshot-arrival race in isolated renders.
+  // Inherited discovery may finish after New opens. An explicit model or
+  // effort choice keeps ownership of that field.
   useEffect(() => {
     if (modelTouched || !inheritedModel) return;
     setModelKey(modelIdentityKey(inheritedModel));
@@ -622,9 +583,7 @@ export const Welcome = memo(function Welcome({
   const changeDirectory = (value: string) => {
     setDirectory(value);
     if (value.trim() === effectiveDirectory) return;
-    ++catalogGeneration.current;
     catalogRequest.current?.abort();
-    catalogRecovery.reset();
     confirmedDirectory.current = null;
     setDirectoryIssue(null);
     setProjectFiles([]);

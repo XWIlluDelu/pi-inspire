@@ -373,6 +373,40 @@ test("ranks command destinations and opens the model picker without consuming a 
     palette.getByRole("option", { name: /^New session/ }),
   ).toHaveCount(1);
   const filter = palette.getByLabel("Filter commands");
+  await expect(filter).toBeFocused();
+  await palette
+    .getByRole("option", { name: "Find a session", exact: true })
+    .hover();
+  await page.mouse.move(0, 0);
+  await expect(filter).not.toHaveAttribute("aria-activedescendant", /.+/);
+  await filter.press("ArrowDown");
+  await expect(palette.getByRole("option", { selected: true })).toHaveText(
+    "Settings",
+  );
+
+  await filter.fill("shell");
+  const terminal = palette.getByRole("option", {
+    name: "Open Terminal",
+    exact: true,
+  });
+  await expect(terminal).toBeVisible();
+  await expect(terminal.locator(".palette__hint-inline")).toHaveCount(0);
+  await filter.fill("project");
+  const trust = palette.getByRole("option", { name: /^\/trust/ });
+  await expect(trust).toContainText("Terminal only");
+  await expect(trust.locator(".palette__title .search-match")).toHaveCount(0);
+  await expect(trust.locator(".palette__hint-inline .search-match")).toHaveText(
+    "project",
+  );
+  await filter.fill("trust project");
+  await expect(trust.locator(".palette__title .search-match")).toHaveText(
+    "trust",
+  );
+  await filter.fill("/new");
+  await expect(
+    palette.getByRole("option", { name: /^New session/ }),
+  ).toHaveCount(1);
+
   for (const [query, title] of [
     ["settings", "Settings"],
     ["cost", "Session & usage"],

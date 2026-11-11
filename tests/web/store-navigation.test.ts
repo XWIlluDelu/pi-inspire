@@ -645,6 +645,59 @@ describe("navigation curation", () => {
     ]);
   });
 
+  it.each(["complete", "unavailable"] as const)(
+    "restores a child from a hidden folder only when its membership is %s",
+    async (membership) => {
+      const cwd = "/work/hidden";
+      const child = sessionSummary({ id: "child", cwd, title: "Restore me" });
+      const sibling = sessionSummary({ id: "sibling", cwd });
+      let failLookup = false;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/bootstrap")) {
+          const payload = bootstrapPayload();
+          return {
+            body: {
+              ...payload,
+              preferences: { ...payload.preferences, hiddenProjectCwds: [cwd] },
+            },
+          };
+        }
+        if (url.startsWith("/api/sessions/by-cwd")) {
+          return failLookup
+            ? { status: 503, body: { error: "Folder lookup failed" } }
+            : { body: { sessions: [child, sibling] } };
+        }
+        if (url.startsWith("/api/sessions?"))
+          return { body: sessionPage([child], 1) };
+        if (url === "/api/preferences" && init.method === "PATCH")
+          return { body: { ...DEFAULT_PREFS, ...jsonBody(init) } };
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      await store.loadSessions("Restore me");
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        child.id,
+      ]);
+      failLookup = membership === "unavailable";
+      store.toggleSessionHidden(child.id);
+
+      if (failLookup) {
+        await vi.waitFor(() =>
+          expect(store.getState().notices.at(-1)?.text).toBe(
+            "Folder lookup failed",
+          ),
+        );
+        expect(store.getState().prefs.hiddenProjectCwds).toEqual([cwd]);
+        expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
+      } else {
+        await vi.waitFor(() =>
+          expect(store.getState().prefs.hiddenSessionIds).toEqual([sibling.id]),
+        );
+        expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
+      }
+    },
+  );
+
   it("restores the last confirmed value when two writes fail in a row", async () => {
     installFetch((url, init) => {
       if (url.startsWith("/api/preferences") && init.method === "PATCH") {

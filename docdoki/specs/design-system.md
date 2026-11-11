@@ -28,7 +28,6 @@ covers:
   - src/**/*.tsx
   - tests/web/{styles-contract,palette-colors}.test.ts
   - tests/web/palette-css.ts
-  - tests/web/overlay-and-palette.test.tsx
   - tests/web/theme-init.test.ts
   - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,responsive-inputs,theme-colors}.spec.ts
   - tests/browser/support/colors.ts

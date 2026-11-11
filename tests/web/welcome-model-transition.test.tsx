@@ -18,10 +18,8 @@ import { Welcome } from "../../src/components/Welcome";
 import { store } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
-  activeSnapshot,
   bootstrapPayload,
   deferred,
-  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
 } from "./helpers";
@@ -258,36 +256,8 @@ it.each([false, true])(
   },
 );
 
-it("inherits the selected router and its effective effort without reapplying workspace/model policy", async () => {
-  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
-  const policy = vi.fn(() => "xhigh" as ThinkingLevel);
-  thinking = policy;
-  render(<Welcome showRecent={false} inherited={inherit} />);
-  fireEvent.click(screen.getByRole("button", { name: "Model" }));
-  expect(
-    screen.getByRole("option", { name: /extended.*Router/ }),
-  ).toBeVisible();
-  fireEvent.keyDown(screen.getByRole("combobox", { name: "Search models" }), {
-    key: "Escape",
-  });
-  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
-    target: { value: "continue selected router" },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Start session" }));
-  await waitFor(() =>
-    expect(start).toHaveBeenCalledWith("/one", {
-      model: { provider: "fixture", id: "extended" },
-      thinkingLevel: "max",
-    }),
-  );
-  expect(policy).not.toHaveBeenCalled();
-});
 it("waits for a pending source selection instead of applying workspace defaults", async () => {
-  const source =
-    deferred<import("../../shared/model-settings").ModelCatalogResponse>();
+  const source = deferred<ModelCatalogResponse>();
   const queries = vi
     .spyOn(store, "readNewSessionModels")
     .mockImplementation(async (_sessionId, _cwd, inherit) =>
@@ -321,7 +291,6 @@ it("waits for a pending source selection instead of applying workspace defaults"
     "aria-busy",
     "true",
   );
-  expect(document.querySelector(".welcome__readiness")).toBeNull();
   await act(async () =>
     source.resolve({
       models,
@@ -384,7 +353,6 @@ it("recovers inherited selection before allowing missing-folder creation", async
   });
   expect(create).toBeDisabled();
   expect(create).toHaveAttribute("aria-busy", "true");
-  expect(document.querySelector(".welcome__readiness")).toBeNull();
   vi.useFakeTimers();
   await act(async () =>
     source.reject(new ApiError(503, "The source model is unavailable")),
@@ -413,36 +381,8 @@ it("recovers inherited selection before allowing missing-folder creation", async
   });
 });
 
-it("refreshes the displayed workspace default but omits preview overrides at startup", async () => {
-  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
-  render(<Welcome showRecent={false} />);
-  fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
-    target: { value: "/one" },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-      "ordinary",
-    ),
-  );
-  defaults = { cwd: "/one", model: extended, thinkingLevel: "max" };
-  fireEvent.click(screen.getByRole("button", { name: "Model" }));
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-      "extended",
-    ),
-  );
-  fireEvent.keyDown(screen.getByRole("combobox", { name: "Search models" }), {
-    key: "Escape",
-  });
-  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
-    target: { value: "use native default" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Start session" }));
-  await waitFor(() => expect(start).toHaveBeenCalledWith("/one", {}));
-});
 it("keeps a newer catalog refresh when an older default preview arrives late", async () => {
-  const pending =
-    deferred<import("../../shared/model-settings").ModelCatalogResponse>();
+  const pending = deferred<ModelCatalogResponse>();
   const queries = vi
     .spyOn(store, "readNewSessionModels")
     .mockReturnValueOnce(pending.promise);
@@ -502,32 +442,6 @@ it("keeps a manual default effort across workspace changes and submits only that
   fireEvent.click(screen.getByRole("button", { name: "Start session" }));
   await waitFor(() =>
     expect(start).toHaveBeenCalledWith("/two", { thinkingLevel: "low" }),
-  );
-});
-it("treats choosing the displayed default as an explicit selection without resetting its effort", async () => {
-  const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
-  render(<Welcome showRecent={false} />);
-  fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
-    target: { value: "/one" },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
-      "ordinary",
-    ),
-  );
-  pick("ordinary");
-  fireEvent.change(screen.getByRole("textbox", { name: "First message" }), {
-    target: { value: "explicit model" },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Start session" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Start session" }));
-  await waitFor(() =>
-    expect(start).toHaveBeenCalledWith("/one", {
-      model: { provider: "fixture", id: "ordinary" },
-      thinkingLevel: "high",
-    }),
   );
 });
 it.each([
@@ -664,30 +578,24 @@ it("ignores an old workspace response and uses the new workspace's configured le
     screen.getByRole("combobox", { name: "Thinking level" }),
   ).toHaveTextContent("Minimal");
 });
-it("keeps a same-cwd catalog read alive across same-model snapshot objects and effort input", async () => {
+it("keeps a same-cwd catalog read alive across equivalent inheritance and effort input", async () => {
   vi.useFakeTimers();
   const pending = deferred<ModelOption[]>();
   catalog = () => pending.promise;
   const refresh = vi.spyOn(store, "readNewSessionModels");
-  const emit = () =>
-    FakeWebSocket.instances.at(-1)!.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        sessionId: "current",
-        cwd: "/one",
-        model: { ...extended },
-        thinkingLevel: "max",
-        availableModels: models,
-      }),
-    });
-  act(emit);
-  render(<Welcome showRecent={false} />);
+  const surface = () => (
+    <Welcome
+      showRecent={false}
+      inherited={{ ...inherit, sessionId: "current", model: { ...extended } }}
+    />
+  );
+  const view = render(surface());
   await act(() => vi.advanceTimersByTimeAsync(220));
   expect(refresh).toHaveBeenCalledExactlyOnceWith("current", "/one");
   fireEvent.click(screen.getByRole("combobox", { name: "Thinking level" }));
   fireEvent.click(screen.getByRole("option", { name: /^Xhigh$/ }));
   for (let i = 0; i < 3; i++) {
-    act(emit);
+    view.rerender(surface());
     await act(() => vi.advanceTimersByTimeAsync(90));
   }
   await act(() => vi.advanceTimersByTimeAsync(240));

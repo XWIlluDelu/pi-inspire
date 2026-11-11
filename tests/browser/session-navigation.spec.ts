@@ -1,6 +1,6 @@
-import { hostRequest } from "./support/host-request";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
   openFixtureSession,
@@ -29,6 +29,20 @@ test("session search paginates unloaded results and keyboard selection preserves
   const restoreCuration = await preserveCuration(page);
   try {
     await openFixtureSession(page, /Review extension event lifecycle/);
+    const activeRow = page.locator('.nav__row-main[aria-current="page"]');
+    await activeRow.focus();
+    await page.keyboard.press("Tab");
+    await expect(
+      page.getByRole("button", {
+        name: /^(Pin|Unpin) "Review extension event lifecycle"$/,
+      }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(
+      page.getByRole("button", {
+        name: 'Hide "Review extension event lifecycle"',
+      }),
+    ).toBeFocused();
     const input = page.getByRole("textbox", { name: "Message", exact: true });
     await input.fill("SESSION_SEARCH_ACTIVE_DRAFT");
     await page.locator('input[type="file"]').setInputFiles({
@@ -159,8 +173,16 @@ test("session search paginates unloaded results and keyboard selection preserves
       "Review extension event lifecycle",
     );
     await curate("Unpin");
-    await search.fill("");
-    await search.focus();
+    const clear = page.getByRole("button", { name: "Clear session search" });
+    await clear.click();
+    await expect(search).toBeFocused();
+    await expect(search).toHaveValue("");
+    await search.fill("bodyneedle");
+    await search.press("Tab");
+    await expect(clear).toBeFocused();
+    await clear.press("Enter");
+    await expect(search).toBeFocused();
+    await expect(search).toHaveValue("");
     await expect(page.locator(".nav__row--highlighted")).toHaveCount(0);
     await search.press("Enter");
     await expect(page.locator(".topbar__title-button")).toHaveText(
@@ -258,6 +280,7 @@ test.describe("touch session drawer", () => {
         await hiddenToggle.tap();
       const hiddenRow = hidden.locator(`[data-session-id="${sessionId}"]`);
       await expect(hiddenRow).toBeVisible();
+      await expect(hiddenRow.locator('[aria-current="page"]')).toBeVisible();
       await action("Restore").tap();
       await expect(hiddenRow).toHaveCount(0);
       // Hiding clears the pin; restoring returns a regular session row.

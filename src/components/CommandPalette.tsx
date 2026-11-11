@@ -27,6 +27,7 @@ import {
   branchCopiesBlocked,
   hasEarlierContinuation,
 } from "../controllers/branch-controller";
+import { relativeTime } from "../format";
 import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
@@ -44,7 +45,6 @@ import { ButtonLabel } from "./ButtonLabel";
 import { ComposerInput } from "./ComposerInput";
 import { visibleSessions } from "./nav-model";
 import { SearchMatchText } from "./SearchMatchText";
-import { relativeTime } from "../format";
 
 interface PaletteItem {
   id: string;
@@ -101,7 +101,6 @@ export const CommandPalette = memo(function CommandPalette({
     return {
       sessionId: appState.sessionId,
       readOnlyReason: appState.readOnlyReason,
-      modelControls: Boolean(appState.sessionId),
       copiesBlocked: branchCopiesBlocked(appState),
       external: Boolean(
         appState.sessionId &&
@@ -382,14 +381,13 @@ export const CommandPalette = memo(function CommandPalette({
               run: () => void store.cycleModel(-1),
             },
           );
-        if (state.modelControls)
-          actions.push({
-            id: "thinking-cycle",
-            group: "Models",
-            title: "Cycle thinking level",
-            hint: modelCycleShortcut("thinking"),
-            run: () => void store.cycleThinking(),
-          });
+        actions.push({
+          id: "thinking-cycle",
+          group: "Models",
+          title: "Cycle thinking level",
+          hint: modelCycleShortcut("thinking"),
+          run: () => void store.cycleThinking(),
+        });
       }
       actions.push({
         id: "manage-models",
@@ -528,18 +526,13 @@ export const CommandPalette = memo(function CommandPalette({
     }));
 
     const commands: PaletteItem[] = state.sessionId
-      ? resolveCommandInventory(state.commands)
+      ? commandInventory
           .filter(
             (command) =>
               (!state.readOnlyReason ||
                 (command.source === "builtin" &&
                   (command.name === "export" ||
                     nativeCommand(command.name)?.availableWithoutWorkspace))) &&
-              !(
-                command.source === "builtin" &&
-                ["model", "thinking"].includes(command.name) &&
-                !state.modelControls
-              ) &&
               !actions.some((action) =>
                 action.aliases?.includes(`/${command.name}`),
               ),
@@ -615,7 +608,7 @@ export const CommandPalette = memo(function CommandPalette({
   }, [
     state,
     abortable,
-    state.earlierContinuation,
+    commandInventory,
     onToggleNav,
     onToggleCtx,
     onNewSession,

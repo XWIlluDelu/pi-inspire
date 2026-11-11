@@ -100,7 +100,7 @@ covers:
   - tests/browser/needs-you.spec.ts
   - tests/web/update-controller.test.ts
   - tests/web/modal-focus.test.tsx
-  - tests/web/overlay-and-palette.test.tsx
+  - tests/web/extension-ui-ownership.test.tsx
   - tests/web/command-ux.test.tsx
   - tests/browser/command-ux.spec.ts
   - tests/web/theme-init.test.ts
@@ -232,16 +232,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
   Clear Hidden is a persistent header icon action between the count and disclosure, with its own
   accessible name and click target; it does not consume a content row. The count and controls keep
-  their positions when the drawer opens or closes. Independent hidden session titles start farther
-  left than folder contents, so a row following a folder does not look like its child; complete
-  hidden folders keep their own nested indentation. Clear empties the entire drawer through one
-  count-bearing confirmation covering both individually hidden sessions and every session in
-  complete hidden folders. It is unavailable while search or curation hydration can show only a
-  partial selection, and while any target is opening, working in Inspire, or conflicted. A
-  folder-level deletion applies the same conditions to that folder only. Viewing an idle target or
-  observing it in an external Pi terminal does not block deletion; [[session-deletion]] owns
-  idle-worker retirement and the contextual terminal consequence. Session deletion leaves project
-  files and project folders unchanged.
+  their positions when the drawer opens or closes. Clear confirms the complete drawer with one
+  count-bearing dialog. Search, incomplete catalog data, a target opening, or another deletion
+  block admission. The folder action applies these checks to its own targets. [[session-deletion]]
+  defines target validation, Pi instance shutdown and file removal.
 
 ### Search and pagination
 

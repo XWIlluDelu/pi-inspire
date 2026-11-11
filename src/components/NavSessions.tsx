@@ -7,7 +7,7 @@ import {
   PinOff,
   Trash2,
 } from "lucide-react";
-import { memo, useEffect, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useId, useState, useSyncExternalStore } from "react";
 import {
   parentSegment,
   projectNameFromCwd,
@@ -279,7 +279,6 @@ export const SessionRow = memo(function SessionRow({
  * the same fixed right column as a session row owns Pin/Hide or Restore/Trash. */
 export function ProjectGroup({
   group,
-  headingId,
   searching,
   searchQuery = "",
   showContext,
@@ -292,7 +291,6 @@ export function ProjectGroup({
   deleteGroupDisabledReason = null,
 }: {
   group: SessionGroup;
-  headingId: string;
   searching: boolean;
   searchQuery?: string;
   showContext: boolean;
@@ -304,6 +302,7 @@ export function ProjectGroup({
   onDeleteGroup?: () => void;
   deleteGroupDisabledReason?: string | null;
 }) {
+  const headingId = useId();
   const { collapsed, pinned, clearingHidden, deletingSessionId } = useAppState(
     (state) => ({
       collapsed: state.prefs.navCollapsedGroups.includes(group.cwd),

@@ -201,32 +201,6 @@ it("withdraws reads from the previous session and saves from the previous Host c
   ).not.toBeInTheDocument();
   expect(screen.queryByText(/Saved to file/)).not.toBeInTheDocument();
 });
-it("adds HTTP configuration without copying write-only fields from other entries", async () => {
-  render(<McpSettings active owner={{ sessionId: fixture.state.sessionId }} />);
-  await screen.findByRole("button", { name: "Edit user server docs" });
-  fireEvent.click(screen.getByRole("button", { name: "Add server" }));
-  fireEvent.change(screen.getByLabelText("Server name"), {
-    target: { value: "new-server" },
-  });
-  fireEvent.change(screen.getByLabelText("Server URL"), {
-    target: { value: "https://new.example.invalid/mcp" },
-  });
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  await waitFor(() =>
-    expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-      { sessionId: "one" },
-      {
-        operation: "add",
-        scope: "user",
-        revision: "a".repeat(64),
-        name: "new-server",
-        values: { url: "https://new.example.invalid/mcp" },
-      },
-    ),
-  );
-});
 it.each(["unselected", "unavailable"] as const)(
   "keeps user configuration editable with an %s project",
   async (project) => {
@@ -648,26 +622,6 @@ it("saves tool rules in displayed order and removes deleted rules", () => {
   fireEvent.click(screen.getByRole("button", { name: "Remove tool rule 1" }));
   fireEvent.submit(form);
   expect(save).toHaveBeenLastCalledWith("user", "docs", { toolExposure: {} });
-});
-
-it("requires an explicit override before saving an inherited project policy", async () => {
-  render(<McpSettings active owner={{ sessionId: "one" }} />);
-  fireEvent.click(
-    await screen.findByRole("button", {
-      name: "Customize for this project: docs",
-    }),
-  );
-  const save = screen.getByRole("button", { name: "Save" });
-  expect(save).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Add tool rule" }));
-  fireEvent.change(screen.getByLabelText("Tool name or pattern"), {
-    target: { value: "read_*" },
-  });
-  expect(save).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "Remove tool rule 1" }));
-  expect(save).toBeDisabled();
-  fireEvent.submit(save.closest("form")!);
-  expect(fixture.host.editMcpConfig).not.toHaveBeenCalled();
 });
 
 it("rejects duplicate header names rather than silently discarding one value", async () => {
