@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import type { BootstrapResponse } from "../../shared/contracts";
+import { sessionDraft } from "../../src/session-drafts";
 import { AppStore } from "../../src/store";
 import {
   disposeOperationFixture,
@@ -8,7 +9,7 @@ import {
 } from "../server/fixtures/native-operation";
 import { deferred, FakeWebSocket, installFakeWebSocket } from "../web/helpers";
 
-it("stops a second native Pi run after both HTTP observations of the first Stop were lost", async () => {
+it("stops a second native Pi run and reclaims the first Stop's lost Pending input", async () => {
   const browserWindow = window;
   const gate = deferred<void>();
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
@@ -23,9 +24,14 @@ it("stops a second native Pi run after both HTTP observations of the first Stop 
     let losePost = true,
       loseGet = true;
     const ids: string[] = [];
+    const pending = "Queued between Return and Stop";
     vi.stubGlobal("fetch", (async (input, init) => {
-      const response = await bridge(input, init);
       const url = String(input);
+      if (url === "/api/control/abort" && losePost) {
+        // Queue input after the preliminary Return, so only Stop owns it.
+        await f!.api.prompt({ ...f!.delivery(pending), behavior: "followUp" });
+      }
+      const response = await bridge(input, init);
       if (url.startsWith("/api/bootstrap"))
         bootstrap = await response.clone().json();
       if (url === "/api/control/abort") {
@@ -58,6 +64,7 @@ it("stops a second native Pi run after both HTTP observations of the first Stop 
     await vi.waitFor(() => expect(f!.modelRequests).toHaveLength(1));
     await store.abort();
     await vi.waitFor(() => expect(store!.getState().runState).toBe("aborted"));
+    expect(sessionDraft(f.sessionId)).toBe("");
     await f.api.prompt(f.delivery("Second isolated run"));
     await vi.waitFor(() => expect(f!.modelRequests).toHaveLength(2));
     expect(store.getState().runState).toBe("running");
@@ -65,6 +72,7 @@ it("stops a second native Pi run after both HTTP observations of the first Stop 
     await vi.waitFor(async () =>
       expect((await f!.runtime.snapshot()).runState).toBe("aborted"),
     );
+    await vi.waitFor(() => expect(sessionDraft(f!.sessionId)).toBe(pending));
     expect(ids).toHaveLength(2);
     expect(ids[1]).not.toBe(ids[0]);
     expect(store.getState().connection).toBe("open");

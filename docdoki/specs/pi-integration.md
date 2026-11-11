@@ -211,9 +211,10 @@ cannot resolve a message suspended before its event. Recovery transfers owned or
 staged handles; discard, consumption and retirement release only worker-owned copies. [[composer]]
 owns recovery merging, copying and unresolved-image feedback.
 
-An input hook can also accept a prompt without agent lifecycle events: an idle/empty Pi observation
-may clear that queued admission only while the same worker and sole pending prompt still own it.
-Failure of this observation does not reject an accepted prompt.
+An input hook can handle a prompt without agent events. The Host clears that preflight only after
+Pi reports an idle worker with an empty queue and the worker still owns the sole pending prompt.
+A `started` receipt can arrive before Pi appends the user message. Immediate Composer history
+uses artifact references from the reconciled session projection.
 
 Direct-worker retirement requires observed leader exit (or proven spawn failure) and completed
 process-tree signaling. Herdr additionally requires its worker scope to be empty. Replacement and

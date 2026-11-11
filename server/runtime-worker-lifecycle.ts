@@ -5,21 +5,20 @@ import {
   type ProjectionConflict,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
+import { samePersistedJson } from "./persisted-json.js";
 import {
   MAX_RPC_LINE_BYTES,
   type PiRpcOptions,
   type PiRpcProcess,
 } from "./pi-rpc.js";
-import { samePersistedJson } from "./persisted-json.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
-import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
 import { parseRpcEntryChain } from "./runtime-entry-chain.js";
+import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
 import type { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
 import {
   type BranchBridgeIdentity,
-  clearPiQueueMirror,
   clearWorkerPresentation,
   type RuntimeSlot,
 } from "./runtime-slot.js";
@@ -185,7 +184,7 @@ export class RuntimeWorkerLifecycle {
     reason: Parameters<RuntimeExtensionUiController["clear"]>[1],
   ): Promise<void> {
     this.collaborators.extensionUi.clear(slot, reason);
-    clearPiQueueMirror(slot);
+    slot.piPendingInput = { steering: [], followUp: [] };
     const images = slot.pendingImages;
     slot.pendingImages = null;
     slot.pendingQueues = {
@@ -231,7 +230,6 @@ export class RuntimeWorkerLifecycle {
     void slot.pendingImages?.dispose();
     slot.pendingImages = null;
     slot.process = null;
-    slot.pendingPrompt = null;
     slot.pendingPromptCount = 0;
     slot.nativeBash = null;
     slot.ready = false;

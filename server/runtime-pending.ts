@@ -30,100 +30,63 @@ export function exactPendingInput(value: unknown): PendingInput | null {
   return { steering: [...steering], followUp: [...followUp] };
 }
 
-export function mergePendingQueues(
-  pi: PendingQueues,
-  host: readonly (Pick<PromptRequest, "message" | "behavior"> & {
-    imageCount?: number | null;
-  })[],
-  previousRevision: number,
-): PendingQueues {
-  const summarize = (mode: NonNullable<PromptRequest["behavior"]>) =>
-    host
-      .filter((item) => item.behavior === mode)
-      .map((item, index) => ({
-        id: `host-${mode}-${index}`,
-        ...pendingTextSummary(item.message),
-        ...(item.imageCount ? { imageCount: item.imageCount } : {}),
-      }));
-  const steering = [...pi.steering, ...summarize("steer")];
-  const followUp = [...pi.followUp, ...summarize("followUp")];
-  const remaining = MAX_PENDING_MESSAGES;
-  const piImageCount =
-    pi.totalImageCount ??
-    (pi.totalCount === pi.steering.length + pi.followUp.length
-      ? [...pi.steering, ...pi.followUp].reduce(
-          (sum, row) => sum + (row.imageCount ?? 0),
-          0,
-        )
-      : undefined);
-  const totalImageCount =
-    piImageCount === undefined || host.some((row) => row.imageCount === null)
-      ? undefined
-      : piImageCount +
-        host.reduce((sum, row) => sum + (row.imageCount ?? 0), 0);
+export function pendingContentFromInput(input: PendingInput): PendingContent {
   return {
-    revision: previousRevision + 1,
-    totalCount: pi.totalCount + host.length,
-    ...(totalImageCount === undefined ? {} : { totalImageCount }),
-    steering: steering.slice(0, remaining),
-    followUp: followUp.slice(0, Math.max(0, remaining - steering.length)),
+    steering: input.steering.map((text) => ({ text })),
+    followUp: input.followUp.map((text) => ({ text })),
   };
 }
 
-export function pendingContentFromTexts(
-  steeringTexts: unknown,
-  followUpTexts: unknown,
-): PendingContent {
-  const rows = (values: unknown): PendingContentRow[] =>
-    Array.isArray(values)
-      ? values
-          .filter((text): text is string => typeof text === "string")
-          .map((text) => ({ text }))
-      : [];
-  return { steering: rows(steeringTexts), followUp: rows(followUpTexts) };
-}
-
-export function pendingQueuesFromContent(
-  content: PendingContent,
+/** Only visible rows need previews. Totals include the full native and Host queues. */
+export function projectPendingQueues(
+  pi: PendingContent,
+  host: readonly {
+    message: string;
+    behavior: NonNullable<PromptRequest["behavior"]>;
+    imageCount: number | null;
+  }[],
   previousRevision: number,
 ): PendingQueues {
   let remaining = MAX_PENDING_MESSAGES;
-  const project = (rows: PendingContentRow[], kind: string) => {
-    const summaries: PendingMessageSummary[] = [];
-    for (const { text, imageCount, imageAttachmentIds } of rows) {
-      if (remaining === 0) break;
-      remaining -= 1;
-      summaries.push({
+  const project = (
+    native: PendingContentRow[],
+    mode: NonNullable<PromptRequest["behavior"]>,
+  ): PendingMessageSummary[] => {
+    const rows = native
+      .slice(0, remaining)
+      .map(({ text, imageCount, imageAttachmentIds }, index) => ({
         // Coordinates in the unconsumed view, not native Pi item identities.
-        id: `text-${kind}-${summaries.length}`,
+        id: `text-${mode}-${index}`,
         ...pendingTextSummary(text),
         ...(imageCount === undefined ? {} : { imageCount }),
         ...(imageAttachmentIds === undefined ? {} : { imageAttachmentIds }),
-      });
-    }
-    return summaries;
+      }));
+    remaining -= rows.length;
+    const held = host
+      .filter((item) => item.behavior === mode)
+      .slice(0, remaining)
+      .map(({ message, imageCount }, index) => ({
+        id: `host-${mode}-${index}`,
+        ...pendingTextSummary(message),
+        ...(imageCount ? { imageCount } : {}),
+      }));
+    remaining -= held.length;
+    return [...rows, ...held];
   };
-  const steering = project(content.steering, "steer");
-  const followUp = project(content.followUp, "followUp");
+  const steering = project(pi.steering, "steer");
+  const followUp = project(pi.followUp, "followUp");
+  const imageCount = (sum: number, row: { imageCount?: number | null }) =>
+    sum + (row.imageCount ?? 0);
+  const totalImageCount = host.some((row) => row.imageCount === null)
+    ? undefined
+    : pi.steering.reduce(imageCount, 0) +
+      pi.followUp.reduce(imageCount, 0) +
+      host.reduce(imageCount, 0);
   return {
     revision: previousRevision + 1,
-    totalCount: content.steering.length + content.followUp.length,
-    totalImageCount: [...content.steering, ...content.followUp].reduce(
-      (sum, row) => sum + (row.imageCount ?? 0),
-      0,
-    ),
+    totalCount: pi.steering.length + pi.followUp.length + host.length,
+    ...(totalImageCount === undefined ? {} : { totalImageCount }),
     steering,
     followUp,
   };
-}
-
-export function pendingQueuesFromTexts(
-  steeringTexts: unknown,
-  followUpTexts: unknown,
-  previousRevision: number,
-): PendingQueues {
-  return pendingQueuesFromContent(
-    pendingContentFromTexts(steeringTexts, followUpTexts),
-    previousRevision,
-  );
 }

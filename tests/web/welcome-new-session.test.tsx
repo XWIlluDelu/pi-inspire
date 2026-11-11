@@ -931,14 +931,12 @@ describe("new-session start surface", () => {
     });
     expect(screen.getByLabelText("Message")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
-    expect(store.getState().sending).toBe(true);
 
     await act(async () => {
       receipt.reject(new TypeError("Lost receipt"));
     });
-    await waitFor(() => expect(store.getState().sending).toBe(false));
-    expect(screen.getByLabelText("Message")).toHaveValue(
-      "Inspect the attached image",
+    expect(await screen.findByDisplayValue("Inspect the attached image")).toBe(
+      screen.getByLabelText("Message"),
     );
     expect(
       screen.getByRole("button", { name: "Preview image.png" }),
@@ -946,9 +944,10 @@ describe("new-session start surface", () => {
     expect(store.getState().failedDeliveryCount).toBe(0);
     promptGate = null;
     promptBody = null;
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(promptBody).toEqual(original));
-    await waitFor(() => expect(store.getState().sending).toBe(false));
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Send message" })),
+    );
+    expect(promptBody).toEqual(original);
     expect(screen.getByLabelText("Message")).toHaveValue("");
   });
 

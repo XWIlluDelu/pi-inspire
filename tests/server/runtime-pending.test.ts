@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
-import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import { RuntimeController } from "../../server/runtime.js";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import { PreviewProjection } from "./fixtures/preview-projection.js";
 import {
   catalog,
@@ -329,6 +329,24 @@ describe("RuntimeController Pending input and recovery", () => {
       ],
       followUp: [pendingEntry("text-followUp-0", "later")],
     });
+
+    const observed = await runtime.snapshot();
+    f.worker.emit("event", {
+      type: "queue_update",
+      steering: ["unverified", false],
+      followUp: [],
+    });
+    expect((await runtime.snapshot()).pendingQueues).toEqual(
+      observed.pendingQueues,
+    );
+    await expect(
+      runtime.pendingText({
+        sessionId: "a",
+        viewId: observed.active!.transcriptPage.viewId!,
+        revision: observed.pendingQueues!.revision,
+        itemId: "text-steer-0",
+      }),
+    ).rejects.toThrow(/Complete pending text is unavailable/);
 
     f.worker.emit("event", {
       type: "queue_update",

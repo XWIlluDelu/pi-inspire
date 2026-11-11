@@ -71,10 +71,9 @@ describe("Host-deferred image handoff", () => {
             return { body: "image preview" };
           }
           if (url === "/api/prompt") {
+            const body = jsonBody(init);
             try {
-              await f.runtime.prompt(
-                jsonBody(init) as unknown as PromptRequest,
-              );
+              await f.runtime.prompt(body as unknown as PromptRequest);
               return {
                 status: 202,
                 body: { accepted: true, historyEntry: null },
@@ -88,7 +87,11 @@ describe("Host-deferred image handoff", () => {
               };
               return {
                 status: 409,
-                headers: { "X-Inspire-Authority": TEST_HOST_AUTHORITY },
+                headers: {
+                  "X-Inspire-Authority": TEST_HOST_AUTHORITY,
+                  "X-Inspire-Prompt-Operation": String(body.operationId),
+                  "X-Inspire-Prompt-Outcome": "rejected",
+                },
                 body: {
                   error: recovered.message,
                   code: recovered.code,

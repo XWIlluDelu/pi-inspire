@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import {
-  mergePendingQueues,
-  pendingQueuesFromContent,
-  pendingQueuesFromTexts,
+  pendingContentFromInput,
+  projectPendingQueues,
 } from "../../server/runtime-pending";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import {
   MAX_PENDING_MESSAGES,
   MAX_PENDING_PREVIEW_CHARS,
@@ -21,24 +20,18 @@ const summary = {
 
 describe("Pending wire contracts", () => {
   it("counts image formats across omitted rows and Host-held input without exposing image data", () => {
-    const pi = pendingQueuesFromContent(
-      {
-        steering: Array.from(
-          { length: MAX_PENDING_MESSAGES + 1 },
-          (_, index) => ({
-            text: index ? "" : "first",
-            ...(index === MAX_PENDING_MESSAGES ? { imageCount: 2 } : {}),
-          }),
-        ),
-        followUp: [],
-      },
-      0,
-    );
-    const merged = mergePendingQueues(
-      pi,
-      [{ message: "", behavior: "followUp", imageCount: 3 }],
-      pi.revision,
-    );
+    const pi = {
+      steering: Array.from(
+        { length: MAX_PENDING_MESSAGES + 1 },
+        (_, index) => ({
+          text: index ? "" : "first",
+          ...(index === MAX_PENDING_MESSAGES ? { imageCount: 2 } : {}),
+        }),
+      ),
+      followUp: [],
+    };
+    const host = { message: "", behavior: "followUp" as const };
+    const merged = projectPendingQueues(pi, [{ ...host, imageCount: 3 }], 0);
     expect(merged).toMatchObject({
       totalCount: MAX_PENDING_MESSAGES + 2,
       totalImageCount: 5,
@@ -48,7 +41,7 @@ describe("Pending wire contracts", () => {
     );
     expect(parsePendingQueues(merged)).toEqual(merged);
     expect(
-      mergePendingQueues(pi, [{ message: "", imageCount: null }], 0)
+      projectPendingQueues(pi, [{ ...host, imageCount: null }], 0)
         .totalImageCount,
     ).toBeUndefined();
   });
@@ -59,11 +52,10 @@ describe("Pending wire contracts", () => {
       const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
       const message = text ? `${text}\n\n${trailer}` : trailer;
       const preview = text ? `${text}\n\nreport.csv` : "report.csv";
-      const pi = pendingQueuesFromTexts([message], [], 0);
-      const queue = mergePendingQueues(
-        pi,
-        [{ message, behavior: "followUp" }],
-        pi.revision,
+      const queue = projectPendingQueues(
+        { steering: [{ text: message }], followUp: [] },
+        [{ message, behavior: "followUp", imageCount: 0 }],
+        0,
       );
       const expected = {
         textPreview: preview,
@@ -91,7 +83,11 @@ describe("Pending wire contracts", () => {
 
   it("projects previews and queue counts into the wire format", () => {
     expect(parsePendingMessageSummary(summary)).toEqual(summary);
-    const queue = pendingQueuesFromTexts(["continue"], [], 3);
+    const queue = projectPendingQueues(
+      { steering: [{ text: "continue" }], followUp: [] },
+      [],
+      3,
+    );
     expect(parsePendingQueues(queue)).toEqual({
       revision: 4,
       totalCount: 1,
@@ -125,11 +121,10 @@ describe("Pending wire contracts", () => {
   ])(
     "keeps both ends or the whole $label in Pi and Host previews",
     ({ text, preview, ends }) => {
-      const pi = pendingQueuesFromTexts([text], [], 0);
-      const merged = mergePendingQueues(
-        pi,
-        [{ message: text, behavior: "followUp" }],
-        pi.revision,
+      const merged = projectPendingQueues(
+        { steering: [{ text }], followUp: [] },
+        [{ message: text, behavior: "followUp", imageCount: 0 }],
+        0,
       );
       const summary = merged.steering[0]!;
       expect(summary).toMatchObject({
@@ -191,7 +186,7 @@ describe("Pending wire contracts", () => {
       "12345678-1234-1234-1234-123456789012",
       "12345678-1234-1234-1234-123456789013",
     ];
-    const queue = pendingQueuesFromContent(
+    const queue = projectPendingQueues(
       {
         steering: [
           { text: "", imageCount: 2, imageAttachmentIds: ids },
@@ -199,6 +194,7 @@ describe("Pending wire contracts", () => {
         ],
         followUp: [{ text: "caption", imageCount: 1 }],
       },
+      [],
       0,
     );
     expect(parsePendingQueues(queue)).toEqual(queue);
@@ -232,9 +228,12 @@ describe("Pending wire contracts", () => {
   });
 
   it("bounds retained rows while reporting omitted content truthfully", () => {
-    const queue = pendingQueuesFromTexts(
-      Array(MAX_PENDING_MESSAGES + 1).fill("queued input"),
-      ["later"],
+    const queue = projectPendingQueues(
+      pendingContentFromInput({
+        steering: Array(MAX_PENDING_MESSAGES + 1).fill("queued input"),
+        followUp: ["later"],
+      }),
+      [],
       0,
     );
     expect(queue.totalCount).toBe(MAX_PENDING_MESSAGES + 2);

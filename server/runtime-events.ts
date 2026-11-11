@@ -21,6 +21,7 @@ import {
   MAX_EXTENSION_KEY_CHARS,
   MAX_EXTENSION_STATUSES,
   MAX_EXTENSION_WIDGET_LINES,
+  type PendingInput,
   type ProjectionConflict,
   parsePendingExtensionUiRequest,
   parseRetryInfo,
@@ -39,10 +40,7 @@ import {
 import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
-import {
-  exactPendingInput,
-  pendingQueuesFromTexts,
-} from "./runtime-pending.js";
+import { exactPendingInput } from "./runtime-pending.js";
 import type {
   PersistenceMessageIdentity,
   RuntimeSlot,
@@ -259,8 +257,9 @@ export class RuntimeEventController {
     slot: RuntimeSlot,
     event: unknown,
     rpc: PiRpcProcess,
-    pendingContentChanged = false,
-    persistence?: PersistenceMessageIdentity,
+    pendingContentChanged: boolean,
+    persistence: PersistenceMessageIdentity | undefined,
+    pendingInput: PendingInput | null,
   ): void {
     if (pendingContentChanged) {
       this.host.refreshPendingQueues(slot);
@@ -591,13 +590,8 @@ export class RuntimeEventController {
         break;
       }
       case "queue_update":
-        slot.piPendingInput = exactPendingInput(record);
-        if (!slot.piPendingInput)
-          slot.piPendingQueues = pendingQueuesFromTexts(
-            record.steering,
-            record.followUp,
-            slot.piPendingQueues.revision,
-          );
+        slot.piPendingInput = pendingInput;
+        if (!pendingInput) return;
         this.host.refreshPendingQueues(slot);
         // Public Pi emits full-text arrays on queue updates. The browser
         // receives only the bounded Host projection.
@@ -805,13 +799,12 @@ export class RuntimeEventController {
   ): void {
     // Artifact identity uses the exact wire boundary, before async projection
     // ordering or response fences can advance.
-    let pendingContentChanged = false;
-    if (record.type === "queue_update") {
-      const input = exactPendingInput(record);
-      if (input) slot.pendingImages?.observeQueue(input);
-    } else if (record.type === "message_start")
-      pendingContentChanged =
-        slot.pendingImages?.observeMessage(record.message) ?? false;
+    const pendingInput =
+      record.type === "queue_update" ? exactPendingInput(record) : null;
+    if (pendingInput) slot.pendingImages?.observeQueue(pendingInput);
+    const pendingContentChanged =
+      record.type === "message_start" &&
+      (slot.pendingImages?.observeMessage(record.message) ?? false);
     if (
       record.type === "compaction_end" &&
       record.reason === "manual" &&
@@ -822,6 +815,15 @@ export class RuntimeEventController {
     // `entry_appended` is host provenance, not transcript content. Its raw
     // extension payload must never cross the browser boundary.
     if (record.type === "entry_appended") return;
+    const handle = () =>
+      this.handleEvent(
+        slot,
+        event,
+        rpc,
+        pendingContentChanged,
+        persistence,
+        pendingInput,
+      );
     if (record.type === "agent_settled" || record.type === "compaction_end") {
       this.enqueueOrderedEvent(
         slot,
@@ -858,13 +860,7 @@ export class RuntimeEventController {
           }
           if (slot.process !== rpc && (slot.process !== null || !slot.conflict))
             return;
-          this.handleEvent(
-            slot,
-            event,
-            rpc,
-            pendingContentChanged,
-            persistence,
-          );
+          handle();
           // A terminal lifecycle event may settle the agent, but it cannot
           // repair a reconciliation conflict. Keep the worker stopped and leave
           // the explicit abort/recovery boundary as the sole conflict clearer.
@@ -876,19 +872,12 @@ export class RuntimeEventController {
       this.enqueueOrderedEvent(
         slot,
         () => {
-          if (slot.process === rpc)
-            this.handleEvent(
-              slot,
-              event,
-              rpc,
-              pendingContentChanged,
-              persistence,
-            );
+          if (slot.process === rpc) handle();
         },
         "ordered_event_failed",
       );
     } else {
-      this.handleEvent(slot, event, rpc, pendingContentChanged, persistence);
+      handle();
     }
   }
 

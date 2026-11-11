@@ -256,9 +256,6 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
    * slice, so staged work never leaks across sessions. */
   attachments: PendingAttachment[];
   projectFiles: string[];
-  /** Outgoing operations own their handed-off artifacts independently of the
-   * editable next draft. */
-  sending: boolean;
   /** Failed inputs retained for explicit restoration without replacing a draft. */
   failedDeliveryCount: number;
   /** Pending queue mutation currently awaiting the Host. */
@@ -403,7 +400,6 @@ export function createInitialAppState(): AppState {
     clearingHidden: false,
     attachments: [],
     projectFiles: [],
-    sending: false,
     failedDeliveryCount: 0,
     pendingAction: null,
     resourcesOpen: false,

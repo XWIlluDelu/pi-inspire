@@ -2242,8 +2242,6 @@ export class AppStore {
     return ACCEPTED_NATIVE_COMMAND;
   }
 
-  failedComposerPrompt = () => this.composer.failedPrompt(this.state.sessionId);
-
   restoreFailedComposerPrompt = (): boolean => {
     const sessionId = this.state.sessionId;
     return sessionId ? this.composer.restoreFailedPrompt(sessionId) : false;

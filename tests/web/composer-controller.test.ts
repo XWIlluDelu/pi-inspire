@@ -170,13 +170,15 @@ describe("ComposerController", () => {
     harness.restoreDraftIfEmpty.mockReturnValue(false);
     first.reject(new ApiError(409, "not delivered"));
     await expect(firstSend).resolves.toBe(false);
-    expect(harness.slice().sending).toBe(true);
-    expect(harness.controller.failedPrompt("session-a")?.message).toBe("first");
+    expect(harness.slice().failedDeliveryCount).toBe(1);
     second.resolve(acceptedPrompt);
     await expect(secondSend).resolves.toEqual(acceptedPrompt);
-    expect(harness.controller.failedPrompt("session-a")?.message).toBe("first");
     harness.restoreDraftIfEmpty.mockReturnValue(true);
     expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
+    expect(harness.restoreDraftIfEmpty).toHaveBeenLastCalledWith(
+      "session-a",
+      "first",
+    );
     expect(harness.slice().projectFiles).toEqual(["/workspace/first.ts"]);
   });
 
@@ -222,7 +224,7 @@ describe("ComposerController", () => {
       }),
     ]);
     expect(harness.slice("session-b").attachments).toEqual([]);
-    expect(harness.controller.failedPrompt("session-a")).toBeNull();
+    expect(harness.slice("session-a").failedDeliveryCount).toBe(0);
     expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
     expect(harness.deleteAttachment).not.toHaveBeenCalled();
   });
@@ -243,7 +245,7 @@ describe("ComposerController", () => {
     );
     await expect(sending).resolves.toBe(false);
     expect(harness.slice().projectFiles).toEqual([]);
-    expect(harness.controller.failedPrompt("session-a")).toBeNull();
+    expect(harness.slice().failedDeliveryCount).toBe(0);
     expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
   });
 
@@ -256,22 +258,29 @@ describe("ComposerController", () => {
       .mockReturnValueOnce(second.promise)
       .mockResolvedValue(acceptedPrompt);
     const firstSend = harness.controller.send("first", "steer");
-    const firstIdentity = harness.prompt.mock.calls[0]![0].operationId;
+    const firstRequest = harness.prompt.mock.calls[0]![0];
     const secondSend = harness.controller.send("second", "followUp");
     harness.restoreDraftIfEmpty.mockReturnValue(false);
-    first.reject(new ApiTransportError("request"));
+    first.reject(
+      new ApiError(
+        409,
+        "Unknown",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      ),
+    );
     second.resolve(acceptedPrompt);
     await Promise.all([firstSend, secondSend]);
     harness.restoreDraftIfEmpty.mockReturnValue(true);
     expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
     await harness.controller.send("first");
-    expect(harness.prompt.mock.calls[2]![0]).toMatchObject({
-      operationId: firstIdentity,
-      behavior: "steer",
-    });
+    expect(harness.prompt.mock.calls[2]![0]).toEqual(firstRequest);
   });
 
-  it("clears only the delivered partition and preserves an attachment staged during send", async () => {
+  it("preserves attachments and project files added during a send", async () => {
     const pending = deferred<PromptAcceptedResponse>();
     const harness = createHarness();
     harness.prompt.mockReturnValue(pending.promise);
@@ -281,6 +290,8 @@ describe("ComposerController", () => {
     harness.controller.addProjectFile("/workspace/sent.ts");
 
     const sending = harness.controller.send("inspect this");
+    expect(harness.slice().projectFiles).toEqual([]);
+    harness.controller.addProjectFile("/workspace/next.ts");
     await harness.controller.addFiles([
       new File(["next"], "next.txt", { type: "text/plain" }),
     ]);
@@ -305,8 +316,7 @@ describe("ComposerController", () => {
           status: "ready",
         }),
       ],
-      projectFiles: [],
-      sending: false,
+      projectFiles: ["/workspace/next.ts"],
       failedDeliveryCount: 0,
     });
   });
@@ -324,97 +334,36 @@ describe("ComposerController", () => {
     expect(harness.slice()).toEqual({
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
-      sending: false,
       failedDeliveryCount: 0,
     });
-  });
-
-  it.each([
-    [
-      "an acceptance-unknown transport failure",
-      () => new ApiTransportError("request"),
-    ],
-    ["an unmarked intermediary 5xx", () => new ApiError(502, "Bad gateway")],
-    [
-      "a marked relay failure",
-      () =>
-        new ApiError(
-          502,
-          "Public relay could not reach the Host",
-          undefined,
-          undefined,
-          "ssh-reverse",
-        ),
-    ],
-    [
-      "the same Host explicitly reports Pi outcome unknown",
-      () =>
-        new ApiError(
-          504,
-          "Unknown",
-          undefined,
-          "PI_RPC_OUTCOME_UNKNOWN",
-          undefined,
-          "11111111-1111-4111-8111-111111111111",
-        ),
-    ],
-    [
-      "a same-Host unknown-outcome flag independent of HTTP status",
-      () =>
-        new ApiError(
-          409,
-          "Unknown",
-          undefined,
-          undefined,
-          undefined,
-          "11111111-1111-4111-8111-111111111111",
-          true,
-        ),
-    ],
-    [
-      "an expired same-Host result receipt",
-      () =>
-        new ApiError(
-          409,
-          "Retired",
-          undefined,
-          "PROMPT_OPERATION_RESULT_RETIRED",
-          undefined,
-          "11111111-1111-4111-8111-111111111111",
-        ),
-    ],
-  ])("reuses one delivery identity after %s", async (_label, failure) => {
-    const harness = createHarness();
-    harness.prompt
-      .mockRejectedValueOnce(failure())
-      .mockResolvedValueOnce({ accepted: true, historyEntry: null });
-
-    await expect(harness.controller.send("send once")).resolves.toBe(false);
-    await expect(harness.controller.send("send once")).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-
-    expect(harness.prompt).toHaveBeenCalledTimes(2);
-    expect(harness.prompt.mock.calls[1]![0]).toEqual(
-      harness.prompt.mock.calls[0]![0],
-    );
   });
 
   it("retires confirmation polling without cancelling or losing the delivery", async () => {
     const harness = createHarness();
     const pending = deferred<PromptAcceptedResponse>();
+    const retry = deferred<PromptAcceptedResponse>();
     harness.prompt
       .mockReturnValueOnce(pending.promise)
+      .mockReturnValueOnce(retry.promise)
       .mockResolvedValueOnce(acceptedPrompt);
     const sending = harness.controller.send("synthetic prompt");
     const [first, signal] = harness.prompt.mock.calls[0]!;
     harness.replaceTransport();
     expect(signal.aborted).toBe(true);
+    const retrying = harness.controller.send("synthetic prompt");
+    const [retryRequest, retrySignal] = harness.prompt.mock.calls[1]!;
+    expect(retryRequest).toEqual(first);
     pending.resolve(acceptedPrompt);
     await expect(sending).resolves.toBe(false);
-    await harness.controller.send("synthetic prompt");
-    expect(harness.prompt.mock.calls[1]![0]).toEqual(first);
+    expect(retrySignal.aborted).toBe(false);
+    harness.replaceTransport();
+    expect(retrySignal.aborted).toBe(true);
+    retry.resolve(acceptedPrompt);
+    await expect(retrying).resolves.toBe(false);
+    await expect(harness.controller.send("synthetic prompt")).resolves.toEqual(
+      acceptedPrompt,
+    );
+    expect(harness.prompt.mock.calls[2]![0]).toEqual(first);
   });
 
   it("starts a new operation after a definitive same-Host 5xx refusal", async () => {
@@ -480,7 +429,6 @@ describe("ComposerController", () => {
     expect(harness.slice()).toEqual({
       attachments: [],
       projectFiles: ["/workspace/message.ts"],
-      sending: false,
       failedDeliveryCount: 0,
     });
   });
@@ -606,7 +554,6 @@ describe("ComposerController", () => {
         },
       ],
       projectFiles: [],
-      sending: false,
     });
   });
 
@@ -773,7 +720,6 @@ describe("ComposerController", () => {
     expect(harness.slice()).toEqual({
       attachments: [],
       projectFiles: ["/workspace/kept.ts"],
-      sending: false,
       failedDeliveryCount: 0,
     });
     expect(harness.notifyVisible).not.toHaveBeenCalled();

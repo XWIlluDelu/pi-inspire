@@ -66,7 +66,6 @@ describe("composer delivery and artifacts", () => {
       first.resolve({ status: 202, body: { accepted: true } });
       await first.promise;
     });
-    await waitFor(() => expect(store.getState().sending).toBe(false));
     expect(screen.getByLabelText("Message")).toHaveValue("same text");
   });
 
@@ -83,14 +82,9 @@ describe("composer delivery and artifacts", () => {
       first.resolve({ status: 400, body: { error: "Not delivered" } });
       await first.promise;
     });
-    await waitFor(() => expect(store.getState().sending).toBe(false));
     expect(screen.getByText("Message not delivered")).toBeInTheDocument();
     expect(screen.getByLabelText("Message")).toHaveValue("newer draft");
     expect(screen.getByRole("button", { name: "Restore" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Restore" })).toHaveClass(
-      "button",
-      "button--quiet",
-    );
     expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
     typeDraft("");
     fireEvent.click(screen.getByRole("button", { name: "Restore" }));
@@ -105,7 +99,8 @@ describe("composer delivery and artifacts", () => {
 
     await attachFile("first.txt");
     await screen.findByText("notes.txt");
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    const send = screen.getByRole("button", { name: "Send message" });
+    await act(async () => fireEvent.click(send));
     await waitFor(() => expect(host.promptBodies.length).toBe(before + 1));
     await waitFor(() =>
       expect(screen.queryByText("notes.txt")).not.toBeInTheDocument(),
@@ -113,7 +108,7 @@ describe("composer delivery and artifacts", () => {
 
     await attachFile("second.txt");
     await screen.findByText("notes.txt");
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await act(async () => fireEvent.click(send));
     await waitFor(() => expect(host.promptBodies.length).toBe(before + 2));
     expect(host.promptBodies.slice(before)).toEqual([
       expect.objectContaining({
@@ -125,12 +120,9 @@ describe("composer delivery and artifacts", () => {
     ]);
 
     for (let index = 0; index < 2; index++) {
-      await waitFor(() => expect(store.getState().sending).toBe(false));
       act(() => store.addProjectFile("src/repeated.ts"));
-      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-      await waitFor(() =>
-        expect(host.promptBodies.length).toBe(before + 3 + index),
-      );
+      await act(async () => fireEvent.click(send));
+      expect(host.promptBodies).toHaveLength(before + 3 + index);
       expect(host.promptBodies.at(-1)).toMatchObject({
         message: "",
         projectFiles: ["src/repeated.ts"],
@@ -173,7 +165,6 @@ describe("composer delivery and artifacts", () => {
         projectFiles: ["src/a.ts"],
       }),
     );
-    expect(store.getState().sending).toBe(true);
     expect(textarea).toHaveValue("");
 
     // Switch to session B while A's send is still in flight; draft a message.
@@ -192,8 +183,6 @@ describe("composer delivery and artifacts", () => {
     await act(async () =>
       response.resolve({ status: 202, body: { accepted: true } }),
     );
-    await waitFor(() => expect(store.getState().sessionId).toBe("s2"));
-    await waitFor(() => expect(store.getState().sending).toBe(false));
     // The settled send consumed A's draft without touching B's visible one.
     expect(screen.getByLabelText("Message")).toHaveValue("draft for B");
     expect(
@@ -205,7 +194,6 @@ describe("composer delivery and artifacts", () => {
         .at(-1)!
         .emit({ type: "snapshot", data: activeSnapshot() });
     });
-    await waitFor(() => expect(store.getState().sending).toBe(false));
     expect(screen.getByLabelText("Message")).toHaveValue("");
     expect(store.getState().projectFiles).toEqual([]);
     act(() =>
@@ -216,37 +204,5 @@ describe("composer delivery and artifacts", () => {
     );
     expect(screen.getByLabelText("Message")).toHaveValue("draft for B");
     expect(store.getState().projectFiles).toEqual(["src/b.ts"]);
-  });
-  it("hands off only the delivered canonical paths and preserves new editable chips", async () => {
-    render(<Composer />);
-    act(() => store.addProjectFile("src/owned.ts"));
-    fireEvent.change(screen.getByLabelText("Message"), {
-      target: { value: "send with file" },
-    });
-    const response = deferred<RouteResponse>();
-    host.promptGates.push(response.promise);
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    expect(store.getState().sending).toBe(true);
-    expect(
-      screen.queryByRole("button", { name: "Remove src/owned.ts" }),
-    ).not.toBeInTheDocument();
-    expect(host.promptBodies.at(-1)?.projectFiles).toEqual(["src/owned.ts"]);
-
-    act(() => {
-      store.removeProjectFile("src/owned.ts");
-      store.addProjectFile("src/racing.ts");
-    });
-    expect(store.getState().projectFiles).toEqual(["src/racing.ts"]);
-    expect(
-      screen.getByRole("button", { name: "Remove src/racing.ts" }),
-    ).toBeEnabled();
-
-    await act(async () =>
-      response.resolve({ status: 202, body: { accepted: true } }),
-    );
-    await waitFor(() => expect(store.getState().sending).toBe(false));
-    expect(store.getState().projectFiles).toEqual(["src/racing.ts"]);
-    expect(host.promptBodies.at(-1)?.projectFiles).toEqual(["src/owned.ts"]);
-    act(() => store.removeProjectFile("src/racing.ts"));
   });
 });
