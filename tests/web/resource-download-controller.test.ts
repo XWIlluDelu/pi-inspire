@@ -23,13 +23,15 @@ function fixture() {
     transcriptRevision: 1,
     resourcesOpen: true,
     contextMode: "files",
-    fileBrowserView: "preview",
-    selectedResourceReference: descriptor.reference,
-    selectedResourceWorkspacePath: descriptor.reference,
-    resourcePreview: {
-      status: "ready",
+    fileInspection: {
+      kind: "file",
       reference: descriptor.reference,
-      descriptor,
+      workspacePath: descriptor.reference,
+      preview: {
+        status: "ready",
+        reference: descriptor.reference,
+        descriptor,
+      },
     },
     resourceTabs: [],
     resourceStanding: {},
@@ -42,8 +44,7 @@ function fixture() {
     api: () => current as unknown as Api,
     patch: vi.fn(),
     handleAuthFailure: vi.fn(),
-    prepareGitForResourceOpen: vi.fn(),
-    selectWorkspacePath: vi.fn(),
+    revealWorkspacePath: vi.fn(),
     saveDownload: vi.fn(),
   };
   const controller = new ResourceController(host);
@@ -96,7 +97,7 @@ describe("native resource download authority", () => {
       });
       if (change === "session") f.state.sessionId = "s2";
       if (change === "view") f.state.transcriptViewId = "v2";
-      if (change === "selection") f.state.resourcePreview = null;
+      if (change === "selection") f.state.fileInspection = { kind: "browse" };
       if (change === "transport") f.rotate();
       if (change === "closed") f.state.resourcesOpen = false;
       if (change === "cancelled") f.controller.cancelRequest();

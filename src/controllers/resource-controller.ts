@@ -10,44 +10,37 @@ import { type Api, ApiError } from "../api";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
 import {
   classifiedResourceFailure,
+  type FileInspectionState,
   injectHtmlPreviewCsp,
+  inspectedPreview,
   MAX_MEDIA_PREVIEW_BYTES,
   NOTEBOOK_PREVIEW_BYTES,
-  type ResourceFileTab,
   type ResourcePreview,
   TEXT_PREVIEW_BYTES,
   unknownResourceAvailability,
 } from "../resource-preview";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 
-interface ResourceControllerState {
+interface ResourceControllerState extends FileInspectionState {
   sessionId: string | null;
   transcriptViewId: string | null;
   transcriptIncarnation: string | null;
   transcriptRevision: number;
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches" | "terminal";
-  fileBrowserView: "browse" | "preview";
-  selectedResourceReference: string | null;
-  selectedResourceWorkspacePath: string | null;
-  resourcePreview: ResourcePreview | null;
-  resourceTabs: ResourceFileTab[];
   resourceStanding: Record<string, ResourceProbeResult>;
 }
 
-/** Resource-owned state only. AppStore retains cross-domain transactions; a
- * resource opening asks its host to prepare the Git surface without knowing
- * its fields or request implementation. */
-interface ResourceControllerPatch {
-  resourcesOpen?: boolean;
-  contextMode?: "files" | "changes" | "branches" | "terminal";
-  fileBrowserView?: "browse" | "preview";
-  selectedResourceReference?: string | null;
-  selectedResourceWorkspacePath?: string | null;
-  resourcePreview?: ResourcePreview | null;
-  resourceTabs?: ResourceFileTab[];
-  resourceStanding?: Record<string, ResourceProbeResult>;
-}
+type ResourceControllerPatch = Partial<
+  Pick<
+    ResourceControllerState,
+    | "resourcesOpen"
+    | "contextMode"
+    | "fileInspection"
+    | "resourceTabs"
+    | "resourceStanding"
+  >
+>;
 
 interface ResourceControllerHost {
   state(): ResourceControllerState;
@@ -55,8 +48,7 @@ interface ResourceControllerHost {
   api(): Api | null;
   handleAuthFailure(): void;
   saveDownload(url: string, name: string): void;
-  prepareGitForResourceOpen(contextMode: "files" | "changes"): () => boolean;
-  selectWorkspacePath(workspacePath: string, reveal?: boolean): void;
+  revealWorkspacePath(workspacePath: string): void;
 }
 
 interface ImageReadOwner {
@@ -123,28 +115,23 @@ export class ResourceController {
     this.cancelRequest();
     this.cancelProbes(true);
     this.revokePreviewObjectUrl();
-    const state = this.host.state();
-    const reference = state.selectedResourceReference;
-    const positional = reference?.startsWith("pi-embedded://");
+    const { fileInspection, resourceTabs, resourcesOpen, contextMode } =
+      this.host.state();
     this.host.patch({
-      resourceTabs: state.resourceTabs.filter(
+      resourceTabs: resourceTabs.filter(
         (tab) => !tab.reference.startsWith("pi-embedded://"),
       ),
-      ...(positional
-        ? {
-            selectedResourceReference: null,
-            selectedResourceWorkspacePath: null,
-            fileBrowserView: "browse",
-          }
-        : {}),
-      resourcePreview:
-        !positional &&
-        reference &&
-        state.resourcesOpen &&
-        state.contextMode === "files" &&
-        state.fileBrowserView === "preview"
-          ? { status: "loading", reference }
-          : null,
+      fileInspection: fileInspection.reference?.startsWith("pi-embedded://")
+        ? { kind: "browse" }
+        : fileInspection.kind === "file"
+          ? {
+              ...fileInspection,
+              preview:
+                resourcesOpen && contextMode === "files"
+                  ? { status: "loading", reference: fileInspection.reference }
+                  : null,
+            }
+          : fileInspection,
     });
   }
 
@@ -340,11 +327,8 @@ export class ResourceController {
    * after a late response or a browser transport replacement. */
   async createHtmlPreview(): Promise<{ url: string; release: () => void }> {
     const api = this.host.api();
-    const {
-      sessionId,
-      transcriptViewId,
-      resourcePreview: preview,
-    } = this.host.state();
+    const { sessionId, transcriptViewId, fileInspection } = this.host.state();
+    const preview = inspectedPreview(fileInspection);
     if (
       !api ||
       !sessionId ||
@@ -370,7 +354,7 @@ export class ResourceController {
       this.host.api() !== api ||
       current.sessionId !== sessionId ||
       current.transcriptViewId !== transcriptViewId ||
-      current.resourcePreview !== preview
+      inspectedPreview(current.fileInspection) !== preview
     ) {
       release();
       throw new Error("The preview selection has changed");
@@ -384,33 +368,28 @@ export class ResourceController {
   }
 
   private publishPreview(preview: ResourcePreview): void {
+    const inspection = this.host.state().fileInspection;
+    if (inspection.kind !== "file") return;
     this.revokePreviewObjectUrl();
     this.previewObjectUrl =
       preview.status === "ready" ? (preview.objectUrl ?? null) : null;
-    this.host.patch({ resourcePreview: preview });
+    this.host.patch({ fileInspection: { ...inspection, preview } });
   }
 
-  clearSelection(): void {
+  clearSelection(keepHighlight = false): void {
     this.cancelRequest();
     this.revokePreviewObjectUrl();
-    const {
-      selectedResourceReference,
-      selectedResourceWorkspacePath,
-      resourcePreview,
-      fileBrowserView,
-    } = this.host.state();
+    const inspection = this.host.state().fileInspection;
     if (
-      selectedResourceReference === null &&
-      selectedResourceWorkspacePath === null &&
-      resourcePreview === null &&
-      fileBrowserView === "browse"
+      inspection.kind === "browse" &&
+      (keepHighlight || !inspection.reference)
     )
       return;
     this.host.patch({
-      selectedResourceReference: null,
-      selectedResourceWorkspacePath: null,
-      resourcePreview: null,
-      fileBrowserView: "browse",
+      fileInspection: {
+        kind: "browse",
+        reference: keepHighlight ? inspection.reference : undefined,
+      },
     });
   }
 
@@ -544,9 +523,9 @@ export class ResourceController {
         state.transcriptViewId !== viewId ||
         !state.resourcesOpen ||
         state.contextMode !== "files" ||
-        state.fileBrowserView !== "preview" ||
-        state.resourcePreview?.status !== "ready" ||
-        state.resourcePreview.descriptor.id !== documentId
+        state.fileInspection.kind !== "file" ||
+        state.fileInspection.preview?.status !== "ready" ||
+        state.fileInspection.preview.descriptor.id !== documentId
       )
         throw retired();
     };
@@ -574,8 +553,9 @@ export class ResourceController {
     const {
       sessionId,
       transcriptViewId: viewId,
-      resourcePreview: preview,
+      fileInspection,
     } = this.host.state();
+    const preview = inspectedPreview(fileInspection);
     if (!api || !sessionId || !viewId || preview?.status !== "ready") return;
     const { descriptor } = preview;
     const request = new AbortController();
@@ -588,9 +568,9 @@ export class ResourceController {
         state.sessionId !== sessionId ||
         state.transcriptViewId !== viewId ||
         !state.resourcesOpen ||
-        state.fileBrowserView !== "preview" ||
-        state.resourcePreview?.status !== "ready" ||
-        state.resourcePreview.descriptor.id !== descriptor.id
+        state.fileInspection.kind !== "file" ||
+        state.fileInspection.preview?.status !== "ready" ||
+        state.fileInspection.preview.descriptor.id !== descriptor.id
       )
         throw Object.assign(new Error("The file selection changed"), {
           name: "AbortError",
@@ -643,8 +623,9 @@ export class ResourceController {
     const {
       sessionId,
       transcriptViewId: viewId,
-      resourcePreview: previous,
+      fileInspection,
     } = this.host.state();
+    const previous = inspectedPreview(fileInspection);
     if (!api || !sessionId || !viewId) return;
     const retained =
       previous?.status === "ready" &&
@@ -656,17 +637,20 @@ export class ResourceController {
         ? previous
         : null;
     this.cancelRequest(Boolean(retained));
-    const ownsWorkspaceSelection =
-      this.host.prepareGitForResourceOpen(contextMode);
     const request = new AbortController();
     this.resourceRequest = request;
     if (!retained) this.revokePreviewObjectUrl();
     this.host.patch({
       resourcesOpen: true,
       contextMode: "files",
-      fileBrowserView: "preview",
-      selectedResourceReference: reference,
-      selectedResourceWorkspacePath: knownWorkspacePath ?? null,
+      fileInspection: {
+        kind: "file",
+        reference,
+        workspacePath: knownWorkspacePath,
+        preview: retained
+          ? { ...retained, refreshing: true, refreshError: undefined }
+          : { status: "loading", reference },
+      },
       resourceTabs: existing
         ? this.host
             .state()
@@ -683,9 +667,6 @@ export class ResourceController {
               ...(tabView ? { view: tabView } : {}),
             },
           ],
-      resourcePreview: retained
-        ? { ...retained, refreshing: true, refreshError: undefined }
-        : { status: "loading", reference },
     });
     let descriptorResolved = false;
     const stale = () => {
@@ -694,7 +675,8 @@ export class ResourceController {
         this.resourceRequest !== request ||
         request.signal.aborted ||
         this.host.api() !== api ||
-        current.selectedResourceReference !== tabReference ||
+        current.fileInspection.kind !== "file" ||
+        current.fileInspection.reference !== tabReference ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId
       );
@@ -724,6 +706,9 @@ export class ResourceController {
       let tabPatch: ResourceControllerPatch | undefined;
       if (workspacePath) {
         const { resourceTabs } = this.host.state();
+        const view = resourceTabs.find(
+          (tab) => tab.reference === reference,
+        )?.view;
         // A direct conversation link can learn its canonical path only after
         // the loading tab was opened. Reuse the earlier tab once confirmed.
         const reusable = existing?.workspacePath
@@ -735,20 +720,21 @@ export class ResourceController {
             );
         if (reusable) tabReference = reusable.reference;
         tabPatch = {
-          selectedResourceReference: tabReference,
-          selectedResourceWorkspacePath: workspacePath,
+          fileInspection: {
+            kind: "file",
+            reference: tabReference,
+            workspacePath,
+            preview: reusable
+              ? { status: "loading", reference: tabReference }
+              : inspectedPreview(this.host.state().fileInspection),
+          },
           resourceTabs: resourceTabs
             .filter((tab) => !reusable || tab.reference !== reference)
             .map((tab) =>
               tab.reference === tabReference
-                ? { ...tab, workspacePath, view: tabView }
+                ? { ...tab, workspacePath, view }
                 : tab,
             ),
-          ...(reusable
-            ? {
-                resourcePreview: { status: "loading", reference: tabReference },
-              }
-            : {}),
         };
       }
       this.recordResolution(
@@ -759,11 +745,9 @@ export class ResourceController {
         },
         tabPatch,
       );
-      if (workspacePath && ownsWorkspaceSelection())
-        this.host.selectWorkspacePath(
-          workspacePath,
-          workspacePath !== knownWorkspacePath,
-        );
+      if (stale()) return;
+      if (workspacePath && workspacePath !== knownWorkspacePath)
+        this.host.revealWorkspacePath(workspacePath);
       if (descriptor.kind === "binary") {
         this.publishPreview({
           status: "ready",
@@ -889,14 +873,21 @@ export class ResourceController {
         : classifiedResourceFailure(reference, error);
       if (availability) this.recordResolution(availability);
       if (retained && isTransientFailure(error)) {
-        this.host.patch({
-          resourcePreview: {
-            ...retained,
-            refreshing: false,
-            refreshError:
-              error instanceof Error ? error.message : "Preview refresh failed",
-          },
-        });
+        const inspection = this.host.state().fileInspection;
+        if (inspection.kind === "file")
+          this.host.patch({
+            fileInspection: {
+              ...inspection,
+              preview: {
+                ...retained,
+                refreshing: false,
+                refreshError:
+                  error instanceof Error
+                    ? error.message
+                    : "Preview refresh failed",
+              },
+            },
+          });
         return;
       }
       if (

@@ -13,6 +13,7 @@ import {
 } from "../../shared/contracts";
 import { fileIconForPath } from "../file-icons";
 import { gitDecorationForChange, presentGitFacet } from "../git-presentation";
+import { inspectedFileTab } from "../resource-preview";
 import type { ResourceRow } from "../resources";
 import { gitChangeForWorkspacePath, store } from "../store";
 import { ChangesDetail } from "./ChangesPane";
@@ -213,7 +214,7 @@ function FileBrowser({
                       displayPath={workspacePath ?? row.label}
                       workspacePath={workspacePath}
                       selectedPath={selectedPath}
-                      selectedReference={state.selectedResourceReference}
+                      selectedReference={state.fileInspection.reference ?? null}
                       availability={standing}
                       change={
                         workspacePath
@@ -279,7 +280,8 @@ export function FilesPane({
   readingState?: FileReadingState;
   onQuote?: (markdown: string) => void;
 }) {
-  if (state.fileBrowserView === "browse")
+  const { fileInspection } = state;
+  if (fileInspection.kind === "browse")
     return (
       <div className="res__body res__body--files">
         <FileBrowser
@@ -291,15 +293,12 @@ export function FilesPane({
         />
       </div>
     );
-  const changes =
-    state.resourceTabs.find(
-      (tab) => tab.reference === state.selectedResourceReference,
-    )?.view === "changes";
+  const changes = inspectedFileTab(state)?.view === "changes";
   return (
     <div className="res__body res__body--files res__body--file-tab">
       {changes ? (
         <ChangesDetail
-          key={state.selectedResourceReference}
+          key={fileInspection.reference}
           state={state}
           readingState={readingState}
           render={(controls, content) => (
@@ -312,7 +311,7 @@ export function FilesPane({
         />
       ) : (
         <FilePreview
-          key={state.selectedResourceReference}
+          key={fileInspection.reference}
           state={state}
           readingState={readingState}
           onQuote={onQuote}

@@ -15,6 +15,7 @@ import {
   presentGitFacet,
 } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { inspectedFileTab } from "../resource-preview";
 import {
   gitChangeForWorkspacePath,
   shallowEqual,
@@ -39,24 +40,21 @@ export function WorkspaceVisibilityToggle() {
 
 type WorkspaceSelectionState = Pick<
   ReturnType<typeof store.getState>,
-  | "selectedResourceReference"
-  | "selectedResourceWorkspacePath"
-  | "resourcePreview"
-  | "resourceStanding"
+  "fileInspection" | "resourceTabs" | "resourceStanding"
 >;
 
 export function selectedWorkspacePath(state: WorkspaceSelectionState) {
-  const selected = state.selectedResourceReference;
-  if (!selected) return null;
-  const previewPath =
-    state.resourcePreview?.status === "ready"
-      ? state.resourcePreview.descriptor.workspacePath
-      : undefined;
+  const { fileInspection } = state;
+  const { reference } = fileInspection;
+  if (!reference) return null;
+  const workspacePath =
+    fileInspection.kind === "file"
+      ? fileInspection.workspacePath
+      : inspectedFileTab(state)?.workspacePath;
   return (
-    previewPath ??
-    state.selectedResourceWorkspacePath ??
-    state.resourceStanding[selected]?.workspacePath ??
-    selected
+    workspacePath ??
+    state.resourceStanding[reference]?.workspacePath ??
+    reference
   );
 }
 
@@ -189,10 +187,7 @@ export function WorkspaceTree({
       workspaceDirectoryErrors: source.workspaceDirectoryErrors,
       workspaceTruncatedDirs: source.workspaceTruncatedDirs,
       workspaceRevealRequest: source.workspaceRevealRequest,
-      selectedResourceReference: source.selectedResourceReference,
-      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
-      resourcePreview: source.resourcePreview,
-      resourceStanding: source.resourceStanding,
+      selectedPath: selectedWorkspacePath(source),
       gitStatus: source.gitStatus,
     }),
     shallowEqual,
@@ -202,7 +197,7 @@ export function WorkspaceTree({
     () => new Set(state.workspaceExpandedDirs),
     [state.workspaceExpandedDirs],
   );
-  const selectedPath = selectedWorkspacePath(state);
+  const { selectedPath } = state;
 
   useEffect(() => {
     if (!state.sessionId || !state.cwd) return;
@@ -378,16 +373,13 @@ export function WorkspaceSearchResults({
       workspaceSearchLoading: source.workspaceSearchLoading,
       workspaceMatches: source.workspaceMatches,
       workspaceSearchTruncated: source.workspaceSearchTruncated,
-      selectedResourceReference: source.selectedResourceReference,
-      selectedResourceWorkspacePath: source.selectedResourceWorkspacePath,
-      resourcePreview: source.resourcePreview,
-      resourceStanding: source.resourceStanding,
+      selectedPath: selectedWorkspacePath(source),
       gitStatus: source.gitStatus,
     }),
     shallowEqual,
   );
   const normalized = state.workspaceQuery.trim();
-  const selectedPath = selectedWorkspacePath(state);
+  const { selectedPath } = state;
   return (
     <div
       className={`workspace-tree workspace-tree--results ${className}`}

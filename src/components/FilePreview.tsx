@@ -25,7 +25,12 @@ import {
 } from "../../shared/resource-references";
 import { delimiterForFile } from "../delimited-text";
 import { formatBytes } from "../format";
-import type { FileSourceJump } from "../resource-preview";
+import {
+  type FileSourceJump,
+  inspectedFileTab,
+  inspectedPreview,
+  type ResourcePreview,
+} from "../resource-preview";
 import { store } from "../store";
 import { highlightSource, languageForFile } from "../syntax-highlighting";
 import { useCopied } from "../use-copied";
@@ -220,20 +225,18 @@ function TruncatedRenderedNotice() {
 }
 
 function ReadyResource({
-  state,
+  preview,
   jump,
   viewMode,
   readingPosition,
   interactiveUrl,
 }: {
-  state: ContextPaneView;
+  preview: Extract<ResourcePreview, { status: "ready" }>;
   jump: FileSourceJump | null;
   viewMode: FileViewMode;
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
-  const preview = state.resourcePreview;
-  if (!preview || preview.status !== "ready") return null;
   const { descriptor } = preview;
   if (viewMode === "source" && hasSourceAndPreview(descriptor, preview.text))
     return (
@@ -367,7 +370,7 @@ function ResourcePreviewContent({
   readingPosition?: SourceReadingPosition;
   interactiveUrl?: string;
 }) {
-  const preview = state.resourcePreview;
+  const preview = inspectedPreview(state.fileInspection);
   if (!preview)
     return (
       <ContextPaneState
@@ -397,7 +400,7 @@ function ResourcePreviewContent({
               className="res__more res__choice"
               key={match}
               title={match}
-              onClick={() => void store.openResource(match, "files", match)}
+              onClick={() => void store.openResource(match, match)}
             >
               {match}
             </button>
@@ -421,8 +424,9 @@ function ResourcePreviewContent({
             onClick={() =>
               void store.openResource(
                 preview.reference,
-                "files",
-                state.selectedResourceWorkspacePath ?? undefined,
+                state.fileInspection.kind === "file"
+                  ? state.fileInspection.workspacePath
+                  : undefined,
               )
             }
           >
@@ -434,7 +438,7 @@ function ResourcePreviewContent({
   }
   return (
     <ReadyResource
-      state={state}
+      preview={preview}
       jump={jump}
       viewMode={viewMode}
       readingPosition={readingPosition}
@@ -457,16 +461,17 @@ export function FilePreview({
   /** Body readers only: send a selected passage, with its location, to the composer. */
   onQuote?: (markdown: string) => void;
 }) {
-  const preview = state.resourcePreview;
+  const { fileInspection } = state;
+  const selectedReference = fileInspection.reference;
+  const workspacePath =
+    fileInspection.kind === "file" ? fileInspection.workspacePath : undefined;
+  const preview = inspectedPreview(fileInspection);
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
-  const reference =
-    descriptor?.reference ?? state.selectedResourceReference ?? "File";
+  const reference = descriptor?.reference ?? selectedReference ?? "File";
   const displayPath =
     descriptor?.workspacePath ??
-    state.selectedResourceWorkspacePath ??
-    state.resourceTabs.find(
-      (tab) => tab.reference === state.selectedResourceReference,
-    )?.git?.displayPath ??
+    workspacePath ??
+    inspectedFileTab(state)?.git?.displayPath ??
     (/^(?:file:\/\/|vscode:\/\/file\/)/iu.test(reference)
       ? reference
       : resourceReferenceLabel(reference));
@@ -479,7 +484,7 @@ export function FilePreview({
       state.transportGeneration,
       state.sessionId,
       state.cwd,
-      state.selectedResourceReference,
+      selectedReference,
     ],
   );
   const [fileView, setFileView] = useState<{
@@ -500,11 +505,9 @@ export function FilePreview({
   // An exact workspace filename may literally end in ":12"; a resolved
   // path for a citation is not a reason to discard its line navigation.
   const referencedLine =
-    state.selectedResourceWorkspacePath === state.selectedResourceReference
+    workspacePath === selectedReference
       ? null
-      : resourceReferenceLine(
-          preview?.reference ?? state.selectedResourceReference ?? "",
-        );
+      : resourceReferenceLine(preview?.reference ?? selectedReference ?? "");
   const defaultView: FileViewMode =
     sourceOnly || (canToggle && referencedLine) ? "source" : "preview";
   const activeView = fileView?.owner === readingPosition ? fileView : null;
@@ -533,7 +536,7 @@ export function FilePreview({
   const actionsToggleRef = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     setActionsExpanded(true);
-  }, [state.sessionId, state.cwd, state.selectedResourceReference]);
+  }, [state.sessionId, state.cwd, selectedReference]);
   const showBody = (mode: FileViewMode) => {
     if (readingState) {
       readingState.mode = mode;
@@ -551,7 +554,7 @@ export function FilePreview({
     state.transcriptViewId,
     state.resourcesOpen,
     state.contextMode,
-    state.fileBrowserView,
+    fileInspection.kind,
     viewMode,
     Boolean(changes),
   ].join("|");
@@ -714,7 +717,7 @@ export function FilePreview({
             aria-label="Git changes"
             title="Git changes"
             aria-pressed={Boolean(changes)}
-            disabled={!state.sessionId || !state.selectedResourceReference}
+            disabled={!state.sessionId || !selectedReference}
             onClick={() => void store.setFileChangesView(!changes)}
           >
             <GitCompareArrows size={16} aria-hidden />

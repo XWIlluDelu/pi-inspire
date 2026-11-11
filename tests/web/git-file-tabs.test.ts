@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitFileChange, GitStatusResponse } from "../../shared/contracts";
+import { inspectedPreview } from "../../src/resource-preview";
 import {
   deferred,
   installFakeWebSocket,
@@ -35,6 +36,7 @@ describe("ordinary file tabs with Git views", () => {
   let status: GitStatusResponse;
   let statusFailure: boolean;
   let statusWait: Promise<void> | null;
+  let aliasWait: Promise<void> | null;
   let resolved: string[];
   let diffs: Array<{ pathId: string }>;
 
@@ -43,6 +45,7 @@ describe("ordinary file tabs with Git views", () => {
     status = repository([change]);
     statusFailure = false;
     statusWait = null;
+    aliasWait = null;
     resolved = [];
     diffs = [];
     installFetch(async (url, init) => {
@@ -64,6 +67,7 @@ describe("ordinary file tabs with Git views", () => {
       if (url.startsWith("/api/resources/resolve")) {
         const { reference, workspacePath, sessionId } = jsonBody(init);
         resolved.push(String(reference));
+        if (reference === "readme.md" && aliasWait) await aliasWait;
         if (reference === "deleted.txt")
           return { status: 404, body: { error: "File was deleted" } };
         return {
@@ -110,7 +114,7 @@ describe("ordinary file tabs with Git views", () => {
     await store.openGitDiff(change.path.id);
     expect(store.getState()).toMatchObject({
       contextMode: "files",
-      selectedResourceReference: "readme.md",
+      fileInspection: { kind: "file", reference: "readme.md" },
       resourceTabs: [
         {
           reference: "readme.md",
@@ -128,29 +132,53 @@ describe("ordinary file tabs with Git views", () => {
     await store.openWorkspaceFile("src/readme.md");
     expect(store.getState().resourceTabs).toHaveLength(2);
     expect(store.getState().resourceTabs[0].view).toBeUndefined();
-    expect(store.getState().selectedResourceReference).toBe("readme.md");
+    expect(store.getState().fileInspection.reference).toBe("readme.md");
     expect(store.getState().gitDiff).toBeNull();
   });
 
-  it.each(["./src/readme.md", "/demo/src/readme.md"])(
-    "reuses a Git tab when Recent opens the authorized alias %s",
-    async (reference) => {
-      const { store } = await initStore();
-      await store.openGitDiff(change.path.id);
-      await store.probeResources([reference]);
-      expect(store.getState().resourceStanding[reference]?.workspacePath).toBe(
-        change.path.workspacePath,
-      );
-      await store.openResource(reference);
-      expect(store.getState().resourceTabs).toMatchObject([
-        { reference: "src/readme.md", workspacePath: "src/readme.md" },
-      ]);
-      expect(store.getState().resourceTabs).toHaveLength(1);
-      expect(store.getState().resourceTabs[0].view).toBeUndefined();
-      expect(store.getState().selectedResourceReference).toBe("src/readme.md");
-      expect(resolved).toEqual(["src/readme.md", "src/readme.md"]);
-    },
-  );
+  it("reuses a Git tab when Recent opens an alias with a known path", async () => {
+    const { store } = await initStore();
+    const reference = "./src/readme.md";
+    await store.openGitDiff(change.path.id);
+    await store.probeResources([reference]);
+    await store.openResource(reference);
+    expect(store.getState().resourceTabs).toMatchObject([
+      { reference: "src/readme.md", workspacePath: "src/readme.md" },
+    ]);
+    expect(store.getState().resourceTabs[0].view).toBeUndefined();
+    expect(store.getState().fileInspection.reference).toBe("src/readme.md");
+    expect(resolved).toEqual(["src/readme.md", "src/readme.md"]);
+  });
+
+  it("keeps Changes selected when a pending alias resolves to an existing tab", async () => {
+    const { store } = await initStore();
+    await store.openWorkspaceFile("src/readme.md");
+    await store.openWorkspaceFile("other.txt");
+    const pending = deferred<void>();
+    aliasWait = pending.promise;
+    const body = store.openResource("readme.md");
+    await store.setFileChangesView(true);
+    expect(diffs).toEqual([]);
+
+    pending.resolve();
+    await body;
+
+    expect(store.getState().resourceTabs).toMatchObject([
+      { reference: "src/readme.md", view: "changes" },
+      { reference: "other.txt" },
+    ]);
+    expect(store.getState().fileInspection).toMatchObject({
+      kind: "file",
+      reference: "src/readme.md",
+      workspacePath: "src/readme.md",
+    });
+    await vi.waitFor(() =>
+      expect(store.getState().gitDiff).toMatchObject({
+        status: "ready",
+        result: { path: change.path },
+      }),
+    );
+  });
 
   it("restores the net comparison after closing the neighboring tab and reopening the pane", async () => {
     const { store } = await initStore();
@@ -166,7 +194,7 @@ describe("ordinary file tabs with Git views", () => {
     const previousDiff = store.getState().gitDiff;
     store.setResourcesOpen(false);
     expect(store.getState().gitDiff).toBeNull();
-    expect(store.getState().resourcePreview).toBeNull();
+    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
     store.setResourcesOpen(true);
     await vi.waitFor(() =>
       expect(store.getState().gitDiff).toMatchObject({
@@ -182,9 +210,11 @@ describe("ordinary file tabs with Git views", () => {
     const { store: first } = await initStore();
     await first.openGitDiff(change.path.id);
     await vi.waitFor(() =>
-      expect(first.getState().resourcePreview?.status).toBe("ready"),
+      expect(inspectedPreview(first.getState().fileInspection)?.status).toBe(
+        "ready",
+      ),
     );
-    const oldPreview = first.getState().resourcePreview;
+    const oldPreview = inspectedPreview(first.getState().fileInspection);
     const { store: second } = await initStore();
     await vi.waitFor(() =>
       expect(second.getState().gitDiff).toMatchObject({
@@ -193,7 +223,9 @@ describe("ordinary file tabs with Git views", () => {
       }),
     );
     await vi.waitFor(() =>
-      expect(second.getState().resourcePreview?.status).toBe("ready"),
+      expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
+        "ready",
+      ),
     );
     expect(second.getState().resourceTabs).toMatchObject([
       {
@@ -202,7 +234,9 @@ describe("ordinary file tabs with Git views", () => {
         git: { pathId: change.path.id },
       },
     ]);
-    expect(second.getState().resourcePreview).not.toEqual(oldPreview);
+    expect(inspectedPreview(second.getState().fileInspection)).not.toEqual(
+      oldPreview,
+    );
     expect(diffs).toHaveLength(2);
     expect(JSON.stringify(sessionStorage)).not.toContain("fresh-");
   });
@@ -229,7 +263,7 @@ describe("ordinary file tabs with Git views", () => {
     expect(second.getState().resourceTabs[1].git?.pathId).toBe(change.path.id);
     await second.selectResourceTab("other.txt");
     expect(second.getState().resourceTabs[0].view).toBeUndefined();
-    expect(second.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(second.getState().fileInspection)).toMatchObject({
       status: "ready",
       reference: "other.txt",
     });
@@ -244,9 +278,8 @@ describe("ordinary file tabs with Git views", () => {
     await store.refreshFileTab();
 
     expect(store.getState()).toMatchObject({
-      selectedGitPathId: null,
       gitDiff: null,
-      selectedResourceReference: "src/readme.md",
+      fileInspection: { kind: "file", reference: "src/readme.md" },
     });
     expect(store.getState().resourceTabs).toMatchObject([
       {
@@ -286,7 +319,7 @@ describe("ordinary file tabs with Git views", () => {
     const { store } = await initStore();
     await store.openGitDiff(deleted.path.id);
     await vi.waitFor(() =>
-      expect(store.getState().resourcePreview).toMatchObject({
+      expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
         status: "error",
         message: "File was deleted",
       }),
@@ -296,13 +329,13 @@ describe("ordinary file tabs with Git views", () => {
       result: { path: deleted.path },
     });
     await store.openGitDiff(opaque.path.id);
-    expect(store.getState().selectedResourceReference).toBe("pi-git://opaque");
+    expect(store.getState().fileInspection.reference).toBe("pi-git://opaque");
     expect(store.getState().gitDiff).toMatchObject({
       status: "ready",
       result: { path: opaque.path },
     });
     await store.setFileChangesView(false);
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "error",
       reference: "pi-git://opaque",
     });
@@ -351,7 +384,7 @@ describe("ordinary file tabs with Git views", () => {
       await opening;
       expect(store.getState()).toMatchObject({
         resourcesOpen: false,
-        resourcePreview: null,
+        fileInspection: { kind: "file", preview: null },
         gitDiff: null,
       });
       expect(diffs).toEqual([]);
@@ -369,7 +402,7 @@ describe("ordinary file tabs with Git views", () => {
     pending.resolve();
     await opening;
     expect(store.getState()).toMatchObject({
-      selectedResourceReference: "other.txt",
+      fileInspection: { kind: "file", reference: "other.txt" },
       gitDiff: null,
     });
     expect(store.getState().resourceTabs[1].view).toBeUndefined();

@@ -383,7 +383,10 @@ describe("welcome flow", () => {
       expect(history.state.__inspireWorkbench.depth).toBe(1);
 
       fireEvent.click(screen.getByRole("tab", { name: "Files" }));
-      expect(store.getState().fileBrowserView).toBe("browse");
+      expect(screen.getByRole("tab", { name: "Files" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
       expect(history.state.__inspireWorkbench.depth).toBe(1);
       fireEvent.click(file);
       await waitFor(() =>
@@ -421,17 +424,17 @@ describe("welcome flow", () => {
       history.replaceState({ changesBaseline: true }, "");
       render(<App />);
       act(() => {
-        store.showChangesBrowser();
+        store.setContextMode("changes");
+        store.setResourcesOpen(true);
       });
       const row = await screen.findByRole("button", {
         name: "README.md, modified",
       });
       fireEvent.click(row);
-      await waitFor(() =>
-        expect(store.getState().selectedGitPathId).toBe("readme"),
-      );
-      const file = await screen.findByRole("tab", { name: "README.md" });
-      expect(file).toHaveAttribute("aria-selected", "true");
+      const file = await screen.findByRole("tab", {
+        name: "README.md",
+        selected: true,
+      });
       expect(history.state.__inspireWorkbench.depth).toBe(1);
 
       fireEvent.click(screen.getByRole("tab", { name: "Changes" }));

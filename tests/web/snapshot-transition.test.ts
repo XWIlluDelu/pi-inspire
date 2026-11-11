@@ -121,8 +121,7 @@ describe("snapshot transitions", () => {
   it("makes lifecycle resets explicit for each ownership boundary", () => {
     const previous = projectionState({
       branchTree: {} as AppState["branchTree"],
-      selectedResourceReference: "README.md",
-      resourcePreview: {} as AppState["resourcePreview"],
+      fileInspection: { kind: "browse", reference: "README.md" },
       resourceTabs: [
         { reference: "README.md" },
         { reference: "pi-embedded://message/0/image/0" },
@@ -158,15 +157,14 @@ describe("snapshot transitions", () => {
     expect(snapshotLifecyclePatch(previous, sameProjection)).toEqual({});
     expect(snapshotLifecyclePatch(previous, appended)).toEqual({});
     expect(snapshotLifecyclePatch(previous, replaced)).toMatchObject({
-      selectedResourceReference: null,
-      resourcePreview: null,
+      fileInspection: { kind: "browse" },
       resourceTabs: [{ reference: "README.md" }],
     });
     expect(snapshotLifecyclePatch(previous, changedView)).toMatchObject({
       branchTreeStale: true,
       branchTreeError: null,
       branchActionId: null,
-      selectedResourceReference: null,
+      fileInspection: { kind: "browse" },
       resourceTabs: [{ reference: "README.md" }],
     });
     expect(
@@ -180,7 +178,7 @@ describe("snapshot transitions", () => {
       branchTree: null,
       attachments: [],
       workspaceQuery: "restored",
-      selectedGitPathId: null,
+      gitDiff: null,
       resourceTabs: [],
     });
   });

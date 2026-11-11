@@ -198,9 +198,9 @@ Files selection while resolving and loading it again under the new authority. A 
 workspace path stays the exact target instead of repeating a bare-name search. Failed
 reauthorization stays in the selected-file detail with its error; it does not navigate to Browse.
 Session/workspace changes and positional `pi-embedded://` references still clear selection, because
-rewritten coordinates may identify a different image. Reauthorization does not reopen a preview the
-user has already left for Browse or another context mode, and interactive HTML never inherits its
-retired execution lease.
+rewritten coordinates may identify a different image. Reconnect keeps saved tabs and follows the
+latest file or tool choice, including choices made while it was pending. Reopened files receive new
+content handles, and interactive HTML requires a new execution lease.
 
 ## Readers
 
@@ -419,10 +419,8 @@ of comparing unconverted bytes as a normal diff. Machine patch output is indepen
 display settings that alter patch grammar. This read-only interface is not a sandbox for a
 repository whose configuration is being maliciously replaced during inspection.
 
-A failed refresh keeps the previous result, including clean and non-repository results, with one
-visible stale-result notice. Same-owner background refresh keeps confirmed clean/non-repository
-results without replacing them with a loading panel; initial or changed-owner reads stay unknown
-until confirmed. Initial failure does not claim a Git result.
+While the same view is refreshing, the last confirmed status and comparison stay readable.
+Failure adds a stale-result notice, and success clears it. Status stays unknown until confirmed.
 
 The Changes tool shows repository identity and one full-height list of the current working tree's
 net changes against HEAD, plus untracked new files. Its branch icon, name and status capsule center
@@ -433,10 +431,10 @@ parameter. Staging is not a separate browsing mode. Changes canceled by later wo
 not remain as phantom rows. An unborn repository compares against the empty tree. Conflicts keep
 their explicit unsupported-comparison boundary.
 
-Selecting a path opens or reuses its ordinary file tab in Git Changes mode. Workspace paths share
-identity with Files; opaque Git paths keep their authorized Git ID. Display paths are never
-converted into filesystem authority. Deleted or unreadable body content keeps the tab and its
-error, independently of the readable Git comparison.
+Files and Changes share the active file tab and its reading mode. An exact workspace path can
+identify the same tab from either entry point. Opaque Git paths use their Git ID for the comparison;
+the display name is a label. Body and comparison reads have separate authority, so a deleted or
+unreadable body can show its error while the comparison stays readable.
 
 The file toolbar owns line counts, non-wrapping previous/next change controls and current position;
 these controls navigate changes only within that file. Git Changes toggles back to its remembered
@@ -446,7 +444,9 @@ marker without replacing addition/deletion colors. Old/new line numbers and chan
 sticky gutter with an opaque matching row tint. Changed-file rows use the shared file icons from
 [[design-system]] alongside their Git decoration.
 
-Source comparisons reuse the Source highlighting palette and 64 Ki-character bound per revision.
+Comparisons show complete context when it fits the projection budget. Larger files show bounded
+changed regions and distinguish omitted context from a truncated patch. Source comparisons reuse
+the Source highlighting palette and 64 Ki-character bound per revision.
 Old and new source are highlighted independently with full Git context, then rendered as balanced
 token spans in the existing rows. Deletions use the old revision, and its original filename for
 renames; additions and shared context use the selected new revision. Unknown languages and
@@ -477,8 +477,8 @@ claim that the file is clean.
   successful polls extend that interval to eight seconds; a visible diff is actually reread before
   being judged unchanged. A changed result, failure, explicit refresh, owner change or visibility
   return resets the cadence. Body-only file readers need only the twenty-second topbar summary.
-  Hidden pages pause polling; each timer starts after the previous round finishes. This is a
-  bounded observation delay, not a cache that can claim an old diff is newly read.
+  Hidden pages pause polling. The next poll starts after the current read finishes. Tool completion,
+  terminal command completion and Refresh queue at most one additional observation.
 - Unified-diff file headers are recognized outside hunk bodies. Hunk lines with repeated `+` or `-`
   remain edits with correct line numbers.
 

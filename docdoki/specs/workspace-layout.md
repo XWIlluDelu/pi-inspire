@@ -167,11 +167,8 @@ completion behavior are unchanged.
   adds a total only when the worktree has changes, and opens the detailed Changes pane on
   activation. While the Changes pane is visible, the summary keeps the branch but omits its total,
   which Changes states beside the list. The summary is a first-class Git observation surface: it
-  stays current while the contextual pane is closed, and detailed paths and diffs remain in Changes.
-  Its automatic scheduler uses a 20-second cadence when the summary is the only observer, a
-  four-second cadence while a detailed Git surface is open, and pauses while the page is hidden.
-  Returning to a visible page, tool completion, and explicit refresh trigger an immediate coalesced
-  observation, so a slow repository cannot create a continuous child-process loop.
+  stays current while the contextual pane is closed. [[resource-preview]] defines when the workbench
+  refreshes the summary, list and selected comparison.
 
   Only projection-conflict/recovery and extension status capsules occupy the leading cluster
   immediately after identity. The selected session's ordinary running, retrying and compacting
@@ -246,22 +243,6 @@ completion behavior are unchanged.
   pending input or draft. [[session-branches]] defines native navigation, Fork/Clone boundaries and
   optional branch summaries.
 
-- Git status and diff observations share a bounded scheduler and the workbench's snapshot
-  authority. Selecting a Git path and opening its session-bound resource preview form one
-  cross-domain transition; Git keeps no parallel browser store. While Changes is visible, status
-  observations also refresh its selected file. Polling, Pi tool completion, terminal
-  command completion and explicit Refresh share that inspection path. One active read and one
-  queued refresh coalesce repeated hints; slow reads do not overlap polling. The previous source
-  stays readable until its replacement is ready, the selected path and reader offsets are
-  preserved, and unchanged results are reused. A failed refresh keeps the source with a visible
-  stale-result notice; a successful read clears it.
-
-  Keep the complete selected-file source when it fits the bounded projection. If unchanged context
-  exhausts that budget, reread bounded changed regions instead of hiding the edits behind a long
-  prefix. Mark omitted context separately from a truncated diff. Syntax highlighting has its own
-  bounded complete-revision context; validate it against displayed rows and use literal escaped
-  text when it is unavailable or changed between reads.
-
 ## Contextual modes
 
 - Workspace file browsing lives in the contextual Files pane; the session navigation column does
@@ -290,17 +271,11 @@ completion behavior are unchanged.
   geometry without a legacy Context title; loading and actionable failure feedback stay in the
   content area.
 
-  F5 keeps the current browser tab's navigation collapse, context visibility, file-tab order and
-  selection, tool selection, and Files query/expanded directories. Existing saved pane widths stay
-  in use. Session-specific state is scoped to the Host, session and workspace, and file content is
-  loaded again under current authority. Terminal restores its existing selection and reconnects;
-  restoring the view never reruns a command. Embedded readers keep the limits in
-  [[resource-preview]]. Initial bootstrap and saved/continue-session selection show a lightweight
-  loading state in the workbench shell. The create-session screen appears only after restoration
-  settles without a session; missing sessions and failed reads keep their normal error and recovery
-  paths. Transport replacement revokes old content handles and pending reads but keeps navigation
-  metadata. Tool changes during reconnect must not overwrite saved file tabs with temporary empty
-  state; the latest navigation intent survives success or retry without exposing old file content.
+  F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab
+  order and selection, and Files query and expansions. Saved session navigation is scoped to Host,
+  session and workspace. Terminal reconnects to the existing selection. [[resource-preview]]
+  defines how restored files regain read authority. The workbench shell shows loading until saved
+  or continued session selection settles. An empty selection then shows the create-session screen.
 
   Changes always gives its grouped list the available height, with no Source split or selection
   hint. Selecting a comparison opens or reuses the ordinary file tab in Git Changes mode; Files
