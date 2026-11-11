@@ -132,12 +132,10 @@ import {
   knownExpectation,
 } from "./runtime-persistence.js";
 import { RuntimePersistenceOwnershipController } from "./runtime-persistence-ownership.js";
-import { RuntimeProcessRegistry } from "./runtime-process-registry.js";
 import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
 import { RuntimeReadController } from "./runtime-reads.js";
 import { readWorkerRetryState } from "./runtime-retry-state.js";
 import { RuntimeSessionDeletionController } from "./runtime-session-deletion.js";
-import { RuntimeStartupAttestor } from "./runtime-startup-attestor.js";
 import { runtimeToken as bridgeToken } from "./runtime-token.js";
 import { RuntimeWorkerLifecycle } from "./runtime-worker-lifecycle.js";
 import { RuntimeWorkerPool } from "./runtime-worker-pool.js";
@@ -205,7 +203,6 @@ const ATTACH_CONTROL_PATH = fileURLToPath(
 const MAX_DEFERRED_PROMPTS = 16;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const ATTACHED_RESTART_CHECK_MS = 5_000;
-const NEW_SESSION_ENTRY_MAX_COUNT = 10_000;
 
 export { PI_STARTUP_RESPONSE_UI_ERROR } from "./runtime-events.js";
 
@@ -580,7 +577,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private selectionSequence = 0;
   private provisionalSequence = 0;
   private useSequence = 0;
-  private readonly processRegistry: RuntimeProcessRegistry;
   private readonly persistenceOwnership: RuntimePersistenceOwnershipController;
   private readonly extensionUi: RuntimeExtensionUiController;
   private readonly events: RuntimeEventController;
@@ -592,7 +588,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly reads: RuntimeReadController;
   private readonly deletions: RuntimeSessionDeletionController;
   private readonly projectionCoordinator: RuntimeProjectionCoordinator;
-  private readonly startupAttestor: RuntimeStartupAttestor;
   private readonly workerLifecycle: RuntimeWorkerLifecycle;
   private readonly workerPool: RuntimeWorkerPool;
   private readonly provisionalSlots = new Map<
@@ -653,7 +648,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       {
         promptFileName: (path) => this.attachments.promptFileName(path),
         readNewSessionEntries: (slot, rpc) =>
-          this.readNewSessionEntries(slot, rpc),
+          this.workerLifecycle.readNewSessionEntries(slot, rpc),
       },
       this.diagnostics,
     );
@@ -716,7 +711,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.extensionResponseSlot(slot, operation),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       throwIfConflicted: (slot) => this.throwIfConflicted(slot),
-      processOwner: (process) => this.processRegistry.ownerOf(process),
       externalOwner: (slot) => this.externalSessions?.connection(slot),
       failUnknown: (slot, error) => this.failUnknownRpcOutcome(slot, error),
       emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
@@ -764,7 +758,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
       refreshPendingQueues: (slot) => this.refreshPendingQueues(slot),
       resumeDeferredPrompts: (slot) => this.resumeDeferredPrompts(slot),
-      processOwner: (rpc) => this.processRegistry.ownerOf(rpc),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       setProjectionConflict: (slot, kind, message) =>
         this.setProjectionConflict(slot, kind, message),
@@ -785,21 +778,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       effectiveLeaf: (slot) => this.effectiveLeaf(slot),
       promptFileName: (path) => this.attachments.promptFileName(path),
     });
-    this.processRegistry = new RuntimeProcessRegistry({
-      recordProcessAttachment: (slot, rpc) => {
-        this.diagnostics.record("debug", "slot_worker_attached", {
-          sessionId: slot.id,
-          slotIncarnation: slot.incarnationId,
-          workerId: slot.bridge?.workerId,
-          childPid: rpc.pid,
-          provisional: !this.slots.has(slot.id),
-        });
-      },
-      dispatchProcessEvent: (rpc, event) =>
-        this.events.dispatchProcessEvent(rpc, event),
-      handleProcessExit: (slot, rpc, error) =>
-        this.handleProcessExit(slot, rpc, error),
-    });
     this.projectionCoordinator = new RuntimeProjectionCoordinator(
       {
         isClosing: () => this.closing,
@@ -819,10 +797,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       },
       this.diagnostics,
     );
-    this.startupAttestor = new RuntimeStartupAttestor({
-      reconcile: (slot, force, startupAttestation) =>
-        this.reconcileSlot(slot, force, startupAttestation),
-    });
     this.workerLifecycle = new RuntimeWorkerLifecycle(
       {
         selectedSessionId: () => this.selectedSessionId,
@@ -842,6 +816,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           this.setProjectionConflict(slot, kind, message, diagnosticFields),
         renewView: (slot) => this.renewView(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
+        dispatchProcessEvent: (slot, rpc, event) =>
+          this.events.dispatchProcessEvent(slot, rpc, event),
+        refreshPendingQueues: (slot) => this.refreshPendingQueues(slot),
         rejectDeferredPrompts: (slot, worker) =>
           this.rejectDeferredPrompts(slot, worker),
         scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
@@ -850,8 +827,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       },
       this.diagnostics,
       {
-        startupAttestor: this.startupAttestor,
-        processRegistry: this.processRegistry,
         projectionCoordinator: this.projectionCoordinator,
         extensionUi: this.extensionUi,
         bash: this.bash,
@@ -1441,8 +1416,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         !slot.navigationLease &&
         rpc &&
         slot.ready &&
-        rpc.available &&
-        this.processRegistry.ownerOf(rpc) === slot,
+        rpc.available,
     );
   }
 
@@ -1911,17 +1885,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  private readNewSessionEntries(
-    slot: RuntimeSlot,
-    rpc: PiRpcProcess,
-  ): Promise<SessionEntry[]> {
-    return this.startupAttestor.readNewSessionEntries(
-      slot,
-      rpc,
-      NEW_SESSION_ENTRY_MAX_COUNT,
-    );
-  }
-
   private async withExpectedPersistence<T>(
     slot: RuntimeSlot,
     expectations: readonly PersistenceExpectation[],
@@ -2053,36 +2016,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       sessionStatus,
       taskProject: basename(slot.cwd),
     });
-  }
-
-  private handleProcessExit(
-    slot: RuntimeSlot,
-    _rpc: PiRpcProcess,
-    error: Error,
-  ): void {
-    // `exit` retires RPC availability, not necessarily the Pi writer. The
-    // shared stop path revokes authority immediately and retains its actual
-    // stop promise (including failure) for replacement and Host shutdown.
-    void this.stopWriter(slot).catch(() => undefined);
-    slot.retry = null;
-    slot.summarizationRetry = null;
-    slot.activeAssistantCorrelation = null;
-    if (slot.conflict) {
-      slot.runState = "conflict";
-    } else {
-      slot.runState = "failed";
-      slot.attention = this.selectedSessionId === slot.id ? null : "failed";
-    }
-    void this.workerLifecycle.releaseWorkerView(slot, "stopped");
-    this.refreshPendingQueues(slot);
-    this.logRuntimeError(slot.id, error, "worker_exit");
-    this.emitSlotEvent(slot, {
-      type: "runtime_error",
-      error: error.message,
-      extensionDisplays: slot.extensionDisplays,
-      extensionStatuses: slot.extensionStatuses,
-    });
-    this.scheduleIdleWorkerEviction();
   }
 
   private runtimeCapabilityUnavailable(
@@ -3065,7 +2998,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       finishProvisional = resolveCompletion;
     });
     this.provisionalSlots.set(provisionalId, { slot, completion });
-    this.processRegistry.attach(slot, rpc);
+    this.workerLifecycle.bind(slot, rpc, true);
     try {
       slot.startupPhase = "starting";
       await rpc.start();
@@ -3133,7 +3066,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         await pendingProjection.suspendReconciliation();
         try {
           this.assertNotClosing();
-          const initialEntries = await this.readNewSessionEntries(slot, rpc);
+          const initialEntries =
+            await this.workerLifecycle.readNewSessionEntries(slot, rpc);
           await pendingProjection.reconcileSuspended(true);
           if (pendingProjection.health.status === "error") {
             throw requestError(
@@ -3234,20 +3168,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         this.scheduleIdleWorkerEviction();
       }
       this.catalog.invalidate();
-      this.diagnostics.record("info", "slot_worker_ready", {
-        sessionId,
-        slotIncarnation: slot.incarnationId,
-        workerId: bridge.workerId,
-        childPid: rpc.pid,
-        revision: projection.revision,
-        sourceVersion: projection.sourceVersion,
-        created: true,
-      });
-      this.emitSlotEvent(slot, {
-        type: "runtime_ready",
-        extensionDisplays: slot.extensionDisplays,
-        extensionStatuses: slot.extensionStatuses,
-      });
+      this.workerLifecycle.publishReady(slot, rpc, true);
       return committedSnapshot;
     } catch (error) {
       const failure = slot.startupError ?? error;
@@ -3556,7 +3477,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           if (
             readySlot.process !== readyProcess ||
             !readySlot.ready ||
-            this.processRegistry.ownerOf(readyProcess) !== slot ||
             (expected &&
               (expected.worker !== readyProcess ||
                 expected.navigationEpoch !== slot.deliveryNavigationEpoch ||
@@ -5751,7 +5671,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.process !== rpc ||
         !slot.ready ||
         !rpc.available ||
-        this.processRegistry.ownerOf(rpc) !== slot ||
         (runtimeSessionId !== null && runtimeSessionId !== slot.id) ||
         (runtimeSessionPath !== null &&
           slot.sessionPath !== null &&
@@ -5979,7 +5898,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       slot.process = null;
       slot.ready = false;
       if (rpc) {
-        this.processRegistry.detach(rpc);
+        this.workerLifecycle.unbind(slot);
         // A Host-only restart leaves the worker and its work running.
         stopping.push((preserveWorkers ? rpc.detach() : null) ?? rpc.stop());
       }

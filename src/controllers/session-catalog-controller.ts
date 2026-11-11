@@ -10,6 +10,7 @@ import {
 import type { ExternalSessionActivities } from "../../shared/session-activity";
 import { type Api, ApiError } from "../api";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { sessionCurationOwners } from "../session-curation";
 
 const SESSION_PAGE_SIZE = 40;
 
@@ -136,14 +137,8 @@ export class SessionCatalogController {
    * Confirmed rows stay visible, but a former transport cannot publish over the
    * current generation or turn a later successful pairing into a 401. */
   invalidate(): void {
-    this.clearBackgroundRecovery();
-    this.retireListRequest();
-    this.loadTicket += 1;
     this.clearSearchTimer();
-    this.cancelCurationRequest();
-    this.curationPending = false;
-    this.olderPromise = null;
-    this.retry = null;
+    this.beginListGeneration();
     const state = this.host.state();
     if (
       !state.sessionListLoading &&
@@ -549,25 +544,11 @@ export class SessionCatalogController {
     });
   }
 
-  private curationIds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
-  }
-
-  private curationProjectCwds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedProjectCwds, ...prefs.hiddenProjectCwds]);
-  }
-
   private curationOwnerKey(): string {
-    const state = this.host.state();
-    const confirmed = this.host.confirmedPreferences();
-    const ids = new Set([
-      ...this.curationIds(state.prefs),
-      ...this.curationIds(confirmed),
-    ]);
-    const cwds = new Set([
-      ...this.curationProjectCwds(state.prefs),
-      ...this.curationProjectCwds(confirmed),
-    ]);
+    const { ids, cwds } = sessionCurationOwners(
+      this.host.state().prefs,
+      this.host.confirmedPreferences(),
+    );
     return JSON.stringify([[...ids].sort(), [...cwds].sort()]);
   }
 
@@ -575,23 +556,16 @@ export class SessionCatalogController {
     ids: Set<string>;
     cwds: Set<string>;
   } {
-    const confirmed = this.host.confirmedPreferences();
-    const ids = new Set([
-      ...this.curationIds(prefs),
-      ...this.curationIds(confirmed),
-    ]);
+    const { ids, cwds } = sessionCurationOwners(
+      prefs,
+      this.host.confirmedPreferences(),
+    );
     const state = this.host.state();
     if (state.sessionId) ids.add(state.sessionId);
     for (const id of Object.keys(state.sessionStatuses)) ids.add(id);
     for (const id of Object.keys(state.externalSessionActivities ?? {}))
       ids.add(id);
-    return {
-      ids,
-      cwds: new Set([
-        ...this.curationProjectCwds(prefs),
-        ...this.curationProjectCwds(confirmed),
-      ]),
-    };
+    return { ids, cwds };
   }
 
   private cancelCurationRequest(): void {
@@ -783,45 +757,31 @@ export class SessionCatalogController {
       }
     }
 
-    const missingIds = [...ids].filter(
-      (id) => !baseIds.has(id) && !hydration.has(id),
-    );
-    for (
-      let index = 0;
-      index < missingIds.length;
-      index += MAX_SESSION_ID_HYDRATION_IDS
-    ) {
-      if (!isCurrent()) return null;
-      const chunk = missingIds.slice(
-        index,
-        index + MAX_SESSION_ID_HYDRATION_IDS,
-      );
-      const response = await api.sessionsByIds(chunk);
-      if (!isCurrent()) return null;
-      const requested = new Set(chunk);
-      for (const session of response.sessions) {
-        if (requested.has(session.id) && !baseIds.has(session.id))
-          hydration.set(session.id, session);
-      }
-    }
-
-    const wantedCwds = [...cwds];
-    for (
-      let index = 0;
-      index < wantedCwds.length;
-      index += MAX_SESSION_CWD_HYDRATION_CWDS
-    ) {
-      if (!isCurrent()) return null;
-      const chunk = wantedCwds.slice(
-        index,
-        index + MAX_SESSION_CWD_HYDRATION_CWDS,
-      );
-      const response = await api.sessionsByCwds(chunk);
-      if (!isCurrent()) return null;
-      const requested = new Set(chunk);
-      for (const session of response.sessions) {
-        if (requested.has(session.cwd) && !baseIds.has(session.id))
-          hydration.set(session.id, session);
+    const reads = [
+      {
+        field: "id",
+        owners: [...ids].filter((id) => !baseIds.has(id) && !hydration.has(id)),
+        limit: MAX_SESSION_ID_HYDRATION_IDS,
+        read: (chunk: string[]) => api.sessionsByIds(chunk),
+      },
+      {
+        field: "cwd",
+        owners: [...cwds],
+        limit: MAX_SESSION_CWD_HYDRATION_CWDS,
+        read: (chunk: string[]) => api.sessionsByCwds(chunk),
+      },
+    ] as const;
+    for (const { field, owners, limit, read } of reads) {
+      for (let index = 0; index < owners.length; index += limit) {
+        if (!isCurrent()) return null;
+        const chunk = owners.slice(index, index + limit);
+        const response = await read(chunk);
+        if (!isCurrent()) return null;
+        const requested = new Set(chunk);
+        for (const session of response.sessions) {
+          if (requested.has(session[field]) && !baseIds.has(session.id))
+            hydration.set(session.id, session);
+        }
       }
     }
     return hydration;

@@ -272,9 +272,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 - Older chronological history is reached with an explicit `Load older sessions` control, never
   implicit scrolling. It reports the number of server rows consumed out of the query total, exposes
   loading/retry/end states to keyboard and assistive technology, and sits below the chronological
-  groups before Hidden. Search and explicit refresh restart at offset zero; loading older appends
-  in server order. Curated, selected, and live-session hydration is deduplicated and chunked within
-  the host route bounds; it can add visible rows but never advances the chronological cursor.
+  groups before Hidden. Search and explicit refresh restart at offset zero. Loading older appends
+  in server order. Hydration covers both pending and confirmed curation, plus selected and live
+  sessions. It batches identities and folders within the Host's limits and leaves the
+  chronological cursor unchanged.
 
   Hydration and preservation failures keep the last confirmed union and recover automatically in a
   bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks; a

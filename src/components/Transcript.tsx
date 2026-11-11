@@ -563,6 +563,12 @@ export const Transcript = memo(function Transcript({
     else void store.openResource(reference);
   };
 
+  const virtual = viewport.virtualize;
+  const mountedRows = virtual
+    ? viewport.virtualizer.getVirtualItems()
+    : rows.map((_, index) => ({ index, start: undefined }));
+  const selectedSearchRow = search.matches[search.currentMatch]?.rowIndex;
+
   return (
     <div
       className={`transcript-wrap transcript-wrap--mobile-${mobileTranscriptTool ?? "idle"}`}
@@ -682,68 +688,62 @@ export const Transcript = memo(function Transcript({
             </div>
           ) : null}
           <TranscriptImageOwnerContext value={imageOwner}>
-            {rows.length === 0 ? (
-              <div className="transcript__column">
+            <div
+              className={
+                virtual
+                  ? "transcript__column transcript__column--virtual"
+                  : "transcript__column"
+              }
+              style={
+                virtual
+                  ? { height: viewport.virtualizer.getTotalSize() }
+                  : undefined
+              }
+            >
+              {rows.length === 0 ? (
                 <div className="empty-state empty-state--conversation">
                   <p className="empty-state__title">Empty session</p>
                   <p className="empty-state__hint">Send a message to start.</p>
                 </div>
-              </div>
-            ) : viewport.virtualize ? (
-              <div
-                className="transcript__column transcript__column--virtual"
-                style={{ height: viewport.virtualizer.getTotalSize() }}
-              >
-                {viewport.virtualizer.getVirtualItems().map((item) => (
-                  <div
-                    key={rows[item.index]!.key}
-                    data-index={item.index}
-                    data-transcript-row={item.index}
-                    data-transcript-key={rows[item.index]!.key}
-                    data-user-turn-index={
-                      rows[item.index]!.turnOrdinal ?? undefined
-                    }
-                    data-user-turn-id={rows[item.index]!.turnId ?? undefined}
-                    ref={viewport.virtualizer.measureElement}
-                    className="transcript__virtual-row"
-                    style={{ transform: `translateY(${item.start}px)` }}
-                  >
-                    <TranscriptSearchReveal
-                      value={
-                        search.matches[search.currentMatch]?.rowIndex ===
-                        item.index
-                          ? search.revealVersion
-                          : null
+              ) : (
+                mountedRows.map(({ index, start }) => {
+                  const row = rows[index]!;
+                  return (
+                    <div
+                      key={row.key}
+                      data-index={virtual ? index : undefined}
+                      data-transcript-row={index}
+                      data-transcript-key={row.key}
+                      data-user-turn-index={row.turnOrdinal ?? undefined}
+                      data-user-turn-id={row.turnId ?? undefined}
+                      ref={
+                        virtual
+                          ? viewport.virtualizer.measureElement
+                          : undefined
+                      }
+                      className={
+                        virtual ? "transcript__virtual-row" : undefined
+                      }
+                      style={
+                        virtual
+                          ? { transform: `translateY(${start}px)` }
+                          : undefined
                       }
                     >
-                      {rows[item.index]!.node}
-                    </TranscriptSearchReveal>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="transcript__column">
-                {rows.map((row, index) => (
-                  <div
-                    key={row.key}
-                    data-transcript-row={index}
-                    data-transcript-key={row.key}
-                    data-user-turn-index={row.turnOrdinal ?? undefined}
-                    data-user-turn-id={row.turnId ?? undefined}
-                  >
-                    <TranscriptSearchReveal
-                      value={
-                        search.matches[search.currentMatch]?.rowIndex === index
-                          ? search.revealVersion
-                          : null
-                      }
-                    >
-                      {row.node}
-                    </TranscriptSearchReveal>
-                  </div>
-                ))}
-              </div>
-            )}
+                      <TranscriptSearchReveal
+                        value={
+                          selectedSearchRow === index
+                            ? search.revealVersion
+                            : null
+                        }
+                      >
+                        {row.node}
+                      </TranscriptSearchReveal>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </TranscriptImageOwnerContext>
           {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">

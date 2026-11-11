@@ -28,7 +28,6 @@ import { type CopyLoader, type CopySource, copyLoader } from "../content-copy";
 import {
   type ActivityTool,
   type ChatMessage,
-  contentItems,
   messageText,
   type ToolCallContent,
   userMessageDisplayContent,
@@ -55,11 +54,8 @@ import {
   useVisibleActivityItemIds,
 } from "./transcript-activity-visibility";
 import {
-  type CollapsedActivity,
   CollapsedActivityStrip,
   GenericCard,
-  genericContentTitle,
-  hasRenderableAssistantContent,
   type StaticVisibility,
   ThinkingCard,
   ToolCard,
@@ -238,220 +234,183 @@ export const UserBubble = memo(function UserBubble({
   );
 });
 
-function hasCollapsibleActivityRun(
-  items: ReturnType<typeof contentItems>,
-): boolean {
-  let currentToolRun = 0;
-  for (const item of items) {
-    if (item.type === "toolCall") {
-      currentToolRun += 1;
-      if (currentToolRun > 1) return true;
-    } else {
-      currentToolRun = 0;
-    }
-  }
-  return false;
-}
-
-export const AssistantTurn = memo(function AssistantTurn({
-  message,
-  toolResults,
-  toolActivity,
-  activityItemIds = [],
+function AssistantRow({
   streaming,
-  dynamicActive,
-  thinkingVisibility,
-  toolVisibility,
-  responseCopyText,
-  responseCopyContent,
+  children,
+  actions,
 }: {
-  message: ChatMessage;
-  toolResults: Map<string, ChatMessage>;
-  toolActivity: Record<string, ActivityTool>;
-  activityItemIds?: string[];
   streaming: boolean;
-  dynamicActive: boolean;
-  thinkingVisibility: VisibilityPreference;
-  toolVisibility: ToolVisibilityPreference;
-  /** Empty suppresses actions; a full-message value keeps the existing one-copy
-   * affordance on the message's final visible response fragment. */
-  responseCopyText?: string;
-  responseCopyContent?: CopyLoader;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
 }) {
-  const items = contentItems(message);
-  const hasVisibleContent = hasRenderableAssistantContent(
-    message,
-    thinkingVisibility,
-    toolVisibility,
-  );
-  const dynamicTools = toolVisibility === "dynamic";
-  const visibleActivityIds = useVisibleActivityItemIds();
-  const toolKeys = items.flatMap((item, index) =>
-    item.type === "toolCall"
-      ? [
-          activityItemIds[index] ??
-            (item as ToolCallContent).id ??
-            `tool:${index}`,
-        ]
-      : [],
-  );
-  const hasActivities = toolKeys.length > 0;
-  const collapseEligible = hasCollapsibleActivityRun(items);
-  const visibleToolKeys =
-    visibleActivityIds === null
-      ? toolKeys
-      : toolKeys.filter((id) => visibleActivityIds.has(id));
-  const retainedInspectionHeld = useActivityInspectionHeld(visibleToolKeys);
-  const dynamicBatch = useDynamicActivityGroup(
-    dynamicTools,
-    dynamicActive,
-    !dynamicActive,
-    visibleToolKeys,
-    collapseEligible,
-    retainedInspectionHeld,
-  );
-  const renderedItems: React.ReactNode[] =
-    typeof message.content === "string" && message.content.length > 0
-      ? [<RichText key="text" text={message.content} variant="assistant" />]
-      : [];
-  const ordinaryToolVisibility: StaticVisibility =
-    toolVisibility === "compact" ||
-    toolVisibility === "collapsed" ||
-    dynamicTools
-      ? "collapsed"
-      : toolVisibility;
-  const collapsedActivities =
-    collapseEligible &&
-    (toolVisibility === "collapsed" ||
-      (dynamicTools && dynamicBatch.collapsed));
-  // Execution events, not membership in the current batch, own the running
-  // status. After reconnect an unobserved call stays expanded but unknown.
-  const live = streaming;
-
-  for (let index = 0; index < items.length; ) {
-    const item = items[index]!;
-    if (item.type === "toolCall" && collapsedActivities) {
-      const start = index;
-      let end = start;
-      while (end < items.length && items[end]?.type === "toolCall") end += 1;
-      const runLength = end - start;
-      if (runLength > 1) {
-        const activities: CollapsedActivity[] = [];
-        for (let cursor = start; cursor < end; cursor += 1) {
-          const call = items[cursor] as ToolCallContent;
-          activities.push({
-            key: activityItemIds[cursor] ?? call.id ?? `tool:${cursor}`,
-            call,
-            result: toolResults.get(call.id),
-            activity: toolActivity[call.id],
-          });
-        }
-        index = end;
-        renderedItems.push(
-          <CollapsedActivityStrip
-            key={`tools:${activities[0]?.key ?? start}`}
-            activities={activities}
-            live={live}
-          />,
-        );
-        continue;
-      }
-    }
-    if (item.type === "text") {
-      const text = (item as { text?: string }).text ?? "";
-      if (text)
-        renderedItems.push(
-          <RichText key={index} text={text} variant="assistant" />,
-        );
-    } else if (item.type === "thinking") {
-      const activityItemId =
-        activityItemIds[index] ?? `assistant-item:${index}`;
-      renderedItems.push(
-        <ActivityItemBoundary key={activityItemId} id={activityItemId}>
-          <ThinkingCard
-            text={(item as { thinking?: string }).thinking ?? ""}
-            visibility={thinkingVisibility}
-            dynamicActive={dynamicActive}
-          />
-        </ActivityItemBoundary>,
-      );
-    } else if (item.type === "toolCall") {
-      const call = item as ToolCallContent;
-      const result = toolResults.get(call.id);
-      const activity = toolActivity[call.id];
-      const activityItemId =
-        activityItemIds[index] ?? call.id ?? `assistant-item:${index}`;
-      const toolKey = activityItemId;
-      renderedItems.push(
-        <ActivityItemBoundary key={activityItemId} id={activityItemId}>
-          <ToolCard
-            call={call}
-            result={result}
-            activity={activity}
-            live={live}
-            visibility={ordinaryToolVisibility}
-            dynamic={dynamicTools}
-            dynamicActive={dynamicActive}
-            forceClosed={dynamicTools && dynamicBatch.closing}
-            onDynamicClosed={
-              dynamicTools ? () => dynamicBatch.markClosed(toolKey) : undefined
-            }
-            onManualOpenChange={
-              dynamicTools
-                ? (open) => dynamicBatch.setInspectionHeld(toolKey, open)
-                : undefined
-            }
-          />
-        </ActivityItemBoundary>,
-      );
-    } else {
-      const title = genericContentTitle(item);
-      if (title) {
-        const activityItemId =
-          activityItemIds[index] ?? `assistant-item:${index}`;
-        renderedItems.push(
-          <ActivityItemBoundary key={activityItemId} id={activityItemId}>
-            <GenericCard
-              item={item}
-              visibility={ordinaryToolVisibility}
-              title={title}
-            />
-          </ActivityItemBoundary>,
-        );
-      }
-    }
-    index += 1;
-  }
-
   return (
     <div
       className={`turn turn--assistant ${streaming ? "turn--streaming" : ""}`}
     >
-      <div className="assistant-doc">
-        {streaming && !hasVisibleContent ? (
-          <div className="assistant-activity" role="status">
-            <PiLoader size={14} aria-hidden />
-            <span>Working…</span>
-          </div>
-        ) : dynamicTools && hasActivities ? (
-          <div
-            className={`dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}`}
-          >
-            {renderedItems}
-          </div>
-        ) : (
-          renderedItems
-        )}
-      </div>
-      <MessageActions
-        text={responseCopyText ?? messageText(message)}
-        getContent={responseCopyContent}
-        copyLabel="Response"
-        className="turn__actions--response"
-      />
+      <div className="assistant-doc">{children}</div>
+      {actions}
     </div>
   );
-});
+}
+
+export function AssistantResponse({
+  passages,
+  streaming,
+  copyText = "",
+  copyContent,
+}: {
+  passages: readonly string[];
+  streaming: boolean;
+  copyText?: string;
+  copyContent?: CopyLoader;
+}) {
+  return (
+    <AssistantRow
+      streaming={streaming}
+      actions={
+        <MessageActions
+          text={copyText}
+          getContent={copyContent}
+          copyLabel="Response"
+          className="turn__actions--response"
+        />
+      }
+    >
+      {passages.map((text, index) => (
+        <RichText key={index} text={text} variant="assistant" />
+      ))}
+    </AssistantRow>
+  );
+}
+
+export type AssistantActivityContent =
+  | { kind: "thinking"; text: string }
+  | {
+      kind: "tool";
+      call: ToolCallContent;
+      result: ChatMessage | undefined;
+      activity?: ActivityTool;
+    }
+  | { kind: "generic"; item: object; title: string };
+
+type AssistantActivityItem = AssistantActivityContent & { key: string };
+
+export function AssistantActivity({
+  items,
+  streaming,
+  dynamicActive,
+  thinkingVisibility,
+  toolVisibility,
+}: {
+  items: readonly AssistantActivityItem[];
+  streaming: boolean;
+  dynamicActive: boolean;
+  thinkingVisibility: VisibilityPreference;
+  toolVisibility: ToolVisibilityPreference;
+}) {
+  const dynamicTools = toolVisibility === "dynamic";
+  const visibleIds = useVisibleActivityItemIds();
+  const toolKeys = items.flatMap((item) =>
+    item.kind === "tool" && (!visibleIds || visibleIds.has(item.key))
+      ? [item.key]
+      : [],
+  );
+  const collapseEligible = items.some(
+    (item, index) => item.kind === "tool" && items[index + 1]?.kind === "tool",
+  );
+  const retainedInspectionHeld = useActivityInspectionHeld(toolKeys);
+  const dynamicBatch = useDynamicActivityGroup(
+    dynamicTools,
+    dynamicActive,
+    !dynamicActive,
+    toolKeys,
+    collapseEligible,
+    retainedInspectionHeld,
+  );
+  const visibility = toolVisibility === "expanded" ? "expanded" : "collapsed";
+  const collapse =
+    toolVisibility === "collapsed" || (dynamicTools && dynamicBatch.collapsed);
+  const renderedItems: React.ReactNode[] = [];
+
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index]!;
+    if (collapse && item.kind === "tool" && items[index + 1]?.kind === "tool") {
+      const run = [item];
+      let next = items[index + 1];
+      while (next?.kind === "tool") {
+        run.push(next);
+        index++;
+        next = items[index + 1];
+      }
+      renderedItems.push(
+        <CollapsedActivityStrip
+          key={`tools:${item.key}`}
+          activities={run}
+          live={streaming}
+        />,
+      );
+      continue;
+    }
+
+    const card =
+      item.kind === "thinking" ? (
+        <ThinkingCard
+          text={item.text}
+          visibility={thinkingVisibility}
+          dynamicActive={dynamicActive}
+        />
+      ) : item.kind === "generic" ? (
+        <GenericCard
+          item={item.item}
+          title={item.title}
+          visibility={visibility}
+        />
+      ) : (
+        <ToolCard
+          call={item.call}
+          result={item.result}
+          activity={item.activity}
+          live={streaming}
+          visibility={visibility}
+          dynamic={dynamicTools}
+          dynamicActive={dynamicActive}
+          forceClosed={dynamicTools && dynamicBatch.closing}
+          onDynamicClosed={
+            dynamicTools ? () => dynamicBatch.markClosed(item.key) : undefined
+          }
+          onManualOpenChange={
+            dynamicTools
+              ? (open) => dynamicBatch.setInspectionHeld(item.key, open)
+              : undefined
+          }
+        />
+      );
+    renderedItems.push(
+      <ActivityItemBoundary key={item.key} id={item.key}>
+        {card}
+      </ActivityItemBoundary>,
+    );
+  }
+
+  return (
+    <AssistantRow streaming={streaming}>
+      {streaming && !items.length ? (
+        <div className="assistant-activity" role="status">
+          <PiLoader size={14} aria-hidden />
+          <span>Working…</span>
+        </div>
+      ) : dynamicTools && items.some((item) => item.kind === "tool") ? (
+        <div
+          className={`dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}`}
+        >
+          {renderedItems}
+        </div>
+      ) : (
+        renderedItems
+      )}
+    </AssistantRow>
+  );
+}
 
 export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
   activityItemId = "unpaired-tool-result",

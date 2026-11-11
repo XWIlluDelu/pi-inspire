@@ -299,6 +299,19 @@ describe("worker startup and retirement", () => {
           expect(
             workers.filter((worker) => worker.sessionId === "0"),
           ).toHaveLength(2);
+          old.emit("event", {
+            type: "extension_ui_request",
+            id: "late-status",
+            method: "setStatus",
+            statusKey: "retired-worker",
+            statusText: "stale",
+          });
+          old.emit("exit", new Error("Late exit from retired worker"));
+          const current = await runtime.snapshot("0");
+          expect(current.extensionStatuses).not.toHaveProperty(
+            "retired-worker",
+          );
+          expect(current.runState).not.toBe("failed");
         } else {
           const failure = new Error("Old writer exit unconfirmed");
           rejectStop(failure);

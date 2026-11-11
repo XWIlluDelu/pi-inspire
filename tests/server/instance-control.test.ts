@@ -505,21 +505,6 @@ describe("Host local-control ingress", () => {
         ).body.result.kind,
       ).toBe("released");
       expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
-      const stopAttachedWork = vi.spyOn(f.runtime, "stopAttachedPiWork");
-      const prepareRestart = createInstanceControlRequest(
-        owner,
-        "restart-prepare",
-        { scope: "host" },
-      );
-      const restartPrepared = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(prepareRestart)
-        .expect(200);
-      expect(restartPrepared.body.result).toEqual({
-        kind: "prepared",
-        scope: "host",
-      });
-      expect(stopAttachedWork).not.toHaveBeenCalled();
       owner = null;
       await request(f.application.server)
         .post("/api/host/local-control")

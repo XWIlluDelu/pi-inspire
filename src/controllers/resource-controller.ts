@@ -59,6 +59,14 @@ interface ResourceControllerHost {
   selectWorkspacePath(workspacePath: string, reveal?: boolean): void;
 }
 
+interface ImageReadOwner {
+  api: Api;
+  sessionId: string;
+  viewId: string;
+  signal: AbortSignal;
+  checkCurrent(): void;
+}
+
 /**
  * Owns one browser-facing resource lifecycle: revision-bound preflight,
  * opaque-handle preview, request cancellation, and temporary object URLs.
@@ -406,6 +414,53 @@ export class ResourceController {
     });
   }
 
+  private async readInlineImage(
+    { api, sessionId, viewId, signal, checkCurrent }: ImageReadOwner,
+    reference: string,
+    source: "transcript" | "document",
+  ): Promise<Blob> {
+    const embedded =
+      source === "transcript" && isEmbeddedImageReference(reference);
+    checkCurrent();
+    const descriptor = await api.resolveResource(sessionId, reference, signal);
+    checkCurrent();
+    if (
+      descriptor.sessionId !== sessionId ||
+      descriptor.viewId !== viewId ||
+      descriptor.kind !== "image" ||
+      (embedded && descriptor.reference !== reference) ||
+      (source === "document" &&
+        !/^image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml)$/.test(
+          descriptor.mimeType,
+        ))
+    ) {
+      throw new Error(
+        source === "document"
+          ? "The reference is not a previewable image"
+          : "The image is unavailable in this conversation view",
+      );
+    }
+    if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
+      throw new Error("The image is too large to preview");
+    const content = await api.resourceContent(descriptor.id, sessionId, {
+      byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
+      signal,
+    });
+    checkCurrent();
+    if (
+      content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
+      content.blob.size > MAX_MEDIA_PREVIEW_BYTES
+    )
+      throw new Error("The image is too large to preview");
+    if (
+      !embedded &&
+      (content.blob.size !== content.totalSize ||
+        content.blob.type !== descriptor.mimeType)
+    )
+      throw new Error("The image content is unavailable");
+    return content.blob;
+  }
+
   /** Read an image for the owning transcript without selecting the Files pane. */
   async loadTranscriptImage(
     sessionId: string,
@@ -415,7 +470,6 @@ export class ResourceController {
     signal: AbortSignal,
   ): Promise<Blob> {
     const api = this.host.api();
-    const embedded = isEmbeddedImageReference(reference);
     if (
       !api ||
       !isLocalResourceReference(reference) ||
@@ -423,9 +477,9 @@ export class ResourceController {
     ) {
       throw new Error("The transcript image reference is unavailable");
     }
-    const stale = () => {
+    const checkCurrent = () => {
       const current = this.host.state();
-      return (
+      if (
         signal.aborted ||
         this.host.api() !== api ||
         current.sessionId !== sessionId ||
@@ -434,49 +488,20 @@ export class ResourceController {
           current.transcriptViewId,
           current.transcriptIncarnation,
         ) !== projectionKey
-      );
+      )
+        throw Object.assign(
+          new Error("The image request is no longer current"),
+          {
+            name: "AbortError",
+          },
+        );
     };
-    const staleError = () =>
-      Object.assign(new Error("The image request is no longer current"), {
-        name: "AbortError",
-      });
     try {
-      if (stale()) throw staleError();
-      const descriptor = await api.resolveResource(
-        sessionId,
+      return await this.readInlineImage(
+        { api, sessionId, viewId, signal, checkCurrent },
         reference,
-        signal,
+        "transcript",
       );
-      if (stale()) throw staleError();
-      if (
-        descriptor.sessionId !== sessionId ||
-        (embedded && descriptor.reference !== reference) ||
-        descriptor.kind !== "image" ||
-        descriptor.viewId !== viewId
-      ) {
-        throw new Error("The image is unavailable in this conversation view");
-      }
-      if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
-        throw new Error("The image is too large to preview");
-      const content = await api.resourceContent(descriptor.id, sessionId, {
-        byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
-        signal,
-      });
-      if (stale()) throw staleError();
-      if (
-        content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
-        content.blob.size > MAX_MEDIA_PREVIEW_BYTES
-      ) {
-        throw new Error("The image is too large to preview");
-      }
-      if (
-        !embedded &&
-        (content.blob.size !== content.totalSize ||
-          content.blob.type !== descriptor.mimeType)
-      ) {
-        throw new Error("The image content is unavailable");
-      }
-      return content.blob;
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -486,7 +511,7 @@ export class ResourceController {
         this.host.handleAuthFailure();
         throw error;
       }
-      if (stale()) throw staleError();
+      checkCurrent();
       throw error;
     }
   }
@@ -500,6 +525,11 @@ export class ResourceController {
   ): Promise<Blob> {
     const api = this.host.api();
     const { sessionId, transcriptViewId: viewId } = this.host.state();
+    const retired = () =>
+      Object.assign(new Error("The document preview is no longer current"), {
+        name: "AbortError",
+      });
+    if (!api || !sessionId || !viewId) throw retired();
     const request = new AbortController();
     const abort = () => request.abort();
     signal.addEventListener("abort", abort, { once: true });
@@ -508,9 +538,6 @@ export class ResourceController {
     const checkCurrent = () => {
       const state = this.host.state();
       if (
-        !api ||
-        !sessionId ||
-        !viewId ||
         request.signal.aborted ||
         this.host.api() !== api ||
         state.sessionId !== sessionId ||
@@ -521,46 +548,14 @@ export class ResourceController {
         state.resourcePreview?.status !== "ready" ||
         state.resourcePreview.descriptor.id !== documentId
       )
-        throw Object.assign(
-          new Error("The document preview is no longer current"),
-          { name: "AbortError" },
-        );
+        throw retired();
     };
     try {
-      checkCurrent();
-      const descriptor = await api!.resolveResource(
-        sessionId!,
+      return await this.readInlineImage(
+        { api, sessionId, viewId, signal: request.signal, checkCurrent },
         reference,
-        request.signal,
+        "document",
       );
-      checkCurrent();
-      if (
-        descriptor.sessionId !== sessionId ||
-        descriptor.viewId !== viewId ||
-        descriptor.kind !== "image" ||
-        !/^image\/(?:png|jpeg|gif|webp|avif|bmp|svg\+xml)$/.test(
-          descriptor.mimeType,
-        )
-      )
-        throw new Error("The reference is not a previewable image");
-      if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
-        throw new Error("The image is too large to preview");
-      const content = await api!.resourceContent(descriptor.id, sessionId!, {
-        byteLimit: MAX_MEDIA_PREVIEW_BYTES + 1,
-        signal: request.signal,
-      });
-      checkCurrent();
-      if (
-        content.totalSize > MAX_MEDIA_PREVIEW_BYTES ||
-        content.blob.size > MAX_MEDIA_PREVIEW_BYTES
-      )
-        throw new Error("The image is too large to preview");
-      if (
-        content.blob.size !== content.totalSize ||
-        content.blob.type !== descriptor.mimeType
-      )
-        throw new Error("The image content is unavailable");
-      return content.blob;
     } catch (error) {
       checkCurrent();
       if (error instanceof ApiError && error.status === 401)

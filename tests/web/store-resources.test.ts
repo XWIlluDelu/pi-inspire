@@ -806,93 +806,57 @@ describe("resource previews", () => {
     },
   );
 
-  it("rejects embedded-image bytes from a replaced projection incarnation", async () => {
-    const oldContent = deferred<RouteResponse>();
-    const { promise: started, resolve: contentStarted } = deferred<void>();
-    installFetch((url, init) => {
-      if (url.startsWith("/api/resources/resolve")) {
-        const body = jsonBody(init) as { sessionId: string; reference: string };
-        return {
-          body: {
-            id: "embedded-image",
-            sessionId: body.sessionId,
-            viewId: "view-s1",
-            reference: body.reference,
-            name: "Embedded image",
-            mimeType: "image/png",
-            size: 3,
-            kind: "image",
-          },
-        };
+  it.each(["projection", "transport"] as const)(
+    "retires an embedded-image read after %s replacement",
+    async (replacement) => {
+      const oldContent = deferred<RouteResponse>();
+      const { promise: started, resolve: contentStarted } = deferred<void>();
+      installFetch((url, init) => {
+        if (url.startsWith("/api/resources/resolve")) {
+          return {
+            body: {
+              id: "embedded-image",
+              sessionId: "s1",
+              viewId: "view-s1",
+              reference: "pi-embedded://4/0",
+              name: "Embedded image",
+              mimeType: "image/png",
+              size: 3,
+              kind: "image",
+            },
+          };
+        }
+        if (url.includes("/api/resources/embedded-image/content")) {
+          contentStarted();
+          return oldContent.promise;
+        }
+        return baseRoutes(url, init);
+      });
+      const { store, socket } = await initStore();
+      const loading = store.loadTranscriptImage(
+        "s1",
+        "view-s1",
+        "view-s1\u0000projection-1",
+        "pi-embedded://4/0",
+        new AbortController().signal,
+      );
+      await started;
+      if (replacement === "projection") {
+        socket.emit({
+          type: "snapshot",
+          data: activeSnapshot({
+            transcriptPage: { incarnation: "projection-2" },
+          }),
+        });
+        oldContent.resolve({ body: "old" });
+      } else {
+        await store.init();
+        oldContent.resolve({ status: 401, body: { error: "expired token" } });
       }
-      if (url.includes("/api/resources/embedded-image/content")) {
-        contentStarted();
-        return oldContent.promise;
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-
-    const loading = store.loadTranscriptImage(
-      "s1",
-      "view-s1",
-      "view-s1\u0000projection-1",
-      "pi-embedded://4/0",
-      new AbortController().signal,
-    );
-    await started;
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: { incarnation: "projection-2" },
-      }),
-    });
-    oldContent.resolve({ body: "old" });
-
-    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
-  });
-
-  it("ignores an obsolete embedded-image authorization failure after transport replacement", async () => {
-    const oldContent = deferred<RouteResponse>();
-    const { promise: started, resolve: contentStarted } = deferred<void>();
-    installFetch((url, init) => {
-      if (url.startsWith("/api/resources/resolve")) {
-        const body = jsonBody(init) as { sessionId: string; reference: string };
-        return {
-          body: {
-            id: "embedded-image",
-            sessionId: body.sessionId,
-            viewId: "view-s1",
-            reference: body.reference,
-            name: "Embedded image",
-            mimeType: "image/png",
-            size: 3,
-            kind: "image",
-          },
-        };
-      }
-      if (url.includes("/api/resources/embedded-image/content")) {
-        contentStarted();
-        return oldContent.promise;
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    const loading = store.loadTranscriptImage(
-      "s1",
-      "view-s1",
-      "view-s1\u0000projection-1",
-      "pi-embedded://4/0",
-      new AbortController().signal,
-    );
-    await started;
-    await store.init();
-    oldContent.resolve({ status: 401, body: { error: "expired token" } });
-
-    await expect(loading).rejects.toMatchObject({ name: "AbortError" });
-    expect(store.getState().needsToken).toBe(false);
-  });
+      await expect(loading).rejects.toMatchObject({ name: "AbortError" });
+      expect(store.getState().needsToken).toBe(false);
+    },
+  );
 
   it("aborts a pending preview when the session changes", async () => {
     const { promise: started, resolve: transferStarted } = deferred<void>();

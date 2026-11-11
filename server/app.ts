@@ -819,13 +819,6 @@ export function createInspireServer(deps: AppDependencies): {
           ? await deps.maintenanceRestart.reserve()
           : { kind: "skipped", reason: "runtime-unsupported" };
         break;
-      case "restart-prepare": {
-        const { scope } = z
-          .object({ scope: z.literal("host") })
-          .parse(grant.request.payload);
-        result = { kind: "prepared", scope };
-        break;
-      }
       case "maintenance-commit":
       case "maintenance-release": {
         const { leaseId } = maintenanceLeaseSchema.parse(grant.request.payload);

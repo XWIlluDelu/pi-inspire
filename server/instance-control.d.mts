@@ -5,8 +5,7 @@ export type InstanceControlAction =
   | "launch-url"
   | "maintenance-prepare"
   | "maintenance-commit"
-  | "maintenance-release"
-  | "restart-prepare";
+  | "maintenance-release";
 
 export interface InstanceControlRequest {
   version: 1;

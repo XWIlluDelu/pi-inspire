@@ -198,6 +198,7 @@ export interface RuntimeSlot {
    * JSONL records its matching active-path setting. */
   startupThinkingLevel: string | null;
   process: PiRpcProcess | null;
+  unbindWorkerEvents: (() => void) | null;
   startupPhase: "idle" | "starting" | "complete";
   startupError: Error | null;
   /** A reclaimed worker must finish stopping before the same session starts
@@ -319,6 +320,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     ...seed,
     readOnlyReason: seed.readOnlyReason ?? null,
     startupThinkingLevel: seed.startupThinkingLevel ?? null,
+    unbindWorkerEvents: null,
     startupPhase: "idle",
     startupError: null,
     stopping: null,

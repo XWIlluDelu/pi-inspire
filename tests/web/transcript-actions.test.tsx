@@ -318,7 +318,13 @@ describe("message actions", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Copy response" }));
+      const responseCopy = screen.getByRole("button", {
+        name: "Copy response",
+      });
+      expect(responseCopy.closest(".turn")).toHaveTextContent(
+        "second response",
+      );
+      fireEvent.click(responseCopy);
       await waitFor(() =>
         expect(writeText).toHaveBeenLastCalledWith(
           "first response\n\nsecond response",

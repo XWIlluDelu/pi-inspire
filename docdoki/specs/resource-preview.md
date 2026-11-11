@@ -301,9 +301,9 @@ replacement cancels observation even if the transport ignores abort.
 
 ### Documents and local images
 
-Standalone local Markdown images in the transcript use the session-bound resource resolver and
-the 32 MiB image preview limit. A mounted thumbnail owns its read and blob URL for its session,
-branch view, and projection. The image inspector displays the same original bytes.
+Local images in transcripts and documents share the session-bound resource resolver and a 32 MiB
+per-image limit. A transcript thumbnail owns its read and blob URL for its session, branch view,
+and projection. The image inspector displays those same bytes.
 
 Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
 output, and images. Notebook code is not executed. Markdown raw HTML is disabled. Execution prompts
@@ -317,12 +317,11 @@ authority. Error traces keep line breaks and omit ANSI escapes. Notebook output 
 lazily; readers opened at a fragment keep eager image layout for reliable anchor positioning.
 Gallery inspection loads the selected full image eagerly.
 
-Local document images load inline through independently authorized resource requests and
-document-owned blob URLs. Reading a document does not authorize linked files. Each mounted document
-deduplicates at most 64 image references, runs four transfers concurrently, retains at most 64 MiB
-of image blobs, and keeps the 32 MiB per-image cap. Loading, transfer/authorization/limit errors,
-and decode failures keep the image description. Replacement, Source switching, close, or
-session/view/transport change retires transfers and URLs; compatible appends do not.
+Each document image needs independent authorization. A mounted document owns its blob URLs,
+deduplicates up to 64 image references, runs four transfers concurrently, and retains up to
+64 MiB in total. Loading and image failures keep the description visible. Replacement, Source
+switching, close, or session/view/transport change retires transfers and URLs. Compatible appends
+retain them.
 
 Local Markdown figures, Notebook attachments, Markdown-output figures and raster outputs open the
 shared image inspector and participate in their document gallery ([[composer]]). Authored image

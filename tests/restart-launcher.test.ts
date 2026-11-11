@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -111,6 +112,15 @@ if (args[1] === 'show') console.log([
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"],
       }),
+    async stubInstanceState(source: string) {
+      const support = join(root, "build", "server");
+      const entry = join(support, "instance-state.mjs");
+      await rename(entry, join(support, "instance-state.original.mjs"));
+      await writeFile(
+        entry,
+        `export * from "./instance-state.original.mjs";\n${source}`,
+      );
+    },
     log: () => readFile(logPath, "utf8"),
   };
 }
@@ -163,23 +173,21 @@ describe.runIf(process.platform === "linux")(
       expect(f.run(["restart"])).toContain("Terminals remain running");
       expect(await f.log()).toContain("--user restart inspire-host.service");
     });
-    it("does not stop a service when Pi restart preparation fails", async () => {
+    it("verifies the running Host after preflight before restarting its service", async () => {
       const f = await fixture(false);
-      const path = join(f.root, "build/server", "instance-state.mjs");
-      const original = await readFile(path, "utf8");
-      await writeFile(
-        path,
-        original.replace(
-          "export async function prepareInstanceRestart(path, expected) {",
-          'export async function prepareInstanceRestart(path, expected) { throw new Error("Pi restart preparation failed");',
-        ),
+      await f.stubInstanceState(`
+        import { appendFile } from "node:fs/promises";
+        export async function inspectInstance() {
+          await appendFile(process.env.FIXTURE_LOG, "inspect owner\\n");
+          return { kind: "unavailable" };
+        }
+      `);
+      expect(() => f.run(["restart"])).toThrow(
+        /Cannot verify the running Host/,
       );
-      expect(() => f.run(["restart"])).toThrow(/Pi restart preparation failed/);
-      expect(
-        (await f.log())
-          .split("\n")
-          .filter((line) => /--user (stop|restart)/u.test(line)),
-      ).toEqual([]);
+      const log = await f.log();
+      expect(log).toContain("preflight\ninspect owner\n");
+      expect(log).not.toMatch(/--user (start|stop|restart)/u);
     });
     it("rejects Host-only restart of an active service without an authenticated owner", async () => {
       const f = await fixture(false);
@@ -203,29 +211,24 @@ describe.runIf(process.platform === "linux")(
       "binds Host-only restart to the service owner ($case)",
       async ({ invocation, error }) => {
         const f = await fixture(false);
-        const path = join(f.root, "build/server", "instance-state.mjs");
-        const original = await readFile(path, "utf8");
         const owner = {
           pid: 321,
           systemdInvocationId: invocation.repeat(32),
         };
-        await writeFile(
-          path,
-          original
-            .replace(
-              "export async function inspectInstance(path, expected, options = {}) {",
-              `export async function inspectInstance(path, expected, options = {}) {
-            return { kind: "healthy", state: ${JSON.stringify(owner)} };`,
-            )
-            .replace(
-              "export async function stopManagedInstance(path, expected, options = {}) {",
-              `export async function stopManagedInstance(path, expected, options = {}) {
-            if (JSON.stringify(options.scopedOwner) !== ${JSON.stringify(JSON.stringify(owner))}) throw new Error("Missing scoped owner");
-            await writeFile(join(expected.root, "old-host-exited"), "");
-            await (await import("node:fs/promises")).appendFile(process.env.FIXTURE_LOG, "scoped shutdown\\n");
-            return { kind: "stopped", state: options.scopedOwner };`,
-            ),
-        );
+        await f.stubInstanceState(`
+          import { appendFile, writeFile } from "node:fs/promises";
+          import { join } from "node:path";
+          const owner = ${JSON.stringify(owner)};
+          export async function inspectInstance() {
+            return { kind: "healthy", state: owner };
+          }
+          export async function stopManagedInstance(_path, { root }, { scopedOwner }) {
+            if (scopedOwner !== owner) throw new Error("Missing scoped owner");
+            await writeFile(join(root, "old-host-exited"), "");
+            await appendFile(process.env.FIXTURE_LOG, "scoped shutdown\\n");
+            return { kind: "stopped", state: owner };
+          }
+        `);
         if (error) {
           expect(() => f.run(["restart", "--host-only"])).toThrow(error);
           expect(await f.log()).not.toMatch(

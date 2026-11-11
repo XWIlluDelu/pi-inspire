@@ -43,7 +43,9 @@ ordinary startup admission. Do not create the directory, substitute the Host cwd
 session header to make history executable.
 
 Each selected or active session has an independent runtime; switching conversations leaves
-background work running. Before startup, resolve one immutable physical workspace root for Pi,
+background work running. Worker events belong to the slot's current Pi process, and retiring the
+process removes its subscriptions. New sessions finalize the same provisional slot. Before startup,
+resolve one immutable physical workspace root for Pi,
 project files, attachment context, resources and Git inspection. Later symlink retargeting must not
 split those operations across roots, and the browser does not register a second workspace path.
 

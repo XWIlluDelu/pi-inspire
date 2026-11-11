@@ -65,7 +65,6 @@ const {
   inspectInstance,
   instanceLaunchUrl,
   portAvailable,
-  prepareInstanceRestart,
   stopManagedInstance,
 } = await import(pathToFileURL(join(supportRoot, "instance-state.mjs")).href);
 const { inspireRuntimeDirectory, resolveUserPath } = await import(
@@ -561,138 +560,83 @@ async function placeStopRequest(context) {
   );
 }
 
-async function acquireStopLease(context) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    // A startup that wins the OS scheduling race must consume this request and
-    // release its lease instead of publishing a replacement Host. Reinstall it
-    // on every pass because consumption is intentionally one-shot.
-    await placeStopRequest(context);
-    const lease = await tryShortLock(context);
-    if (lease) {
-      await rm(context.stopRequestPath, { force: true });
-      return lease;
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
-  }
-  throw new Error(
-    "Timed out waiting for the INSΠRE launcher to finish stopping.",
-  );
-}
-
-async function completeLocalStop(
-  context,
-  message,
-  retainLease,
-  acquiredLease = null,
-) {
-  let lease = acquiredLease;
-  try {
-    // Also wait for a standalone stop: the old state file can disappear before
-    // the supervised process exits. Do not clear cancellation while its launcher
-    // could still replace it.
-    if (!lease) lease = await acquireStopLease(context);
-    await rm(context.stopRequestPath, { force: true });
-    if (!retainLease) {
-      await lease?.release();
-      lease = null;
-    }
-    console.log(message);
-    return { code: 0, context, lease };
-  } catch (error) {
-    await lease?.release();
-    await rm(context.stopRequestPath, { force: true }).catch(() => undefined);
-    throw error;
-  }
-}
-
-async function failLocalStop(context, message) {
-  await rm(context.stopRequestPath, { force: true }).catch(() => undefined);
-  console.error(message);
-  return { code: 1, context, lease: null };
-}
+const localStopErrors = {
+  unavailable: "The managed process could not be stopped safely.",
+  timeout: "Timed out waiting for INSΠRE to stop; it was not force-killed.",
+  "cleanup-failed":
+    "The Host could not confirm clean owned-worker shutdown. No replacement was started.",
+};
 
 async function stopLocalHost(retainLease = false) {
   const context = instanceContext();
   await mkdir(dirname(context.statePath), { recursive: true, mode: 0o700 });
-  await placeStopRequest(context);
 
-  const result = await stopManagedInstance(
-    context.statePath,
-    expected(context),
-  );
-  if (result.kind === "stopped") {
-    return completeLocalStop(
-      context,
-      `Stopped INSΠRE process ${result.state.pid}.`,
-      retainLease,
-    );
-  }
-  if (result.kind === "unavailable" || result.kind === "cleanup-failed") {
-    return failLocalStop(
-      context,
-      result.kind === "cleanup-failed"
-        ? "The Host could not confirm clean owned-worker shutdown. No replacement was started."
-        : "The managed process could not be stopped safely.",
-    );
-  }
-  if (result.kind === "timeout") {
-    return failLocalStop(
-      context,
-      "Timed out waiting for INSΠRE to stop; it was not force-killed.",
-    );
-  }
+  let lease = null;
+  let cancellationPublished = false;
+  let waitingForStartup = false;
+  let stoppedMessage = null;
+  let deadline = Infinity;
+  try {
+    while (Date.now() < deadline) {
+      // Cancellation is consumed once. Keep publishing it until this command
+      // owns the launcher's lock, even after the Host's state disappears.
+      await placeStopRequest(context);
+      cancellationPublished = true;
+      if (!stoppedMessage) {
+        const result = await stopManagedInstance(
+          context.statePath,
+          expected(context),
+          waitingForStartup ? { timeoutMs: 5_000 } : undefined,
+        );
+        if (result.kind === "stopped") {
+          stoppedMessage = waitingForStartup
+            ? "Stopped the INSΠRE instance that was starting."
+            : `Stopped INSΠRE process ${result.state.pid}.`;
+          deadline = Date.now() + 30_000;
+          continue;
+        }
+        if (localStopErrors[result.kind])
+          throw new Error(
+            waitingForStartup
+              ? "Unable to stop the INSΠRE instance that was starting."
+              : localStopErrors[result.kind],
+          );
+      }
 
-  const lease = await tryShortLock(context);
-  if (lease) {
-    return completeLocalStop(
-      context,
-      "No managed INSΠRE instance is running.",
-      retainLease,
-      lease,
+      lease = await tryShortLock(context);
+      if (lease) {
+        await rm(context.stopRequestPath, { force: true });
+        cancellationPublished = false;
+        console.log(
+          stoppedMessage ??
+            (waitingForStartup
+              ? "Cancelled the pending INSΠRE startup."
+              : "No managed INSΠRE instance is running."),
+        );
+        if (!retainLease) return null;
+        const retained = { context, lease };
+        lease = null;
+        return retained;
+      }
+      if (stoppedMessage || waitingForStartup)
+        await new Promise((resolveWait) =>
+          setTimeout(resolveWait, stoppedMessage ? 50 : 100),
+        );
+      else {
+        waitingForStartup = true;
+        deadline = Date.now() + 30_000;
+      }
+    }
+    throw new Error(
+      stoppedMessage
+        ? "Timed out waiting for the INSΠRE launcher to finish stopping."
+        : "Timed out waiting for the pending INSΠRE startup; it was not force-killed.",
     );
+  } finally {
+    if (cancellationPublished)
+      await rm(context.stopRequestPath, { force: true }).catch(() => undefined);
+    await lease?.release();
   }
-
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    await placeStopRequest(context);
-    const pending = await stopManagedInstance(
-      context.statePath,
-      expected(context),
-      { timeoutMs: 5_000 },
-    );
-    if (pending.kind === "stopped") {
-      return completeLocalStop(
-        context,
-        "Stopped the INSΠRE instance that was starting.",
-        retainLease,
-      );
-    }
-    if (
-      pending.kind === "unavailable" ||
-      pending.kind === "timeout" ||
-      pending.kind === "cleanup-failed"
-    ) {
-      return failLocalStop(
-        context,
-        "Unable to stop the INSΠRE instance that was starting.",
-      );
-    }
-    const acquired = await tryShortLock(context);
-    if (acquired) {
-      return completeLocalStop(
-        context,
-        "Cancelled the pending INSΠRE startup.",
-        retainLease,
-        acquired,
-      );
-    }
-    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
-  }
-  return failLocalStop(
-    context,
-    "Timed out waiting for the pending INSΠRE startup; it was not force-killed.",
-  );
 }
 
 async function stopHost(allowService = true) {
@@ -701,7 +645,8 @@ async function stopHost(allowService = true) {
     if (service.code === 0) return 0;
     if (service.code !== 3) return service.code;
   }
-  return (await stopLocalHost()).code;
+  await stopLocalHost();
+  return 0;
 }
 
 async function prepareRestart() {
@@ -787,7 +732,8 @@ async function restartHost(all = false, hostOnly = false) {
   await prepareRestart();
   const context = instanceContext();
   if (hostOnly) return restartHostOnly(context, inspected.code);
-  await prepareInstanceRestart(context.statePath, expected(context));
+  if ((await inspect(context)).kind === "unavailable")
+    throw new Error("Cannot verify the running Host for restart.");
   const service = await manageHostService(all ? "restart-all" : "restart");
   if (service.code === 0) return 0;
   if (service.code !== 3) return service.code;
@@ -799,9 +745,7 @@ async function restartHost(all = false, hostOnly = false) {
   }
 
   console.log("Restarting INSΠRE Host. Terminals remain running.");
-  const stopped = await stopLocalHost(true);
-  if (stopped.code !== 0) return stopped.code;
-  return startHost(false, stopped);
+  return startHost(false, await stopLocalHost(true));
 }
 
 async function statusHost() {

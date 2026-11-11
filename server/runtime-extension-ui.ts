@@ -23,7 +23,6 @@ interface RuntimeExtensionUiHost {
   ): Promise<T>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   throwIfConflicted(slot: RuntimeSlot): void;
-  processOwner(process: PiRpcProcess): RuntimeSlot | undefined;
   externalOwner(slot: RuntimeSlot): ExternalSessionConnection | undefined;
   failUnknown(
     slot: RuntimeSlot,
@@ -204,9 +203,7 @@ export class RuntimeExtensionUiController {
       if (
         request.sessionId !== sessionId ||
         (rpc
-          ? slot.process !== rpc ||
-            !slot.ready ||
-            this.host.processOwner(rpc) !== slot
+          ? slot.process !== rpc || !slot.ready
           : this.host.externalOwner(slot) !== process)
       ) {
         throw requestError(
