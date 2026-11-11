@@ -34,6 +34,7 @@ describe("message reconciliation", () => {
       streamMessageKey: "live:stream-write",
       streamRevision: 1,
       streamTextLength: 0,
+      sourceEventCount: 1,
       assistantMessageEvents: [
         {
           type: "toolcall_start",
@@ -98,6 +99,7 @@ describe("message reconciliation", () => {
       streamMessageKey: "live:stream-write",
       streamRevision: 9,
       streamTextLength: 23,
+      sourceEventCount: 1,
       assistantMessageEvents: [
         {
           type: "toolcall_delta",
@@ -167,118 +169,6 @@ describe("message reconciliation", () => {
     expect(start.slice.runState).toBe("running");
   });
 
-  it("reconstructs message_update deltas without creating phantom rows", () => {
-    let result = reduce(emptyEventSlice(), new Set(), {
-      type: "message_start",
-      message: {
-        role: "assistant",
-        content: [],
-        timestamp: 2,
-        provider: "openai-codex",
-        model: "gpt-5.6",
-        __inspireLiveId: "call-1",
-      },
-    });
-
-    const updates: WireEvent[] = [
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "thinking_start", contentIndex: 0 },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "thinking_delta",
-          contentIndex: 0,
-          delta: "check ",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "thinking_delta",
-          contentIndex: 0,
-          delta: "state",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "thinking_end",
-          contentIndex: 0,
-          content: "check state",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: { type: "text_start", contentIndex: 1 },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 1,
-          delta: "hel",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "text_delta",
-          contentIndex: 1,
-          delta: "lo",
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "toolcall_start",
-          contentIndex: 2,
-        },
-      },
-      {
-        type: "message_update",
-        assistantMessageEvent: {
-          type: "toolcall_delta",
-          contentIndex: 2,
-          delta: '{"path":',
-        },
-      },
-    ];
-    for (const update of updates)
-      result = reduce(result.slice, new Set(), update);
-
-    expect(result.resync).toBe(false);
-    expect(result.slice.messages[0]!.content).toMatchObject([
-      { type: "thinking", thinking: "check state" },
-      { type: "text", text: "hello" },
-    ]);
-
-    result = reduce(result.slice, new Set(), {
-      type: "message_update",
-      assistantMessageEvent: {
-        type: "toolcall_end",
-        contentIndex: 2,
-        toolCall: {
-          type: "toolCall",
-          id: "tool-1",
-          name: "read",
-          arguments: { path: "README.md" },
-        },
-      },
-    });
-    expect(result.slice.messages).toHaveLength(1);
-    expect(result.slice.messages[0]).toMatchObject({
-      role: "assistant",
-      __inspireLiveId: "call-1",
-      content: [
-        { type: "thinking", thinking: "check state" },
-        { type: "text", text: "hello" },
-        { type: "toolCall", id: "tool-1", name: "read" },
-      ],
-    });
-  });
-
   it("reduces an ordered delta batch once and rejects a broken length witness", () => {
     const started = reduce(emptyEventSlice(), new Set(), {
       type: "message_start",
@@ -296,6 +186,7 @@ describe("message reconciliation", () => {
       streamMessageKey,
       streamTextLength: 5,
       streamRevision: 3,
+      sourceEventCount: 3,
       assistantMessageEvents: [
         { type: "text_start", contentIndex: 0 },
         { type: "text_delta", contentIndex: 0, delta: "hel" },
@@ -313,6 +204,7 @@ describe("message reconciliation", () => {
       streamMessageKey,
       streamTextLength: 99,
       streamRevision: 4,
+      sourceEventCount: 1,
       assistantMessageEvents: [
         { type: "text_delta", contentIndex: 0, delta: "!" },
       ],
@@ -396,12 +288,14 @@ describe("message reconciliation", () => {
       },
     ];
     const result = reduce(slice, new Set(["assistant:1"]), {
-      type: "message_update",
-      assistantMessageEvent: {
-        type: "text_delta",
-        contentIndex: 0,
-        delta: "orphan",
-      },
+      type: "message_update_batch",
+      streamMessageKey: "live:orphan",
+      streamRevision: 1,
+      streamTextLength: 6,
+      sourceEventCount: 1,
+      assistantMessageEvents: [
+        { type: "text_delta", contentIndex: 0, delta: "orphan" },
+      ],
     });
     expect(result.resync).toBe(true);
     expect(result.slice.messages).toBe(slice.messages);

@@ -8,7 +8,6 @@ interface PaneResizeHandleProps {
   min: number;
   max: (viewportWidth: number) => number;
   label: string;
-  variant: string;
   /** Re-apply preferences when desktop pane membership changes, not on ordinary renders. */
   layoutKey?: string;
   peerPane?: { cssVar: string; paneSelector: string };
@@ -184,10 +183,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
       observer.disconnect();
       window.removeEventListener("resize", applyResponsiveSize);
       pane?.style.removeProperty("flex-shrink");
-      document.body.classList.remove(
-        "pane-resizing",
-        "pane-resizing--vertical",
-      );
+      document.body.classList.remove("pane-resizing");
     };
   }, [props.layoutKey]);
 
@@ -199,7 +195,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
     if (target.hasPointerCapture(pointerId))
       target.releasePointerCapture(pointerId);
     setDragging(false);
-    document.body.classList.remove("pane-resizing", "pane-resizing--vertical");
+    document.body.classList.remove("pane-resizing");
   };
 
   const reset = () => {
@@ -249,9 +245,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
 
   const direction = props.edge === "end" ? 1 : -1;
   return (
-    <div
-      className={`pane-resize pane-resize--vertical pane-resize--${props.variant}`}
-    >
+    <div className="pane-resize">
       <div
         className={`pane-resize__hit ${dragging ? "pane-resize__hit--drag" : ""}`}
         role="separator"
@@ -276,10 +270,7 @@ export function PaneResizeHandle(props: PaneResizeHandleProps) {
           };
           setMetrics(measured);
           setDragging(true);
-          document.body.classList.add(
-            "pane-resizing",
-            "pane-resizing--vertical",
-          );
+          document.body.classList.add("pane-resizing");
         }}
         onPointerMove={(event) => {
           const active = dragRef.current;

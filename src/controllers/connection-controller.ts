@@ -33,7 +33,12 @@ function streamMessageUpdate(
     typeof event.streamTextLength === "number" &&
     Number.isSafeInteger(event.streamTextLength) &&
     event.streamTextLength >= 0 &&
-    Array.isArray(event.assistantMessageEvents)
+    Array.isArray(event.assistantMessageEvents) &&
+    event.assistantMessageEvents.length > 0 &&
+    typeof event.sourceEventCount === "number" &&
+    Number.isSafeInteger(event.sourceEventCount) &&
+    event.sourceEventCount >= event.assistantMessageEvents.length &&
+    event.sourceEventCount <= MAX_ASSISTANT_STREAM_BATCH_EVENTS
   ) {
     return {
       event,
@@ -544,10 +549,8 @@ export class ConnectionController {
         .assistantMessageEvents as unknown[];
       const nextEvents = update.event.assistantMessageEvents as unknown[];
       const sourceEventCount =
-        Number(
-          this.pendingStreamUpdate.event.sourceEventCount ??
-            previousEvents.length,
-        ) + Number(update.event.sourceEventCount ?? nextEvents.length);
+        Number(this.pendingStreamUpdate.event.sourceEventCount) +
+        Number(update.event.sourceEventCount);
       if (sourceEventCount > MAX_ASSISTANT_STREAM_BATCH_EVENTS) {
         if (!this.flushStreamUpdate(socket)) return;
         this.pendingStreamUpdate = {

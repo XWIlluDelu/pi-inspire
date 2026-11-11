@@ -119,9 +119,6 @@
 .pane-resize {
   position: relative;
   flex: 0 0 auto;
-}
-
-.pane-resize--vertical {
   --pane-gutter: var(--space-1);
   z-index: 20;
   width: var(--pane-gutter);
@@ -130,9 +127,6 @@
 .pane-resize__hit {
   position: absolute;
   touch-action: none;
-}
-
-.pane-resize--vertical .pane-resize__hit {
   top: 0;
   bottom: 0;
   left: calc((var(--pane-gutter) - 8px) / 2);
@@ -146,9 +140,6 @@
   opacity: 0;
   content: "";
   transition: opacity var(--dur-standard) var(--ease-standard);
-}
-
-.pane-resize--vertical .pane-resize__hit::after {
   /* A straight divider with round caps, not an outline of the adjacent pane. */
   top: var(--space-2);
   bottom: var(--space-2);
@@ -165,7 +156,7 @@
   opacity: 1;
 }
 
-.pane-resize--vertical .pane-resize__hit--drag::after {
+.pane-resize__hit--drag::after {
   background: color-mix(in srgb, var(--accent) 55%, var(--thumb));
 }
 
@@ -175,14 +166,11 @@
 
 body.pane-resizing {
   user-select: none;
-}
-
-body.pane-resizing--vertical {
   cursor: col-resize;
 }
 
 /* The collapse animation must not rubber-band a live outer-pane drag. */
-body.pane-resizing--vertical .nav {
+body.pane-resizing .nav {
   transition: none;
 }
 

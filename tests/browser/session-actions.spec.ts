@@ -8,6 +8,7 @@ import {
   openFixtureSession,
   openSettings,
   pairedPage,
+  reloadSession,
 } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
@@ -79,15 +80,7 @@ async function namedSession(page: Page, withConversation = false) {
       })
       .toBe("idle");
   }
-  // API creation is outside browser navigation; reload must restore this
-  // fixture's session rather than the Host selection from a preceding test.
-  await page.evaluate((sessionId) => {
-    sessionStorage.setItem(
-      "inspire:workbench:v1:last-session",
-      JSON.stringify({ sessionId }),
-    );
-  }, sessionId);
-  await page.reload();
+  await reloadSession(page, sessionId);
   const title = page.getByRole("button", { name: /^Session actions:/ });
   await expect(title).toContainText("Calibration notes");
   const composer = page.getByRole("textbox", {

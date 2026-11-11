@@ -2,16 +2,19 @@ import { expect, type Page, type WebSocketRoute } from "@playwright/test";
 import type {
   ActiveSnapshot,
   BootstrapResponse,
+  SessionRuntimeStatus,
 } from "../../../shared/contracts";
 import type { ToolPresentationConfiguration } from "../../../shared/tool-presentation-config";
 import { browserWorkspace } from "../fixtures/workspace.mjs";
 import { hostRequest } from "./host-request";
-import { pairedPage } from "./navigation";
+import { pairedPage, reloadSession } from "./navigation";
 
 type SnapshotEvent = {
   type: string;
   data?: ActiveSnapshot;
   detailSessionId?: string;
+  sessionId?: string;
+  sessionStatus?: SessionRuntimeStatus;
 };
 
 // Keep HTTP bootstrap/open/recovery and live snapshots consistent. Fixtures own
@@ -24,20 +27,23 @@ export async function routeSnapshots(
     event?: (event: SnapshotEvent) => false | void;
   },
 ) {
-  let socket: WebSocketRoute;
+  let socket: WebSocketRoute | undefined;
+  let detailSessionId: string | undefined;
   let authority = "";
   await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
     socket = client;
+    detailSessionId = undefined;
     const upstream = client.connectToServer();
     upstream.onMessage((message) => {
       if (socket !== client) return;
-      const event = JSON.parse(String(message));
-      if (event.type === "snapshot" && event.data)
-        options.snapshot?.(event.data);
+      const event = JSON.parse(String(message)) as SnapshotEvent;
+      if (event.type === "snapshot") {
+        detailSessionId = event.detailSessionId;
+        if (event.data) options.snapshot?.(event.data);
+      }
       if (options.event?.(event) === false) return;
       client.send(JSON.stringify(event));
     });
-    client.onMessage((message) => upstream.send(message));
   });
   for (const pattern of [
     "**/api/bootstrap**",
@@ -58,8 +64,21 @@ export async function routeSnapshots(
   }
   return {
     authority: () => authority,
-    send: (event: Record<string, unknown>) =>
-      socket.send(JSON.stringify(event)),
+    ready: (sessionId: string) => detailSessionId === sessionId,
+    async reload(
+      sessionId: string,
+      load: () => Promise<unknown> = () => page.reload(),
+    ) {
+      const previous = socket;
+      await load();
+      await expect
+        .poll(() => socket !== previous && detailSessionId === sessionId)
+        .toBe(true);
+    },
+    send(event: Record<string, unknown>) {
+      if (!socket) throw new Error("No Host event connection");
+      socket.send(JSON.stringify(event));
+    },
   };
 }
 
@@ -71,16 +90,10 @@ export async function openEventSession(
   toolPresentations: ToolPresentationConfiguration,
   preferences: Record<string, unknown>,
 ) {
-  let sessionId: string | null = null;
   const transport = await routeSnapshots(page, {
     bootstrap: (body) => {
       Object.assign(body.preferences, preferences);
       body.toolPresentations = toolPresentations;
-    },
-    event: (event) => {
-      if (event.type === "snapshot")
-        sessionId =
-          event.detailSessionId ?? event.data?.active?.sessionId ?? null;
     },
   });
   await pairedPage(page);
@@ -90,23 +103,12 @@ export async function openEventSession(
   expect(created.ok()).toBe(true);
   const createdSnapshot: ActiveSnapshot = await created.json();
   const createdSessionId = createdSnapshot.active!.sessionId;
-  // This fixture creates outside the browser. Match its persisted selection
-  // before reload rather than relying on the Host's process-global selection.
-  await page.evaluate((sessionId) => {
-    sessionStorage.setItem(
-      "inspire:workbench:v1:last-session",
-      JSON.stringify({ sessionId }),
-    );
-  }, createdSessionId);
-  sessionId = null;
-  await page.reload();
+  await transport.reload(createdSessionId, () =>
+    reloadSession(page, createdSessionId),
+  );
   await expect(
     page.getByRole("button", { name: /^Session actions:/ }),
   ).toHaveText(name);
-  // Reload can race a final snapshot from the old socket. Titles are not
-  // identities, and any non-null session could belong to that retiring page.
-  // Wait for this admission's handshake before injecting its live events.
-  await expect.poll(() => sessionId).toBe(createdSessionId);
   return (...events: Record<string, unknown>[]) => {
     for (const event of events)
       transport.send({ ...event, sessionId: createdSessionId });

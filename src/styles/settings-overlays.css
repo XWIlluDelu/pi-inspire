@@ -41,7 +41,6 @@
 .dialog.settings,
 .dialog.terminal-settings {
   --set-control-h: 32px;
-  --set-icon-btn: 28px;
   --set-row-pad: 11px 16px;
   --set-row-min-h: 50px;
   --set-choice-w: 264px;
@@ -63,7 +62,6 @@
   .dialog.settings,
   .dialog.terminal-settings {
     --set-control-h: 40px;
-    --set-icon-btn: 30px;
     --set-row-pad: 12px 14px;
     --set-row-min-h: 56px;
   }

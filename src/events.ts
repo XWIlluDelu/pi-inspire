@@ -6,7 +6,6 @@ import {
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../shared/assistant-stream";
 import { fileReferenceName } from "../shared/attachment-context";
-import { userMessageContent } from "../shared/user-message";
 import {
   EXTENSION_ONE_WAY_METHODS,
   type ExtensionDisplay,
@@ -30,10 +29,10 @@ import { structuralMessageIdentity } from "../shared/message-identity";
 import {
   type ActivityTool,
   type ChildCallList,
-  codemodeCalls,
   updateChildActivity,
 } from "../shared/tool-activity";
 import type { ToolCallPreview } from "../shared/tool-argument-updates";
+import { userMessageContent } from "../shared/user-message";
 
 export type { ActivityTool } from "../shared/tool-activity";
 
@@ -445,126 +444,74 @@ export function reduceEvent(
       changed = true;
       resync = true;
       break;
-    case "message_update":
-    case "message_update_batch": {
-      const supplied =
-        event.message &&
-        typeof event.message === "object" &&
-        !Array.isArray(event.message)
-          ? asMessage(event.message)
-          : null;
-      if (supplied && typeof supplied.role === "string") {
-        // Joining sockets and cumulative Pi RPC frames supply complete partial messages.
-        // Host revisions make an update that overlaps a newer snapshot a true
-        // no-op rather than allowing a cumulative replacement to move backward.
-        const suppliedKey = messageKey(supplied);
-        const wireKey =
-          typeof event.streamMessageKey === "string"
-            ? event.streamMessageKey
-            : null;
-        const suppliedRevision = streamRevision(supplied);
-        const wireRevision =
-          Number.isSafeInteger(event.streamRevision) &&
-          Number(event.streamRevision) >= 0
-            ? Number(event.streamRevision)
-            : null;
-        if (
-          (event.streamRevision !== undefined && wireRevision === null) ||
-          (wireRevision !== null && suppliedRevision !== wireRevision) ||
-          (wireKey !== null && suppliedKey !== wireKey)
-        ) {
-          resync = true;
-          break;
-        }
-        const index = suppliedKey
-          ? indexOfKey(current.messages, suppliedKey)
-          : -1;
-        const currentRevision =
-          index >= 0 ? streamRevision(current.messages[index]) : null;
-        if (
-          suppliedRevision !== null &&
-          currentRevision !== null &&
-          suppliedRevision <= currentRevision
-        )
-          break;
-        slice.messages = upsert(current.messages, supplied, settledKeys);
-        changed = true;
-        break;
-      }
-
-      // Reduce Host-coalesced AssistantMessageEvent deltas into one immutable
-      // browser publication.
-      const activeKey = current.activeAssistantMessageKey;
-      const wireKey =
-        typeof event.streamMessageKey === "string"
-          ? event.streamMessageKey
-          : null;
-      const index = activeKey ? indexOfKey(current.messages, activeKey) : -1;
-      const events =
-        event.type === "message_update_batch"
-          ? event.assistantMessageEvents
-          : [event.assistantMessageEvent];
-      if (
-        index < 0 ||
-        (wireKey !== null && wireKey !== activeKey) ||
-        !Array.isArray(events) ||
-        events.length === 0 ||
-        events.length > MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
-        (event.sourceEventCount !== undefined &&
-          (!Number.isSafeInteger(event.sourceEventCount) ||
-            Number(event.sourceEventCount) < events.length ||
-            Number(event.sourceEventCount) >
-              MAX_ASSISTANT_STREAM_BATCH_EVENTS)) ||
-        (event.streamTextLength !== undefined &&
-          (!Number.isSafeInteger(event.streamTextLength) ||
-            Number(event.streamTextLength) < 0)) ||
-        (event.streamRevision !== undefined &&
-          (!Number.isSafeInteger(event.streamRevision) ||
-            Number(event.streamRevision) < 0))
-      ) {
-        // Never guess against settled history. A missing or mismatched active
-        // identity means this browser missed lifecycle state.
+    case "message_update": {
+      const supplied = asMessage(event.message);
+      if (typeof supplied.role !== "string") {
         resync = true;
         break;
       }
-      let reconstructed: unknown = current.messages[index];
-      for (const delta of events) {
+      // Complete projections from the joining backlog may overlap a newer
+      // snapshot. An older cumulative update cannot move the message backward.
+      const key = messageKey(supplied);
+      const revision = streamRevision(supplied);
+      if (
+        (event.streamRevision !== undefined &&
+          (revision === null || event.streamRevision !== revision)) ||
+        (event.streamMessageKey !== undefined && event.streamMessageKey !== key)
+      ) {
+        resync = true;
+        break;
+      }
+      const index = key ? indexOfKey(current.messages, key) : -1;
+      const currentRevision = streamRevision(current.messages[index]);
+      if (
+        revision !== null &&
+        currentRevision !== null &&
+        revision <= currentRevision
+      )
+        break;
+      slice.messages = upsert(current.messages, supplied, settledKeys);
+      changed = true;
+      break;
+    }
+    case "message_update_batch": {
+      const key = current.activeAssistantMessageKey;
+      const index = key ? indexOfKey(current.messages, key) : -1;
+      const base = current.messages[index];
+      const revision = streamRevision(base);
+      const { assistantMessageEvents: deltas, sourceEventCount } = event;
+      if (
+        !base ||
+        key !== event.streamMessageKey ||
+        !Array.isArray(deltas) ||
+        deltas.length === 0 ||
+        typeof sourceEventCount !== "number" ||
+        !Number.isSafeInteger(sourceEventCount) ||
+        sourceEventCount < deltas.length ||
+        sourceEventCount > MAX_ASSISTANT_STREAM_BATCH_EVENTS ||
+        revision === null ||
+        event.streamRevision !== revision + sourceEventCount
+      ) {
+        resync = true;
+        break;
+      }
+      let reconstructed: unknown = base;
+      for (const delta of deltas) {
         reconstructed = applyAssistantMessageDelta(reconstructed, delta);
         if (!reconstructed) break;
       }
-      if (!reconstructed) {
-        // Raw Pi frames can carry projection no-ops such as an identity-less
-        // legacy start, an unprojected argument fragment, or matching text end.
-        // Host-owned incremental batches never contain those; a failed batch
-        // application therefore means this browser lost its stream base.
-        if (event.type === "message_update_batch" || wireKey !== null)
-          resync = true;
-        break;
-      }
       if (
-        event.streamTextLength !== undefined &&
+        !reconstructed ||
         assistantStreamTextLength(reconstructed) !== event.streamTextLength
       ) {
         resync = true;
         break;
       }
-      if (event.streamRevision !== undefined) {
-        const currentRevision = streamRevision(current.messages[index]);
-        if (
-          currentRevision === null ||
-          Number(event.streamRevision) !==
-            currentRevision + Number(event.sourceEventCount ?? events.length)
-        ) {
-          resync = true;
-          break;
-        }
-        reconstructed = {
-          ...(reconstructed as Record<string, unknown>),
-          __inspireStreamRevision: Number(event.streamRevision),
-        };
-      }
       slice.messages = [...current.messages];
-      slice.messages[index] = reconstructed as ChatMessage;
+      slice.messages[index] = {
+        ...asMessage(reconstructed),
+        __inspireStreamRevision: event.streamRevision,
+      };
       changed = true;
       break;
     }
@@ -688,46 +635,7 @@ export function reduceEvent(
       break;
     }
     case "tool_execution_start":
-    case "tool_execution_update": {
-      if (typeof event.parentToolCallId === "string") {
-        slice.tools = updateChildActivity(current.tools, event);
-        changed = slice.tools !== current.tools;
-        break;
-      }
-      const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
-      if (!id) break;
-      const existing = current.tools[id];
-      // A delayed update must not resurrect a completed execution.
-      if (existing?.phase === "done" || existing?.phase === "error") break;
-      slice.tools = {
-        ...current.tools,
-        [id]: {
-          id,
-          name:
-            typeof event.toolName === "string" && event.toolName
-              ? event.toolName
-              : (existing?.name ?? "tool"),
-          phase: "running",
-          ...(event.type === "tool_execution_update"
-            ? {
-                outputPreview:
-                  event.outputPreview as ActivityTool["outputPreview"],
-              }
-            : {}),
-          calls:
-            typeof event.toolName === "string" && event.toolName === "codemode"
-              ? ((event.childCalls as ChildCallList | undefined) ??
-                codemodeCalls(
-                  (event.partialResult as { details?: unknown } | undefined)
-                    ?.details,
-                ) ??
-                existing?.calls)
-              : existing?.calls,
-        },
-      };
-      changed = true;
-      break;
-    }
+    case "tool_execution_update":
     case "tool_execution_end": {
       if (typeof event.parentToolCallId === "string") {
         slice.tools = updateChildActivity(current.tools, event);
@@ -737,6 +645,10 @@ export function reduceEvent(
       const id = typeof event.toolCallId === "string" ? event.toolCallId : "";
       if (!id) break;
       const existing = current.tools[id];
+      const ended = event.type === "tool_execution_end";
+      // A delayed update must not resurrect a completed execution.
+      if (!ended && (existing?.phase === "done" || existing?.phase === "error"))
+        break;
       slice.tools = {
         ...current.tools,
         [id]: {
@@ -745,13 +657,16 @@ export function reduceEvent(
             typeof event.toolName === "string" && event.toolName
               ? event.toolName
               : (existing?.name ?? "tool"),
-          phase: event.isError ? "error" : "done",
+          phase: ended ? (event.isError ? "error" : "done") : "running",
+          ...(event.type === "tool_execution_update"
+            ? {
+                outputPreview:
+                  event.outputPreview as ActivityTool["outputPreview"],
+              }
+            : {}),
           calls:
-            typeof event.toolName === "string" && event.toolName === "codemode"
+            event.toolName === "codemode"
               ? ((event.childCalls as ChildCallList | undefined) ??
-                codemodeCalls(
-                  (event.result as { details?: unknown } | undefined)?.details,
-                ) ??
                 existing?.calls)
               : existing?.calls,
         },

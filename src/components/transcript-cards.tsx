@@ -28,10 +28,7 @@ import {
   isResourceReferenceText,
   isToolResourceArgumentKey,
 } from "../../shared/resource-references";
-import {
-  type ChildCallList,
-  resultChildCalls,
-} from "../../shared/tool-activity";
+import { type ChildCallList } from "../../shared/tool-activity";
 import { stripTerminalSequences } from "../ansi";
 import type { CopyLoader } from "../content-copy";
 import { type DiffLine, parseUnifiedDiff } from "../diff";
@@ -41,6 +38,8 @@ import {
   type ToolCallContent,
   toolResultText,
 } from "../events";
+import { formatCount } from "../format";
+import { prefersReducedMotion } from "../input-device";
 import { messageCopyLoader } from "../message-copy";
 import { usePresentationAdapters } from "../presentation-adapters";
 import { store } from "../store";
@@ -91,8 +90,6 @@ import {
   useActivityStripSelection,
   useVisibleActivityItemIds,
 } from "./transcript-activity-visibility";
-import { formatCount } from "../format";
-import { prefersReducedMotion } from "../input-device";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
 
@@ -808,7 +805,7 @@ export function ToolResultCard({
 }) {
   const owner = useContext(TranscriptImageOwnerContext);
   const name = typeof result.toolName === "string" ? result.toolName : "Tool";
-  const calls = result.__inspireCalls ?? resultChildCalls(result);
+  const calls = result.__inspireCalls;
   const output =
     name === "codemode" ? (
       codeModeResultBlocks(result).map((block, index) => (
@@ -1478,9 +1475,7 @@ function ToolDetails({
 }) {
   const preview =
     !result && status === "running" ? activity?.outputPreview : undefined;
-  const calls = result
-    ? (result.__inspireCalls ?? resultChildCalls(result))
-    : activity?.calls;
+  const calls = result ? result.__inspireCalls : activity?.calls;
   const codemode = presentation?.ruleId === "inspire.pi.codemode";
   const phaseDetails = codemode || calls;
   const content =
@@ -1636,9 +1631,7 @@ function ToolCardSummary({
   presentation: ResolvedToolPresentation | null;
 }) {
   if (presentation?.ruleId === "inspire.pi.codemode") {
-    const calls = result
-      ? (result.__inspireCalls ?? resultChildCalls(result))
-      : activity?.calls;
+    const calls = result ? result.__inspireCalls : activity?.calls;
     return <CodeModeSummary result={result} calls={calls} />;
   }
   return presentation ? (
@@ -1766,8 +1759,7 @@ function collapsedActivityPresentation(
     resolved?.ruleId === "inspire.pi.codemode"
       ? childCallsSummary(
           activity.result
-            ? (activity.result.__inspireCalls ??
-                resultChildCalls(activity.result))
+            ? activity.result.__inspireCalls
             : activity.activity?.calls,
         )
       : resolved

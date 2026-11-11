@@ -25,7 +25,7 @@ export interface ActivityTool {
   calls?: ChildCallList;
 }
 
-export const MAX_CHILD_CALLS = 256;
+const MAX_CHILD_CALLS = 256;
 const MAX_ARGUMENT_BYTES = 8_192;
 const MAX_ARGUMENT_TOTAL_BYTES = 32_768;
 const encoder = new TextEncoder();
@@ -172,7 +172,8 @@ export function updateChildActivity(
 ): Record<string, ActivityTool> {
   const parent =
     typeof event.parentToolCallId === "string" ? event.parentToolCallId : "";
-  if (!parent) return tools;
+  const incoming = event.childCall as ChildCall | undefined;
+  if (!parent || !incoming) return tools;
   const root = tools[parent]
     ? parent
     : Object.keys(tools).find(
@@ -189,8 +190,6 @@ export function updateChildActivity(
     tool.name === "codemode"
   )
     return tools;
-  const incoming =
-    (event.childCall as ChildCall | undefined) ?? childCallFromEvent(event);
   const previous = tool.calls ?? {
     source: "nested" as const,
     calls: [],

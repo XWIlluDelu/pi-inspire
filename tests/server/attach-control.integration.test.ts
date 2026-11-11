@@ -315,7 +315,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     const { pi, connection, enter, sessionFile } = await promptFixture();
     await connection.prompt("normal attached input");
     await vi.waitFor(async () => {
-      expect(await connection.read()).toMatchObject({ status: "idle" });
+      expect(await connection.read()).toMatchObject({ activity: "idle" });
     });
     const before = await readFile(sessionFile, "utf8");
     expect(before).toContain("normal attached input");
@@ -350,13 +350,13 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     const requests = join(root, "provider-requests");
     await vi.waitFor(async () => {
       expect(await readFile(requests, "utf8")).toBe("request\n");
-      expect(await connection.read()).toMatchObject({ status: "idle" });
+      expect(await connection.read()).toMatchObject({ activity: "idle" });
     });
     await expect(connection.abort()).rejects.toMatchObject(UNKNOWN_OUTCOME);
     await release();
     await result;
     await vi.waitFor(async () => {
-      expect(await connection.read()).toMatchObject({ status: "idle" });
+      expect(await connection.read()).toMatchObject({ activity: "idle" });
     });
     expect(await readFile(requests, "utf8")).toBe("request\n");
     await connection.abort();
@@ -473,7 +473,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     const connection = new AttachControlConnection(registry, record!);
 
     expect(await connection.read()).toMatchObject({
-      status: "idle",
+      activity: "idle",
       leafId: startLeaf,
     });
 
@@ -532,7 +532,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       },
       { timeout: 15_000 },
     );
-    expect(await connection.read()).toMatchObject({ status: "idle" });
+    expect(await connection.read()).toMatchObject({ activity: "idle" });
   }, 60_000);
 
   it("rejects remote native commands without executing them when two copies are loaded", async () => {

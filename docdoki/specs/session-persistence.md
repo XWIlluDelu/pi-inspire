@@ -234,9 +234,9 @@ the session for other browsers or starting a worker.
 **Take over** prefers a Pi whose reported leaf is at or beyond the viewed position on the same
 branch. An ancestor or unprojected leaf can prompt a live check when there is no reported
 continuation. An available endpoint must confirm a continuation before attaching. Several
-equally plausible endpoints require the user to resolve the conflict and retry. The binding is
-to that process incarnation and session file. Every operation re-resolves
-its current endpoint, so reloads are transparent, and input and Stop stay addressed to it. The view
+equally plausible endpoints require the user to resolve the conflict and retry. The binding names
+the process incarnation and session file. Each operation opens its own socket at the current
+endpoint, keeping input and Stop addressed to the same Pi across reloads. The view
 follows the attached Pi's reported leaf as soon as the saved projection contains it, even when
 the report arrives after Inspire has already read that file revision. When the attached Pi exits,
 moves to another session or off the viewed branch, or stays unreachable for longer than a reload

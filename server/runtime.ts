@@ -936,10 +936,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             const state = await connection.read();
             if ("ended" in state)
               return state.ended === "exited" ? null : "in-flight-operation";
-            if (state.status === "idle") return null;
-            return state.status === "unknown"
-              ? "in-flight-operation"
-              : "active-work";
+            return state.activity === "idle" ? null : "active-work";
           } catch {
             return "in-flight-operation";
           }

@@ -16,6 +16,7 @@ import { observeClipboardWrites } from "./support/clipboard";
 import { renderedColors, resolvedColor } from "./support/colors";
 import { openEventSession } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
+import { reloadSession } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
 
@@ -1213,14 +1214,6 @@ test("saved tool images and full logs reopen through the authorized viewers on d
     await page.getByLabel("Access token").fill("tool-resources-test-token");
     await page.getByRole("button", { name: "Pair", exact: true }).click();
     await expect(page.getByRole("main")).toBeVisible();
-    await page.evaluate(
-      (sessionId) =>
-        sessionStorage.setItem(
-          "inspire:workbench:v1:last-session",
-          JSON.stringify({ sessionId }),
-        ),
-      fixture.record.id,
-    );
     for (const presentation of ["native", "generic"] as const) {
       if (presentation === "generic") {
         // The desktop log reader is persisted across reload; close it before narrowing.
@@ -1242,7 +1235,7 @@ test("saved tool images and full logs reopen through the authorized viewers on d
           await route.fulfill({ response, json: body });
         });
       }
-      await page.reload();
+      await reloadSession(page, fixture.record.id);
       const read = toolCard(page, "read");
       const thumbnail = read.locator(".tool-image-block__image");
       await expect(thumbnail).toBeEnabled();
