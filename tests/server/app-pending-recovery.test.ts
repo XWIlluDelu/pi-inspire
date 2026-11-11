@@ -34,6 +34,7 @@ describe("Pending handoff receipts", () => {
         sessionId: "fixture-active",
         authorityId: f.application.authorityId,
         operationId: randomUUID(),
+        expectedViewId: "original-view",
       };
       const path =
         action === "recover" ? "/api/pending/recover" : "/api/control/abort";
@@ -44,6 +45,10 @@ describe("Pending handoff receipts", () => {
           .send(body);
       const first = post().then((response) => response);
       await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
+      expect(operation).toHaveBeenCalledWith(
+        body.sessionId,
+        body.expectedViewId,
+      );
       const second = post().then((response) => response);
       finish({ steering: ["original text"], followUp: [] });
       const [a, b] = await Promise.all([first, second]);
@@ -59,6 +64,7 @@ describe("Pending handoff receipts", () => {
         .query({
           authorityId: body.authorityId,
           sessionId: body.sessionId,
+          expectedViewId: body.expectedViewId,
           action,
         })
         .expect(200);
@@ -68,6 +74,7 @@ describe("Pending handoff receipts", () => {
       for (const changed of [
         { sessionId: "fixture-older" },
         { authorityId: randomUUID() },
+        { expectedViewId: "another-view" },
       ]) {
         await request(f.application.server)
           .post(path)

@@ -701,6 +701,7 @@ export interface PendingInput {
 export interface PendingOperationIdentity {
   operationId: string;
   authorityId: string;
+  expectedViewId?: string;
 }
 
 export interface PendingOperationRequest extends PendingOperationIdentity {

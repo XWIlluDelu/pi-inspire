@@ -62,20 +62,20 @@ import type {
 import type { McpConfigService } from "./mcp-config.js";
 import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
 import { queryModelThinkingLevel } from "./model-metadata.js";
-import { commonModelOptions } from "./model-settings.js";
 import type { ModelSettingsService } from "./model-settings.js";
+import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
-import type { ProviderAuthService } from "./provider-auth.js";
 import {
   invalidateProjectFiles,
   listProjectDirectory,
   searchProjectFiles,
 } from "./project-files.js";
+import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
 import { resourceByteRange, sendResourceFile } from "./resource-http.js";
 import type { ResourceStore } from "./resources.js";
@@ -177,6 +177,7 @@ const pendingOperationSchema = z
     sessionId: sessionIdField,
     operationId: z.string().uuid(),
     authorityId: z.string().uuid(),
+    expectedViewId: z.string().min(1).max(240).optional(),
   })
   .strict();
 const nativeCommandSchema = z
@@ -1620,7 +1621,7 @@ export function createInspireServer(deps: AppDependencies): {
     response.setHeader("Cache-Control", "no-store");
     const recovered = await pendingOperations.run(
       { ...operation, action: "abort" },
-      () => deps.runtime.abort(operation.sessionId),
+      () => deps.runtime.abort(operation.sessionId, operation.expectedViewId),
     );
     response.json({
       ...recovered,
@@ -1640,7 +1641,11 @@ export function createInspireServer(deps: AppDependencies): {
     assertPendingAuthority(operation.authorityId);
     const recovered = await pendingOperations.run(
       { ...operation, action: "recover" },
-      () => deps.runtime.recoverPending(operation.sessionId),
+      () =>
+        deps.runtime.recoverPending(
+          operation.sessionId,
+          operation.expectedViewId,
+        ),
     );
     response.json({
       ...recovered,

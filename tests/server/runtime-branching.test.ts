@@ -428,6 +428,42 @@ afterEach(async () => {
 });
 
 describe("stock RPC branch bridge", () => {
+  it("allows editing history after Stop and rejects Stop or recovery for the old view", async () => {
+    const { runtime, worker } = await setup();
+    try {
+      const viewId = (await runtime.snapshot()).active!.transcriptPage.viewId;
+      worker.emit("event", { type: "agent_start" });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).runState).toBe("running"),
+      );
+      await runtime.abort(SESSION_ID, viewId);
+      worker.emit("event", { type: "agent_settled", aborted: true });
+      await vi.waitFor(async () =>
+        expect((await runtime.snapshot()).runState).toBe("aborted"),
+      );
+      const tree = await runtime.branchTree(SESSION_ID);
+      const result = await runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        revision: tree.revision,
+        targetId: "u2",
+        mode: "edit",
+      });
+      expect(result.editorText).toBe("second question");
+      const commands = worker.commands.length;
+      await expect(
+        runtime.recoverPending(SESSION_ID, viewId),
+      ).rejects.toMatchObject({
+        code: "PENDING_VIEW_CHANGED",
+      });
+      await expect(runtime.abort(SESSION_ID, viewId)).rejects.toMatchObject({
+        code: "PENDING_VIEW_CHANGED",
+      });
+      expect(worker.commands).toHaveLength(commands);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("keeps History inspection available while the source owns work, queued input and a dialog", async () => {
     const { runtime, worker, path } = await setup();
     try {

@@ -7,6 +7,7 @@ import { requestError } from "./request-error.js";
 interface Receipt {
   sessionId: string;
   action: PendingOperationRequest["action"];
+  expectedViewId?: string;
   result: Promise<PendingRecovery> | null;
   settledAt: number | null;
   bytes: number;
@@ -40,10 +41,11 @@ export class PendingOperationReceipts {
     if (
       receipt &&
       (receipt.sessionId !== request.sessionId ||
-        receipt.action !== request.action)
+        receipt.action !== request.action ||
+        receipt.expectedViewId !== request.expectedViewId)
     )
       throw requestError(
-        "That Pending operation belongs to another session or action",
+        "That Pending operation belongs to another session view or action",
         409,
         {
           code: "PENDING_OPERATION_MISMATCH",
@@ -96,6 +98,7 @@ export class PendingOperationReceipts {
     const receipt: Receipt = {
       sessionId: request.sessionId,
       action: request.action,
+      expectedViewId: request.expectedViewId,
       result: null,
       settledAt: null,
       bytes: 0,

@@ -15,11 +15,12 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  BranchEntryResponse,
-  BranchTreeNode,
-  BranchTreeQuery,
-  BranchTreeResponse,
+import {
+  type BranchEntryResponse,
+  type BranchTreeNode,
+  type BranchTreeQuery,
+  type BranchTreeResponse,
+  isBusyRunState,
 } from "../../shared/contracts";
 import { copyLoader } from "../content-copy";
 import { isComposingKeyboardEvent } from "../keyboard-input";
@@ -650,7 +651,7 @@ export function BranchTree({
         ? "History is unavailable"
         : state.readOnlyReason
           ? "This session is read-only"
-          : state.runState !== "idle" || state.bashRunning
+          : isBusyRunState(state.runState) || state.bashRunning
             ? "Wait for the current task to finish."
             : state.pendingCount
               ? "Send or clear Pending input first."

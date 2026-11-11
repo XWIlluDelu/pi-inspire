@@ -379,7 +379,10 @@ describe("typed Host API", () => {
       steering: ["complete"],
       followUp: ["later"],
     });
-    expect(recover).toHaveBeenCalledExactlyOnceWith("fixture-active");
+    expect(recover).toHaveBeenCalledExactlyOnceWith(
+      "fixture-active",
+      undefined,
+    );
     const copied = await request(application.server)
       .post("/api/pending/text")
       .set("Authorization", `Bearer ${token}`)

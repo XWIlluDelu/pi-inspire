@@ -252,7 +252,8 @@ browser input. Host shutdown and idle reclamation leave attached Pi running.
 
 Attached connections stay outside the owned-worker pool. Input keeps artifact validation,
 file-backed images and final Stop/session fences. The browser identifies the branch view it sent
-from. A changed branch blocks delivery. Input, rename, model and thinking changes stay addressed
+from. A changed branch blocks delivery. Stop and its preliminary Pending recovery share the view
+selected at the click. Input, rename, model and thinking changes stay addressed
 to the attachment present when the request begins.
 A missing admission witness or lost reply after dispatch leaves the outcome unknown, and retrying
 the same browser operation observes the original receipt. Shell and Pi slash commands run from the

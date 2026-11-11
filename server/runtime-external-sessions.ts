@@ -49,6 +49,7 @@ interface ExternalSessionHost {
   log(slot: RuntimeSlot, error: unknown): void;
   released(slot: RuntimeSlot): void;
   followLeaf(slot: RuntimeSlot, leafId: string | null): void;
+  renewView(slot: RuntimeSlot): void;
   syncUi(
     slot: RuntimeSlot,
     requests: Record<string, unknown>[],
@@ -266,6 +267,7 @@ export class RuntimeExternalSessions {
       selectionRevision: 0,
     };
     this.connections.set(slot, connection);
+    this.host.renewView(slot);
     // Attached Pi accepts input: the view is no longer read-only.
     if (slot.readOnlyReason === "external-active") slot.readOnlyReason = null;
     this.applyState(slot, connection, state, true);
@@ -493,6 +495,7 @@ export class RuntimeExternalSessions {
   private end(slot: RuntimeSlot, reason: AttachmentEnd, release = true): void {
     const duringWork = isBusyRunState(slot.runState);
     this.detach(slot);
+    this.host.renewView(slot);
     if (slot.runState !== "failed")
       slot.runState = slot.conflict ? "conflict" : "idle";
     this.host.emit(slot, {

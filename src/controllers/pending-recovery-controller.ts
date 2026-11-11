@@ -34,6 +34,7 @@ export class PendingRecoveryController {
   async run(
     sessionId: string,
     action: PendingOperationRequest["action"],
+    expectedViewId?: string,
   ): Promise<boolean> {
     const authorityId = this.host.authorityId();
     if (!authorityId || !this.host.api()) return false;
@@ -41,6 +42,7 @@ export class PendingRecoveryController {
       authorityId,
       sessionId,
       action,
+      expectedViewId,
       this.runs.get(sessionId) ?? 0,
       action === "recover" ? (this.queues.get(sessionId) ?? 0) : null,
     ]);
@@ -57,6 +59,7 @@ export class PendingRecoveryController {
           sessionId,
           action,
           authorityId,
+          ...(expectedViewId ? { expectedViewId } : {}),
           operationId: crypto.randomUUID(),
         },
         completion,
