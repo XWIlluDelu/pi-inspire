@@ -93,14 +93,10 @@ export class RuntimeWorkerPool {
     await this.pruneDormantSlots();
   }
 
-  private isRetirableDormantSlot(slot: RuntimeSlot): boolean {
+  private unclaimed(slot: RuntimeSlot): boolean {
     return (
       slot.id !== this.host.selectedSessionId() &&
       !this.host.isObserved(slot.id) &&
-      // Attached instances are working connections, not owned-worker cache.
-      !this.host.isExternal(slot) &&
-      !slot.process &&
-      !slot.stopping &&
       slot.activeOperations === 0 &&
       slot.persistenceExpectations.length === 0 &&
       !slot.pendingPartialPersistence &&
@@ -111,22 +107,27 @@ export class RuntimeWorkerPool {
     );
   }
 
-  private canReclaimProjection(slot: RuntimeSlot): boolean {
-    return Boolean(slot.projection) && this.isRetirableDormantSlot(slot);
+  private isRetirableDormantSlot(slot: RuntimeSlot): boolean {
+    return (
+      !slot.process &&
+      !slot.stopping &&
+      // Attached instances are working connections outside the worker cache.
+      !this.host.isExternal(slot) &&
+      this.unclaimed(slot)
+    );
   }
 
   private async reclaimDormantProjections(): Promise<void> {
     const closing: Promise<void>[] = [];
     for (const slot of this.host.slots()) {
-      if (!this.canReclaimProjection(slot)) continue;
       const projection = slot.projection;
+      if (!projection || !this.isRetirableDormantSlot(slot)) continue;
       slot.projection = null;
       slot.preview = null;
       closing.push(
         projection
-          ?.close()
-          .catch((error) => this.host.logRuntimeError(slot.id, error)) ??
-          Promise.resolve(),
+          .close()
+          .catch((error) => this.host.logRuntimeError(slot.id, error)),
       );
     }
     await Promise.all(closing);
@@ -159,21 +160,13 @@ export class RuntimeWorkerPool {
     return Boolean(
       slot.process &&
         slot.ready &&
-        slot.id !== this.host.selectedSessionId() &&
-        !this.host.isObserved(slot.id) &&
         !isBusyRunState(slot.runState) &&
         slot.pendingExtensionUiRequests.size === 0 &&
         slot.pendingQueues.totalCount === 0 &&
         !slot.conflict &&
         !slot.navigationLease &&
         !slot.pendingBranchBridge &&
-        !slot.pendingPartialPersistence &&
-        slot.activeOperations === 0 &&
-        slot.persistenceExpectations.length === 0 &&
-        !this.host.isOpening(slot.id) &&
-        !this.host.isLoading(slot.id) &&
-        !this.host.hasSelectionReservation(slot.id) &&
-        !this.host.hasForkReservation(slot.id, slot.sessionPath),
+        this.unclaimed(slot),
     );
   }
 }

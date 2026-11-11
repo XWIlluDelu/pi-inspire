@@ -539,22 +539,6 @@ async function waitForProcessExit(path, state, timeoutMs, requestNonce) {
   return "timeout";
 }
 
-export async function prepareInstanceRestart(path, expected) {
-  const result = await inspectInstance(path, expected);
-  if (result.kind === "unavailable")
-    throw new Error("The running Host could not prepare its Pi instances for restart. The Host was not stopped.");
-  if (result.kind !== "healthy") return null;
-  const prepared = await requestInstanceControl(
-    result.state,
-    "restart-prepare",
-    { scope: "host" },
-    60_000,
-  );
-  if (prepared?.kind !== "prepared" || prepared.scope !== "host")
-    throw new Error("The running Host did not confirm restart preparation. The Host was not stopped.");
-  return prepared;
-}
-
 export async function stopManagedInstance(path, expected, options = {}) {
   const state = await readState(path);
   if (!state) return { kind: "absent" };

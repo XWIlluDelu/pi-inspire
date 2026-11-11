@@ -382,7 +382,7 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   Inspire's workers. Running work can continue during restart because the closing Host detaches
   its workers. When the browser returns to a preserved session, it automatically attaches to a
   sole idle worker. A busy worker can be attached through **Take over**.
-- Ordinary CLI restart uses signed `restart-prepare` local control before stopping a running Host.
+- After preflight, ordinary CLI restart verifies the running Host with signed readiness.
   `--host-only` authenticates the running Host and binds worker preservation to the signed
   shutdown request for that exact process. Start the replacement only after the old Host exits
   with a clean signed receipt for that request. For an active installed service, verify the service

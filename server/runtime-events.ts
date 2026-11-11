@@ -102,7 +102,6 @@ interface RuntimeEventControllerHost {
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   refreshPendingQueues(slot: RuntimeSlot): void;
   resumeDeferredPrompts(slot: RuntimeSlot): void;
-  processOwner(rpc: PiRpcProcess): RuntimeSlot | undefined;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   setProjectionConflict(
     slot: RuntimeSlot,
@@ -893,9 +892,12 @@ export class RuntimeEventController {
     }
   }
 
-  dispatchProcessEvent(rpc: PiRpcProcess, event: unknown): void {
-    const slot = this.host.processOwner(rpc);
-    if (!slot || slot.process !== rpc) return;
+  dispatchProcessEvent(
+    slot: RuntimeSlot,
+    rpc: PiRpcProcess,
+    event: unknown,
+  ): void {
+    if (slot.process !== rpc) return;
     const record =
       event && typeof event === "object"
         ? (event as Record<string, unknown>)

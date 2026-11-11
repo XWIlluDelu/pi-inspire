@@ -52,10 +52,6 @@ export function inspectInstance(
   expected: ExpectedInstance,
   options?: { healthTimeoutMs?: number },
 ): Promise<InspectionResult>;
-export function prepareInstanceRestart(
-  path: string,
-  expected: ExpectedInstance,
-): Promise<unknown>;
 export function stopManagedInstance(
   path: string,
   expected: ExpectedInstance,

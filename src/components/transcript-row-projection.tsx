@@ -39,17 +39,16 @@ import {
   type ActivityReadingChoices,
   ActivitySegmentBoundary,
 } from "./transcript-activity-visibility";
-import {
-  assistantEndsWithToolRun,
-  genericContentTitle,
-} from "./transcript-cards";
+import { genericContentTitle } from "./transcript-cards";
 import {
   type ActivityFoldPresentation,
   type ActivityTelemetryItem,
   ResponseActivityFold,
 } from "./transcript-fold";
 import {
-  AssistantTurn,
+  AssistantActivity,
+  type AssistantActivityContent,
+  AssistantResponse,
   ContextCheckpointRow,
   contextCheckpointContent,
   UnknownRoleRow,
@@ -295,11 +294,9 @@ export function useTranscriptRows({
       turnOrdinal: number | null;
       turnId: string | null;
     };
-    type AssistantSegment = {
-      kind: "response" | "activity";
-      start: number;
-      content: ChatMessage["content"];
-    };
+    type AssistantSegment =
+      | { kind: "response"; start: number; passages: string[] }
+      | { kind: "activity"; start: number; items: AssistantActivityContent[] };
 
     const built: Row[] = [];
     const activityItemKeys = new Set<string>();
@@ -562,11 +559,12 @@ export function useTranscriptRows({
       }
 
       if (message.role === "assistant") {
+        const items = contentItems(message);
         let activityEnd = index + 1;
         const trailingActivityKeys: string[] = [];
-        if (assistantEndsWithToolRun(message)) {
+        if (items.at(-1)?.type === "toolCall") {
           const ownToolCallIds = new Set(
-            contentItems(message).flatMap((item) =>
+            items.flatMap((item) =>
               item.type === "toolCall" &&
               typeof (item as ToolCallContent).id === "string"
                 ? [(item as ToolCallContent).id]
@@ -602,123 +600,103 @@ export function useTranscriptRows({
         const assistantDynamicActive =
           runBusy && key === activeAssistantMessageKey;
         const segments: AssistantSegment[] = [];
-        const appendSegmentItem = (
-          kind: AssistantSegment["kind"],
-          item: ReturnType<typeof contentItems>[number],
-          itemIndex: number,
-        ) => {
+        if (typeof message.content === "string" && message.content) {
+          segments.push({
+            kind: "response",
+            start: 0,
+            passages: [message.content],
+          });
+        }
+        items.forEach((item, index) => {
           const previous = segments.at(-1);
-          if (previous?.kind === kind && Array.isArray(previous.content)) {
-            previous.content.push(item);
+          if (item.type === "text") {
+            if (typeof item.text !== "string" || !item.text) return;
+            if (previous?.kind === "response")
+              previous.passages.push(item.text);
+            else
+              segments.push({
+                kind: "response",
+                start: index,
+                passages: [item.text],
+              });
             return;
           }
-          segments.push({
-            kind,
-            start: itemIndex,
-            content: [item],
-          });
-        };
 
-        if (typeof message.content === "string") {
-          if (message.content.length > 0) {
-            segments.push({
-              kind: "response",
-              start: 0,
-              content: message.content,
-            });
-          }
-        } else {
-          contentItems(message).forEach((item, itemIndex) => {
-            if (item.type === "text") {
-              if (
-                typeof (item as { text?: unknown }).text === "string" &&
-                (item as { text: string }).text.length > 0
-              ) {
-                appendSegmentItem("response", item, itemIndex);
-              }
-              return;
+          let activity: AssistantActivityContent;
+          if (item.type === "thinking") {
+            if (thinkingVisibility === "hidden") return;
+            activity = {
+              kind: "thinking",
+              text: (item as { thinking?: string }).thinking ?? "",
+            };
+          } else {
+            if (toolVisibility === "hidden") return;
+            if (item.type === "toolCall") {
+              const call = item as ToolCallContent;
+              activity = {
+                kind: "tool",
+                call,
+                result: toolResults.get(call.id),
+                activity: toolActivity[call.id],
+              };
+            } else {
+              const title = genericContentTitle(item);
+              if (!title) return;
+              activity = { kind: "generic", item, title };
             }
-            const visible =
-              item.type === "thinking"
-                ? thinkingVisibility !== "hidden"
-                : item.type === "toolCall"
-                  ? toolVisibility !== "hidden"
-                  : toolVisibility !== "hidden" &&
-                    genericContentTitle(item) !== null;
-            if (visible) appendSegmentItem("activity", item, itemIndex);
-          });
-        }
+          }
+          if (previous?.kind === "activity") previous.items.push(activity);
+          else
+            segments.push({
+              kind: "activity",
+              start: index,
+              items: [activity],
+            });
+        });
 
-        // Empty failed messages get their own error row below, not Working.
-        if (
-          segments.length === 0 &&
-          assistantStreaming &&
-          assistantOutcome(message) === null
-        ) {
-          segments.push({
-            kind: "activity",
-            start: 0,
-            content: [],
-          });
-        }
+        const outcome = assistantOutcome(message);
+        // Empty failed messages show their outcome, while an active empty row shows Working.
+        if (segments.length === 0 && assistantStreaming && !outcome)
+          segments.push({ kind: "activity", start: 0, items: [] });
 
         let lastResponse = -1;
         let lastActivity = -1;
-        segments.forEach((segment, segmentIndex) => {
-          if (segment.kind === "response") {
-            lastResponse = segmentIndex;
-          } else lastActivity = segmentIndex;
+        segments.forEach((segment, index) => {
+          if (segment.kind === "response") lastResponse = index;
+          else lastActivity = index;
         });
-        const fullResponseText = messageText(message);
 
         segments.forEach((segment, segmentIndex) => {
           const segmentKey = `${projectedKey}:${segment.kind}:${segment.start}`;
-          const fragmentMessage: ChatMessage = {
-            ...message,
-            content: segment.content,
-          };
-          const fragmentItems = contentItems(fragmentMessage);
-          const activityItemIds = fragmentItems.map(
-            (_, itemIndex) => `${segmentKey}:item:${itemIndex}`,
-          );
           const segmentStreaming =
             assistantStreaming && segmentIndex === segments.length - 1;
-          const node = (
-            <AssistantTurn
-              key={segmentKey}
-              message={fragmentMessage}
-              toolResults={toolResults}
-              toolActivity={toolActivity}
-              activityItemIds={activityItemIds}
-              streaming={segmentStreaming}
-              dynamicActive={assistantDynamicActive}
-              thinkingVisibility={thinkingVisibility}
-              toolVisibility={toolVisibility}
-              responseCopyContent={
-                segment.kind === "response" && segmentIndex === lastResponse
-                  ? messageCopyLoader(message, fullResponseText, {
-                      sessionId,
-                      viewId,
-                      projectionKey: projectionViewKey,
-                    })
-                  : undefined
-              }
-              responseCopyText={
-                segment.kind === "response" && segmentIndex === lastResponse
-                  ? fullResponseText
-                  : ""
-              }
-            />
-          );
 
           if (segment.kind === "response") {
+            const copyText =
+              segmentIndex === lastResponse ? messageText(message) : "";
             flushActivity(true);
             built.push({
               key: `response:${segmentKey}`,
-              node,
+              node: (
+                <AssistantResponse
+                  key={segmentKey}
+                  passages={segment.passages}
+                  streaming={segmentStreaming}
+                  copyText={copyText}
+                  copyContent={
+                    copyText
+                      ? messageCopyLoader(message, copyText, {
+                          sessionId,
+                          viewId,
+                          projectionKey: projectionViewKey,
+                        })
+                      : undefined
+                  }
+                />
+              ),
               searchText:
                 settled && !assistantStreaming
-                  ? messageText(fragmentMessage)
+                  ? segment.passages.join("\n\n")
                   : "",
               searchScope: "model",
               turnOrdinal: currentTurnOrdinal,
@@ -728,66 +706,66 @@ export function useTranscriptRows({
             return;
           }
 
-          const segmentTelemetry: ActivityTelemetryItem[] = [];
-          fragmentItems.forEach((item, itemIndex) => {
-            if (item.type === "thinking") {
-              segmentTelemetry.push({
-                id: activityItemIds[itemIndex]!,
-                kind: "thinking",
-                label: "Thinking",
-              });
-            } else if (item.type === "toolCall") {
-              const call = item as ToolCallContent;
-              const phase = toolActivity[call.id]?.phase;
-              segmentTelemetry.push({
-                id: activityItemIds[itemIndex]!,
+          const activityItems = segment.items.map((item, index) => ({
+            ...item,
+            key: `${segmentKey}:item:${index}`,
+          }));
+          const telemetry = activityItems.map<ActivityTelemetryItem>(
+            (item, index) => {
+              if (item.kind === "thinking") {
+                return {
+                  id: item.key,
+                  kind: "thinking",
+                  label: "Thinking",
+                  // Only the trailing Thinking part is streaming.
+                  live: segmentStreaming && index === activityItems.length - 1,
+                };
+              }
+              if (item.kind === "generic")
+                return { id: item.key, kind: "tool", label: item.title };
+              const { call, result } = item;
+              const phase = item.activity?.phase;
+              return {
+                id: item.key,
                 kind: "tool",
                 label: call.name ? `Tool: ${call.name}` : "Tool call",
                 name: call.name || undefined,
-                failed:
-                  toolResults.get(call.id)?.isError === true ||
-                  phase === "error",
+                failed: result?.isError === true || phase === "error",
                 live:
                   runBusy &&
-                  !toolResults.has(call.id) &&
+                  !result &&
                   phase !== "done" &&
                   phase !== "error" &&
                   (phase === "running" ||
                     phase === "queued" ||
                     (assistantDynamicActive &&
                       call.__inspireToolCall?.phase !== "interrupted")),
-              });
-            } else if (genericContentTitle(item) !== null) {
-              segmentTelemetry.push({
-                id: activityItemIds[itemIndex]!,
-                kind: "tool",
-                label: genericContentTitle(item) ?? "Activity",
-              });
-            }
-          });
-          // Thinking is live only while its own trailing block is streaming,
-          // not merely because a later tool in the same message is still running.
-          if (segmentStreaming && fragmentItems.at(-1)?.type === "thinking") {
-            const last = segmentTelemetry.at(-1);
-            if (last) last.live = true;
-          }
+              };
+            },
+          );
           appendActivity(
             segmentKey,
             <ActivitySegmentBoundary
-              ids={segmentTelemetry.map((item) => item.id)}
+              ids={activityItems.map((item) => item.key)}
             >
-              {node}
+              <AssistantActivity
+                key={segmentKey}
+                items={activityItems}
+                streaming={segmentStreaming}
+                dynamicActive={assistantDynamicActive}
+                thinkingVisibility={thinkingVisibility}
+                toolVisibility={toolVisibility}
+              />
             </ActivitySegmentBoundary>,
             assistantDynamicActive || segmentStreaming,
             segmentIndex === lastActivity
               ? [...trailingActivityKeys, ...deferredRangeAlias(message)]
               : deferredRangeAlias(message),
             undefined,
-            segmentTelemetry,
+            telemetry,
           );
         });
 
-        const outcome = assistantOutcome(message);
         if (outcome) {
           // Outcomes remain after partial content and outside activity folding,
           // including a cancellation with no response body.

@@ -15,7 +15,6 @@ const actions = new Set([
   "maintenance-prepare",
   "maintenance-commit",
   "maintenance-release",
-  "restart-prepare",
 ]);
 const encodedSecret = /^[A-Za-z0-9_-]{43}$/u;
 

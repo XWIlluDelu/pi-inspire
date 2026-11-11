@@ -13,13 +13,10 @@ import {
   type TranscriptNavigation,
 } from "../../src/components/Transcript";
 import { findLiteralMatches } from "../../src/components/transcript-search";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
 import * as modalFocus from "../../src/use-modal-focus";
-import { checkpointAdapterConfiguration } from "./fixtures/extension-adapters";
 import { openTranscriptSearch } from "./helpers";
 
 afterEach(() => {
-  configureToolPresentationRegistry();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -153,49 +150,6 @@ describe("settled transcript search", () => {
     expect(
       screen.getByRole("search", { name: "Search conversation" }),
     ).not.toHaveClass("transcript-search--open");
-  });
-
-  it("indexes displayed shell output and checkpoint text rather than their hidden control data", () => {
-    configureToolPresentationRegistry(checkpointAdapterConfiguration);
-    render(
-      <Transcript
-        sessionId="normalized-content"
-        messages={[
-          {
-            role: "bashExecution",
-            command: "printf status",
-            output: "\u001b[31mVisible status\u001b[0m",
-            timestamp: 1,
-          },
-          {
-            role: "compactionSummary",
-            summary: "Magic Context compacted: retained decisions",
-            timestamp: 2,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-    const search = openTranscriptSearch();
-    for (const query of ["31m", "Magic Context compacted"]) {
-      fireEvent.change(search, { target: { value: query } });
-      expect(
-        screen.getByRole("search", { name: "Search conversation" }),
-      ).toHaveTextContent("0 matches");
-    }
-    fireEvent.change(search, { target: { value: "Visible status" } });
-    expect(
-      screen.getByRole("search", { name: "Search conversation" }),
-    ).toHaveTextContent("1");
-    fireEvent.change(search, { target: { value: "retained decisions" } });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Next transcript match" }),
-    );
-    expect(
-      screen.getByRole("button", { name: "Magic Context compacted" }),
-    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it.each([

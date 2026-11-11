@@ -84,19 +84,21 @@ boundaries in this contract.
   after reconnecting. A keyed message updates only its own key; if an earlier turn lacks its end
   event, the next keyed assistant turn appends instead of overwriting it.
 
+- The transcript projects assistant content into response and activity rows in source order.
+  Search reads the displayed response passages, and activity summaries use the same items as
+  their cards. Ordinary and virtualized rows share the same turn and search anchors.
+
 - Copying a selection containing KaTeX writes ordinary selected HTML plus a plain-text source
   projection. Inline formulas use `$…$`; display formulas put each `$$` delimiter on its own line,
   preserving internal formula whitespace. This also applies to partial selections, where the
   original formula wrapper determines display identity; surrounding selected text and multiple
   formulas are preserved.
 
-  Every user turn has a message-level action that copies its exact source. Every assistant response
-  has an action at its end that concatenates only its response text blocks, excluding thinking,
-  tool, custom, and generic activity payloads. Saved user/assistant/custom copies read the original
-  entry on demand through the existing paged History content channel, not the bounded transcript
-  preview or mixed History display text. Display bounds stay unchanged; custom content and details
-  remain complete, embedded image bytes travel separately, and changing the source view retires
-  pending copies.
+  A user turn copies its exact source. Copy response appears after the final text block and copies
+  the assistant entry's response text. Saved user, assistant, and custom copies read the original
+  entry on demand through the paged History content channel. Custom content and details remain
+  complete, embedded image bytes travel separately, and changing the source view retires pending
+  copies.
 
   Each Thinking, tool, and generic activity block independently copies its complete source
   projection. Completed-tool copies include the name, arguments, and result under the existing Host

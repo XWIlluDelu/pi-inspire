@@ -55,7 +55,6 @@ function setup(incremental = true) {
       forwarded = event as Record<string, unknown>;
       forwardedEvents.push(forwarded);
     },
-    processOwner: () => slot,
     reconcileSlot: async () => {},
     setProjectionConflict: () => {
       throw new Error("Unexpected conflict");
@@ -64,7 +63,8 @@ function setup(incremental = true) {
     logRuntimeError: () => {},
     safeProjection: (value) => value,
   });
-  const emit = (event: unknown) => events.dispatchProcessEvent(rpc, event);
+  const emit = (event: unknown) =>
+    events.dispatchProcessEvent(slot, rpc, event);
   const start = (content: unknown[] = []) =>
     emit({
       type: "message_start",

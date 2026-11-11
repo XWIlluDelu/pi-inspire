@@ -18,6 +18,7 @@ import {
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../api";
 import type { AppState } from "../app-state";
+import { sessionCurationOwners } from "../session-curation";
 
 interface PreferenceControllerHost {
   state(): AppState;
@@ -106,14 +107,6 @@ export class PreferenceController {
     );
   }
 
-  private curationIds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedSessionIds, ...prefs.hiddenSessionIds]);
-  }
-
-  private curationProjectCwds(prefs: InspirePreferences): Set<string> {
-    return new Set([...prefs.pinnedProjectCwds, ...prefs.hiddenProjectCwds]);
-  }
-
   private curationDiffers(
     previous: InspirePreferences,
     next: InspirePreferences,
@@ -135,30 +128,16 @@ export class PreferenceController {
     next: InspirePreferences,
     nextConfirmed: InspirePreferences,
   ): boolean {
-    const previousIds = new Set([
-      ...this.curationIds(previous),
-      ...this.curationIds(previousConfirmed),
-    ]);
-    const nextIds = new Set([
-      ...this.curationIds(next),
-      ...this.curationIds(nextConfirmed),
-    ]);
+    const before = sessionCurationOwners(previous, previousConfirmed);
+    const after = sessionCurationOwners(next, nextConfirmed);
     const loadedIds = new Set(
       this.host.state().sessions.map((session) => session.id),
     );
-    for (const id of nextIds) {
-      if (!previousIds.has(id) && !loadedIds.has(id)) return true;
+    for (const id of after.ids) {
+      if (!before.ids.has(id) && !loadedIds.has(id)) return true;
     }
-    const previousCwds = new Set([
-      ...this.curationProjectCwds(previous),
-      ...this.curationProjectCwds(previousConfirmed),
-    ]);
-    const nextCwds = new Set([
-      ...this.curationProjectCwds(next),
-      ...this.curationProjectCwds(nextConfirmed),
-    ]);
-    for (const cwd of nextCwds) {
-      if (!previousCwds.has(cwd)) return true;
+    for (const cwd of after.cwds) {
+      if (!before.cwds.has(cwd)) return true;
     }
     return false;
   }

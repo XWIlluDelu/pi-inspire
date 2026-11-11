@@ -21,10 +21,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  ToolVisibilityPreference,
-  VisibilityPreference,
-} from "../../shared/contracts";
+import type { VisibilityPreference } from "../../shared/contracts";
 import {
   fileResourceReference,
   isLocalResourceReference,
@@ -41,7 +38,6 @@ import { type DiffLine, parseUnifiedDiff } from "../diff";
 import {
   type ActivityTool,
   type ChatMessage,
-  contentItems,
   type ToolCallContent,
   toolResultText,
 } from "../events";
@@ -1735,7 +1731,7 @@ export function ToolCard({
   );
 }
 
-export interface CollapsedActivity {
+interface CollapsedActivity {
   key: string;
   call: ToolCallContent;
   result: ChatMessage | undefined;
@@ -2002,26 +1998,6 @@ export function genericContentTitle(item: object): string | null {
         .replace(/[-_]+/g, " ")
         .replace(/^./, (character) => character.toUpperCase())
     : bounded;
-}
-
-export function assistantEndsWithToolRun(message: ChatMessage): boolean {
-  const items = contentItems(message);
-  return items.length > 0 && items[items.length - 1]?.type === "toolCall";
-}
-
-export function hasRenderableAssistantContent(
-  message: ChatMessage,
-  thinkingVisibility: VisibilityPreference,
-  toolVisibility: ToolVisibilityPreference,
-): boolean {
-  if (typeof message.content === "string") return message.content.length > 0;
-  return contentItems(message).some((item) => {
-    if (item.type === "text")
-      return typeof item.text === "string" && item.text.length > 0;
-    if (item.type === "thinking") return thinkingVisibility !== "hidden";
-    if (item.type === "toolCall") return toolVisibility !== "hidden";
-    return toolVisibility !== "hidden" && genericContentTitle(item) !== null;
-  });
 }
 
 export function GenericCard({
