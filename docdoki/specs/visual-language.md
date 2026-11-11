@@ -4,7 +4,7 @@ covers:
   - index.html
   - src/**/*.tsx
   - src/styles.css
-  - tests/web/app.test.tsx
+  - tests/browser/shell-layout.spec.ts
 ---
 
 # Visual language

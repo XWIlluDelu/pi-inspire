@@ -1,4 +1,7 @@
+import { basename } from "node:path";
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
+import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
@@ -352,10 +355,30 @@ test("resizing one side holds its peer still and exposes only the remaining read
 
 test("sidebar owns desktop toggles and creation while phones keep a full drawer", async ({
   page,
+  context,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await pairedPage(page);
   await openFixtureSession(page, /Formula rendering and spectral analysis/);
+  await expect(page.getByRole("log")).toContainText("A compact result");
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+        .disableRules(["color-contrast"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const project = page.getByRole("button", { name: "Copy project path" });
+  await expect(project).toHaveText(basename(browserWorkspace));
+  await expect
+    .poll(() => project.getAttribute("title"))
+    .toContain(browserWorkspace);
+  await project.click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(browserWorkspace);
   const title = page.locator(".topbar__title-button");
   await expect(
     page.locator(".topbar").getByRole("button", { name: "Toggle navigation" }),

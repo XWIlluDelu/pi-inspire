@@ -46,6 +46,38 @@ async function fixture() {
   };
 }
 
+async function httpFixture() {
+  const daemon = await fixture();
+  const app = express();
+  app.use(express.json());
+  const gateway = createTerminalGateway(app, daemon.client, 60_000);
+  app.use(
+    (
+      error: {
+        status?: number;
+        code?: string;
+        message?: string;
+        name?: string;
+      },
+      _request: express.Request,
+      response: express.Response,
+      _next: express.NextFunction,
+    ) => {
+      response
+        .status(error.status ?? (error.name === "ZodError" ? 400 : 500))
+        .json({ error: error.message, code: error.code });
+    },
+  );
+  return {
+    request: supertest(app),
+    service: daemon.service,
+    async close() {
+      gateway.close();
+      await daemon.close();
+    },
+  };
+}
+
 describe("terminal control receipts over isolated IPC", () => {
   it("retains an operation across an IPC timeout, concurrent retries, and Host replacement", async () => {
     const f = await fixture();
@@ -139,48 +171,85 @@ describe("terminal control receipts over isolated IPC", () => {
 });
 
 describe("terminal HTTP operation forwarding", () => {
+  const routes: Array<
+    [
+      method: "post" | "patch" | "delete",
+      path: string,
+      body?: object,
+      invalid?: { path?: string; body?: object },
+    ]
+  > = [
+    ["post", "/api/terminals", { cwd: "/fixture" }, { body: {} }],
+    [
+      "patch",
+      "/api/terminals/tab",
+      { title: "Title" },
+      { body: { title: 42 } },
+    ],
+    [
+      "post",
+      "/api/terminals/reorder",
+      { cwd: "/fixture", terminalIds: [] },
+      { body: { cwd: "/fixture", terminalIds: ["bad/id"] } },
+    ],
+    [
+      "post",
+      "/api/terminals/tab/restart",
+      undefined,
+      { path: "/api/terminals/bad%20id/restart" },
+    ],
+    [
+      "delete",
+      "/api/terminals/tab",
+      undefined,
+      { path: "/api/terminals/bad%20id" },
+    ],
+    [
+      "patch",
+      "/api/terminal-settings",
+      { persistOutput: true },
+      { body: { historyRetentionDays: 0 } },
+    ],
+    ["delete", "/api/terminal-history"],
+  ];
+
+  it.each(routes)(
+    "checks identity and validation before forwarding %s %s",
+    async (method, path, body, invalid) => {
+      const { request, service, close } = await httpFixture();
+      const dispatch = vi.spyOn(service, "operate");
+      try {
+        const missing = await request[method](path).send(body).expect(400);
+        expect(missing.body.code).toBe("terminal_operation_required");
+        if (invalid) {
+          const operation = {
+            id: randomUUID(),
+            epoch: await service.operationEpoch(),
+          };
+          const rejected = await request[method](invalid.path ?? path)
+            .set("X-Terminal-Operation", JSON.stringify(operation))
+            .send(invalid.body)
+            .expect(400);
+          expect(rejected.headers["x-terminal-operation"]).toBe(operation.id);
+          expect(rejected.headers["x-terminal-outcome"]).toBe("rejected");
+        }
+        expect(dispatch).not.toHaveBeenCalled();
+      } finally {
+        await close();
+      }
+    },
+  );
+
   it("forwards immutable identity through Host requests and marks authoritative outcomes", async () => {
-    const f = await fixture();
+    const { request, service, close } = await httpFixture();
     const create = vi
-      .spyOn(f.service, "create")
+      .spyOn(service, "create")
       .mockResolvedValue({ id: "one" } as TerminalDescriptor);
-    const app = express();
-    app.use(express.json());
-    const gateway = createTerminalGateway(app, f.client, 60_000);
-    app.use(
-      (
-        error: {
-          status?: number;
-          code?: string;
-          message?: string;
-          name?: string;
-        },
-        _request: express.Request,
-        response: express.Response,
-        _next: express.NextFunction,
-      ) => {
-        response
-          .status(error.status ?? (error.name === "ZodError" ? 400 : 500))
-          .json({ error: error.message, code: error.code });
-      },
-    );
     try {
-      const epoch = await supertest(app)
-        .get("/api/terminal-operations")
-        .expect(200);
+      const epoch = await request.get("/api/terminal-operations").expect(200);
       const operation = { id: randomUUID(), epoch: epoch.body.epoch as string };
-      const invalid = await supertest(app)
-        .post("/api/terminals")
-        .set(
-          "X-Terminal-Operation",
-          JSON.stringify({ ...operation, id: randomUUID() }),
-        )
-        .send({})
-        .expect(400);
-      expect(invalid.headers["x-terminal-outcome"]).toBe("rejected");
-      expect(create).not.toHaveBeenCalled();
       for (let i = 0; i < 2; i++) {
-        const response = await supertest(app)
+        const response = await request
           .post("/api/terminals")
           .set("X-Terminal-Operation", JSON.stringify(operation))
           .send({ cwd: "/fixture" })
@@ -189,7 +258,7 @@ describe("terminal HTTP operation forwarding", () => {
         expect(response.headers["x-terminal-outcome"]).toBe("completed");
         expect(response.body).toEqual({ id: "one" });
       }
-      const mismatch = await supertest(app)
+      const mismatch = await request
         .post("/api/terminals")
         .set("X-Terminal-Operation", JSON.stringify(operation))
         .send({ cwd: "/other" })
@@ -201,7 +270,7 @@ describe("terminal HTTP operation forwarding", () => {
       );
       const refusedOperation = { ...operation, id: randomUUID() };
       const refusedRequest = () =>
-        supertest(app)
+        request
           .post("/api/terminals")
           .set("X-Terminal-Operation", JSON.stringify(refusedOperation))
           .send({ cwd: "/fixture" })
@@ -217,7 +286,7 @@ describe("terminal HTTP operation forwarding", () => {
           "Exit unconfirmed",
         ),
       );
-      const uncertain = await supertest(app)
+      const uncertain = await request
         .post("/api/terminals")
         .set(
           "X-Terminal-Operation",
@@ -227,8 +296,7 @@ describe("terminal HTTP operation forwarding", () => {
         .expect(503);
       expect(uncertain.headers["x-terminal-outcome"]).toBe("unknown");
     } finally {
-      gateway.close();
-      await f.close();
+      await close();
     }
   });
 });

@@ -46,6 +46,9 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
   const scroll = pdf.getByRole("region", { name: "PDF pages", exact: true });
   await expect(first).toContainText("Experiment summary");
   await expect(first).toHaveAttribute("aria-busy", "false");
+  await expect(
+    resources.getByRole("button", { name: "Download report.pdf" }),
+  ).toBeEnabled();
   const ink = await pdf
     .locator("canvas")
     .first()

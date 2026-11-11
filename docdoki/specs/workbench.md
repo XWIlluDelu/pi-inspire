@@ -89,7 +89,7 @@ covers:
   - tests/launcher.test.ts
   - tests/portable/web-build-output.test.mjs
   - tests/server/pi-update-checker.test.ts
-  - tests/web/app.test.tsx
+  - tests/browser/{composer,extension-ui,modal-ownership,shell-layout}.spec.ts
   - tests/web/composer-*.test.tsx
   - tests/web/notices.test.tsx
   - tests/web/store-feedback.test.ts
@@ -273,9 +273,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   implicit scrolling. It reports the number of server rows consumed out of the query total, exposes
   loading/retry/end states to keyboard and assistive technology, and sits below the chronological
   groups before Hidden. Search and explicit refresh restart at offset zero. Loading older appends
-  in server order. Hydration covers both pending and confirmed curation, plus selected and live
-  sessions. It batches identities and folders within the Host's limits and leaves the
-  chronological cursor unchanged.
+  in server order. Supplemental reads cover pending and confirmed curation, plus selected and live
+  sessions. They batch identities and folders within the Host's limits. Supplemental reads and
+  chronological paging can finish independently. Only paging advances its cursor.
 
   Hydration and preservation failures keep the last confirmed union and recover automatically in a
   bounded, generation-owned window. Supplemental catalog reads do not create warning/retry tasks; a

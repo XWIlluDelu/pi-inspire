@@ -1,9 +1,61 @@
 import { expect, test } from "@playwright/test";
+import { routeSnapshots } from "./support/host-events";
 import {
   openCommandPalette,
-  pairAndOpen,
   openSettings,
+  pairAndOpen,
 } from "./support/navigation";
+
+test("Escape closes the focused workbench surface before aborting an active run", async ({
+  page,
+}) => {
+  const sessionId = "fixture-history";
+  const transport = await routeSnapshots(page, {});
+  let aborts = 0;
+  await page.route("**/api/control/abort", (route) => {
+    aborts++;
+    return route.fulfill({ json: { steering: [], followUp: [] } });
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await pairAndOpen(page);
+  await expect.poll(() => transport.ready(sessionId)).toBe(true);
+  transport.send({ type: "agent_start", sessionId });
+  await expect(
+    page.getByRole("button", { name: "Abort running task" }),
+  ).toBeVisible();
+
+  await openSettings(page);
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(settings).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+  const sessions = page.getByRole("searchbox", { name: "Search sessions" });
+  await sessions.focus();
+  await sessions.press("Escape");
+  await expect(sessions).not.toBeFocused();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const [name, control] of [
+    [
+      "Open conversation search",
+      page.getByRole("searchbox", { name: "Search conversation" }),
+    ],
+    [
+      "Open prompt navigation",
+      page.getByRole("button", { name: "Open prompt map", exact: true }),
+    ],
+  ] as const) {
+    const launcher = page.getByRole("button", { name, exact: true });
+    await launcher.click();
+    await control.press("Escape");
+    await expect(launcher).toBeFocused();
+  }
+  expect(aborts).toBe(0);
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .press("Escape");
+  await expect.poll(() => aborts).toBe(1);
+});
 
 test.describe("phone action dialogs", () => {
   test.use({ viewport: { width: 390, height: 600 }, hasTouch: true });

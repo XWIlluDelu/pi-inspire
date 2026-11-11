@@ -118,19 +118,35 @@ test("HTML interaction isolates real resources and revokes execution across desk
     .poll(async () => (await hostRequest(page).get(url!)).status())
     .toBe(404);
 
-  await pane
-    .getByRole("button", { name: "Enable interaction", exact: true })
-    .click();
-  await expect(frame.locator("#status")).toHaveText("Scripts running");
-  const secondUrl = await iframe.getAttribute("src");
+  const enable = pane.getByRole("button", {
+    name: "Enable interaction",
+    exact: true,
+  });
+  async function startInteraction() {
+    await enable.click();
+    await expect(frame.locator("#status")).toHaveText("Scripts running");
+    return (await iframe.getAttribute("src"))!;
+  }
+  async function expectRevoked(interactiveUrl: string) {
+    await expect
+      .poll(async () => (await hostRequest(page).get(interactiveUrl)).status())
+      .toBe(404);
+  }
+
+  const sourceUrl = await startInteraction();
   await pane.getByRole("button", { name: "Source", exact: true }).click();
   await expect(pane.getByRole("region", { name: "File source" })).toBeVisible();
-  await expect
-    .poll(async () => (await hostRequest(page).get(secondUrl!)).status())
-    .toBe(404);
+  await expectRevoked(sourceUrl);
   await pane.getByRole("button", { name: "Preview", exact: true }).click();
   await expect(frame.locator("#status")).toHaveText("Static preview");
-  await expect(
-    pane.getByRole("button", { name: "Enable interaction", exact: true }),
-  ).toBeVisible();
+
+  const refreshUrl = await startInteraction();
+  await pane.getByRole("button", { name: "Refresh context pane" }).click();
+  await expect(frame.locator("#status")).toHaveText("Static preview");
+  await expectRevoked(refreshUrl);
+
+  const closeUrl = await startInteraction();
+  await pane.getByRole("button", { name: "Close interactive.html" }).click();
+  await expect(iframe).toHaveCount(0);
+  await expectRevoked(closeUrl);
 });

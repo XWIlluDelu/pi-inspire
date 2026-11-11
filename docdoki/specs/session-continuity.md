@@ -73,7 +73,7 @@ covers:
   - tests/server/pi-rpc.test.ts
   - tests/browser/session-navigation.spec.ts
   - tests/server/session-projection.test.ts
-  - tests/web/app.test.tsx
+  - tests/web/session-actions.test.tsx
   - tests/web/readonly-session.test.tsx
   - tests/browser/readonly-session.spec.ts
   - tests/web/nav-render.test.tsx

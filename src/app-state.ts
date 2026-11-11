@@ -225,7 +225,7 @@ export interface AppState
   sessionListLoadingOlder: boolean;
   sessionListHydrating: boolean;
   /** Current operation, retained after failure so retry copy stays truthful. */
-  sessionListOperation: "reset" | "older" | "refresh" | "curation" | null;
+  sessionListOperation: "reset" | "older" | "refresh" | null;
   sessionListError: string | null;
   sessionListIssues: SessionCatalogIssue[];
   /** Selection failures stay with the session navigation/start surface rather

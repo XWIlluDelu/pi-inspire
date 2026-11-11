@@ -244,6 +244,46 @@ describe("terminal daemon", () => {
     },
   );
 
+  it("replays a restart failure after the PTY exits too late", async () => {
+    const { client, directory, manager, ptys, server } = await setup();
+    const epoch = await client.operationEpoch();
+    const { id } = await client.operate<TerminalDescriptor>(
+      "create",
+      { request: { cwd: directory } },
+      { id: randomUUID(), epoch },
+    );
+    const pty = ptys[0]!;
+    let markStopping!: () => void;
+    const stopping = new Promise<void>((resolve) => {
+      markStopping = resolve;
+    });
+    vi.spyOn(pty, "kill").mockImplementation(markStopping);
+    const restart = vi.spyOn(manager, "restart");
+    const operation = { id: randomUUID(), epoch };
+    const send = () => client.operate("restart", { id }, operation);
+    vi.useFakeTimers();
+    try {
+      const failure = { code: "terminal_stop_timeout", status: 503 };
+      const first = expect(send()).rejects.toMatchObject(failure);
+      await stopping;
+      await vi.advanceTimersByTimeAsync(7_000);
+      await first;
+      pty.emitExit(0);
+
+      await expect(send()).rejects.toMatchObject(failure);
+      expect(restart).toHaveBeenCalledOnce();
+      expect(ptys).toHaveLength(1);
+      expect((await client.list(directory)).terminals).toMatchObject([
+        { id, status: "exited" },
+      ]);
+    } finally {
+      pty.emitExit(0);
+      vi.useRealTimers();
+      await client.close();
+      await server.stop();
+    }
+  });
+
   it("keeps terminal RPC and byte streams behind authenticated IPC", async () => {
     const { address, client, directory, ptys, server } = await setup();
     await client.probe();
