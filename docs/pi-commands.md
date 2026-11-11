@@ -283,8 +283,10 @@ The History pane handles same-file navigation and independent Fork/Clone copies.
 create a separate session without replacing the source worker; extension authors should check the
 [lifecycle differences](extensions.md#session-lifecycle).
 
-A session can be open in Inspire and in terminal Pi at the same time. **Session actions → Copy
-resume command** copies `pi --session …` for the session's project; copying it changes nothing.
+A session can be open in Inspire and in terminal Pi at the same time. Search the command palette
+for **Copy resume command** to copy a command that opens the session in its project folder.
+If the original folder is missing, run the copied command in the new project folder and choose
+**Fork** in Pi 1.5.2 or later.
 When a terminal Pi is running the branch you open, Inspire shows its progress read-only and offers
 **Take over**, which continues that same Pi from the browser while the terminal keeps working (see
 [sharing sessions](extensions.md#share-sessions-with-terminal-pi)). Otherwise Inspire continues the

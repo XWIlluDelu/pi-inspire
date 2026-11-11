@@ -41,6 +41,7 @@ const models = [
     thinkingLevelMap: { xhigh: "xhigh", max: null },
   },
 ];
+const resumeCommand = "pi --session '/sessions/test.jsonl'";
 let prompts: Record<string, unknown>[];
 let failPrompt = false;
 let aborts = 0;
@@ -100,6 +101,10 @@ beforeEach(async () => {
           version: "1.0.0",
           markdown: "## [1.0.0]\n\n### Changed\n\nInstalled release fixture.",
         },
+      };
+    if (url === "/api/sessions/resume-command?sessionId=s1")
+      return {
+        body: { command: resumeCommand, projectDirectoryMissing: true },
       };
     if (url.startsWith("/api/sessions?")) {
       const query =
@@ -255,14 +260,23 @@ describe("command discovery and preparation", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers Copy resume command through search for a selected read-only session", async () => {
+  it("copies the terminal resume command and shows Fork guidance for a missing project", async ({
+    onTestFinished,
+  }) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    onTestFinished(() => {
+      Reflect.deleteProperty(navigator, "clipboard");
+    });
     act(() =>
       FakeWebSocket.instances.at(-1)?.emit({
         type: "snapshot",
-        data: activeSnapshot({ readOnlyReason: "external-active" }),
+        data: activeSnapshot({ readOnlyReason: "workspace-unavailable" }),
       }),
     );
-    const copy = vi.spyOn(store, "copyResumeCommand").mockResolvedValue(true);
     render(<App />);
     const input = await palette();
     const action = { name: "Copy resume command", exact: true };
@@ -272,7 +286,12 @@ describe("command discovery and preparation", () => {
       screen.getByRole("option", action),
     );
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(copy).toHaveBeenCalledExactlyOnceWith("s1");
+    expect(
+      await screen.findByText(
+        "Resume command copied. Run it in the new project folder and choose Fork in Pi 1.5.2 or later.",
+      ),
+    ).toBeVisible();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(resumeCommand);
     expect(
       screen.queryByRole("dialog", { name: "Command palette" }),
     ).toBeNull();

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -170,6 +170,26 @@ describe("typed Host API", () => {
       },
       updateStatus: { piUpdateChecking: false },
     });
+  });
+
+  it("generates a resume command for the new folder after the original project moves", async () => {
+    const session = await fixture.catalog.get("fixture-active");
+    if (!session) throw new Error("Missing fixture session");
+    const resume = () =>
+      request(application.server)
+        .get("/api/sessions/resume-command")
+        .query({ sessionId: session.id })
+        .set("Authorization", `Bearer ${token}`);
+    const command = `pi --session '${session.path}'`;
+    const changeDirectory =
+      process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --";
+    await resume().expect(200, {
+      command: `${changeDirectory} '${session.cwd}' && ${command}`,
+    });
+
+    await rename(session.cwd, join(temporary, "moved-workspace"));
+
+    await resume().expect(200, { command, projectDirectoryMissing: true });
   });
 
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
