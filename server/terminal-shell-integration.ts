@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
-import { chmod, rename, writeFile } from "node:fs/promises";
+import { chmod } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { ResolvedTerminalProfile } from "./terminal-profiles.js";
 import { ensurePrivateDirectory } from "./private-directory.js";
+import { replacePrivateStateFile } from "./private-state-file.js";
 
 const PRIVATE_FILE_MODE = 0o600;
 interface IntegratedTerminalLaunch {
@@ -19,12 +19,7 @@ async function replacePrivateFile(
   path: string,
   content: string,
 ): Promise<void> {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temporary, content, {
-    encoding: "utf8",
-    mode: PRIVATE_FILE_MODE,
-  });
-  await rename(temporary, path);
+  await replacePrivateStateFile(path, content);
   if (process.platform !== "win32") await chmod(path, PRIVATE_FILE_MODE);
 }
 

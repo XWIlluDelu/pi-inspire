@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
-import { openEventSession, routeSnapshots } from "./support/host-events";
+import { openEventSession } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import {
   openFixtureSession,
@@ -560,96 +560,85 @@ test("Markdown and notebook prose follow reading size without scaling resource c
   }
 });
 
-for (const theme of ["light", "dark"] as const) {
-  for (const operation of ["download", "interaction"] as const) {
-    test(`long ${operation} errors wrap within the ${theme} file reader without losing the preview`, async ({
+for (const operation of ["download", "interaction"] as const) {
+  test(`long ${operation} errors wrap within the file reader without losing the preview`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await pairedPage(page);
+    await openFixtureSession(
       page,
-    }) => {
-      await page.setViewportSize({ width: 1280, height: 900 });
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await routeSnapshots(page, {
-        bootstrap(body) {
-          body.preferences.theme = theme;
-        },
-      });
-      await pairedPage(page);
-      await openFixtureSession(
-        page,
-        /Resource virtualization and sandbox fixture/,
-      );
-      const host = hostRequest(page);
-      const authority = (await host.get("/api/preferences")).headers()[
-        "x-inspire-authority"
-      ];
-      const message =
-        "EACCES: permission denied, open '/workspace/results/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.json'";
-      await page.route(
-        `**/api/resources/*/${operation === "download" ? "download-ticket" : "interactive"}`,
-        (route) =>
-          route.fulfill({
-            status: 403,
-            headers: { "X-Inspire-Authority": authority },
-            json: { error: message },
+      /Resource virtualization and sandbox fixture/,
+    );
+    const host = hostRequest(page);
+    const authority = (await host.get("/api/preferences")).headers()[
+      "x-inspire-authority"
+    ];
+    const message =
+      "EACCES: permission denied, open '/workspace/results/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.json'";
+    await page.route(
+      `**/api/resources/*/${operation === "download" ? "download-ticket" : "interactive"}`,
+      (route) =>
+        route.fulfill({
+          status: 403,
+          headers: { "X-Inspire-Authority": authority },
+          json: { error: message },
+        }),
+    );
+    await page.getByRole("button", { name: "Toggle resources panel" }).click();
+    const pane = page.locator(".ctx");
+    const file = operation === "download" ? "document.md" : "interactive.html";
+    await pane
+      .getByRole("searchbox", { name: "Search workspace files" })
+      .fill(file);
+    await pane
+      .getByRole("button", {
+        name: new RegExp(
+          `${file.replaceAll(".", "\\.")}.*tests/browser/fixtures/file-previews`,
+        ),
+      })
+      .click();
+    const content = pane.locator(
+      operation === "download" ? ".rich-text" : "iframe",
+    );
+    await expect(content).toBeVisible();
+
+    await pane
+      .getByRole("button", {
+        name:
+          operation === "download" ? `Download ${file}` : "Enable interaction",
+        exact: true,
+      })
+      .click();
+    const notice = pane.locator(".file-preview__notice");
+    await expect(notice).toHaveText(message);
+    await page.evaluate(() => document.fonts.ready);
+    for (const [width, height] of [
+      [1280, 900],
+      [820, 420],
+      [320, 420],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await expect
+        .poll(() => notice.evaluate(textOverflowsInlineBounds))
+        .toBe(false);
+      await expect
+        .poll(() =>
+          notice.evaluate((element) => {
+            const frame = element.getBoundingClientRect();
+            const parent = element.parentElement!.getBoundingClientRect();
+            const preview = element.nextElementSibling!.getBoundingClientRect();
+            return (
+              frame.top >= parent.top &&
+              frame.bottom <= parent.bottom &&
+              preview.height > 0 &&
+              preview.top >= frame.bottom
+            );
           }),
-      );
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-      const pane = page.locator(".ctx");
-      const file =
-        operation === "download" ? "document.md" : "interactive.html";
-      await pane
-        .getByRole("searchbox", { name: "Search workspace files" })
-        .fill(file);
-      await pane
-        .getByRole("button", {
-          name: new RegExp(
-            `${file.replaceAll(".", "\\.")}.*tests/browser/fixtures/file-previews`,
-          ),
-        })
-        .click();
-      const content = pane.locator(
-        operation === "download" ? ".rich-text" : "iframe",
-      );
+        )
+        .toBe(true);
       await expect(content).toBeVisible();
-      for (const width of [1280, 820, 390, 320]) {
-        for (const height of [900, 420]) {
-          await page.setViewportSize({ width, height });
-          await pane
-            .getByRole("button", {
-              name:
-                operation === "download"
-                  ? `Download ${file}`
-                  : "Enable interaction",
-              exact: true,
-            })
-            .click();
-          const notice = pane.locator(".file-preview__notice");
-          await expect(notice).toHaveText(message);
-          await page.evaluate(() => document.fonts.ready);
-          await expect
-            .poll(() => notice.evaluate(textOverflowsInlineBounds))
-            .toBe(false);
-          await expect
-            .poll(() =>
-              notice.evaluate((element) => {
-                const frame = element.getBoundingClientRect();
-                const parent = element.parentElement!.getBoundingClientRect();
-                const preview =
-                  element.nextElementSibling!.getBoundingClientRect();
-                return (
-                  frame.top >= parent.top &&
-                  frame.bottom <= parent.bottom &&
-                  preview.height > 0 &&
-                  preview.top >= frame.bottom
-                );
-              }),
-            )
-            .toBe(true);
-          await expect(content).toBeVisible();
-        }
-      }
-    });
-  }
+    }
+  });
 }

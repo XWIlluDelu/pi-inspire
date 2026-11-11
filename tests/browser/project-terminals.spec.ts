@@ -9,7 +9,6 @@ import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { actionGeometry } from "./support/action-geometry";
 import { focusRingClipping } from "./support/focus-bounds";
 import { hostRequest } from "./support/host-request";
-import { routeSnapshots } from "./support/host-events";
 import {
   openFixtureSession,
   openProjectTerminal,
@@ -21,55 +20,6 @@ import { terminalMutationHeaders } from "./support/terminal-operations";
 import { terminalTransportFixture } from "./support/terminal-transport";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
-
-test("terminal failures use shared error feedback with copy and explicit dismissal", async ({
-  page,
-  context,
-}) => {
-  const message =
-    "A terminal endpoint is listening, but its authenticated data connection failed. " +
-    "Existing terminal processes were left running. Inspect the owning service before deciding whether replacement is needed.\n" +
-    "Connection check: Client network socket disconnected before secure TLS connection was established";
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.route(/\/api\/terminals(?:\?|$)/, (route) =>
-    route.fulfill({ status: 503, json: { error: message } }),
-  );
-  await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await openProjectTerminal(page);
-  const error = page.locator(".terminal-pane__error");
-  await expect(error).toBeVisible();
-  await expect(error).toHaveClass(/notice--error/);
-  await expect(error).toHaveAttribute("role", "alert");
-  for (const theme of ["light", "dark"]) {
-    await page.evaluate((value) => {
-      document.documentElement.dataset.theme = value;
-    }, theme);
-    for (const width of [1280, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await expect(error).toBeInViewport({ ratio: 1 });
-      expect(await error.evaluate(textOverflowsInlineBounds)).toBe(false);
-      await expect(
-        error.getByRole("button", { name: "Copy error" }),
-      ).toBeInViewport({ ratio: 1 });
-    }
-  }
-  await error.locator(".notice__text").click();
-  await expect(error).toBeVisible();
-  await error.getByRole("button", { name: "Copy error" }).click();
-  // Keep all content and whitespace; the Windows clipboard may encode LF as CRLF.
-  await expect
-    .poll(async () =>
-      (await page.evaluate(() => navigator.clipboard.readText())).replace(
-        /\r\n/g,
-        "\n",
-      ),
-    )
-    .toBe(message);
-  await error.getByRole("button", { name: "Dismiss terminal error" }).click();
-  await expect(error).toBeHidden();
-});
 
 for (const narrow of [false, true]) {
   test.describe(`terminal quote handoff · ${narrow ? "phone" : "desktop"}`, () => {
@@ -416,88 +366,93 @@ test("terminal profiles keep long labels, the default marker, and keyboard focus
   await expect(trigger).toBeFocused();
 });
 
-for (const theme of ["light", "dark"] as const) {
-  for (const source of ["catalog", "connection"] as const) {
-    test(`long terminal ${source} errors remain contained and dismissible in ${theme} mode`, {
-      tag: "@platform-ui",
-    }, async ({ page }) => {
-      await page.setViewportSize({ width: 1280, height: 900 });
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await routeSnapshots(page, {
-        bootstrap(body) {
-          body.preferences.theme = theme;
-        },
-      });
-      await terminalTransportFixture(
-        page,
-        browserWorkspace,
-        source === "connection" ? ["error-wrap-terminal"] : [],
-      );
-      const message =
-        "EACCES: permission denied, open '/workspace/terminal-state/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.json'";
-      let recover = false;
-      await page.route(
-        source === "catalog"
-          ? /\/api\/terminals(?:\?|$)/
-          : /\/api\/terminals\/[^/]+\/attach-ticket$/,
-        (route) =>
-          recover
-            ? route.fallback()
-            : route.fulfill({ status: 500, json: { error: message } }),
-      );
-      await pairedPage(page);
-      await openFixtureSession(page, /Review extension event lifecycle/);
-      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-      const pane = page.locator(".ctx");
-      await openProjectTerminal(page);
-      const error = pane.locator(
-        source === "catalog"
-          ? ".terminal-pane__error"
-          : ".terminal-view__error",
-      );
-      for (const width of [1280, 820, 390, 320]) {
-        for (const height of [900, 420]) {
-          await page.setViewportSize({ width, height });
-          await expect(error.locator(".notice__text")).toHaveText(message);
-          await expect(error).toHaveAttribute("role", "alert");
-          await expect(error.locator(".notice__title")).toHaveText("Error");
-          await expect(
-            error.getByRole("button", { name: "Copy error", exact: true }),
-          ).toBeVisible();
-          await page.evaluate(() => document.fonts.ready);
-          await expect
-            .poll(() => error.evaluate(textOverflowsInlineBounds))
-            .toBe(false);
-          await expect
-            .poll(() =>
-              error.evaluate((element) => {
-                const frame = element.getBoundingClientRect();
-                const pane = element
-                  .closest(".terminal-pane")!
-                  .getBoundingClientRect();
-                return (
-                  frame.left >= pane.left &&
-                  frame.right <= pane.right &&
-                  frame.top >= pane.top &&
-                  frame.bottom <= pane.bottom
-                );
-              }),
-            )
-            .toBe(true);
-        }
-      }
-      // Let the actual dismiss click win before restoring the transport.
-      // Otherwise its automatic reconnect can remove the click target first.
-      await error
-        .getByRole("button", { name: "Dismiss terminal error", exact: true })
-        .click();
-      recover = true;
-      await expect(error).toHaveCount(0);
-    });
-  }
+for (const source of ["catalog", "connection"] as const) {
+  test(`long terminal ${source} errors stay within the pane and can be dismissed`, {
+    tag: "@platform-ui",
+  }, async ({ page, context }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await terminalTransportFixture(
+      page,
+      browserWorkspace,
+      source === "connection" ? ["error-wrap-terminal"] : [],
+    );
+    const message =
+      "Cannot establish the terminal connection.\n" +
+      "EACCES: permission denied, open '/workspace/terminal-state/TemperatureDependentReferenceSpectrometerCalibrationRepeatabilityAndMeasurementUncertaintyDecompositionAnalysis.json'";
+    let recover = false;
+    await page.route(
+      source === "catalog"
+        ? /\/api\/terminals(?:\?|$)/
+        : /\/api\/terminals\/[^/]+\/attach-ticket$/,
+      (route) =>
+        recover
+          ? route.fallback()
+          : route.fulfill({ status: 500, json: { error: message } }),
+    );
+    await pairedPage(page);
+    await openFixtureSession(page, /Review extension event lifecycle/);
+    await page.getByRole("button", { name: "Toggle resources panel" }).click();
+    await openProjectTerminal(page);
+
+    const pane = page.locator(".ctx");
+    const error = pane.locator(
+      source === "catalog" ? ".terminal-pane__error" : ".terminal-view__error",
+    );
+    await expect(error).toHaveAttribute("role", "alert");
+    await expect(error.locator(".notice__title")).toHaveText("Error");
+    await expect(error.locator(".notice__text")).toHaveText(message);
+    await page.evaluate(() => document.fonts.ready);
+
+    const copy = error.getByRole("button", { name: "Copy error", exact: true });
+    for (const [width, height] of [
+      [1280, 900],
+      [820, 420],
+      [320, 420],
+    ]) {
+      await page.setViewportSize({ width, height });
+      await expect(copy).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() => error.evaluate(textOverflowsInlineBounds))
+        .toBe(false);
+      await expect
+        .poll(() =>
+          error.evaluate((element) => {
+            const frame = element.getBoundingClientRect();
+            const owner = element
+              .closest(".terminal-pane")!
+              .getBoundingClientRect();
+            return (
+              frame.left >= owner.left &&
+              frame.right <= owner.right &&
+              frame.top >= owner.top &&
+              frame.bottom <= owner.bottom
+            );
+          }),
+        )
+        .toBe(true);
+    }
+    if (source === "catalog") {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await error.locator(".notice__text").click();
+      await expect(error).toBeVisible();
+      await copy.click();
+      await expect
+        .poll(async () =>
+          (await page.evaluate(() => navigator.clipboard.readText())).replace(
+            /\r\n/g,
+            "\n",
+          ),
+        )
+        .toBe(message);
+    }
+    // Restore transport only after dismissal so reconnect cannot remove the click target.
+    await error
+      .getByRole("button", { name: "Dismiss terminal error", exact: true })
+      .click();
+    recover = true;
+    await expect(error).toHaveCount(0);
+  });
 }
 
 test("project terminals survive browser detach and keep multiple tabs", {

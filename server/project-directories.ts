@@ -39,7 +39,7 @@ export class ProjectDirectoryStore {
       await replacePrivateStateFile(
         this.path,
         `${JSON.stringify(merged, null, 2)}\n`,
-        lease.assertOwned,
+        { beforeReplace: lease.assertOwned },
       );
     } finally {
       await lease.release();

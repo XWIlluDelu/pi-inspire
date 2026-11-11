@@ -1,8 +1,9 @@
 import { constants } from "node:fs";
-import { lstat, open, readdir, rm, stat } from "node:fs/promises";
+import { open, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { TerminalHistoryBackend } from "./terminal-session-manager.js";
 import { ensurePrivateDirectory } from "./private-directory.js";
+import { readPrivateTerminalFile } from "./terminal-private-file.js";
+import type { TerminalHistoryBackend } from "./terminal-session-manager.js";
 
 const PRIVATE_FILE_MODE = 0o600;
 const MAX_HISTORY_BYTES = 32 * 1024 * 1024;
@@ -20,8 +21,10 @@ function historyFile(directory: string, terminalId: string): string {
 }
 
 export class TerminalHistoryStore implements TerminalHistoryBackend {
-  private readonly pending = new Map<string, Buffer[]>();
-  private readonly pendingSizes = new Map<string, number>();
+  private readonly pending = new Map<
+    string,
+    { chunks: Buffer[]; size: number }
+  >();
   private tail = Promise.resolve();
   private writing: Promise<void> | null = null;
   private timer: NodeJS.Timeout | null = null;
@@ -39,21 +42,19 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
       this.onError(error);
       return;
     }
-    let chunks = this.pending.get(terminalId) ?? [];
-    chunks.push(Buffer.from(data));
-    let pendingSize =
-      (this.pendingSizes.get(terminalId) ?? 0) + data.byteLength;
-    if (pendingSize > MAX_HISTORY_BYTES) {
-      const combined = Buffer.concat(chunks, pendingSize);
+    const pending = this.pending.get(terminalId) ?? { chunks: [], size: 0 };
+    pending.chunks.push(Buffer.from(data));
+    pending.size += data.byteLength;
+    if (pending.size > MAX_HISTORY_BYTES) {
+      const combined = Buffer.concat(pending.chunks, pending.size);
       const keep = combined.subarray(
         combined.byteLength -
           (RETAIN_HISTORY_BYTES - RESET_SEQUENCE.byteLength),
       );
-      chunks = [RESET_SEQUENCE, Buffer.from(keep)];
-      pendingSize = RESET_SEQUENCE.byteLength + keep.byteLength;
+      pending.chunks = [RESET_SEQUENCE, Buffer.from(keep)];
+      pending.size = RESET_SEQUENCE.byteLength + keep.byteLength;
     }
-    this.pending.set(terminalId, chunks);
-    this.pendingSizes.set(terminalId, pendingSize);
+    this.pending.set(terminalId, pending);
     if (this.timer) return;
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -65,80 +66,30 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
   async read(terminalId: string): Promise<Buffer | null> {
     await this.flush();
     const path = historyFile(this.directory, terminalId);
-    try {
-      const pathInfo = await lstat(path);
-      if (!pathInfo.isFile() || pathInfo.isSymbolicLink())
-        throw new Error(`The terminal history path is invalid: ${path}`);
-      if (
-        typeof process.getuid === "function" &&
-        pathInfo.uid !== process.getuid()
-      )
-        throw new Error(
-          `The terminal history file is owned by another user: ${path}`,
-        );
-      if (pathInfo.size > MAX_HISTORY_BYTES)
-        throw new Error(
-          `The terminal history file exceeds its size limit: ${path}`,
-        );
-      const noFollow =
-        process.platform === "win32" ? 0 : (constants.O_NOFOLLOW ?? 0);
-      const handle = await open(path, constants.O_RDONLY | noFollow);
-      try {
-        const openedInfo = await handle.stat();
-        if (
-          !openedInfo.isFile() ||
-          openedInfo.dev !== pathInfo.dev ||
-          openedInfo.ino !== pathInfo.ino
-        )
-          throw new Error(
-            `The terminal history path changed while opening: ${path}`,
-          );
-        if (process.platform !== "win32" && (openedInfo.mode & 0o077) !== 0)
-          throw new Error(`The terminal history file is not private: ${path}`);
-        return await handle.readFile();
-      } finally {
-        await handle.close();
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-      throw error;
-    }
+    return readPrivateTerminalFile(path, "history", MAX_HISTORY_BYTES);
   }
 
   async remove(terminalId: string): Promise<void> {
     await this.flush();
     const path = historyFile(this.directory, terminalId);
-    const operation = this.tail.then(async () => {
-      await rm(path, { force: true });
-    });
-    this.tail = operation.catch(this.onError);
-    await operation;
+    return this.enqueue(() => rm(path, { force: true }));
   }
 
-  async clear(): Promise<void> {
-    await this.flush();
-    const operation = this.tail.then(async () => {
-      let entries: string[];
-      try {
-        entries = await readdir(this.directory);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-        throw error;
-      }
-      await Promise.all(
-        entries
-          .filter((entry) => entry.endsWith(".log"))
-          .map((entry) => rm(join(this.directory, entry), { force: true })),
-      );
-    });
-    this.tail = operation.catch(this.onError);
-    await operation;
+  clear(): Promise<void> {
+    return this.removeLogs();
   }
 
-  async prune(retentionDays: number): Promise<void> {
+  prune(retentionDays: number): Promise<void> {
+    return this.removeLogs(retentionDays);
+  }
+
+  private async removeLogs(retentionDays?: number): Promise<void> {
     await this.flush();
-    const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1_000;
-    const operation = this.tail.then(async () => {
+    const cutoff =
+      retentionDays === undefined
+        ? undefined
+        : Date.now() - retentionDays * 24 * 60 * 60 * 1_000;
+    return this.enqueue(async () => {
       let entries: string[];
       try {
         entries = await readdir(this.directory);
@@ -151,13 +102,12 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
           .filter((entry) => entry.endsWith(".log"))
           .map(async (entry) => {
             const path = join(this.directory, entry);
+            if (cutoff === undefined) return rm(path, { force: true });
             const info = await stat(path).catch(() => null);
             if (info && info.mtimeMs < cutoff) await rm(path, { force: true });
           }),
       );
     });
-    this.tail = operation.catch(this.onError);
-    await operation;
   }
 
   async flush(): Promise<void> {
@@ -174,32 +124,31 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
 
   private enqueuePending(): void {
     if (this.writing || this.pending.size === 0) return;
-    const batches = [...this.pending].map(([id, chunks]) => [
-      id,
-      Buffer.concat(chunks),
-    ]) as Array<[string, Buffer]>;
+    const batches = [...this.pending].map(
+      ([id, { chunks, size }]) => [id, Buffer.concat(chunks, size)] as const,
+    );
     this.pending.clear();
-    this.pendingSizes.clear();
-    const writing = this.tail
-      .then(async () => {
-        await ensurePrivateDirectory(
-          this.directory,
-          "terminal history directory",
-          {
-            loose: "repair",
-          },
-        );
-        for (const [terminalId, data] of batches)
-          await this.appendBatch(terminalId, data);
-      })
-      .catch((error) => this.onError(error));
-    this.writing = writing;
-    this.tail = writing;
+    void this.enqueue(async () => {
+      await ensurePrivateDirectory(
+        this.directory,
+        "terminal history directory",
+        { loose: "repair" },
+      );
+      for (const [terminalId, data] of batches)
+        await this.appendBatch(terminalId, data);
+    });
+    this.writing = this.tail;
     const finished = (): void => {
       this.writing = null;
       if (!this.timer) this.enqueuePending();
     };
-    void writing.then(finished, finished);
+    void this.writing.then(finished, finished);
+  }
+
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    const result = this.tail.then(operation);
+    this.tail = result.catch((error) => this.onError(error));
+    return result;
   }
 
   private async appendBatch(terminalId: string, data: Buffer): Promise<void> {

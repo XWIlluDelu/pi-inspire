@@ -225,7 +225,7 @@ export class PreferencesStore {
     await replacePrivateStateFile(
       this.path,
       `${JSON.stringify(preferences, null, 2)}\n`,
-      assertOwned,
+      { beforeReplace: assertOwned },
     );
   }
 
