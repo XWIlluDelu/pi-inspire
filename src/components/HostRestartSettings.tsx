@@ -110,10 +110,17 @@ export function HostRestartSettings({
       operation.busyReason === "in-flight-operation")
       ? operation.scope
       : null;
+  const unconfirmedScope =
+    operation?.phase === "rejected" && operation.stopUnconfirmed
+      ? operation.scope
+      : null;
   const requestRestart = (scope: SettingsRestartScope) => {
     if (!state.status) return;
     const hostId = state.status.hostId;
-    if (scope === busyScope) void hostRestartClient.start(scope, hostId, true);
+    if (scope === unconfirmedScope)
+      void hostRestartClient.start(scope, hostId, true, true);
+    else if (scope === busyScope)
+      void hostRestartClient.start(scope, hostId, true);
     else setConfirmation({ scope, hostId });
   };
   const currentOperation =
@@ -159,12 +166,18 @@ export function HostRestartSettings({
           type="button"
           className="button button--danger-outline"
           aria-label={
-            busyScope === "host" ? "Stop work and restart Host" : "Restart Host"
+            unconfirmedScope === "host"
+              ? "Restart Host anyway"
+              : busyScope === "host"
+                ? "Stop work and restart Host"
+                : "Restart Host"
           }
           disabled={hostDisabled}
           onClick={() => requestRestart("host")}
         >
-          {busyScope === "host" ? (
+          {unconfirmedScope === "host" ? (
+            "Restart anyway"
+          ) : busyScope === "host" ? (
             "Stop work and restart"
           ) : (
             <>
@@ -186,12 +199,18 @@ export function HostRestartSettings({
           type="button"
           className="button button--danger-outline"
           aria-label={
-            busyScope === "all" ? "Stop work and restart all" : "Restart all"
+            unconfirmedScope === "all"
+              ? "Restart all anyway"
+              : busyScope === "all"
+                ? "Stop work and restart all"
+                : "Restart all"
           }
           disabled={allDisabled}
           onClick={() => requestRestart("all")}
         >
-          {busyScope === "all" ? (
+          {unconfirmedScope === "all" ? (
+            "Restart all anyway"
+          ) : busyScope === "all" ? (
             "Stop work and restart all"
           ) : (
             <>

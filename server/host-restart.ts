@@ -64,7 +64,8 @@ export class HostRestartController {
     if (previous) {
       if (
         previous.scope !== request.scope ||
-        Boolean(previous.interruptWork) !== Boolean(request.interruptWork)
+        previous.interruptWork !== request.interruptWork ||
+        previous.skipAttachedStop !== request.skipAttachedStop
       )
         throw requestError("Restart operation does not match.", 409);
       return { ...previous };
@@ -74,6 +75,13 @@ export class HostRestartController {
         "A restart is already pending. Check its status.",
         409,
       );
+    if (
+      request.skipAttachedStop &&
+      (!request.interruptWork ||
+        this.operation?.scope !== request.scope ||
+        !this.operation.stopUnconfirmed)
+    )
+      throw requestError("Review the unconfirmed Stop before restarting.", 409);
     // Never forget an identity and accidentally admit it again on this Host.
     if (this.receipts.size >= 32)
       throw requestError(
@@ -84,6 +92,7 @@ export class HostRestartController {
       id: request.operationId,
       scope: request.scope,
       ...(request.interruptWork ? { interruptWork: true as const } : {}),
+      ...(request.skipAttachedStop ? { skipAttachedStop: true as const } : {}),
       phase: "preparing",
     };
     this.receipts.set(operation.id, operation);
@@ -121,8 +130,18 @@ export class HostRestartController {
         );
       }
       leaseId = reservation.leaseId;
-      if (!preserveWork && operation.interruptWork)
-        await this.runtime.stopAttachedPiWork();
+      if (
+        !preserveWork &&
+        operation.interruptWork &&
+        !operation.skipAttachedStop
+      ) {
+        try {
+          await this.runtime.stopAttachedPiWork();
+        } catch (error) {
+          operation.stopUnconfirmed = true;
+          throw error;
+        }
+      }
       const result = await this.backend.request(
         operation.scope === "all",
         async () => {

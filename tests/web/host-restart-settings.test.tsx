@@ -157,6 +157,35 @@ describe("Settings restart controls", () => {
     },
   );
 
+  it("offers Restart anyway in the affected row after an unconfirmed Stop", () => {
+    fixture.state.status = {
+      hostId: "fixture-host",
+      available: true,
+      allAvailable: true,
+      operation: {
+        id: "unconfirmed-stop",
+        scope: "host",
+        phase: "rejected",
+        stopUnconfirmed: true,
+        error:
+          "Could not confirm Stop for session A. Work may still be running.",
+      },
+    };
+    render(<HostRestartSettings />);
+    expect(screen.getByRole("alert")).toHaveTextContent("session A");
+    const button = screen.getByRole("button", { name: "Restart Host anyway" });
+    expect(button.closest(".settings__field")).toHaveTextContent(
+      "Restart Host",
+    );
+    fireEvent.click(button);
+    expect(fixture.start).toHaveBeenCalledExactlyOnceWith(
+      "host",
+      "fixture-host",
+      true,
+      true,
+    );
+  });
+
   it("shows current preparation rather than an old reconnection notice", () => {
     fixture.state.status = {
       hostId: "fixture-host",

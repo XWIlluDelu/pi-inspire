@@ -1055,6 +1055,7 @@ export function createInspireServer(deps: AppDependencies): {
       operationId: z.string().uuid(),
       scope: z.enum(["host", "host-only", "all"]),
       interruptWork: z.literal(true).optional(),
+      skipAttachedStop: z.literal(true).optional(),
     })
     .strict();
   app.post("/api/host/restart", (request, response) => {

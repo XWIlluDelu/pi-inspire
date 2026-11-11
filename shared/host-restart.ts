@@ -7,8 +7,10 @@ export interface HostRestartOperation {
   scope: HostRestartScope;
   /** Explicit authority to interrupt Pi work; absent means idle-only. */
   interruptWork?: true;
+  skipAttachedStop?: true;
   phase: "preparing" | "submitted" | "unknown" | "rejected";
   busyReason?: "active-work" | "in-flight-operation" | "restart-pending";
+  stopUnconfirmed?: true;
   error?: string;
 }
 
@@ -26,4 +28,5 @@ export interface HostRestartRequest {
   operationId: string;
   scope: HostRestartScope;
   interruptWork?: true;
+  skipAttachedStop?: true;
 }
