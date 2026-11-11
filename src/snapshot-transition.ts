@@ -159,7 +159,7 @@ function renewedResourceInspection(
   transition: SnapshotTransition,
 ): Partial<AppState> {
   const empty = emptyResourceInspectionState();
-  const reference = previous.selectedResourceReference;
+  const inspection = previous.fileInspection;
   const resourceTabs =
     previous.cwd === transition.cwd
       ? previous.resourceTabs.filter(
@@ -169,23 +169,19 @@ function renewedResourceInspection(
   if (
     !previous.resourcesOpen ||
     previous.contextMode !== "files" ||
-    previous.fileBrowserView !== "preview" ||
+    inspection.kind !== "file" ||
     previous.cwd !== transition.cwd ||
-    !reference ||
-    reference.startsWith("pi-embedded://")
+    inspection.reference.startsWith("pi-embedded://")
   )
-    return { ...empty, resourceTabs };
+    return { ...empty, resourceTabs, gitDiff: null };
   return {
     ...empty,
     resourceTabs,
-    fileBrowserView: "preview",
-    selectedResourceReference: reference,
-    selectedResourceWorkspacePath:
-      previous.selectedResourceWorkspacePath ??
-      (previous.resourcePreview?.status === "ready"
-        ? (previous.resourcePreview.descriptor.workspacePath ?? null)
-        : null),
-    resourcePreview: { status: "loading", reference },
+    fileInspection: {
+      ...inspection,
+      preview: null,
+    },
+    gitDiff: null,
   };
 }
 
@@ -226,7 +222,6 @@ export function snapshotLifecyclePatch(
         gitStatusError: null,
         gitStatusLoading: false,
         gitStatusRefreshing: false,
-        selectedGitPathId: null,
         gitDiff: null,
       };
     case "view-changed":

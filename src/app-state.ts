@@ -35,7 +35,7 @@ import {
   type WorkspaceBrowserState,
 } from "./controllers/workspace-controller";
 import { type EventSlice, emptyEventSlice } from "./events";
-import type { ResourceFileTab, ResourcePreview } from "./resource-preview";
+import type { FileInspectionState } from "./resource-preview";
 
 /** Context-window occupancy from Pi's session stats. `tokens`/`percent` are
  * null right after a compaction until the next assistant response reports
@@ -142,7 +142,10 @@ export function contextUsage(stats: unknown): ContextUsage | null {
   return { tokens, contextWindow, percent };
 }
 
-export interface AppState extends EventSlice, WorkspaceBrowserState {
+export interface AppState
+  extends EventSlice,
+    WorkspaceBrowserState,
+    FileInspectionState {
   needsToken: boolean;
   connection: ManagedConnectionState;
   connectionProblem: ManagedConnectionProblem;
@@ -263,8 +266,6 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
   contextMode: "files" | "changes" | "branches" | "terminal";
-  /** Full browsing or the shared workspace/detail split. */
-  fileBrowserView: "browse" | "preview";
   /** The compact nav disclosure is store-owned so drawer remounts and
    * responsive transitions retain it. */
   branchTree: BranchTreeResponse | null;
@@ -272,19 +273,10 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
   branchTreeStale: boolean;
   branchTreeError: string | null;
   branchActionId: string | null;
-  /** Reference currently selected in the resources pane. */
-  selectedResourceReference: string | null;
-  /** Exact project-index path when the selection came from Files or Changes.
-   * Textual transcript references remain null so their path syntax can retain
-   * citation and line-location semantics. */
-  selectedResourceWorkspacePath: string | null;
-  resourcePreview: ResourcePreview | null;
-  resourceTabs: ResourceFileTab[];
   gitStatus: GitStatusResponse | null;
   gitStatusError: string | null;
   gitStatusLoading: boolean;
   gitStatusRefreshing: boolean;
-  selectedGitPathId: string | null;
   gitDiff: GitDiffView | null;
   /** Preflight standing for the bounded Files-pane references. A textual
    * mention stays unverified until the host classifies it for this branch
@@ -295,18 +287,10 @@ export interface AppState extends EventSlice, WorkspaceBrowserState {
 
 export function emptyResourceInspectionState(): Pick<
   AppState,
-  | "fileBrowserView"
-  | "selectedResourceReference"
-  | "selectedResourceWorkspacePath"
-  | "resourcePreview"
-  | "resourceTabs"
-  | "resourceStanding"
+  "fileInspection" | "resourceTabs" | "resourceStanding"
 > {
   return {
-    fileBrowserView: "browse",
-    selectedResourceReference: null,
-    selectedResourceWorkspacePath: null,
-    resourcePreview: null,
+    fileInspection: { kind: "browse" },
     resourceTabs: [],
     resourceStanding: {},
   };
@@ -414,7 +398,6 @@ export function createInitialAppState(): AppState {
     gitStatusError: null,
     gitStatusLoading: false,
     gitStatusRefreshing: false,
-    selectedGitPathId: null,
     gitDiff: null,
     error: null,
   };

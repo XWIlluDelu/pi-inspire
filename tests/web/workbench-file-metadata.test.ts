@@ -32,15 +32,12 @@ describe("file-tab navigation metadata", () => {
     saveWorkbench(key, {
       ...createInitialAppState(),
       resourceTabs: tabs,
-      selectedResourceReference: "git-path-2",
-      fileBrowserView: "preview",
+      fileInspection: { kind: "file", reference: "git-path-2", preview: null },
     });
 
     expect(readWorkbench(key)).toMatchObject({
       resourceTabs: tabs,
-      selectedResourceReference: "git-path-2",
-      selectedResourceWorkspacePath: null,
-      fileBrowserView: "preview",
+      fileInspection: { kind: "file", reference: "git-path-2", preview: null },
     });
     expect(
       readWorkbench(workbenchSessionKey("other-session", "/project")),

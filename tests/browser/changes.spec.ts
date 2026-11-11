@@ -550,7 +550,7 @@ for (const touch of [false, true]) {
   });
 }
 
-test("Files and Changes open one file tab with explicit body and diff views", async ({
+test("Files and Changes share a tab and restore its comparison after reload", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -601,6 +601,10 @@ test("Files and Changes open one file tab with explicit body and diff views", as
   await expect(
     resources.getByRole("region", { name: /Source changes for .*page\.html/ }),
   ).toBeVisible();
+  await expect(resources.getByLabel("Change position")).toHaveText("1/1");
+  await page.reload();
+  await expect(fileTab).toHaveAttribute("aria-selected", "true");
+  await expect(changes).toHaveAttribute("aria-pressed", "true");
   await expect(resources.getByLabel("Change position")).toHaveText("1/1");
   await changes.click();
   await expect(changes).toHaveAttribute("aria-pressed", "false");

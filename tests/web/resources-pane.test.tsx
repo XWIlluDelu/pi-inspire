@@ -839,7 +839,10 @@ describe("Files pane", () => {
       ]),
     );
     expect(resourceResolveRequests).toBe(0);
-    expect(store.getState().fileBrowserView).toBe("browse");
+    expect(within(pane).getByRole("tab", { name: "Files" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     fireEvent.click(folder);
     expect(folder).toHaveAttribute("aria-expanded", "true");
   });
@@ -1033,12 +1036,7 @@ describe("Files pane", () => {
       name: "Context panel",
     });
     await within(pane).findByRole("heading", { name: "Previewed notes" });
-    await waitFor(() =>
-      expect(store.getState().selectedGitPathId).toBe("notes"),
-    );
-
     fireEvent.click(within(pane).getByRole("tab", { name: "Files" }));
-    expect(store.getState().selectedGitPathId).toBe("notes");
     fireEvent.click(within(pane).getByRole("tab", { name: "Changes" }));
     expect(
       await within(pane).findByRole("button", {
@@ -1787,7 +1785,6 @@ describe("Files pane", () => {
       "sandbox",
       "",
     );
-    expect(store.getState().fileBrowserView).toBe("preview");
     expect(htmlStarts).toBe(1);
   });
 

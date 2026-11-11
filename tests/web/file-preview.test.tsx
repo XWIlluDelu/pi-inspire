@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createInitialAppState } from "../../src/app-state";
 import { selectContextPaneView } from "../../src/components/context-pane-view";
 import { FilePreview } from "../../src/components/FilePreview";
+import type { ResourcePreview } from "../../src/resource-preview";
 import { store } from "../../src/store";
 import type { FileReadingState } from "../../src/workbench-session";
 
@@ -14,10 +15,23 @@ const initial = {
   sessionId: "s1",
   cwd: "/project",
   resourcesOpen: true,
-  fileBrowserView: "preview" as const,
-  selectedResourceReference: "notes.md",
-  selectedResourceWorkspacePath: "notes.md",
 };
+function fileState(
+  preview: ResourcePreview,
+  reference = preview.reference,
+  workspacePath = reference,
+) {
+  return {
+    ...initial,
+    fileInspection: {
+      kind: "file" as const,
+      reference,
+      workspacePath,
+      preview,
+    },
+  };
+}
+
 function ready(id: string, text = "# Notes\n\nOriginal source") {
   return {
     status: "ready" as const,
@@ -46,7 +60,7 @@ describe("Files reading continuity", () => {
     };
     const { container, rerender } = render(
       <FilePreview
-        state={{ ...initial, resourcePreview: ready("first") }}
+        state={fileState(ready("first"))}
         readingState={readingState}
       />,
     );
@@ -56,10 +70,7 @@ describe("Files reading continuity", () => {
     fireEvent.scroll(reader, { target: { scrollTop: 137, scrollLeft: 48 } });
     rerender(
       <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: ready("renewed", "# Notes\n\nRefreshed content"),
-        }}
+        state={fileState(ready("renewed", "# Notes\n\nRefreshed content"))}
         readingState={readingState}
       />,
     );
@@ -72,27 +83,21 @@ describe("Files reading continuity", () => {
 
   it("keeps the chosen Source view and both offsets across a refreshed file handle", () => {
     const { rerender } = render(
-      <FilePreview state={{ ...initial, resourcePreview: ready("first") }} />,
+      <FilePreview state={fileState(ready("first"))} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Source" }));
     const source = screen.getByRole("region", { name: "File source" });
     fireEvent.scroll(source, { target: { scrollTop: 137, scrollLeft: 48 } });
     rerender(
       <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: { ...ready("first"), refreshing: true },
-        }}
+        state={fileState({ ...ready("first"), refreshing: true })}
       />,
     );
     expect(screen.getByRole("region", { name: "File source" })).toBe(source);
     expect(source).toHaveTextContent("Original source");
     rerender(
       <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: ready("renewed", "# Notes\n\nRefreshed source"),
-        }}
+        state={fileState(ready("renewed", "# Notes\n\nRefreshed source"))}
       />,
     );
     const refreshed = screen.getByRole("region", { name: "File source" });
@@ -102,19 +107,9 @@ describe("Files reading continuity", () => {
     expect(screen.getByRole("button", { name: "Preview" })).toBeVisible();
 
     // A different file owns its default view; returning does not revive state.
-    rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          selectedResourceReference: "other.md",
-          resourcePreview: ready("other"),
-        }}
-      />,
-    );
+    rerender(<FilePreview state={fileState(ready("other"), "other.md")} />);
     expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
-    rerender(
-      <FilePreview state={{ ...initial, resourcePreview: ready("third") }} />,
-    );
+    rerender(<FilePreview state={fileState(ready("third"))} />);
     expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
   });
 
@@ -133,18 +128,11 @@ describe("Files reading continuity", () => {
       },
       objectUrl: "blob:static-page",
     };
-    const { rerender } = render(
-      <FilePreview state={{ ...initial, resourcePreview: preview }} />,
-    );
+    const { rerender } = render(<FilePreview state={fileState(preview)} />);
     fireEvent.click(screen.getByRole("button", { name: "Enable interaction" }));
     await screen.findByRole("button", { name: "Stop interaction" });
     rerender(
-      <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: { ...preview, refreshing: true },
-        }}
-      />,
+      <FilePreview state={fileState({ ...preview, refreshing: true })} />,
     );
     expect(release).toHaveBeenCalledOnce();
     expect(
@@ -155,10 +143,7 @@ describe("Files reading continuity", () => {
     );
     rerender(
       <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: { ...preview, refreshError: "Still unavailable" },
-        }}
+        state={fileState({ ...preview, refreshError: "Still unavailable" })}
       />,
     );
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -168,7 +153,7 @@ describe("Files reading continuity", () => {
       screen.getByRole("button", { name: "Enable interaction" }),
     ).toBeEnabled();
     expect(start).toHaveBeenCalledOnce();
-    rerender(<FilePreview state={{ ...initial, resourcePreview: preview }} />);
+    rerender(<FilePreview state={fileState(preview)} />);
     expect(screen.queryByRole("status")).toBeNull();
   });
 
@@ -183,30 +168,23 @@ describe("Files reading continuity", () => {
       "code",
       Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join("\n"),
     );
-    const state = {
-      ...initial,
-      selectedResourceReference: "first.ts",
-      selectedResourceWorkspacePath: "first.ts",
-      resourcePreview: {
-        ...preview,
-        reference: "first.ts",
-        descriptor: {
-          ...preview.descriptor,
-          kind: "text" as const,
-          name: "first.ts",
-        },
+    const sourcePreview = {
+      ...preview,
+      reference: "first.ts",
+      descriptor: {
+        ...preview.descriptor,
+        kind: "text" as const,
+        name: "first.ts",
       },
     };
+    const state = fileState(sourcePreview);
     const { rerender } = render(<FilePreview state={state} />);
     fireEvent.scroll(screen.getByRole("region", { name: "File source" }), {
       target: { scrollTop: 137, scrollLeft: 48 },
     });
     rerender(
       <FilePreview
-        state={{
-          ...state,
-          resourcePreview: { status: "loading", reference: "first.ts" },
-        }}
+        state={fileState({ status: "loading", reference: "first.ts" })}
       />,
     );
     rerender(<FilePreview state={state} />);
@@ -215,28 +193,17 @@ describe("Files reading continuity", () => {
     expect(source.scrollLeft).toBe(48);
     rerender(
       <FilePreview
-        state={{
-          ...state,
-          selectedResourceReference: "first.ts:20",
-          resourcePreview: {
-            ...state.resourcePreview,
-            reference: "first.ts:20",
-          },
-        }}
+        state={fileState(
+          { ...sourcePreview, reference: "first.ts:20" },
+          "first.ts:20",
+          "first.ts",
+        )}
       />,
     );
     expect(screen.getByRole("region", { name: "File source" }).scrollTop).toBe(
       380,
     );
-    rerender(
-      <FilePreview
-        state={{
-          ...state,
-          selectedResourceReference: "second.ts",
-          selectedResourceWorkspacePath: "second.ts",
-        }}
-      />,
-    );
+    rerender(<FilePreview state={fileState(sourcePreview, "second.ts")} />);
     expect(screen.getByRole("region", { name: "File source" }).scrollTop).toBe(
       0,
     );
@@ -247,18 +214,18 @@ describe("Files reading continuity", () => {
 
   it("does not carry source reading state to another session or transport", () => {
     const { rerender } = render(
-      <FilePreview state={{ ...initial, resourcePreview: ready("first") }} />,
+      <FilePreview state={fileState(ready("first"))} />,
     );
     for (const owner of [
-      { ...initial, sessionId: "s2" },
-      { ...initial, sessionId: "s2", transportGeneration: 2 },
+      { sessionId: "s2" },
+      { sessionId: "s2", transportGeneration: 2 },
     ]) {
       fireEvent.click(screen.getByRole("button", { name: "Source" }));
       fireEvent.scroll(screen.getByRole("region", { name: "File source" }), {
         target: { scrollTop: 137, scrollLeft: 48 },
       });
       rerender(
-        <FilePreview state={{ ...owner, resourcePreview: ready("renewed") }} />,
+        <FilePreview state={{ ...fileState(ready("renewed")), ...owner }} />,
       );
       expect(screen.queryByRole("region", { name: "File source" })).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Source" }));
@@ -295,7 +262,7 @@ describe("Files Git view", () => {
         rendered: { current: { top: 263, left: 0 } },
         mode,
       };
-      const state = { ...initial, resourcePreview: ready("file") };
+      const state = fileState(ready("file"));
       const { rerender, container } = render(
         <FilePreview state={state} readingState={readingState} />,
       );
@@ -356,7 +323,7 @@ describe("Files Git view", () => {
       rendered: { current: { top: 263, left: 0 } },
       mode: "preview",
     };
-    const state = { ...initial, resourcePreview: ready("file") };
+    const state = fileState(ready("file"));
     const { container, rerender } = render(
       <FilePreview
         state={state}
@@ -384,7 +351,7 @@ describe("Files Git view", () => {
 
   it("keeps actions expanded through programmatic scrolling and collapses on reading intent", () => {
     const { container } = render(
-      <FilePreview state={{ ...initial, resourcePreview: ready("file") }} />,
+      <FilePreview state={fileState(ready("file"))} />,
     );
     const content = container.querySelector(".file-preview__content")!;
     fireEvent.scroll(content);
@@ -416,7 +383,7 @@ describe("Files Git view", () => {
       },
       objectUrl: "blob:static-page",
     };
-    const state = { ...initial, resourcePreview: preview };
+    const state = fileState(preview);
     const { rerender, container } = render(<FilePreview state={state} />);
     fireEvent.click(screen.getByRole("button", { name: "Enable interaction" }));
     await screen.findByRole("button", { name: "Stop interaction" });
@@ -440,14 +407,11 @@ describe("Files Git view", () => {
   it("shows a deleted file's diff while keeping its unavailable download disabled", () => {
     render(
       <FilePreview
-        state={{
-          ...initial,
-          resourcePreview: {
-            status: "error",
-            reference: "notes.md",
-            message: "File was deleted",
-          },
-        }}
+        state={fileState({
+          status: "error",
+          reference: "notes.md",
+          message: "File was deleted",
+        })}
         changes={changes}
       />,
     );

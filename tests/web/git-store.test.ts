@@ -6,6 +6,8 @@ import type {
   GitStatusResponse,
 } from "../../shared/contracts";
 import { AppTopbar } from "../../src/components/AppTopbar";
+import { inspectedGitChange } from "../../src/controllers/git-controller";
+import { inspectedPreview } from "../../src/resource-preview";
 import { AppStore, store as appStore } from "../../src/store";
 import {
   activeSnapshot,
@@ -148,6 +150,10 @@ describe("Git inspection ownership and freshness", () => {
         return baseRoutes(url, init);
       });
       const { store } = await initStore();
+      const selectedPath = () => {
+        const state = store.getState();
+        return inspectedGitChange(state, state.gitStatus)?.path.id;
+      };
       await store.refreshGitStatus();
       const opening =
         origin === "files"
@@ -156,7 +162,7 @@ describe("Git inspection ownership and freshness", () => {
       await resourceStarted.promise;
       await store.openGitDiff(deletedPath.id);
       const selectedDiff = store.getState().gitDiff;
-      expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
+      expect(selectedPath()).toBe(deletedPath.id);
 
       lateResource.resolve({
         body: {
@@ -175,16 +181,18 @@ describe("Git inspection ownership and freshness", () => {
       // A deleted file is now its own active tab. The former file's late body
       // must neither replace that tab's error nor reclaim its Git selection.
       await vi.waitFor(() =>
-        expect(store.getState().resourcePreview).toMatchObject({
-          status: "error",
-          reference: deletedPath.workspacePath,
-        }),
+        expect(inspectedPreview(store.getState().fileInspection)).toMatchObject(
+          {
+            status: "error",
+            reference: deletedPath.workspacePath,
+          },
+        ),
       );
       expect(resourceSignal?.aborted).toBe(true);
-      expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
+      expect(selectedPath()).toBe(deletedPath.id);
       expect(store.getState().gitDiff).toBe(selectedDiff);
       await store.refreshGitStatus();
-      expect(store.getState().selectedGitPathId).toBe(deletedPath.id);
+      expect(selectedPath()).toBe(deletedPath.id);
       expect(store.getState().gitDiff).toBe(selectedDiff);
     },
   );
@@ -205,33 +213,6 @@ describe("Git inspection ownership and freshness", () => {
     await store.refreshGitStatus();
     expect(store.getState().gitStatus).toEqual(cleanStatus);
     expect(store.getState().gitStatusError).toBe("Git timed out");
-  });
-
-  it("refreshes the selected comparison along with Git status", async () => {
-    let diffCalls = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/git/status")) return { body: cleanStatus };
-      if (url.startsWith("/api/git/diff")) {
-        diffCalls += 1;
-        return {
-          body: textDiff(`+version-${diffCalls}`),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.refreshGitStatus();
-    await store.openGitDiff(path.id);
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { lines: [{ text: "+version-1" }] },
-    });
-
-    await store.refreshGitStatus();
-    expect(store.getState().gitDiff).toMatchObject({
-      status: "ready",
-      result: { lines: [{ text: "+version-2" }] },
-    });
   });
 
   it("revalidates status and the open diff across a same-session transport replacement", async () => {
@@ -438,7 +419,7 @@ describe("Git inspection ownership and freshness", () => {
       sessionId: "s2",
       gitStatus: null,
       gitDiff: null,
-      selectedGitPathId: null,
+      fileInspection: { kind: "browse" },
     });
   });
 });

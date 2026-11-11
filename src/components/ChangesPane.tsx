@@ -18,11 +18,8 @@ import {
   useRef,
   useState,
 } from "react";
-import type {
-  GitDiffResponse,
-  GitFileChange,
-  GitStatusResponse,
-} from "../../shared/contracts";
+import type { GitDiffResponse, GitFileChange } from "../../shared/contracts";
+import { inspectedGitChange } from "../controllers/git-controller";
 import { fileIconForPath } from "../file-icons";
 import {
   gitDecorationForChange,
@@ -36,14 +33,6 @@ import { ContextPaneState } from "./ContextPaneState";
 import type { ContextPaneView } from "./context-pane-view";
 import { PiLoader } from "./PiLoader";
 import { ResourcePathLabel } from "./ResourcePathLabel";
-
-function selectedChange(
-  status: GitStatusResponse | null,
-  pathId: string | null,
-): GitFileChange | null {
-  if (!status || status.kind !== "repository" || !pathId) return null;
-  return status.files.find((file) => file.path.id === pathId) ?? null;
-}
 
 function pathName(change: GitFileChange): string {
   return change.path.utf8Path ?? change.path.display;
@@ -331,6 +320,7 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
     );
   const conflicts = status.files.filter((file) => file.conflict);
   const changes = status.files.filter((file) => !file.conflict);
+  const selectedPathId = inspectedGitChange(state, status)?.path.id ?? null;
   return (
     <>
       {status.truncated ? (
@@ -341,12 +331,12 @@ function ChangesIndex({ state }: { state: ContextPaneView }) {
       <ChangeGroup
         title="Conflicts"
         changes={conflicts}
-        selectedPathId={state.selectedGitPathId}
+        selectedPathId={selectedPathId}
       />
       <ChangeGroup
         title="Changes"
         changes={changes}
-        selectedPathId={state.selectedGitPathId}
+        selectedPathId={selectedPathId}
       />
     </>
   );
@@ -403,9 +393,9 @@ export function ChangesDetail({
     rendered: { current: null },
   });
   const reading = readingState ?? localReading.current;
-  const pathId = state.selectedGitPathId;
-  const change = selectedChange(state.gitStatus, pathId);
-  const hasComparison = change !== null;
+  const change = inspectedGitChange(state, state.gitStatus);
+  const pathId = change?.path.id ?? null;
+  const hasComparison = change !== undefined;
   const pending = state.gitDiff;
   // A retained response is usable only for the currently selected comparison.
   const diffView =
@@ -428,7 +418,7 @@ export function ChangesDetail({
   const scope = JSON.stringify([
     state.sessionId,
     state.cwd,
-    state.selectedResourceReference ?? pathId,
+    state.fileInspection.reference,
   ]);
   const statusScope = JSON.stringify([scope, state.transportGeneration]);
   const confirmedStatusScope = useRef<string | null>(null);

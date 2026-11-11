@@ -4,6 +4,7 @@ import { waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   injectHtmlPreviewCsp,
+  inspectedPreview,
   MAX_MEDIA_PREVIEW_BYTES,
   NOTEBOOK_PREVIEW_BYTES,
 } from "../../src/resource-preview";
@@ -194,8 +195,8 @@ describe("resource previews", () => {
     await store.probeResources([...references, "newly-loaded.md"]);
     await store.probeResources([...references, "newly-loaded.md"]);
     expect(batches.map((batch) => batch.length)).toEqual([16, 2, 1]);
-    expect(store.getState().selectedResourceReference).toBeNull();
-    expect(store.getState().resourcePreview).toBeNull();
+    expect(store.getState().fileInspection.reference).toBeUndefined();
+    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
     expect(store.getState().resourceStanding).toMatchObject({
       "file-0.md": { availability: "available" },
       "missing/file.md": { availability: "missing" },
@@ -496,7 +497,7 @@ describe("resource previews", () => {
     await store.openResource("analysis.ipynb");
 
     expect(range).toBe(`bytes=0-${NOTEBOOK_PREVIEW_BYTES - 1}`);
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ready",
       truncated: false,
       text: notebook,
@@ -526,7 +527,9 @@ describe("resource previews", () => {
     stubContent("image");
     const { store, socket } = await initStore();
     await store.openResource("pi-embedded://0/0");
-    expect(store.getState().resourcePreview).toMatchObject({ status: "ready" });
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
+      status: "ready",
+    });
 
     socket.emit({
       type: "snapshot",
@@ -541,8 +544,8 @@ describe("resource previews", () => {
     });
 
     expect(store.getState().sessionId).toBe("s1");
-    expect(store.getState().selectedResourceReference).toBeNull();
-    expect(store.getState().resourcePreview).toBeNull();
+    expect(store.getState().fileInspection.reference).toBeUndefined();
+    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
   });
 
   it("uses the transfer total for grown and shrunk files instead of resolve metadata", async () => {
@@ -594,14 +597,14 @@ describe("resource previews", () => {
     const { store } = await initStore();
 
     await store.openResource("grown.md");
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ready",
       truncated: true,
       descriptor: { size: 20 },
     });
 
     await store.openResource("shrunk.md");
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ready",
       truncated: false,
       descriptor: { size: 4 },
@@ -635,7 +638,7 @@ describe("resource previews", () => {
 
     await store.openResource("large.png");
     expect(contentRequests).toBe(0);
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ready",
       contentUnavailable: "too-large",
     });
@@ -677,7 +680,7 @@ describe("resource previews", () => {
     });
     const { store } = await initStore();
     await store.openResource("report.pdf");
-    const preview = store.getState().resourcePreview;
+    const preview = inspectedPreview(store.getState().fileInspection);
     expect(preview?.status).toBe("ready");
     if (preview?.status !== "ready") throw new Error("PDF did not load");
     expect(await preview.pdfBlob?.text()).toBe(JSON.stringify("%PDF-1.4"));
@@ -685,8 +688,12 @@ describe("resource previews", () => {
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(range).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
     await store.openResource("missing.pdf");
-    expect(store.getState().resourcePreview).toMatchObject({ status: "error" });
-    expect(store.getState().resourcePreview).not.toHaveProperty("pdfBlob");
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
+      status: "error",
+    });
+    expect(
+      inspectedPreview(store.getState().fileInspection),
+    ).not.toHaveProperty("pdfBlob");
   });
 
   it("range-bounds media and aborts an obsolete transfer", async () => {
@@ -743,8 +750,8 @@ describe("resource previews", () => {
 
     expect(firstSignal?.aborted).toBe(true);
     expect(secondRange).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
-    expect(store.getState().selectedResourceReference).toBe("second.png");
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(store.getState().fileInspection.reference).toBe("second.png");
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ready",
       objectUrl: "blob:second",
     });
@@ -900,8 +907,8 @@ describe("resource previews", () => {
     await opening;
 
     expect(signal?.aborted).toBe(true);
-    expect(store.getState().resourcePreview).toBeNull();
-    expect(store.getState().selectedResourceReference).toBeNull();
+    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
+    expect(store.getState().fileInspection.reference).toBeUndefined();
   });
 
   it("surfaces a truthful error state when the host rejects the reference", async () => {
@@ -909,7 +916,7 @@ describe("resource previews", () => {
     const { store } = await initStore();
 
     await store.openResource("missing/file.md");
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "error",
       message: "The referenced file was not found",
     });
@@ -922,7 +929,9 @@ describe("resource previews", () => {
     // …but a reference that resolved and then failed to transfer keeps its
     // standing: the file exists, the bytes did not arrive.
     await store.openResource("notes/result.md");
-    expect(store.getState().resourcePreview).toMatchObject({ status: "error" });
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
+      status: "error",
+    });
     expect(store.getState().resourceStanding["notes/result.md"]).toMatchObject({
       availability: "available",
     });
@@ -968,7 +977,7 @@ describe("resource previews", () => {
     const { store } = await initStore();
 
     await store.openResource("notes.md");
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ambiguous",
       reference: "notes.md",
       matches: ["a/notes.md", "b/notes.md"],
@@ -1016,7 +1025,7 @@ describe("resource previews", () => {
     const { store, socket } = await initStore();
 
     await store.openResource("chart.png");
-    expect(store.getState().resourcePreview).toMatchObject({
+    expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
       status: "ready",
       objectUrl: "blob:preview-0",
     });
@@ -1026,8 +1035,8 @@ describe("resource previews", () => {
       type: "snapshot",
       data: activeSnapshot({ sessionId: "s2", sessionName: "Other" }),
     });
-    expect(store.getState().selectedResourceReference).toBeNull();
-    expect(store.getState().resourcePreview).toBeNull();
+    expect(store.getState().fileInspection.reference).toBeUndefined();
+    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
     expect(revoked).toEqual(["blob:preview-0"]);
   });
 
@@ -1038,9 +1047,11 @@ describe("resource previews", () => {
 
     await store.openResource("notes/result.md");
     expect(store.getState()).toMatchObject({
-      fileBrowserView: "preview",
-      selectedResourceReference: "notes/result.md",
-      resourcePreview: { status: "ready" },
+      fileInspection: {
+        kind: "file",
+        reference: "notes/result.md",
+        preview: { status: "ready" },
+      },
     });
 
     socket.emit({
@@ -1055,13 +1066,17 @@ describe("resource previews", () => {
     });
 
     expect(store.getState()).toMatchObject({
-      fileBrowserView: "preview",
-      selectedResourceReference: "notes/result.md",
-      resourcePreview: { status: "loading" },
+      fileInspection: {
+        kind: "file",
+        reference: "notes/result.md",
+        preview: { status: "loading" },
+      },
       resourceStanding: {},
     });
     await waitFor(() =>
-      expect(store.getState().resourcePreview?.status).toBe("ready"),
+      expect(inspectedPreview(store.getState().fileInspection)?.status).toBe(
+        "ready",
+      ),
     );
   });
 });

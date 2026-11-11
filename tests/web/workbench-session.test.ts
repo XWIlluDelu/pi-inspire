@@ -1,5 +1,6 @@
 import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { inspectedPreview } from "../../src/resource-preview";
 import { AppStore } from "../../src/store";
 import {
   lastWorkbenchSession,
@@ -119,14 +120,15 @@ describe("browser workbench restoration", () => {
     saveNavCollapsed(true);
     const second = await reload();
     await waitFor(() =>
-      expect(second.getState().resourcePreview?.status).toBe("ready"),
+      expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
+        "ready",
+      ),
     );
     expect(bootstrapDetails).toEqual([null, "s1"]);
     expect(second.getState()).toMatchObject({
       resourcesOpen: true,
       contextMode: "files",
-      fileBrowserView: "preview",
-      selectedResourceReference: "other.txt",
+      fileInspection: { kind: "file", reference: "other.txt" },
       resourceTabs: [
         { reference: "readme.md", workspacePath: "readme.md" },
         { reference: "other.txt", workspacePath: "other.txt" },
@@ -155,7 +157,7 @@ describe("browser workbench restoration", () => {
       resourcesOpen: true,
       contextMode: "terminal",
       resourceTabs: [{ reference: "readme.md" }],
-      resourcePreview: null,
+      fileInspection: { kind: "file", preview: null },
     });
     expect(resolved).toEqual(["readme.md"]);
     expect(
@@ -171,12 +173,16 @@ describe("browser workbench restoration", () => {
     missing = "deleted.txt";
     const second = await reload();
     await waitFor(() =>
-      expect(second.getState().resourcePreview?.status).toBe("error"),
+      expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
+        "error",
+      ),
     );
     expect(second.getState()).toMatchObject({
-      fileBrowserView: "preview",
       resourceTabs: [{ reference: "deleted.txt" }],
-      resourcePreview: { status: "error", message: "File was deleted" },
+      fileInspection: {
+        kind: "file",
+        preview: { status: "error", message: "File was deleted" },
+      },
     });
   });
 
@@ -219,7 +225,9 @@ describe("browser workbench restoration", () => {
     authorityId = "22222222-2222-4222-8222-222222222222";
     const restarted = await reload();
     await waitFor(() =>
-      expect(restarted.getState().resourcePreview?.status).toBe("ready"),
+      expect(
+        inspectedPreview(restarted.getState().fileInspection)?.status,
+      ).toBe("ready"),
     );
     expect(restarted.getState().resourceTabs).toEqual([
       { reference: "one.txt", workspacePath: "one.txt" },
@@ -236,16 +244,17 @@ describe("browser workbench restoration", () => {
     expect(second.getState()).toMatchObject({
       resourcesOpen: false,
       resourceTabs: [{ reference: "one.txt" }],
-      resourcePreview: null,
+      fileInspection: { kind: "file", preview: null },
     });
     expect(second.getState()).toMatchObject({
-      selectedResourceReference: "one.txt",
-      fileBrowserView: "preview",
+      fileInspection: { kind: "file", reference: "one.txt" },
     });
     expect(resolved).toEqual(["one.txt"]);
     second.setResourcesOpen(true);
     await waitFor(() =>
-      expect(second.getState().resourcePreview?.status).toBe("ready"),
+      expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
+        "ready",
+      ),
     );
     expect(resolved).toEqual(["one.txt", "one.txt"]);
   });
@@ -261,9 +270,11 @@ describe("browser workbench restoration", () => {
     pending.resolve();
     await reconnect;
     await waitFor(() =>
-      expect(store.getState().resourcePreview?.status).toBe("ready"),
+      expect(inspectedPreview(store.getState().fileInspection)?.status).toBe(
+        "ready",
+      ),
     );
-    expect(store.getState().selectedResourceReference).toBe("new.txt");
+    expect(store.getState().fileInspection.reference).toBe("new.txt");
     expect(store.getState().resourceTabs.map((tab) => tab.reference)).toEqual([
       "old.txt",
       "new.txt",
@@ -288,8 +299,11 @@ describe("browser workbench restoration", () => {
       await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
       expect(store.getState()).toMatchObject({
         resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
-        selectedResourceReference: "two.txt",
-        resourcePreview: { status: "loading", reference: "two.txt" },
+        fileInspection: {
+          kind: "file",
+          reference: "two.txt",
+          preview: { status: "loading", reference: "two.txt" },
+        },
         workspaceQuery: "known",
         workspaceExpandedDirs: ["src"],
         workspaceShowHidden: true,
@@ -303,9 +317,11 @@ describe("browser workbench restoration", () => {
       await reconnect;
       expect(store.getState()).toMatchObject({
         resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
-        selectedResourceReference: "two.txt",
+        fileInspection: {
+          kind: gesture === "browse" ? "browse" : "file",
+          reference: "two.txt",
+        },
         contextMode: gesture === "terminal" ? "terminal" : "files",
-        fileBrowserView: gesture === "browse" ? "browse" : "preview",
         resourcesOpen: gesture !== "close",
         workspaceQuery: "known",
         workspaceExpandedDirs: ["src"],
@@ -313,11 +329,13 @@ describe("browser workbench restoration", () => {
       });
       if (gesture === "none") {
         await waitFor(() =>
-          expect(store.getState().resourcePreview?.status).toBe("ready"),
+          expect(
+            inspectedPreview(store.getState().fileInspection)?.status,
+          ).toBe("ready"),
         );
         expect(resolved).toEqual(["one.txt", "two.txt", "two.txt"]);
       } else {
-        expect(store.getState().resourcePreview).toBeNull();
+        expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
         expect(resolved).toEqual(["one.txt", "two.txt"]);
       }
     },
@@ -329,7 +347,7 @@ describe("browser workbench restoration", () => {
     bootstrapFailure = true;
     await store.init();
     expect(store.getState().connection).toBe("offline");
-    expect(store.getState().resourcePreview).toEqual({
+    expect(inspectedPreview(store.getState().fileInspection)).toEqual({
       status: "loading",
       reference: "one.txt",
     });
@@ -339,8 +357,7 @@ describe("browser workbench restoration", () => {
     expect(store.getState()).toMatchObject({
       contextMode: "terminal",
       resourceTabs: [{ reference: "one.txt" }],
-      selectedResourceReference: "one.txt",
-      resourcePreview: null,
+      fileInspection: { kind: "file", reference: "one.txt", preview: null },
     });
     expect(resolved).toEqual(["one.txt"]);
   });
@@ -356,8 +373,7 @@ describe("browser workbench restoration", () => {
     expect(store.getState()).toMatchObject({
       sessionId: "s2",
       resourceTabs: [],
-      selectedResourceReference: null,
-      resourcePreview: null,
+      fileInspection: { kind: "browse" },
     });
     await store.openResource("new.txt");
     pending.resolve();
@@ -365,8 +381,11 @@ describe("browser workbench restoration", () => {
     expect(store.getState()).toMatchObject({
       sessionId: "s2",
       resourceTabs: [{ reference: "new.txt" }],
-      selectedResourceReference: "new.txt",
-      resourcePreview: { status: "ready", reference: "new.txt" },
+      fileInspection: {
+        kind: "file",
+        reference: "new.txt",
+        preview: { status: "ready", reference: "new.txt" },
+      },
     });
     await store.openSession("s1");
     expect(store.getState().resourceTabs).toEqual([
@@ -399,7 +418,9 @@ describe("browser workbench restoration", () => {
     });
     const store = await reload();
     await store.openResource("one.txt");
-    expect(store.getState().resourcePreview?.status).toBe("ready");
+    expect(inspectedPreview(store.getState().fileInspection)?.status).toBe(
+      "ready",
+    );
     expect(lastWorkbenchSession()).toBeNull();
   });
 });

@@ -24,14 +24,16 @@ function fixture() {
     transcriptRevision: 1,
     resourcesOpen: true,
     contextMode: "files",
-    fileBrowserView: "preview",
-    selectedResourceReference: descriptor.reference,
-    selectedResourceWorkspacePath: descriptor.reference,
-    resourcePreview: {
-      status: "ready",
+    fileInspection: {
+      kind: "file",
       reference: descriptor.reference,
-      descriptor,
-      text: "![Curve](curve.png)",
+      workspacePath: descriptor.reference,
+      preview: {
+        status: "ready",
+        reference: descriptor.reference,
+        descriptor,
+        text: "![Curve](curve.png)",
+      },
     },
     resourceTabs: [],
     resourceStanding: {},
@@ -60,8 +62,7 @@ function fixture() {
     patch: vi.fn(),
     handleAuthFailure: vi.fn(),
     saveDownload: vi.fn(),
-    prepareGitForResourceOpen: vi.fn(),
-    selectWorkspacePath: vi.fn(),
+    revealWorkspacePath: vi.fn(),
   };
   const controller = new ResourceController(host);
   const load = (signal = new AbortController().signal) =>
@@ -94,7 +95,6 @@ describe("document image resource controller", () => {
       signal: expect.any(AbortSignal),
     });
     expect(f.host.patch).not.toHaveBeenCalled();
-    expect(f.host.prepareGitForResourceOpen).not.toHaveBeenCalled();
   });
 
   it.each(["selection", "session", "view", "pane", "transport"])(
@@ -106,7 +106,7 @@ describe("document image resource controller", () => {
       const outcome = expect(f.load()).rejects.toMatchObject({
         name: "AbortError",
       });
-      if (change === "selection") f.state.resourcePreview = null;
+      if (change === "selection") f.state.fileInspection = { kind: "browse" };
       if (change === "session") f.state.sessionId = "s2";
       if (change === "view") f.state.transcriptViewId = "v2";
       if (change === "pane") f.state.resourcesOpen = false;
@@ -191,7 +191,7 @@ describe("document image resource controller", () => {
     f.api.resolveResource.mockRejectedValue(new ApiError(401, "Pair again"));
     await expect(f.load()).rejects.toThrow("Pair again");
     expect(f.host.handleAuthFailure).toHaveBeenCalledTimes(1);
-    f.state.resourcePreview = null;
+    f.state.fileInspection = { kind: "browse" };
     await expect(f.load()).rejects.toMatchObject({ name: "AbortError" });
     expect(f.api.resolveResource).toHaveBeenCalledTimes(1);
     expect(f.host.handleAuthFailure).toHaveBeenCalledTimes(1);

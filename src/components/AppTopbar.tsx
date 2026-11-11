@@ -137,8 +137,8 @@ function GitSummary() {
       type="button"
       className={tone ? `topbar__git ${tone}` : "topbar__git"}
       onClick={() => {
-        store.setResourcesOpen(true);
         store.setContextMode("changes");
+        store.setResourcesOpen(true);
       }}
       aria-label={`Open Git changes: ${branch}, ${statusLabel}${gitStatusError ? ", status may be stale" : ""}`}
       title={`${branch} · ${statusLabel} — open Changes.${staleLabel}`}

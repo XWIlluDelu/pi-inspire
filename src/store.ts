@@ -81,7 +81,10 @@ import {
   ConnectionController,
   type ConnectionRecoveryTrigger,
 } from "./controllers/connection-controller";
-import { GitController } from "./controllers/git-controller";
+import {
+  GitController,
+  showsFileComparison,
+} from "./controllers/git-controller";
 import { PendingRecoveryController } from "./controllers/pending-recovery-controller";
 import { PreferenceController } from "./controllers/preference-controller";
 import { ResourceController } from "./controllers/resource-controller";
@@ -100,7 +103,11 @@ import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
 import { TaskNotificationController } from "./notifications";
 import { controlState } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
-import type { FileSourceJump, ResourceFileTab } from "./resource-preview";
+import {
+  type FileSourceJump,
+  inspectedFileTab,
+  type ResourceFileTab,
+} from "./resource-preview";
 import {
   sessionDraft,
   sessionDraftRevision,
@@ -233,11 +240,9 @@ export class AppStore {
     patch: (patch) => this.set(patch),
     api: () => this.api,
     handleAuthFailure: () => this.handleAuthFailure(),
-    prepareGitForResourceOpen: (contextMode) =>
-      this.git.prepareResourceOpen(contextMode),
-    selectWorkspacePath: (workspacePath, reveal = true) => {
-      if (reveal) this.workspace.revealPath(workspacePath);
-      this.git.selectWorkspacePath(workspacePath);
+    revealWorkspacePath: (path) => {
+      this.workspace.revealPath(path);
+      if (showsFileComparison(this.state)) void this.git.refreshStatus();
     },
   });
   /** GitController owns polling, selection, and diff request lifecycles.
@@ -247,10 +252,6 @@ export class AppStore {
     state: () => ({
       ...this.state,
       selectionGeneration: this.selectionGeneration,
-      fileChangesVisible:
-        this.state.contextMode === "files" &&
-        this.state.fileBrowserView === "preview" &&
-        this.activeResourceTab()?.view === "changes",
     }),
     patch: (patch) => this.set(patch),
     api: () => this.api,
@@ -867,14 +868,7 @@ export class AppStore {
         this.selectionIntentGeneration !== autoContinueIntent
       )
         this.set({ startupPending: false });
-      // Restoring an active Git file tab already requests fresh status before
-      // reopening its comparison. Do not queue a duplicate inspection here.
-      if (
-        !this.state.resourcesOpen ||
-        this.state.contextMode !== "files" ||
-        this.state.fileBrowserView !== "preview" ||
-        this.activeResourceTab()?.view !== "changes"
-      )
+      if (!showsFileComparison(this.state))
         void this.git.resumeAfterTransportReplacement();
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
@@ -996,7 +990,8 @@ export class AppStore {
       // so compaction/rewrite can reauthorize it instead of returning to Browse.
       this.resources.invalidate();
       this.transcriptData.invalidate();
-      if (sessionChanged) this.git.cancelAll();
+      if (sessionChanged) this.git.invalidateForTransportReplacement();
+      else this.git.clearComparison();
     } else if (revisionChanged) {
       // Cancel observations owned by the old transcript generation. Keep the
       // last known standing visible until Browse produces current observations.
@@ -1034,16 +1029,6 @@ export class AppStore {
       if (saved) {
         Object.assign(lifecyclePatch, saved, {
           workspaceSearchLoading: Boolean(saved.workspaceQuery.trim()),
-          resourcePreview:
-            saved.resourcesOpen &&
-            saved.contextMode === "files" &&
-            saved.fileBrowserView === "preview" &&
-            saved.selectedResourceReference
-              ? {
-                  status: "loading",
-                  reference: saved.selectedResourceReference,
-                }
-              : null,
         });
       }
     }
@@ -1165,15 +1150,21 @@ export class AppStore {
       this.workspace.resumeSearch();
     }
     if (
-      lifecyclePatch.resourcePreview?.status === "loading" &&
-      this.state.selectedResourceReference ===
-        lifecyclePatch.selectedResourceReference
+      lifecyclePatch.fileInspection?.kind === "file" &&
+      this.state.fileInspection === lifecyclePatch.fileInspection &&
+      this.state.resourcesOpen &&
+      this.state.contextMode === "files"
     )
       void this.restoreFileTab();
     // Snapshots restore projection only. Attention is armed exclusively by
     // live lifecycle events, never by bootstrap/reconnect status.
     if (nextSessionId) this.runtimeEvents.acknowledgeVisibleSession();
-    if (sessionChanged && nextSessionId && this.git.hasVisibleSurface())
+    if (
+      sessionChanged &&
+      nextSessionId &&
+      this.git.hasVisibleSurface() &&
+      !showsFileComparison(this.state)
+    )
       void this.git.refreshStatus();
     this.branches.reconcile();
   }
@@ -3183,7 +3174,7 @@ export class AppStore {
 
   openWorkspaceFile = (path: string): Promise<void> => {
     this.workspace.revealPath(path);
-    return this.resources.openResource(path, "files", path);
+    return this.openResource(path, path);
   };
 
   showInFileManager = async (
@@ -3373,163 +3364,130 @@ export class AppStore {
   fileReadingState = (reference: string) =>
     readFileReading(this.workbenchKey(), reference);
 
-  private activeResourceTab(): ResourceFileTab | undefined {
-    return this.state.resourceTabs.find(
-      (tab) => tab.reference === this.state.selectedResourceReference,
-    );
-  }
-
-  private openGitFileTab(change: GitFileChange): Promise<void> {
-    const workspacePath = change.path.workspacePath;
-    const previous = this.state.resourceTabs.find(
-      (tab) =>
-        (workspacePath !== undefined &&
-          (tab.workspacePath === workspacePath ||
-            tab.reference === workspacePath)) ||
-        tab.git?.pathId === change.path.id,
-    );
-    const reference =
-      previous?.reference ?? workspacePath ?? `pi-git://${change.path.id}`;
-    const tab: ResourceFileTab = {
-      ...previous,
-      reference,
-      ...(workspacePath !== undefined ? { workspacePath } : {}),
-      view: "changes",
-      git: {
-        pathId: change.path.id,
-        displayPath:
-          workspacePath ?? change.path.utf8Path ?? change.path.display,
-      },
-    };
-    const sameComparison = this.state.selectedGitPathId === change.path.id;
+  private activateFileTab(
+    tab: ResourceFileTab,
+    resourceTabs = this.state.resourceTabs,
+  ): void {
+    const current = this.state.fileInspection;
     this.set({
       resourcesOpen: true,
       contextMode: "files",
-      fileBrowserView: "preview",
-      resourceTabs: previous
-        ? this.state.resourceTabs.map((item) =>
-            item.reference === reference ? tab : item,
-          )
-        : [...this.state.resourceTabs, tab],
-      selectedResourceReference: reference,
-      selectedResourceWorkspacePath: workspacePath ?? null,
-      selectedGitPathId: change.path.id,
-      ...(!sameComparison ? { gitDiff: null } : {}),
-    });
-    if (workspacePath !== undefined)
-      return this.resources.openResource(reference, "changes", workspacePath);
-    this.resources.invalidate();
-    this.set({
-      resourcePreview: {
-        status: "error",
-        reference,
-        message: "This Git path has no readable workspace file.",
+      resourceTabs,
+      fileInspection: {
+        kind: "file",
+        reference: tab.reference,
+        workspacePath: tab.workspacePath,
+        preview:
+          current.kind === "file" &&
+          current.reference === tab.reference &&
+          current.workspacePath === tab.workspacePath
+            ? current.preview
+            : null,
       },
     });
-    return Promise.resolve();
   }
 
-  private restoreFileTab(): Promise<void> {
-    const tab = this.activeResourceTab();
-    if (!tab) return Promise.resolve();
-    if (tab.view === "changes") return this.setFileChangesView(true);
-    if (tab.reference.startsWith("pi-git://")) {
+  private readFileTab(tab: ResourceFileTab): Promise<void> {
+    const inspection = this.state.fileInspection;
+    if (inspection.kind !== "file") return Promise.resolve();
+    const { workspacePath } = inspection;
+    if (
+      tab.reference.startsWith("pi-git://") ||
+      (tab.view === "changes" && tab.git && !workspacePath)
+    ) {
       this.resources.invalidate();
-      this.git.clearDiffSelection();
       this.set({
-        resourcesOpen: true,
-        contextMode: "files",
-        fileBrowserView: "preview",
-        resourcePreview: {
-          status: "error",
+        fileInspection: {
+          kind: "file",
           reference: tab.reference,
-          message: "This Git path has no readable workspace file.",
+          preview: {
+            status: "error",
+            reference: tab.reference,
+            message: "This Git path has no readable workspace file.",
+          },
         },
       });
       return Promise.resolve();
     }
     return this.resources.openResource(
       tab.reference,
-      "files",
-      tab.workspacePath,
+      tab.view === "changes" ? "changes" : "files",
+      workspacePath,
     );
   }
 
-  setFileChangesView = async (enabled: boolean): Promise<void> => {
-    const tab = this.activeResourceTab();
-    if (!tab) return;
-    this.resources.cancelRequest();
-    this.git.clearDiffSelection();
+  private openGitFileTab(change: GitFileChange): Promise<void> {
+    const { id: pathId, workspacePath, utf8Path, display } = change.path;
+    const previous = this.state.resourceTabs.find(
+      (tab) =>
+        (workspacePath !== undefined &&
+          (tab.workspacePath === workspacePath ||
+            tab.reference === workspacePath)) ||
+        tab.git?.pathId === pathId,
+    );
+    const tab: ResourceFileTab = {
+      reference: previous?.reference ?? workspacePath ?? `pi-git://${pathId}`,
+      workspacePath,
+      view: "changes",
+      git: { pathId, displayPath: workspacePath ?? utf8Path ?? display },
+    };
+    this.activateFileTab(
+      tab,
+      previous
+        ? this.state.resourceTabs.map((item) =>
+            item === previous ? tab : item,
+          )
+        : [...this.state.resourceTabs, tab],
+    );
+    return this.readFileTab(tab);
+  }
+
+  private restoreFileTab(): Promise<void> {
+    const tab = inspectedFileTab(this.state);
+    if (!tab) return Promise.resolve();
+    const body = this.readFileTab(tab);
+    return tab.view === "changes" ? this.git.refreshStatus() : body;
+  }
+
+  setFileChangesView = (enabled: boolean): Promise<void> => {
+    const { fileInspection, resourceTabs } = this.state;
+    const tab = inspectedFileTab(this.state);
+    if (!tab || fileInspection.kind !== "file") return Promise.resolve();
+    this.git.clearComparison();
     this.set({
-      resourcesOpen: true,
-      contextMode: "files",
-      fileBrowserView: "preview",
-      resourceTabs: this.state.resourceTabs.map((item) =>
-        item.reference === tab.reference
-          ? { ...item, view: enabled ? "changes" : undefined }
-          : item,
+      resourceTabs: resourceTabs.map((item) =>
+        item === tab ? { ...tab, view: enabled ? "changes" : undefined } : item,
       ),
     });
-    if (!enabled) {
-      await this.restoreFileTab();
-      return;
-    }
-    const intentTab = this.activeResourceTab();
-    const sessionId = this.state.sessionId;
-    const api = this.api;
-    const selection = this.selectionGeneration;
-    await this.git.refreshStatus();
-    if (
-      this.state.sessionId !== sessionId ||
-      this.api !== api ||
-      this.selectionGeneration !== selection ||
-      !this.state.resourcesOpen ||
-      this.state.contextMode !== "files" ||
-      this.state.fileBrowserView !== "preview" ||
-      this.activeResourceTab() !== intentTab
-    )
-      return;
-    const status = this.state.gitStatus;
-    if (this.state.gitStatusError || status?.kind !== "repository") return;
-    const change = status.files.find(
-      (file) =>
-        (file.worktree || file.conflict) &&
-        ((tab.workspacePath !== undefined &&
-          file.path.workspacePath === tab.workspacePath) ||
-          file.path.id === tab.git?.pathId),
-    );
-    if (!change) {
-      // A clean file remains the watched comparison target; a later status
-      // poll can discover edits without requiring the user to toggle again.
-      if (tab.workspacePath) this.git.selectWorkspacePath(tab.workspacePath);
-      return;
-    }
-    await this.git.openChange(change.path.id);
+    return enabled && fileInspection.preview
+      ? this.git.refreshStatus()
+      : this.restoreFileTab();
   };
 
-  refreshFileTab = (): Promise<void> => {
-    const tab = this.activeResourceTab();
-    if (tab?.view === "changes" && this.state.selectedGitPathId)
-      return this.git.refreshStatus();
-    return this.restoreFileTab();
-  };
+  refreshFileTab = (): Promise<void> =>
+    showsFileComparison(this.state)
+      ? this.git.refreshStatus()
+      : this.restoreFileTab();
 
   setResourcesOpen = (resourcesOpen: boolean): void => {
+    const { fileInspection, contextMode } = this.state;
     if (!resourcesOpen) {
-      // Closing retires content and HTML capabilities, but the filename/tool
-      // choice remains navigation intent when this pane is opened again.
       this.resources.invalidate();
-      this.git.clearDiffSelection();
-      this.set({ resourcesOpen, resourcePreview: null });
+      this.git.clearComparison();
+      this.set({
+        resourcesOpen,
+        fileInspection:
+          fileInspection.kind === "file"
+            ? { ...fileInspection, preview: null }
+            : fileInspection,
+      });
       return;
     }
     this.set({ resourcesOpen });
-    const state = this.state;
     if (
-      state.contextMode === "files" &&
-      state.fileBrowserView === "preview" &&
-      state.selectedResourceReference &&
-      (!state.resourcePreview || this.activeResourceTab()?.view === "changes")
+      contextMode === "files" &&
+      fileInspection.kind === "file" &&
+      (!fileInspection.preview || showsFileComparison(this.state))
     )
       void this.restoreFileTab();
   };
@@ -3539,25 +3497,19 @@ export class AppStore {
       (tab) => tab.reference === reference,
     );
     if (!tab) return Promise.resolve();
+    const { fileInspection, resourcesOpen, contextMode, gitDiff } = this.state;
     if (
-      this.state.contextMode === "files" &&
-      this.state.fileBrowserView === "preview" &&
-      this.state.selectedResourceReference === reference &&
+      resourcesOpen &&
+      contextMode === "files" &&
+      fileInspection.kind === "file" &&
+      fileInspection.reference === reference &&
       (tab.view === "changes"
-        ? this.state.gitDiff !== null
-        : this.state.resourcePreview !== null)
+        ? gitDiff !== null
+        : fileInspection.preview !== null)
     )
       return Promise.resolve();
-    this.resources.invalidate();
-    this.git.clearDiffSelection();
-    this.set({
-      resourcesOpen: true,
-      contextMode: "files",
-      fileBrowserView: "preview",
-      selectedResourceReference: tab.reference,
-      selectedResourceWorkspacePath: tab.workspacePath ?? null,
-      resourcePreview: null,
-    });
+    this.git.clearComparison();
+    this.activateFileTab(tab);
     return this.restoreFileTab();
   };
 
@@ -3570,33 +3522,29 @@ export class AppStore {
     const resourceTabs = this.state.resourceTabs.filter(
       (tab) => tab.reference !== reference,
     );
-    const active =
-      this.state.contextMode === "files" &&
-      this.state.fileBrowserView === "preview" &&
-      this.state.selectedResourceReference === reference;
-    this.set({ resourceTabs });
-    if (!active) return;
-    const next = resourceTabs[Math.min(index, resourceTabs.length - 1)];
-    if (next) void this.selectResourceTab(next.reference);
-    else {
+    const inspection = this.state.fileInspection;
+    if (inspection.reference === reference) {
+      this.git.clearComparison();
+      const next = resourceTabs[Math.min(index, resourceTabs.length - 1)];
+      if (
+        inspection.kind === "file" &&
+        this.state.contextMode === "files" &&
+        next
+      ) {
+        this.resources.invalidate();
+        this.activateFileTab(next, resourceTabs);
+        void this.restoreFileTab();
+        return;
+      }
       this.resources.clearSelection();
-      this.git.clearDiffSelection();
     }
+    this.set({ resourceTabs });
   };
 
   showFileBrowser = (): void => {
-    this.resources.cancelRequest();
-    this.set({
-      resourcesOpen: true,
-      contextMode: "files",
-      fileBrowserView: "browse",
-    });
-  };
-
-  showChangesBrowser = (): void => {
-    this.resources.clearSelection();
-    this.git.clearDiffSelection();
-    this.set({ resourcesOpen: true, contextMode: "changes" });
+    this.resources.clearSelection(true);
+    this.git.clearComparison();
+    this.set({ resourcesOpen: true, contextMode: "files" });
   };
 
   setContextMode = (
@@ -3697,26 +3645,31 @@ export class AppStore {
     );
 
   consumeFileSourceJump = (jump: FileSourceJump): boolean => {
-    const preview = this.state.resourcePreview;
+    const inspection = this.state.fileInspection;
+    if (inspection.kind !== "file") return false;
+    const { preview } = inspection;
     if (preview?.status !== "ready" || preview.sourceJump !== jump)
       return false;
-    this.set({ resourcePreview: { ...preview, sourceJump: undefined } });
+    this.set({
+      fileInspection: {
+        ...inspection,
+        preview: { ...preview, sourceJump: undefined },
+      },
+    });
     return true;
   };
 
-  openResource = (
-    reference: string,
-    contextMode: "files" | "changes" = "files",
-    workspacePath?: string,
-  ): Promise<void> =>
-    this.resources.openResource(
+  openResource = (reference: string, workspacePath?: string): Promise<void> => {
+    this.git.clearComparison();
+    return this.resources.openResource(
       reference,
-      contextMode,
+      "files",
       workspacePath ?? this.state.resourceStanding[reference]?.workspacePath,
-      contextMode === "files" && workspacePath !== reference
+      workspacePath !== reference
         ? (resourceReferenceLine(reference) ?? undefined)
         : undefined,
     );
+  };
 }
 
 export function gitChangeForWorkspacePath(

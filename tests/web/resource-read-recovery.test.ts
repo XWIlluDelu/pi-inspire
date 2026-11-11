@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type Api, ApiError } from "../../src/api";
 import { ResourceController } from "../../src/controllers/resource-controller";
+import { inspectedPreview } from "../../src/resource-preview";
 
 type Host = ConstructorParameters<typeof ResourceController>[0];
 
@@ -22,10 +23,7 @@ function fixture() {
     transcriptRevision: 1,
     resourcesOpen: true,
     contextMode: "files",
-    fileBrowserView: "browse",
-    selectedResourceReference: null,
-    selectedResourceWorkspacePath: null,
-    resourcePreview: null,
+    fileInspection: { kind: "browse" },
     resourceTabs: [],
     resourceStanding: {},
   };
@@ -43,8 +41,7 @@ function fixture() {
     api: () => current as unknown as Api,
     patch: (patch) => Object.assign(state, patch),
     handleAuthFailure: vi.fn(),
-    prepareGitForResourceOpen: () => () => true,
-    selectWorkspacePath: vi.fn(),
+    revealWorkspacePath: vi.fn(),
     saveDownload: vi.fn(),
   };
   const controller = new ResourceController(host);
@@ -84,14 +81,14 @@ describe("resource preview read recovery", () => {
       );
       const reading = f.controller.openResource("notes.txt");
       await vi.advanceTimersByTimeAsync(0);
-      expect(f.state.resourcePreview?.status).toBe("loading");
+      expect(inspectedPreview(f.state.fileInspection)?.status).toBe("loading");
       expect(f.state.resourceStanding["notes.txt"]?.availability).toBe(
         endpoint === "resourceContent" ? "available" : undefined,
       );
       await vi.advanceTimersByTimeAsync(1_000);
       await reading;
       expect(f.api[endpoint]).toHaveBeenCalledTimes(2);
-      expect(f.state.resourcePreview).toMatchObject({
+      expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
         status: "ready",
         text: "Notes",
       });
@@ -106,29 +103,34 @@ describe("resource preview read recovery", () => {
     );
     const reading = f.controller.openResource("notes.txt");
     await vi.advanceTimersByTimeAsync(0);
-    expect(f.state.resourcePreview).toMatchObject({
+    expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
       status: "ready",
       text: "Notes",
       refreshing: true,
     });
     await vi.advanceTimersByTimeAsync(14_000);
     await reading;
-    expect(f.state.resourcePreview).toMatchObject({
+    expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
       status: "ready",
       text: "Notes",
       refreshError: "Content unavailable",
     });
-    expect(f.state.resourcePreview).not.toHaveProperty("refreshing", true);
+    expect(inspectedPreview(f.state.fileInspection)).not.toHaveProperty(
+      "refreshing",
+      true,
+    );
     f.api.resourceContent.mockResolvedValue({
       blob: new Blob(["Updated"]),
       totalSize: 7,
     });
     await f.controller.openResource("notes.txt");
-    expect(f.state.resourcePreview).toMatchObject({
+    expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
       status: "ready",
       text: "Updated",
     });
-    expect(f.state.resourcePreview).not.toHaveProperty("refreshError");
+    expect(inspectedPreview(f.state.fileInspection)).not.toHaveProperty(
+      "refreshError",
+    );
   });
 
   it("retains a loaded media URL until its replacement is ready", async () => {
@@ -156,14 +158,14 @@ describe("resource preview read recovery", () => {
     );
     const refresh = f.controller.openResource("plot.png");
     await vi.advanceTimersByTimeAsync(0);
-    expect(f.state.resourcePreview).toMatchObject({
+    expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
       status: "ready",
       objectUrl: "blob:old",
     });
     expect(revoke).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1_000);
     await refresh;
-    expect(f.state.resourcePreview).toMatchObject({
+    expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
       status: "ready",
       objectUrl: "blob:new",
     });
@@ -190,7 +192,7 @@ describe("resource preview read recovery", () => {
       if (change === "transport") {
         f.rotate();
         expect(f.state.resourceTabs).toEqual([{ reference: "notes.txt" }]);
-        expect(f.state.resourcePreview).toEqual({
+        expect(inspectedPreview(f.state.fileInspection)).toEqual({
           status: "loading",
           reference: "notes.txt",
         });
@@ -225,28 +227,34 @@ describe("resource preview read recovery", () => {
     expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:retired");
     expect(f.state).toMatchObject({
       resourceTabs: [{ reference: "plot.png" }],
-      selectedResourceReference: "plot.png",
-      resourcePreview: { status: "loading", reference: "plot.png" },
+      fileInspection: {
+        kind: "file",
+        reference: "plot.png",
+        preview: { status: "loading", reference: "plot.png" },
+      },
       resourceStanding: {},
     });
-    expect(f.state.resourcePreview).not.toHaveProperty("descriptor");
-    expect(f.state.resourcePreview).not.toHaveProperty("objectUrl");
+    expect(inspectedPreview(f.state.fileInspection)).not.toHaveProperty(
+      "descriptor",
+    );
+    expect(inspectedPreview(f.state.fileInspection)).not.toHaveProperty(
+      "objectUrl",
+    );
   });
 
   it("retires positional embedded tabs without discarding named tabs", () => {
     const f = fixture();
     const reference = "pi-embedded://message/0/image/0";
     f.state.resourceTabs = [{ reference: "notes.txt" }, { reference }];
-    f.state.selectedResourceReference = reference;
-    f.state.fileBrowserView = "preview";
-    f.state.resourcePreview = { status: "loading", reference };
+    f.state.fileInspection = {
+      kind: "file",
+      reference,
+      preview: { status: "loading", reference },
+    };
     f.rotate();
     expect(f.state).toMatchObject({
       resourceTabs: [{ reference: "notes.txt" }],
-      selectedResourceReference: null,
-      selectedResourceWorkspacePath: null,
-      fileBrowserView: "browse",
-      resourcePreview: null,
+      fileInspection: { kind: "browse" },
     });
   });
 
@@ -264,7 +272,10 @@ describe("resource preview read recovery", () => {
       expect(f.api.resourceContent).toHaveBeenCalledOnce();
       if (status === 401)
         expect(f.host.handleAuthFailure).toHaveBeenCalledOnce();
-      else expect(f.state.resourcePreview).toMatchObject({ status: "error" });
+      else
+        expect(inspectedPreview(f.state.fileInspection)).toMatchObject({
+          status: "error",
+        });
     },
   );
 });

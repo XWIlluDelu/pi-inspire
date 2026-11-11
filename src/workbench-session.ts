@@ -41,10 +41,8 @@ type SavedWorkbench = Pick<
   AppState,
   | "resourcesOpen"
   | "contextMode"
-  | "fileBrowserView"
+  | "fileInspection"
   | "resourceTabs"
-  | "selectedResourceReference"
-  | "selectedResourceWorkspacePath"
   | "workspaceQuery"
   | "workspaceExpandedDirs"
   | "workspaceShowHidden"
@@ -161,11 +159,16 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
   return {
     resourcesOpen: saved.resourcesOpen === true,
     contextMode,
-    fileBrowserView:
-      selected && saved.fileBrowserView === "preview" ? "preview" : "browse",
+    fileInspection:
+      selected && saved.fileBrowserView === "preview"
+        ? {
+            kind: "file",
+            reference: selected.reference,
+            workspacePath: selected.workspacePath,
+            preview: null,
+          }
+        : { kind: "browse", reference: selected?.reference },
     resourceTabs,
-    selectedResourceReference: selected?.reference ?? null,
-    selectedResourceWorkspacePath: selected?.workspacePath ?? null,
     workspaceQuery:
       typeof saved.workspaceQuery === "string" ? saved.workspaceQuery : "",
     workspaceExpandedDirs: Array.isArray(saved.workspaceExpandedDirs)
@@ -178,10 +181,7 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
 const SAVED_FIELDS = [
   "resourcesOpen",
   "contextMode",
-  "fileBrowserView",
   "resourceTabs",
-  "selectedResourceReference",
-  "selectedResourceWorkspacePath",
   "workspaceQuery",
   "workspaceExpandedDirs",
   "workspaceShowHidden",
@@ -195,12 +195,19 @@ export function saveWorkbench(
   if (
     !key ||
     (previous &&
+      previous.fileInspection.kind === state.fileInspection.kind &&
+      previous.fileInspection.reference === state.fileInspection.reference &&
       SAVED_FIELDS.every((field) => previous[field] === state[field]))
   )
     return;
   const saved = Object.fromEntries(
     SAVED_FIELDS.map((field) => [field, state[field]]),
   );
+  // Keep the persisted v1 navigation shape independent of the live reader.
+  saved.fileBrowserView =
+    state.fileInspection.kind === "file" ? "preview" : "browse";
+  if (state.fileInspection.reference !== undefined)
+    saved.selectedResourceReference = state.fileInspection.reference;
   saved.resourceTabs = state.resourceTabs.filter(
     (tab) => !tab.reference.startsWith("pi-embedded://"),
   );

@@ -76,6 +76,8 @@ const diff: Extract<GitDiffResponse, { kind: "text" }> = {
   ],
 };
 function ready(result = diff): ContextPaneView {
+  const { id, display, utf8Path } = result.path;
+  const reference = utf8Path ?? display;
   return {
     ...initial,
     sessionId: "session",
@@ -84,7 +86,14 @@ function ready(result = diff): ContextPaneView {
       ...changed,
       files: [{ ...changed.files[0], staged: { kind: "modified" } }],
     },
-    selectedGitPathId: result.path.id,
+    fileInspection: { kind: "file", reference, preview: null },
+    resourceTabs: [
+      {
+        reference,
+        view: "changes",
+        git: { pathId: id, displayPath: reference },
+      },
+    ],
     gitDiff: { status: "ready", result },
   };
 }
@@ -282,12 +291,12 @@ describe("File Changes rendering and navigation", () => {
   it("restores a file tab's reading after its Git selection resolves on remount", () => {
     const readingState = readings();
     readingState.changes = { top: 800, left: 50, activeChange: 1 };
-    const state = { ...ready(), selectedResourceReference: "notes.md" };
+    const state = ready();
     const view = render(
       <Detail
         state={{
           ...state,
-          selectedGitPathId: null,
+          gitStatus: null,
           gitDiff: null,
           gitStatusRefreshing: true,
         }}
@@ -313,7 +322,6 @@ describe("File Changes rendering and navigation", () => {
       <Detail
         state={{
           ...ready({ ...diff, path: otherPath }),
-          selectedResourceReference: "other.md",
           gitStatus: {
             ...changed,
             files: [{ ...changed.files[0], path: otherPath }],
@@ -426,7 +434,6 @@ describe("Git evidence boundaries", () => {
     ({ status, label }) => {
       const state = {
         ...ready(),
-        selectedResourceReference: "notes.md",
         gitStatus: status,
         gitDiff: null,
       };
@@ -440,7 +447,13 @@ describe("Git evidence boundaries", () => {
         "——",
       );
       for (const changedOwner of [
-        { selectedResourceReference: "other.md" },
+        {
+          fileInspection: {
+            kind: "file" as const,
+            reference: "other.md",
+            preview: null,
+          },
+        },
         { sessionId: "other-session" },
         { cwd: "/other" },
         { transportGeneration: state.transportGeneration + 1 },
@@ -489,8 +502,6 @@ describe("Git evidence boundaries", () => {
             ...ready(),
             gitStatus,
             gitStatusError,
-            selectedGitPathId: null,
-            resourcePreview: { status: "loading", reference: "notes.md" },
           }}
         />,
       );

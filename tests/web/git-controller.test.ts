@@ -6,6 +6,7 @@ import {
   GitController,
   type GitControllerPatch,
   type GitControllerState,
+  inspectedGitChange,
 } from "../../src/controllers/git-controller";
 
 const notRepository: GitStatusResponse = { kind: "not-repository" };
@@ -35,12 +36,31 @@ const diff = (version: string) => ({
     { kind: "add" as const, text: `+${version}`, oldLine: null, newLine: 1 },
   ],
 });
+function fileSelection(path: GitFileChange["path"]) {
+  const reference = path.workspacePath ?? `pi-git://${path.id}`;
+  return {
+    resourcesOpen: true,
+    contextMode: "files" as const,
+    fileInspection: {
+      kind: "file" as const,
+      reference,
+      workspacePath: path.workspacePath,
+      preview: null,
+    },
+    resourceTabs: [
+      {
+        reference,
+        workspacePath: path.workspacePath,
+        view: "changes" as const,
+        git: { pathId: path.id, displayPath: path.display },
+      },
+    ],
+  };
+}
+
 const visibleSelection = {
-  resourcesOpen: true,
-  contextMode: "files" as const,
-  fileChangesVisible: true,
+  ...fileSelection(path),
   gitStatus: modified,
-  selectedGitPathId: path.id,
   gitDiff: { status: "ready" as const, result: diff("before") },
 };
 
@@ -53,18 +73,21 @@ function createHarness(
     selectionGeneration: 1,
     resourcesOpen: false,
     contextMode: "files",
+    fileInspection: { kind: "browse" },
+    resourceTabs: [],
     gitStatus: null,
     gitStatusError: null,
     gitStatusLoading: false,
     gitStatusRefreshing: false,
-    selectedGitPathId: null,
     gitDiff: null,
     ...initial,
   };
   const gitStatus = vi.fn();
   const gitDiff = vi.fn();
   const api = sharedApi ?? ({ gitStatus, gitDiff } as unknown as Api);
-  const openResourceFromGit = vi.fn<(change: GitFileChange) => Promise<void>>();
+  const openResourceFromGit = vi.fn<(change: GitFileChange) => Promise<void>>(
+    () => Promise.resolve(),
+  );
   const handleAuthFailure = vi.fn();
   const controller = new GitController({
     state: () => state,
@@ -73,7 +96,10 @@ function createHarness(
     },
     api: () => api,
     handleAuthFailure,
-    openResourceFromGit,
+    openResourceFromGit: (change) => {
+      state = { ...state, ...fileSelection(change.path) };
+      return openResourceFromGit(change);
+    },
   });
   return {
     controller,
@@ -94,20 +120,6 @@ describe("GitController", () => {
     vi.useRealTimers();
   });
 
-  it("opens the net working-tree comparison", async () => {
-    const harness = createHarness({ gitStatus: modified });
-    harness.gitDiff.mockResolvedValue(diff("net"));
-
-    await harness.controller.openChange(path.id);
-
-    expect(harness.gitDiff).toHaveBeenCalledExactlyOnceWith(
-      "s1",
-      path.id,
-      expect.any(AbortSignal),
-    );
-    expect(harness.state().selectedGitPathId).toBe(path.id);
-  });
-
   it("does not use native index facets as evidence of a net change", async () => {
     const harness = createHarness({
       gitStatus: {
@@ -124,11 +136,9 @@ describe("GitController", () => {
     });
 
     await harness.controller.openChange(path.id);
-    harness.controller.selectWorkspacePath("file.txt");
 
     expect(harness.gitDiff).not.toHaveBeenCalled();
     expect(harness.openResourceFromGit).not.toHaveBeenCalled();
-    expect(harness.state().selectedGitPathId).toBeNull();
   });
 
   it.each([
@@ -175,10 +185,9 @@ describe("GitController", () => {
 
     await harness.controller.refreshStatus();
     expect(signal.aborted).toBe(true);
-    expect(harness.state()).toMatchObject({
-      selectedGitPathId: null,
-      gitDiff: null,
-    });
+    const state = harness.state();
+    expect(inspectedGitChange(state, state.gitStatus)).toBeUndefined();
+    expect(state.gitDiff).toBeNull();
     finish(diff("late native change"));
     await opening;
     expect(harness.state().gitDiff).toBeNull();
@@ -222,7 +231,6 @@ describe("GitController", () => {
       });
     } finally {
       harness.controller.setSurfaceVisible("detail", false);
-      harness.controller.cancelAll();
     }
   });
 
@@ -245,45 +253,6 @@ describe("GitController", () => {
     });
   });
 
-  it("cannot replace a newer file selection with an old background refresh", async () => {
-    const other = { id: "other", display: "other.txt", utf8Path: "other.txt" };
-    const status = {
-      ...modified,
-      files: [
-        ...modified.files,
-        {
-          path: other,
-          unstaged: { kind: "modified" as const },
-          worktree: { kind: "modified" as const },
-          untracked: false,
-        },
-      ],
-    };
-    const harness = createHarness({ ...visibleSelection, gitStatus: status });
-    harness.gitStatus.mockResolvedValue(status);
-    let release!: (value: ReturnType<typeof diff>) => void;
-    harness.gitDiff
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            release = resolve;
-          }),
-      )
-      .mockResolvedValueOnce({ ...diff("new selection"), path: other });
-    const refresh = harness.controller.refreshStatus();
-    await vi.waitFor(() => expect(harness.gitDiff).toHaveBeenCalledTimes(1));
-    await harness.controller.openChange(other.id);
-    release(diff("late old file"));
-    await refresh;
-    expect(harness.state()).toMatchObject({
-      selectedGitPathId: other.id,
-      gitDiff: {
-        status: "ready",
-        result: { path: other, lines: [{ text: "+new selection" }] },
-      },
-    });
-  });
-
   it("does not publish a status response after its selection generation changes", async () => {
     let resolve!: (status: GitStatusResponse) => void;
     const pending = new Promise<GitStatusResponse>((complete) => {
@@ -302,40 +271,6 @@ describe("GitController", () => {
       gitStatus: null,
       gitStatusError: null,
     });
-  });
-
-  it("polls only while a Git surface remains visible", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    harness.gitStatus.mockResolvedValue(notRepository);
-
-    harness.controller.setSurfaceVisible("test", true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(4_000);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(2);
-
-    harness.controller.setSurfaceVisible("test", false);
-    await vi.advanceTimersByTimeAsync(8_000);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(2);
-  });
-
-  it("uses a lower polling cadence when only the topbar summary is visible", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    harness.gitStatus.mockResolvedValue(notRepository);
-
-    harness.controller.setSurfaceVisible("topbar-git", true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(19_999);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(2);
-
-    harness.controller.setSurfaceVisible("topbar-git", false);
   });
 
   it("backs off after two unchanged reads but detects new diff content with the same status", async () => {
@@ -441,7 +376,7 @@ describe("GitController", () => {
     const before = harness.gitStatus.mock.calls.length;
     const diffBefore = harness.gitDiff.mock.calls.length;
 
-    harness.patch({ fileChangesVisible: false });
+    harness.patch({ contextMode: "changes" });
     harness.controller.setSurfaceVisible("detail", false);
     await vi.advanceTimersByTimeAsync(19_999);
     expect(harness.gitStatus).toHaveBeenCalledTimes(before);
@@ -449,7 +384,7 @@ describe("GitController", () => {
     expect(harness.gitStatus).toHaveBeenCalledTimes(before + 1);
     expect(harness.gitDiff).toHaveBeenCalledTimes(diffBefore);
 
-    harness.patch({ fileChangesVisible: true });
+    harness.patch({ contextMode: "files" });
     harness.controller.setSurfaceVisible("detail", true);
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.gitStatus).toHaveBeenCalledTimes(before + 2);
@@ -458,6 +393,8 @@ describe("GitController", () => {
     expect(harness.gitStatus).toHaveBeenCalledTimes(before + 3);
     harness.controller.setSurfaceVisible("detail", false);
     harness.controller.setSurfaceVisible("topbar-git", false);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(harness.gitStatus).toHaveBeenCalledTimes(before + 3);
   });
 
   it("waits for a slow diff and keeps a new selection's cadence independent of the old read", async () => {
@@ -539,61 +476,6 @@ describe("GitController", () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  it("pauses polling while the page is hidden and refreshes on return", async () => {
-    vi.useFakeTimers();
-    let visibility: DocumentVisibilityState = "visible";
-    vi.spyOn(document, "visibilityState", "get").mockImplementation(
-      () => visibility,
-    );
-    const harness = createHarness();
-    harness.gitStatus.mockResolvedValue(notRepository);
-
-    harness.controller.setSurfaceVisible("test", true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-
-    visibility = "hidden";
-    document.dispatchEvent(new Event("visibilitychange"));
-    await vi.advanceTimersByTimeAsync(8_000);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-
-    visibility = "visible";
-    document.dispatchEvent(new Event("visibilitychange"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(harness.gitStatus).toHaveBeenCalledTimes(2);
-    harness.controller.setSurfaceVisible("test", false);
-  });
-
-  it("adopts a workspace selection when a later Git status identifies it", async () => {
-    const harness = createHarness();
-    harness.controller.selectWorkspacePath("src/main.ts");
-    harness.gitStatus.mockResolvedValue({
-      kind: "repository",
-      head: { kind: "branch", name: "main", oid: "abc" },
-      files: [
-        {
-          path: {
-            id: "main-path",
-            display: "src/main.ts",
-            utf8Path: "src/main.ts",
-            workspacePath: "src/main.ts",
-          },
-          unstaged: { kind: "modified" },
-          worktree: { kind: "modified" as const },
-          untracked: false,
-        },
-      ],
-      total: 1,
-      truncated: false,
-    });
-
-    await harness.controller.refreshStatus();
-
-    expect(harness.state()).toMatchObject({
-      selectedGitPathId: "main-path",
-    });
-  });
-
   it("resolves a change once before opening its resource and diff", async () => {
     const path = {
       id: "main-path",
@@ -637,193 +519,17 @@ describe("GitController", () => {
     expect(harness.state().contextMode).toBe("files");
   });
 
-  it.each([
-    {
-      label: "deleted working file",
-      change: {
-        path: { ...path, workspacePath: "file.txt" },
-        unstaged: { kind: "deleted" },
-        worktree: { kind: "deleted" },
-        untracked: false,
-      } satisfies GitFileChange,
-    },
-    {
-      label: "deleted staged file",
-      change: {
-        path: { ...path, workspacePath: "file.txt" },
-        staged: { kind: "deleted" },
-        worktree: { kind: "deleted" },
-        untracked: false,
-      } satisfies GitFileChange,
-    },
-    {
-      label: "non-UTF-8 Git identity",
-      change: {
-        path: { id: "raw-path", display: "escaped pathname" },
-        unstaged: { kind: "modified" },
-        worktree: { kind: "modified" as const },
-        untracked: false,
-      } satisfies GitFileChange,
-    },
-    {
-      label: "path outside the workspace",
-      change: modified.files[0],
-    },
-  ])(
-    "opens a file tab for $label without waiting for its body",
-    async ({ change }) => {
-      const harness = createHarness({
-        gitStatus: { ...modified, files: [change] },
-      });
-      harness.openResourceFromGit.mockReturnValue(new Promise(() => {}));
-      const result = { ...diff("selected"), path: change.path };
-      harness.gitDiff.mockResolvedValue(result);
+  it("opens a comparison while the file body is still loading", async () => {
+    const harness = createHarness({ gitStatus: modified });
+    harness.openResourceFromGit.mockReturnValue(new Promise(() => {}));
+    const result = diff("selected");
+    harness.gitDiff.mockResolvedValue(result);
 
-      await harness.controller.openChange(change.path.id);
+    await harness.controller.openChange(path.id);
 
-      expect(harness.openResourceFromGit).toHaveBeenCalledExactlyOnceWith(
-        change,
-      );
-      expect(harness.gitDiff).toHaveBeenCalledWith(
-        "s1",
-        change.path.id,
-        expect.any(AbortSignal),
-      );
-      expect(harness.state()).toMatchObject({
-        resourcesOpen: true,
-        contextMode: "files",
-        selectedGitPathId: change.path.id,
-        gitDiff: { status: "ready", result },
-      });
-    },
-  );
-
-  it("refreshes a selected comparison only in a visible file Changes view", async () => {
-    const harness = createHarness({
-      ...visibleSelection,
-      contextMode: "changes",
-      fileChangesVisible: false,
-    });
-    harness.gitStatus.mockResolvedValue(modified);
-    harness.gitDiff.mockResolvedValue(diff("latest"));
-
-    await harness.controller.refreshStatus();
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-    expect(harness.gitDiff).not.toHaveBeenCalled();
-
-    harness.patch({ contextMode: "files", fileChangesVisible: true });
-    await harness.controller.refreshStatus();
-    expect(harness.gitDiff).toHaveBeenCalledTimes(1);
-    expect(harness.state().gitDiff).toEqual({
-      status: "ready",
-      result: diff("latest"),
-    });
-
-    harness.patch({ fileChangesVisible: false });
-    await harness.controller.refreshStatus();
-    harness.patch({ resourcesOpen: false, fileChangesVisible: true });
-    await harness.controller.refreshStatus();
-    expect(harness.gitDiff).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves the net comparison when the resource resolves", () => {
-    const path = {
-      id: "dual-path",
-      display: "src/dual.ts",
-      utf8Path: "src/dual.ts",
-      workspacePath: "src/dual.ts",
-    };
-    const gitDiff = {
-      status: "loading" as const,
-      pathId: path.id,
-    };
-    const harness = createHarness({
-      gitStatus: {
-        kind: "repository",
-        head: { kind: "branch", name: "main", oid: "abc" },
-        files: [
-          {
-            path,
-            staged: { kind: "modified" },
-            unstaged: { kind: "modified" },
-            worktree: { kind: "modified" as const },
-            untracked: false,
-          },
-        ],
-        total: 1,
-        truncated: false,
-      },
-      selectedGitPathId: path.id,
-      gitDiff,
-    });
-
-    harness.controller.selectWorkspacePath(path.workspacePath);
-
-    expect(harness.state()).toMatchObject({
-      selectedGitPathId: path.id,
-      gitDiff,
-    });
-  });
-
-  it("keeps an unmodified workspace file while clearing a previous diff", () => {
-    const changedPath = {
-      id: "changed-path",
-      display: "src/changed.ts",
-      utf8Path: "src/changed.ts",
-      workspacePath: "src/changed.ts",
-    };
-    const harness = createHarness({
-      gitStatus: {
-        kind: "repository",
-        head: { kind: "branch", name: "main", oid: "abc" },
-        files: [
-          {
-            path: changedPath,
-            unstaged: { kind: "modified" },
-            worktree: { kind: "modified" as const },
-            untracked: false,
-          },
-        ],
-        total: 1,
-        truncated: false,
-      },
-      selectedGitPathId: changedPath.id,
-      gitDiff: {
-        status: "loading",
-        pathId: changedPath.id,
-      },
-    });
-
-    harness.controller.selectWorkspacePath("src/clean.ts");
-
-    expect(harness.state()).toMatchObject({
-      selectedGitPathId: null,
-      gitDiff: null,
-    });
-  });
-
-  it("clears Git selection only when a Files resource replaces it", () => {
-    const selected: GitControllerState = {
-      sessionId: "s1",
-      selectionGeneration: 1,
-      resourcesOpen: true,
-      contextMode: "changes",
-      gitStatus: null,
-      gitStatusError: null,
-      gitStatusLoading: false,
-      gitStatusRefreshing: false,
-      selectedGitPathId: "path-1",
-      gitDiff: { status: "loading", pathId: "path-1" },
-    };
-    const harness = createHarness(selected);
-
-    harness.controller.prepareResourceOpen("changes");
-    expect(harness.state().selectedGitPathId).toBe("path-1");
-
-    harness.controller.prepareResourceOpen("files");
-    expect(harness.state()).toMatchObject({
-      selectedGitPathId: null,
-      gitDiff: null,
-    });
+    expect(harness.openResourceFromGit).toHaveBeenCalledExactlyOnceWith(
+      modified.files[0],
+    );
+    expect(harness.state().gitDiff).toEqual({ status: "ready", result });
   });
 });

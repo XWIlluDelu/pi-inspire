@@ -29,6 +29,37 @@ export interface ResourceFileTab {
   git?: { pathId: string; displayPath: string };
 }
 
+/** Browse can highlight the last file without holding its preview authority. */
+export type FileInspection =
+  | { kind: "browse"; reference?: string }
+  | {
+      kind: "file";
+      reference: string;
+      /** Exact path supplied or confirmed for this read, not a remembered alias. */
+      workspacePath?: string;
+      preview: ResourcePreview | null;
+    };
+
+export interface FileInspectionState {
+  fileInspection: FileInspection;
+  resourceTabs: ResourceFileTab[];
+}
+
+export function inspectedFileTab({
+  fileInspection,
+  resourceTabs,
+}: FileInspectionState): ResourceFileTab | undefined {
+  return resourceTabs.find(
+    ({ reference }) => reference === fileInspection.reference,
+  );
+}
+
+export function inspectedPreview(
+  inspection: FileInspection,
+): ResourcePreview | null {
+  return inspection.kind === "file" ? inspection.preview : null;
+}
+
 export interface FileSourceJump {
   line: number;
 }

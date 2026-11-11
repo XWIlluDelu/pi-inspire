@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+
 import { waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { selectedWorkspacePath } from "../../src/components/WorkspaceBrowser";
+import { inspectedPreview } from "../../src/resource-preview";
 import {
   activeSnapshot,
   deferred,
@@ -49,7 +51,9 @@ describe("selected file preview lifecycle", () => {
     });
     const owner = await initStore();
     await owner.store.openResource("chart.png");
-    expect(owner.store.getState().resourcePreview?.status).toBe("ready");
+    expect(
+      inspectedPreview(owner.store.getState().fileInspection)?.status,
+    ).toBe("ready");
     return {
       ...owner,
       requests,
@@ -64,7 +68,7 @@ describe("selected file preview lifecycle", () => {
 
   it("keeps the loaded image across prompt confirmation and ordinary appends", async () => {
     const { store, socket, requests } = await openImage();
-    const preview = store.getState().resourcePreview;
+    const preview = inspectedPreview(store.getState().fileInspection);
     await expect(store.sendPrompt("Explain this result")).resolves.toEqual({
       accepted: true,
       historyEntry: null,
@@ -75,8 +79,8 @@ describe("selected file preview lifecycle", () => {
         transcriptPage: { revision: 2 },
       }),
     });
-    expect(store.getState().fileBrowserView).toBe("preview");
-    expect(store.getState().resourcePreview).toBe(preview);
+    expect(store.getState().fileInspection.kind).toBe("file");
+    expect(inspectedPreview(store.getState().fileInspection)).toBe(preview);
     expect(requests).toHaveLength(1);
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
@@ -117,15 +121,15 @@ describe("selected file preview lifecycle", () => {
       expect(store.getState().resourceTabs).toEqual(
         anotherFileOpen ? [{ reference: "current.txt" }] : [],
       );
-      expect(store.getState().selectedResourceReference).toBe(
-        anotherFileOpen ? "current.txt" : null,
+      expect(store.getState().fileInspection.reference).toBe(
+        anotherFileOpen ? "current.txt" : undefined,
       );
-      expect(store.getState().fileBrowserView).toBe(
-        anotherFileOpen ? "preview" : "browse",
+      expect(store.getState().fileInspection.kind).toBe(
+        anotherFileOpen ? "file" : "browse",
       );
-      expect(store.getState().resourcePreview?.reference ?? null).toBe(
-        anotherFileOpen ? "current.txt" : null,
-      );
+      expect(
+        inspectedPreview(store.getState().fileInspection)?.reference ?? null,
+      ).toBe(anotherFileOpen ? "current.txt" : null);
     },
   );
 
@@ -162,22 +166,26 @@ describe("selected file preview lifecycle", () => {
         }),
       });
       expect(store.getState()).toMatchObject({
-        fileBrowserView: "preview",
-        selectedResourceReference: "chart.png",
-        selectedResourceWorkspacePath: "plots/chart.png",
-        resourcePreview: { status: "loading" },
+        fileInspection: {
+          kind: "file",
+          reference: "chart.png",
+          workspacePath: "plots/chart.png",
+          preview: { status: "loading" },
+        },
       });
       expect(selectedWorkspacePath(store.getState())).toBe("plots/chart.png");
       expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:chart");
       await waitFor(() =>
-        expect(store.getState().resourcePreview?.status).toBe("ready"),
+        expect(inspectedPreview(store.getState().fileInspection)?.status).toBe(
+          "ready",
+        ),
       );
       expect(requests).toHaveLength(2);
       expect(requests[1]).toMatchObject({
         reference: "chart.png",
         workspacePath: "plots/chart.png",
       });
-      expect(store.getState().resourcePreview).toMatchObject({
+      expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
         descriptor: { id: "chart-2", viewId },
       });
       expect(store.getState().resourceTabs).toEqual([
@@ -196,13 +204,13 @@ describe("selected file preview lifecycle", () => {
       }),
     });
     await waitFor(() =>
-      expect(store.getState().resourcePreview).toMatchObject({
+      expect(inspectedPreview(store.getState().fileInspection)).toMatchObject({
         status: "error",
         message: "File no longer authorized",
       }),
     );
-    expect(store.getState().fileBrowserView).toBe("preview");
-    expect(store.getState().selectedResourceReference).toBe("chart.png");
+    expect(store.getState().fileInspection.kind).toBe("file");
+    expect(store.getState().fileInspection.reference).toBe("chart.png");
     expect(selectedWorkspacePath(store.getState())).toBe("plots/chart.png");
   });
 
@@ -213,7 +221,7 @@ describe("selected file preview lifecycle", () => {
       type: "snapshot",
       data: activeSnapshot({ transcriptPage: { viewId: "view-compacted" } }),
     });
-    expect(store.getState().fileBrowserView).toBe("browse");
+    expect(store.getState().fileInspection.kind).toBe("browse");
     expect(requests).toHaveLength(1);
   });
 
@@ -225,7 +233,7 @@ describe("selected file preview lifecycle", () => {
     expect(store.getState().resourceTabs).toEqual([
       { reference: "chart.png", workspacePath: "plots/chart.png" },
     ]);
-    expect(store.getState().fileBrowserView).toBe("browse");
+    expect(store.getState().fileInspection.kind).toBe("browse");
   });
 
   it("retires the selected file when the workspace changes", async () => {
@@ -237,8 +245,8 @@ describe("selected file preview lifecycle", () => {
         transcriptPage: { viewId: "view-other-project" },
       }),
     });
-    expect(store.getState().fileBrowserView).toBe("browse");
-    expect(store.getState().resourcePreview).toBeNull();
+    expect(store.getState().fileInspection.kind).toBe("browse");
+    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
     expect(store.getState().resourceTabs).toEqual([]);
     expect(requests).toHaveLength(1);
   });

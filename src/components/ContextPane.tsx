@@ -26,6 +26,7 @@ import {
 import { gitChangeCount } from "../git-presentation";
 import { appendDraftBlock } from "../reader-quote";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { inspectedFileTab } from "../resource-preview";
 import {
   resourceRows as toResourceRows,
   withProducedResources,
@@ -99,9 +100,10 @@ export const ContextPane = memo(function ContextPane({
       if (!state.resourceTabs.some((tab) => tab.reference === reference))
         fileReadings.delete(reference);
   }, [fileReadings, state.resourceTabs]);
+  const { fileInspection } = state;
   const activeFile =
-    state.contextMode === "files" && state.fileBrowserView === "preview";
-  const selectedReference = state.selectedResourceReference;
+    state.contextMode === "files" && fileInspection.kind === "file";
+  const selectedReference = fileInspection.reference;
   if (selectedReference && !fileReadings.has(selectedReference))
     fileReadings.set(
       selectedReference,
@@ -121,7 +123,7 @@ export const ContextPane = memo(function ContextPane({
   const browsingFiles =
     state.resourcesOpen &&
     state.contextMode === "files" &&
-    state.fileBrowserView === "browse";
+    fileInspection.kind === "browse";
   const currentResourcePage =
     resourcePage?.sessionId === state.sessionId &&
     resourcePage.viewId === state.transcriptViewId &&
@@ -173,7 +175,7 @@ export const ContextPane = memo(function ContextPane({
               latest.transportGeneration === transportGeneration &&
               latest.resourcesOpen &&
               latest.contextMode === "files" &&
-              latest.fileBrowserView === "browse"
+              latest.fileInspection.kind === "browse"
             )
               void loadResources();
           })
@@ -256,11 +258,9 @@ export const ContextPane = memo(function ContextPane({
       ? "changes"
       : state.contextMode !== "files"
         ? null
-        : state.fileBrowserView === "browse"
+        : fileInspection.kind === "browse"
           ? "browse"
-          : state.resourceTabs.find(
-                (tab) => tab.reference === state.selectedResourceReference,
-              )?.view === "changes"
+          : inspectedFileTab(state)?.view === "changes"
             ? "diff"
             : null;
   useEffect(() => {
@@ -269,8 +269,7 @@ export const ContextPane = memo(function ContextPane({
   }, [gitDetailView]);
 
   const handleTerminalOpenFile = useCallback((reference: string) => {
-    store.setContextMode("files");
-    void store.openResource(reference, "files");
+    void store.openResource(reference);
   }, []);
 
   const handleReaderQuote = useCallback(
@@ -323,7 +322,7 @@ export const ContextPane = memo(function ContextPane({
     state.cwd,
     transportGeneration,
     state.contextMode,
-    state.fileBrowserView,
+    fileInspection.kind,
     selectedReference,
   ]);
   const [manualRefresh, setManualRefresh] = useState<{ scope: string } | null>(
@@ -344,11 +343,11 @@ export const ContextPane = memo(function ContextPane({
       if (state.contextMode === "files") {
         store.cancelResourceProbes();
         await Promise.all([
-          state.fileBrowserView === "browse"
+          fileInspection.kind === "browse"
             ? loadResources()
             : Promise.resolve(),
           store.refreshWorkspaceBrowser(),
-          state.fileBrowserView === "preview" && selectedReference
+          fileInspection.kind === "file"
             ? store.refreshFileTab()
             : Promise.resolve(),
         ]);

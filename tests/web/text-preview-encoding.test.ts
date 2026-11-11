@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ResourceDescriptor } from "../../shared/contracts";
 import { decodeTextPreview } from "../../shared/text-preview";
 import { ResourceController } from "../../src/controllers/resource-controller";
+import { inspectedPreview } from "../../src/resource-preview";
 
 const text = '$message = "你好 🌍"\r\nWrite-Output $message\r\n';
 
@@ -99,10 +100,7 @@ describe("authorized Unicode resource previews", () => {
         transcriptRevision: 1,
         resourcesOpen: false,
         contextMode: "files",
-        fileBrowserView: "browse",
-        selectedResourceReference: null,
-        selectedResourceWorkspacePath: null,
-        resourcePreview: null,
+        fileInspection: { kind: "browse" },
         resourceTabs: [],
         resourceStanding: {},
       };
@@ -120,13 +118,12 @@ describe("authorized Unicode resource previews", () => {
         api: () => api,
         handleAuthFailure: vi.fn(),
         saveDownload: vi.fn(),
-        prepareGitForResourceOpen: () => () => true,
-        selectWorkspacePath: vi.fn(),
+        revealWorkspacePath: vi.fn(),
       };
       const controller = new ResourceController(host);
       try {
         await controller.openResource(reference);
-        expect(state.resourcePreview).toMatchObject({
+        expect(inspectedPreview(state.fileInspection)).toMatchObject({
           status: "ready",
           text: source,
           truncated: false,
