@@ -70,7 +70,7 @@ async function save(root: string, value: AttachControlRecord) {
 }
 
 describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
-  it("lists live, fresh records and drops ones from exited processes", async () => {
+  it("keeps an expired record from a live process for writer admission", async () => {
     const root = await directory();
     const live = await record();
     await save(root, live);
@@ -88,6 +88,12 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     ]);
     expect(await readdir(root)).not.toContain(exited);
     expect(await registry.forSession("one", "/work/one.jsonl")).toHaveLength(1);
+    expect(
+      await registry.branchLeaves("one", "/work/one.jsonl", {
+        observe: false,
+        isAncestor: () => false,
+      }),
+    ).toEqual(expect.arrayContaining(["leaf", undefined]));
     expect(await registry.forSession("one", "/work/other.jsonl")).toEqual([]);
   });
 

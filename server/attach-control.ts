@@ -28,6 +28,11 @@ function errorCode(error: unknown): string | undefined {
   return (error as NodeJS.ErrnoException | null)?.code;
 }
 
+function heartbeatIsCurrent(record: AttachControlRecord): boolean {
+  const age = Date.now() - record.updatedAt;
+  return age >= 0 && age < ATTACH_CONTROL_STALE_MS;
+}
+
 async function sessionFileStat(path: string) {
   try {
     return await stat(path, { bigint: true });
@@ -134,6 +139,7 @@ export class AttachControlRegistry {
     name: string,
     relevant: ((record: AttachControlRecord) => Promise<boolean>) | undefined,
     cachedIdentity: boolean,
+    includeStale: boolean,
   ): Promise<AttachControlRecord | null> {
     const path = join(this.directory, name);
     try {
@@ -156,8 +162,7 @@ export class AttachControlRegistry {
           await rm(path, { force: true }).catch(() => {});
         return null;
       }
-      const age = Date.now() - record.updatedAt;
-      return age >= 0 && age < ATTACH_CONTROL_STALE_MS ? record : null;
+      return includeStale || heartbeatIsCurrent(record) ? record : null;
     } catch (error) {
       if (errorCode(error) === "ENOENT" || error instanceof SyntaxError)
         return null;
@@ -169,10 +174,12 @@ export class AttachControlRegistry {
     include = () => true,
     relevant,
     cachedIdentity = false,
+    includeStale = false,
   }: {
     include?: (name: string) => boolean;
     relevant?: (record: AttachControlRecord) => Promise<boolean>;
     cachedIdentity?: boolean;
+    includeStale?: boolean;
   } = {}): Promise<AttachControlRecord[]> {
     let names: string[];
     try {
@@ -185,7 +192,9 @@ export class AttachControlRegistry {
     }
     return (
       await Promise.all(
-        names.map((name) => this.readRecord(name, relevant, cachedIdentity)),
+        names.map((name) =>
+          this.readRecord(name, relevant, cachedIdentity, includeStale),
+        ),
       )
     ).filter((record): record is AttachControlRecord => record !== null);
   }
@@ -222,9 +231,15 @@ export class AttachControlRegistry {
   async forSession(
     sessionId: string,
     sessionFile: string,
-    { observe = false }: { observe?: boolean } = {},
+    {
+      observe = false,
+      includeStale = false,
+    }: {
+      observe?: boolean;
+      includeStale?: boolean;
+    } = {},
   ): Promise<AttachControlRecord[]> {
-    if (observe) {
+    if (observe && !includeStale) {
       try {
         return await matchingSessionRecords(
           await this.observe(),
@@ -237,6 +252,8 @@ export class AttachControlRegistry {
       }
     }
     return this.scan({
+      includeStale,
+      cachedIdentity: observe,
       relevant: async (record) =>
         (await matchingSessionRecords([record], sessionId, sessionFile))
           .length > 0,
@@ -253,9 +270,13 @@ export class AttachControlRegistry {
       isAncestor,
     }: { observe: boolean; isAncestor: (leaf: string | null) => boolean },
   ): Promise<(string | null | undefined)[]> {
-    const records = await this.forSession(sessionId, sessionFile, { observe });
+    const records = await this.forSession(sessionId, sessionFile, {
+      observe,
+      includeStale: true,
+    });
     const leaves = await Promise.all(
       records.map(async (record) => {
+        if (!heartbeatIsCurrent(record)) return [undefined];
         if (!isAncestor(record.leafId)) return [record.leafId];
         if (!record.endpoint) return [undefined];
         try {
@@ -275,7 +296,9 @@ export class AttachControlRegistry {
   /** Deletion targets the whole session, across every reported branch. A
    * reply is not exit evidence; leave the file in place until each Pi exits. */
   async stopSession(sessionId: string, sessionFile: string): Promise<void> {
-    const records = await this.forSession(sessionId, sessionFile);
+    const records = await this.forSession(sessionId, sessionFile, {
+      includeStale: true,
+    });
     const results = await Promise.allSettled(
       records.map(async (record) => {
         const response = await requestAttachControl(record.endpoint, {
@@ -305,7 +328,10 @@ export class AttachControlRegistry {
     );
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
-    if ((await this.forSession(sessionId, sessionFile)).length)
+    if (
+      (await this.forSession(sessionId, sessionFile, { includeStale: true }))
+        .length
+    )
       throw requestError(
         "Another Pi opened this session during deletion. Review it before retrying.",
         409,
@@ -345,6 +371,7 @@ export function takeoverCandidate(
   idleOnly = false,
 ): AttachControlRecord | undefined {
   if (idleOnly) {
+    if (records.some((record) => !heartbeatIsCurrent(record))) return undefined;
     const [candidate, other] = records.filter(
       (record) => matchLeaf(record.leafId) !== "other",
     );

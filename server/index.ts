@@ -190,7 +190,9 @@ const runtime: RuntimeController = new RuntimeController(catalog, attachments, {
   .setExternalSessionConnector(
     async (sessionId, sessionFile, match, idleOnly) => {
       const instance = takeoverCandidate(
-        await attachControl.forSession(sessionId, sessionFile),
+        await attachControl.forSession(sessionId, sessionFile, {
+          includeStale: idleOnly,
+        }),
         match,
         idleOnly,
       );

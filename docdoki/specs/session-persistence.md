@@ -215,7 +215,8 @@ still at the older node, Inspire can start its own worker for the viewed branch.
 - Opening a session or reconnecting a browser view attaches automatically when exactly one Pi
   could own the branch, its control endpoint is available, and live state confirms it is idle.
   Otherwise the view is read-only (`external-active`) with progress and **Take over**.
-- An unavailable live check or a reported leaf still missing from the refreshed projection
+- A stale heartbeat from a process that is still alive leaves its branch unknown. An unavailable
+  live check or a reported leaf still missing from the refreshed projection
   blocks cold writer admission. Read-only views recheck about every two seconds.
 
 Inspire's own workers load attach-control with a tag bound to the worker launcher. The owning Host
