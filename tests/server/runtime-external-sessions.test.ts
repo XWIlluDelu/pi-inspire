@@ -252,6 +252,23 @@ describe("continue an externally owned Pi", () => {
     }
   });
 
+  it("identifies the attached session whose Stop could not be confirmed", async () => {
+    const f = nativeFixture();
+    f.setState({ status: "working", leafId: null });
+    vi.mocked(f.native.abort).mockRejectedValueOnce(
+      new Error("No Stop receipt"),
+    );
+    const runtime = attachedRuntime(async () => f.native);
+    try {
+      await openAttached(runtime, "a");
+      await expect(runtime.stopAttachedPiWork()).rejects.toThrow(
+        "Could not confirm Stop for a. Work may still be running.",
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it("blocks a restart when an attached Pi becomes busy after reservation", async () => {
     const session = await persistedRecord("a");
     const f = nativeFixture();

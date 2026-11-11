@@ -317,6 +317,8 @@ export class RuntimeExternalSessions {
     )
       return false;
     if (!state || read < connection.latestRead) return true;
+    if (requireObservation && "ended" in state && state.ended === "unreachable")
+      throw requestError("The attached Pi could not confirm its state.", 409);
     connection.latestRead = read;
     if (
       "ended" in state ||

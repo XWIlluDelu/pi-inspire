@@ -64,13 +64,15 @@ export class HostRestartClient {
           ![
             "hostId,operationId,scope",
             "hostId,interruptWork,operationId,scope",
+            "hostId,interruptWork,operationId,scope,skipAttachedStop",
           ].includes(Object.keys(value).sort().join()) ||
           typeof value.hostId !== "string" ||
           !UUID.test(value.hostId) ||
           typeof value.operationId !== "string" ||
           !UUID.test(value.operationId) ||
           !["host", "host-only", "all"].includes(value.scope) ||
-          ("interruptWork" in value && value.interruptWork !== true)
+          ("interruptWork" in value && value.interruptWork !== true) ||
+          ("skipAttachedStop" in value && value.skipAttachedStop !== true)
         )
           throw new Error();
         this.patch({ pending: value });
@@ -141,6 +143,7 @@ export class HostRestartClient {
         status.operation.scope === pending.scope &&
         Boolean(status.operation.interruptWork) ===
           Boolean(pending.interruptWork) &&
+        status.operation.skipAttachedStop === pending.skipAttachedStop &&
         status.operation.phase === "rejected"
       ) {
         this.persist(null);
@@ -171,6 +174,7 @@ export class HostRestartClient {
     scope: HostRestartScope,
     hostId: string,
     interruptWork = false,
+    skipAttachedStop = false,
   ): Promise<void> => {
     if (this.state.sending || this.state.blocked || this.state.pending) return;
     try {
@@ -189,6 +193,7 @@ export class HostRestartClient {
         operationId: crypto.randomUUID(),
         scope,
         ...(interruptWork ? { interruptWork: true } : {}),
+        ...(skipAttachedStop ? { skipAttachedStop: true } : {}),
       };
       this.persist(pending);
       this.patch({ pending, sending: true, notice: null });
@@ -214,7 +219,8 @@ export class HostRestartClient {
         status?.hostId !== pending.hostId ||
         receipt.id !== pending.operationId ||
         receipt.scope !== pending.scope ||
-        Boolean(receipt.interruptWork) !== Boolean(pending.interruptWork)
+        Boolean(receipt.interruptWork) !== Boolean(pending.interruptWork) ||
+        receipt.skipAttachedStop !== pending.skipAttachedStop
       )
         return;
 

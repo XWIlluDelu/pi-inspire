@@ -937,16 +937,23 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   }
 
   async stopAttachedPiWork(): Promise<void> {
-    await Promise.all(
+    const failures = await Promise.all(
       [...this.slots.values()].map(async (slot) => {
         if (!this.externalSessions?.has(slot)) return;
         try {
           await this.externalSessions.abort(slot, true);
         } catch (error) {
           this.logRuntimeError(slot.id, error, "attached_pi_abort");
+          return slot.preview?.sessionName || slot.id;
         }
       }),
     );
+    const sessions = failures.filter((name) => name !== undefined);
+    if (sessions.length)
+      throw requestError(
+        `Could not confirm Stop for ${sessions.join(", ")}. Work may still be running.`,
+        409,
+      );
   }
 
   async checkAttachedRestartWork(): Promise<RestartWorkConflict | null> {

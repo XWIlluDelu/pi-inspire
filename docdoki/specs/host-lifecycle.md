@@ -385,7 +385,9 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   counts as active work for both scopes. Before submission, the Host reads the attached Pi
   directly. An unavailable observation leaves the ordinary restart blocked. Only an explicit
   **Stop work and restart** interrupts its agent work through attach-control. The interruption
-  must identify the attached branch. The Host logs a failed interruption and continues the restart.
+  must identify the attached branch. If Stop cannot be confirmed, the Host reports the affected
+  sessions before restarting. The same row offers **Restart anyway** to proceed without issuing
+  another Stop to attached Pi processes.
 - `inspire restart --host-only` preserves every Pi process and its running work, including
   Inspire's workers. Running work can continue during restart because the closing Host detaches
   its workers. When the browser returns to a preserved session, it automatically attaches to a

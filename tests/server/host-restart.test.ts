@@ -201,6 +201,41 @@ describe("manual Host restart ownership", () => {
     ).toThrow("does not match");
   });
 
+  it("reports an unconfirmed Stop before allowing Restart anyway", async () => {
+    const f = fixture();
+    const request = {
+      ...(await intent(f.controller)),
+      interruptWork: true as const,
+    };
+    const anyway = {
+      ...request,
+      operationId: randomUUID(),
+      skipAttachedStop: true as const,
+    };
+    expect(() => f.controller.start(anyway)).toThrow(
+      "Review the unconfirmed Stop",
+    );
+    f.runtime.stopAttachedPiWork.mockRejectedValueOnce(
+      new Error("Could not confirm Stop for session A."),
+    );
+    f.controller.start(request);
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation).toMatchObject({
+        phase: "rejected",
+        stopUnconfirmed: true,
+        error: "Could not confirm Stop for session A.",
+      }),
+    );
+    expect(f.backend.request).not.toHaveBeenCalled();
+    expect(f.runtime.releaseMaintenanceRestart).toHaveBeenCalledWith("lease");
+    f.controller.start(anyway);
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
+    );
+    expect(f.backend.request).toHaveBeenCalledOnce();
+    expect(f.runtime.stopAttachedPiWork).toHaveBeenCalledOnce();
+  });
+
   it("does not interrupt on failed forced preparation or when another restart lease exists", async () => {
     const f = fixture({
       prepare: vi.fn(async () => {
