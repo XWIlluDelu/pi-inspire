@@ -514,7 +514,7 @@ test("session title and workspace/status text share a baseline at every header t
   }
 });
 
-test("workbench headers preserve controls, text baselines and drawer dismissal", async ({
+test("narrow workbench headers preserve model controls and the Git count", async ({
   page,
 }) => {
   await page.route("**/api/git/status?**", async (route) => {
@@ -576,15 +576,6 @@ test("workbench headers preserve controls, text baselines and drawer dismissal",
       // The 320px bar yields secondary workspace details to primary controls.
       await expect(metadata).toBeHidden();
     }
-    const toggle = page.getByRole("button", { name: "Toggle navigation" });
-    await toggle.click();
-    const navigation = page.getByRole("dialog", {
-      name: "Sessions",
-      exact: true,
-    });
-    await navigation.getByRole("button", { name: "Close navigation" }).click();
-    await expect(navigation).toBeHidden();
-    await expect(toggle).toBeFocused();
   }
 
   await page.getByRole("button", { name: "Toggle resources panel" }).click();

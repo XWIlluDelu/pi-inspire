@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import type { ModelOption } from "../../shared/contracts";
 import { modelIdentityKey } from "../../shared/contracts";
 import {
@@ -8,6 +8,7 @@ import {
   modelSettingsSnapshot,
 } from "../web/fixtures/model-settings";
 import { loadModelScale } from "./fixtures/model-scale";
+import { pairAndOpen } from "./support/navigation";
 
 let root: string, catalog: ModelOption[], available: ModelOption[];
 const previous = {
@@ -36,14 +37,6 @@ test.afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 test.use({ serviceWorkers: "block" });
-async function frame(page: Page) {
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      ),
-  );
-}
 for (const touch of [false, true]) {
   test.describe(
     touch
@@ -92,35 +85,11 @@ for (const touch of [false, true]) {
         );
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
-        await page.goto("/");
-        await page
-          .getByLabel("Access token")
-          .fill("inspire-browser-test-token");
-        await page.getByRole("button", { name: "Pair", exact: true }).click();
-        const nav = page.getByRole("button", {
-          name: /^(Toggle|Expand|Collapse) navigation$/,
-          exact: true,
-        });
-        if (
-          (await nav.getAttribute("aria-expanded")) === "false" ||
-          (await page.locator(".nav--rail").count())
-        )
-          await nav.click();
-        await page
-          .getByRole("button", { name: /Review extension event lifecycle/ })
-          .first()
-          .click();
-        await expect(
-          page.getByRole("textbox", { name: "Message", exact: true }),
-        ).toBeVisible();
+        await pairAndOpen(page);
         const trigger = page.getByRole("button", {
           name: "Model",
           exact: true,
         });
-        const measurements: Record<string, unknown> = {
-          catalog: catalog.length,
-          available: available.length,
-        };
         await page.evaluate(() => {
           const metrics = { maxMounted: 0, maxAddedPerMutation: 0 };
           (
@@ -148,16 +117,12 @@ for (const touch of [false, true]) {
             );
           }).observe(document.body, { childList: true, subtree: true });
         });
-        const opened = Date.now();
         await trigger.click();
-        await frame(page);
-        measurements.pickerOpenMs = Date.now() - opened;
         const search = page.getByRole("combobox", { name: "Search models" });
         const list = page.getByRole("listbox", { name: "Available models" });
         const navigation = touch ? list : search;
         await expect(navigation).toBeFocused();
-        measurements.pickerMounted = await page.getByRole("option").count();
-        expect(measurements.pickerMounted).toBeLessThan(25);
+        expect(await list.getByRole("option").count()).toBeLessThan(25);
         const menu = page.locator(".model-picker__menu");
         const bounds = await menu.boundingBox();
         expect(Math.round(bounds!.height)).toBeLessThanOrEqual(456);
@@ -169,18 +134,13 @@ for (const touch of [false, true]) {
         expect(Math.round(bounds!.y + bounds!.height)).toBeLessThanOrEqual(
           touch ? 844 : 900,
         );
-        const navigated = Date.now();
         await navigation.press("End");
-        await frame(page);
-        measurements.pickerEndMs = Date.now() - navigated;
-        const last = page.locator(
-          `[id="${await navigation.getAttribute("aria-activedescendant")}"]`,
-        );
-        await expect(last).toHaveAttribute(
-          "aria-posinset",
-          String(available.length),
-        );
+        const last = list.locator(`[aria-posinset="${available.length}"]`);
         await expect(last).toBeInViewport();
+        await expect(navigation).toHaveAttribute(
+          "aria-activedescendant",
+          (await last.getAttribute("id"))!,
+        );
         await navigation.press("ArrowUp");
         await expect(
           page.locator(
@@ -203,11 +163,8 @@ for (const touch of [false, true]) {
         if (touch) await search.tap();
         else await search.click();
         await expect(search).toBeFocused();
-        const typed = Date.now();
         await search.pressSequentially(`${target.provider} ${target.id}`);
-        await frame(page);
-        measurements.pickerSearchMs = Date.now() - typed;
-        expect(await page.getByRole("option").count()).toBeLessThan(25);
+        expect(await list.getByRole("option").count()).toBeLessThan(25);
         await expect(
           page.locator(
             `[id="${await search.getAttribute("aria-activedescendant")}"]`,
@@ -225,21 +182,15 @@ for (const touch of [false, true]) {
           "aria-rowcount",
           String(available.length),
         );
-        measurements.settingsMounted = await grid.getByRole("row").count();
-        expect(measurements.settingsMounted).toBeLessThan(16);
+        expect(await grid.getByRole("row").count()).toBeLessThan(16);
         await gridSearch.focus();
-        const gridNavigated = Date.now();
         await gridSearch.press("End");
-        await frame(page);
-        measurements.settingsEndMs = Date.now() - gridNavigated;
-        const lastRow = page.locator(
-          `[id="${await gridSearch.getAttribute("aria-activedescendant")}"]`,
-        );
-        await expect(lastRow).toHaveAttribute(
-          "aria-rowindex",
-          String(available.length),
-        );
+        const lastRow = grid.locator(`[aria-rowindex="${available.length}"]`);
         await expect(lastRow).toBeInViewport();
+        await expect(gridSearch).toHaveAttribute(
+          "aria-activedescendant",
+          (await lastRow.getAttribute("id"))!,
+        );
         await gridSearch.press("Tab");
         await expect(
           page.getByRole("button", { name: "Refresh available models" }),
@@ -248,12 +199,9 @@ for (const touch of [false, true]) {
         await expect(
           lastRow.getByRole("checkbox", { name: /^Common:/ }),
         ).toBeFocused();
-        const gridTyped = Date.now();
         await gridSearch.fill(`${target.provider} ${target.id}`);
-        await frame(page);
-        measurements.settingsSearchMs = Date.now() - gridTyped;
-        expect(await grid.getByRole("row").count()).toBeLessThan(16);
         await expect(grid).toContainText(target.name ?? target.id);
+        expect(await grid.getByRole("row").count()).toBeLessThan(16);
         const keys = new Set(available.map(modelIdentityKey));
         const unavailable = catalog.find(
           (model) => !keys.has(modelIdentityKey(model)),
@@ -263,23 +211,21 @@ for (const touch of [false, true]) {
           grid.getByText(unavailable.name ?? unavailable.id, { exact: true }),
         ).toHaveCount(0);
         await gridSearch.fill(`${target.provider} ${target.id}`);
-        await frame(page);
+        await expect(grid).toContainText(target.name ?? target.id);
 
         const geometry = await grid.evaluate((element) => {
           const rect = element.getBoundingClientRect();
           return {
-            width: rect.width,
             height: rect.height,
             overflow:
               document.querySelector(".settings__main")!.scrollWidth >
               document.querySelector(".settings__main")!.clientWidth + 1,
           };
         });
-        measurements.settingsGeometry = geometry;
         expect(geometry.height).toBeLessThanOrEqual(340);
         expect(geometry.overflow).toBe(false);
         expect(errors).toEqual([]);
-        measurements.rendering = await page.evaluate(
+        const rendering = await page.evaluate(
           () =>
             (
               window as unknown as {
@@ -290,18 +236,8 @@ for (const touch of [false, true]) {
               }
             ).modelRendering,
         );
-        expect(
-          (measurements.rendering as { maxMounted: number }).maxMounted,
-        ).toBeLessThan(25);
-        expect(
-          (measurements.rendering as { maxAddedPerMutation: number })
-            .maxAddedPerMutation,
-        ).toBeLessThan(100);
-        await writeFile(
-          `output/playwright/models-scale-${touch ? "touch" : "desktop"}.json`,
-          JSON.stringify(measurements, null, 2),
-        );
-        console.log(measurements);
+        expect(rendering.maxMounted).toBeLessThan(25);
+        expect(rendering.maxAddedPerMutation).toBeLessThan(100);
       });
     },
   );

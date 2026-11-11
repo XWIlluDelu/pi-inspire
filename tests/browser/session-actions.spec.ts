@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { renderedColors, resolvedColor } from "./support/colors";
 import { hostRequest } from "./support/host-request";
 import {
   openFixtureSession,
-  pairedPage,
   openSettings,
+  pairedPage,
 } from "./support/navigation";
 import { firstTextBaseline } from "./support/text-baseline";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
@@ -604,14 +605,40 @@ test("export failure keeps long diagnostics readable and every action reachable"
     name: "Download",
     exact: true,
   });
+  const onAccent = await resolvedColor(download, "on-accent");
+  const checkFill = async (role: string) => {
+    await expect(download).toHaveCSS("color", onAccent);
+    await expect(download).toHaveCSS(
+      "background-color",
+      await resolvedColor(download, role),
+    );
+    expect((await renderedColors(download)).contrast).toBeGreaterThanOrEqual(
+      4.5,
+    );
+  };
+  await page.mouse.move(0, 0);
+  await checkFill("accent-fill");
+  await download.hover();
+  await checkFill("accent-fill-hover");
   const geometry = (await download.boundingBox())!;
-  await download.click();
+  await page.mouse.down();
   try {
+    await checkFill("accent-fill-active");
+    await page.mouse.up();
     const exporting = dialog.getByRole("button", {
       name: "Exporting…",
       exact: true,
     });
     await expect(exporting).toBeDisabled();
+    await exporting.hover({ force: true });
+    await expect(exporting).toHaveCSS(
+      "color",
+      await resolvedColor(exporting, "faint"),
+    );
+    await expect(exporting).toHaveCSS(
+      "background-color",
+      await resolvedColor(exporting, "bg-inset"),
+    );
     // Pending exports add guidance and allow closing; only the submitted
     // action's label footprint remains fixed.
     expect(await exporting.boundingBox()).toMatchObject({
@@ -626,6 +653,11 @@ test("export failure keeps long diagnostics readable and every action reachable"
   }
   const error = dialog.getByRole("alert");
   await expect(error).toHaveText(message);
+  await expect(error).toHaveCSS(
+    "color",
+    await resolvedColor(error, "error-ink"),
+  );
+  expect((await renderedColors(error)).contrast).toBeGreaterThanOrEqual(4.5);
   for (const [width, height] of [
     [1280, 900],
     [844, 390],

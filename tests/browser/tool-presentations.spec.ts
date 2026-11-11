@@ -4,7 +4,6 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { createInspireServer } from "../../server/app";
 import { GitInspectionService } from "../../server/git-inspection";
-import { workbenchFixture } from "../fixtures/workbench";
 import { PreferencesStore } from "../../server/preferences";
 import { ResourceStore } from "../../server/resources";
 import { ToolPresentationConfigStore } from "../../server/tool-presentation-config";
@@ -12,9 +11,11 @@ import { fileResourceReference } from "../../shared/resource-references";
 import type { ToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import type { ToolCallContent } from "../../src/events";
 import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
+import { workbenchFixture } from "../fixtures/workbench";
 import { observeClipboardWrites } from "./support/clipboard";
-import { hostRequest } from "./support/host-request";
+import { renderedColors, resolvedColor } from "./support/colors";
 import { openEventSession } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
 
 test.use({ serviceWorkers: "block" });
 
@@ -1136,9 +1137,13 @@ for (const [palette, theme] of [
     expect(markdownSize.scroll).toBeGreaterThan(markdownSize.height);
     await markdown.focus();
     await expect(markdown).toBeFocused();
-    await expect(
-      markdown.getByRole("link", { name: "Runtime guide" }),
-    ).toBeVisible();
+    const link = markdown.getByRole("link", { name: "Runtime guide" });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveCSS(
+      "color",
+      await resolvedColor(link, "accent-deep"),
+    );
+    expect((await renderedColors(link)).contrast).toBeGreaterThanOrEqual(4.5);
     const accessibility = await new AxeBuilder({ page })
       .include(".card--tool")
       .analyze();

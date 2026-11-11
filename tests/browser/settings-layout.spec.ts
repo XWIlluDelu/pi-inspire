@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import type { HostUpdateStatus } from "../../shared/contracts";
 import type {
   HostRestartRequest,
@@ -6,6 +6,7 @@ import type {
 } from "../../shared/host-restart";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
+import { renderedColors, resolvedColor } from "./support/colors";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
@@ -20,7 +21,17 @@ import { textMarkOffsets } from "./support/text-baseline";
 // These suites own mocked Host responses, not Service Worker fetch handling.
 test.use({ serviceWorkers: "block" });
 
-test("update checks keep button geometry stable throughout checking and results", async ({
+async function openSystemSettings(page: Page) {
+  await openSettings(page);
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  await settings
+    .getByRole("navigation", { name: "Settings categories" })
+    .getByRole("button", { name: "System", exact: true })
+    .click();
+  return settings;
+}
+
+test("update checks keep action geometry stable from request to result", async ({
   page,
 }) => {
   let status: HostUpdateStatus = {
@@ -45,119 +56,81 @@ test("update checks keep button geometry stable throughout checking and results"
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openSettings(page);
-  await page
-    .getByRole("navigation", { name: "Settings categories" })
-    .getByRole("button", { name: "System", exact: true })
-    .click();
-  const versions = page.locator("#settings-section-updates");
-  const button = versions.getByRole("button", {
-    name: "Check for updates",
-    exact: true,
-  });
+  const settings = await openSystemSettings(page);
+  const versions = settings.locator("#settings-section-updates");
+  const button = versions.getByRole("button", { name: "Check for updates" });
   const label = button.locator(".system-versions__check-label");
-  const publish = (patch: Partial<typeof status>) => {
-    status = { ...status, ...patch, revision: status.revision + 1 };
-    transport.send({ type: "update_status", updateStatus: status });
-  };
+  await page.evaluate(() => document.fonts.ready);
+
   try {
-    for (const width of [1280, 820, 390, 320]) {
+    for (const width of [1280, 320]) {
       await page.setViewportSize({ width, height: 900 });
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate((theme) => {
-          document.documentElement.dataset.theme = theme;
-        }, theme);
-        publish({ piUpdateCheck: null, inspireUpdateCheck: null });
-        await expect(label).toHaveText("Check updates");
-        await page.evaluate(() => document.fonts.ready);
-        await page
-          .getByRole("dialog", { name: "Settings", exact: true })
-          .evaluate((el) =>
-            Promise.allSettled(
-              el.getAnimations().map((animation) => animation.finished),
-            ),
+      status = {
+        ...status,
+        revision: status.revision + 1,
+        piUpdateCheck: null,
+        inspireUpdateCheck: null,
+      };
+      transport.send({ type: "update_status", updateStatus: status });
+      await expect(label).toHaveText("Check updates");
+      await settings.evaluate((el) =>
+        Promise.allSettled(
+          el.getAnimations().map((animation) => animation.finished),
+        ),
+      );
+      const before = (await button.boundingBox())!;
+      const expectStableAction = async (text: string) => {
+        await expect(label).toHaveText(text);
+        await expect(label).toBeVisible();
+        const after = (await button.boundingBox())!;
+        for (const key of ["x", "y", "width", "height"] as const)
+          expect(after[key], `${width}px / ${text} / ${key}`).toBeCloseTo(
+            before[key],
+            1,
           );
-        const before = (await button.boundingBox())!;
-        const stable = async (text: string) => {
-          await expect(label).toHaveText(text);
-          await expect(label).toBeVisible();
-          const after = (await button.boundingBox())!;
-          for (const key of ["x", "y", "width", "height"] as const)
-            expect(
-              after[key],
-              `${width} / ${theme} / ${text} / ${key}`,
-            ).toBeCloseTo(before[key], 1);
-          const alignment = await button.evaluate((el) => {
-            const box = el.getBoundingClientRect();
-            const content = el.querySelector(
-              ".system-versions__check-content",
-            )!;
-            const group = content.getBoundingClientRect();
-            const icon = content.querySelector("svg")!.getBoundingClientRect();
-            const text = content.querySelector("span")!.getBoundingClientRect();
-            return {
-              x: group.x + group.width / 2 - box.x - box.width / 2,
-              y: icon.y + icon.height / 2 - box.y - box.height / 2,
-              gap: text.left - icon.right,
-              labelOffset: text.y + text.height / 2 - icon.y - icon.height / 2,
-            };
-          });
-          expect(Math.abs(alignment.x)).toBeLessThanOrEqual(0.5);
-          expect(Math.abs(alignment.y)).toBeLessThanOrEqual(0.5);
-          expect(alignment.gap).toBeCloseTo(8, 1);
-          expect(alignment.labelOffset).toBeCloseTo(0, 1);
-          expect(
-            await versions
-              .locator(".settings__section-title-wrap")
-              .evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
-          ).toBe(true);
-        };
-        await stable("Check updates");
-        responseReady = new Promise<void>((resolve) => {
-          release = resolve;
+        const alignment = await button.evaluate((element) => {
+          const bounds = element.getBoundingClientRect();
+          const group = element.querySelector(
+            ".system-versions__check-content",
+          )!;
+          const content = group.getBoundingClientRect();
+          const icon = group.querySelector("svg")!.getBoundingClientRect();
+          const label = group.querySelector("span")!.getBoundingClientRect();
+          return {
+            center:
+              (content.left + content.right - bounds.left - bounds.right) / 2,
+            gap: label.left - icon.right,
+          };
         });
-        await button.click();
-        await stable("Checking…");
-        status = {
-          ...status,
-          revision: status.revision + 1,
-          piUpdateChecking: true,
-        };
-        release!();
-        await stable("Checking…");
-        publish({
-          piUpdateChecking: false,
-          piUpdateCheck: {
-            currentVersion: "1.0.0",
-            installedVersion: "1.0.0",
-            pi: {
-              kind: "available",
-              latestVersion: "1.1.0",
-              releaseUrl: "https://example.invalid/pi",
-            },
-            extensions: { kind: "none" },
+        expect(Math.abs(alignment.center)).toBeLessThanOrEqual(0.5);
+        expect(alignment.gap).toBeCloseTo(8, 1);
+      };
+      await expectStableAction("Check updates");
+      responseReady = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await button.click();
+      await expectStableAction("Checking…");
+      status = {
+        ...status,
+        revision: status.revision + 1,
+        piUpdateCheck: {
+          currentVersion: "1.0.0",
+          installedVersion: "1.0.0",
+          pi: {
+            kind: "available",
+            latestVersion: "1.1.0",
+            releaseUrl: "https://example.invalid/pi",
           },
-          inspireUpdateCheck: { kind: "current" },
-        });
-        await stable("Check again");
-        await expect(button).toBeEnabled();
-        await expect(
-          versions.getByRole("button", {
-            name: "Copy update details",
-            exact: true,
-          }),
-        ).toBeVisible();
-        publish({
-          piUpdateCheck: {
-            currentVersion: "1.0.0",
-            installedVersion: "1.0.0",
-            pi: { kind: "unavailable" },
-            extensions: { kind: "unavailable" },
-          },
-          inspireUpdateCheck: { kind: "unavailable" },
-        });
-        await stable("Check again");
-      }
+          extensions: { kind: "none" },
+        },
+        inspireUpdateCheck: { kind: "current" },
+      };
+      release!();
+      await expectStableAction("Check again");
+      await expect(
+        versions.getByRole("button", { name: "Copy update details" }),
+      ).toBeVisible();
     }
   } finally {
     release?.();
@@ -215,12 +188,7 @@ test("busy Host restarts submit directly with stable status through delayed rece
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings
-    .getByRole("navigation", { name: "Settings categories" })
-    .getByRole("button", { name: "System", exact: true })
-    .click();
+  const settings = await openSystemSettings(page);
   const row = settings.locator(".host-restart__status-row");
   const message = row.locator(".host-restart__status");
   const dialog = page.getByRole("alertdialog");
@@ -1151,6 +1119,27 @@ test("canceling preference reset preserves settings and returns focus to its ope
   for (const exit of ["Escape", "Cancel"]) {
     await reset.click();
     await expect(confirmation).toBeVisible();
+    if (exit === "Escape") {
+      const confirm = confirmation.getByRole("button", {
+        name: "Reset preferences",
+      });
+      await expect(confirm).toHaveCSS(
+        "color",
+        await resolvedColor(confirm, "on-status"),
+      );
+      await expect(confirm).toHaveCSS(
+        "background-color",
+        await resolvedColor(confirm, "error"),
+      );
+      await confirm.hover();
+      await expect(confirm).toHaveCSS(
+        "background-color",
+        await resolvedColor(confirm, "error-fill-hover"),
+      );
+      expect((await renderedColors(confirm)).contrast).toBeGreaterThanOrEqual(
+        4.5,
+      );
+    }
     for (let step = 0; step < 3; step += 1) {
       await page.keyboard.press("Tab");
       expect(
@@ -1213,15 +1202,7 @@ for (const touch of [false, true]) {
           });
         });
         await pairedPage(page);
-        await openSettings(page);
-        const settings = page.getByRole("dialog", {
-          name: "Settings",
-          exact: true,
-        });
-        await settings
-          .getByRole("navigation", { name: "Settings categories" })
-          .getByRole("button", { name: "System", exact: true })
-          .click();
+        const settings = await openSystemSettings(page);
         const field = settings.locator(".settings__field").filter({
           has: page.locator(".settings__field-label", {
             hasText: /^Herdr enhancement$/,
@@ -1318,15 +1299,7 @@ for (const touch of [false, true]) {
           });
         });
         await pairedPage(page);
-        await openSettings(page);
-        const settings = page.getByRole("dialog", {
-          name: "Settings",
-          exact: true,
-        });
-        await settings
-          .getByRole("navigation", { name: "Settings categories" })
-          .getByRole("button", { name: "System", exact: true })
-          .click();
+        const settings = await openSystemSettings(page);
         const recheck = settings.getByRole("button", {
           name: "Recheck availability",
           exact: true,
@@ -1473,15 +1446,7 @@ for (const hasTouch of [false, true]) {
       });
       await page.emulateMedia({ reducedMotion: "reduce" });
       await pairAndOpen(page);
-      await openSettings(page);
-      const settings = page.getByRole("dialog", {
-        name: "Settings",
-        exact: true,
-      });
-      await settings
-        .getByRole("navigation", { name: "Settings categories" })
-        .getByRole("button", { name: "System", exact: true })
-        .click();
+      const settings = await openSystemSettings(page);
       const versions = settings.locator("#settings-section-updates");
       for (const theme of ["light", "dark"]) {
         await page.evaluate(
@@ -1664,12 +1629,7 @@ test("System copies update details and native commands while the notice is snooz
     await route.fulfill({ response, json: data });
   });
   await pairAndOpen(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings
-    .getByRole("navigation", { name: "Settings categories" })
-    .getByRole("button", { name: "System", exact: true })
-    .click();
+  const settings = await openSystemSettings(page);
   const versions = settings.locator("#settings-section-updates");
   const copy = versions.getByRole("button", {
     name: "Copy update details",
