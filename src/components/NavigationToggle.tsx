@@ -3,21 +3,16 @@ import { shallowEqual, useAppState } from "../store";
 
 /** Navigation entrances share unread attention while their session list is hidden. */
 export function NavigationToggle({
-  selectedSessionId,
   className,
   children,
   ...props
-}: ComponentProps<"button"> & {
-  selectedSessionId?: string | null;
-}) {
+}: ComponentProps<"button">) {
   const descriptionId = useId();
   const { count, urgent } = useAppState((state) => {
-    const selected =
-      selectedSessionId === undefined ? state.sessionId : selectedSessionId;
     let count = 0;
     let urgent = false;
     for (const [id, status] of Object.entries(state.sessionStatuses)) {
-      if (id === selected) continue;
+      if (id === state.sessionId) continue;
       if (status.indicator === "completed") count += 1;
       else if (
         status.indicator === "failed" ||

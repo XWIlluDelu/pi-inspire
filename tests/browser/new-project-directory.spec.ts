@@ -1,8 +1,8 @@
-import { hostRequest } from "./support/host-request";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { hostRequest } from "./support/host-request";
 import { pairedPage } from "./support/navigation";
 
 for (const width of [980, 390]) {
@@ -32,6 +32,7 @@ for (const width of [980, 390]) {
         await expect(
           page.getByRole("button", { name: "Start session", exact: true }),
         ).toBeDisabled();
+        if (width !== 390) await message.press("Control+Enter");
         await expect(stat(join(root, "projects"))).rejects.toMatchObject({
           code: "ENOENT",
         });

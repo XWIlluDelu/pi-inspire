@@ -156,12 +156,21 @@ it("discovers target commands without a session and confirms a preselection befo
 });
 
 it("uses discovered prompts and skills without reviving a removed inherited command", async () => {
-  render(<Welcome />);
-  fireEvent.change(screen.getByRole("textbox", { name: "Project directory" }), {
-    target: { value: "/target" },
-  });
-  await screen.findByRole("button", { name: "Thinking level" });
+  render(
+    <Welcome
+      inherited={{
+        cwd: "/target",
+        model,
+        thinkingLevel: "off",
+        commands: [
+          { name: "retired", source: "prompt", description: "Retired prompt" },
+        ],
+      }}
+    />,
+  );
   const input = screen.getByRole("textbox", { name: "First message" });
+  fireEvent.change(input, { target: { value: "/retired" } });
+  expect(screen.getByRole("option", { name: /Retired prompt/ })).toBeVisible();
   fireEvent.change(input, { target: { value: "/review" } });
   expect(
     await screen.findByRole("option", { name: /Review the project/ }),
@@ -170,23 +179,6 @@ it("uses discovered prompts and skills without reviving a removed inherited comm
   expect(
     await screen.findByRole("option", { name: /Analyze the project/ }),
   ).toBeVisible();
-  act(() =>
-    FakeWebSocket.instances.at(-1)!.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        sessionId: "source",
-        cwd: "/target",
-        model,
-        commands: [
-          {
-            name: "retired",
-            source: "prompt",
-            description: "Retired prompt",
-          },
-        ],
-      }),
-    }),
-  );
   fireEvent.change(input, { target: { value: "/retired" } });
   expect(screen.queryByRole("option", { name: /Retired prompt/ })).toBeNull();
   expect(created).toBe(0);

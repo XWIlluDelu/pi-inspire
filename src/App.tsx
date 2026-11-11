@@ -956,7 +956,6 @@ export function App() {
         onClose={closeMobileNavigation}
         onOpenSettings={openNavigationSettings}
         onToggleNavigation={toggleNavigation}
-        selectedSessionId={state.sessionId}
         searchInputRef={navSearchRef}
         onNewSession={newSession}
         onSelectSession={openSession}

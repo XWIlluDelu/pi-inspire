@@ -2,6 +2,7 @@ import { ArrowLeft, CircleHelp, Eye, EyeOff, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useMemo,
   useRef,
@@ -206,19 +207,20 @@ function AuthenticationPanel({
       clearTimeout(timer);
     };
   }, [attemptId, attemptStatus, owner, update, ownsPendingAttempt]);
+  const refreshCredentials = async () => {
+    await onRefresh();
+    if (mounted.current) await store.refreshModels(owner);
+    if (mounted.current) await onModelsRefreshed?.();
+  };
+  const refreshAfterLogin = useEffectEvent(() => {
+    void refreshCredentials().catch((error) => {
+      if (mounted.current) setError(messageOf(error));
+    });
+  });
   useEffect(() => {
-    if (attemptStatus !== "completed" && attemptStatus !== "failed") return;
-    void onRefresh()
-      .then(() => {
-        if (mounted.current) return store.refreshModels(owner);
-      })
-      .then(() => {
-        if (mounted.current) return onModelsRefreshed?.();
-      })
-      .catch((error) => {
-        if (mounted.current) setError(messageOf(error));
-      });
-  }, [attemptId, attemptStatus, owner, onRefresh, onModelsRefreshed]);
+    if (attemptStatus === "completed" || attemptStatus === "failed")
+      refreshAfterLogin();
+  }, [attemptId, attemptStatus]);
   const start = async (provider: string, type: "api_key" | "oauth") => {
     if (busy || attemptRef.current?.status === "pending") return;
     setBusy(true);
@@ -303,9 +305,7 @@ function AuthenticationPanel({
       setRemoving(null);
       setView({ kind: "saved" });
       if (attempt?.provider === provider) update(null);
-      await onRefresh();
-      if (mounted.current) await store.refreshModels(owner);
-      if (mounted.current) await onModelsRefreshed?.();
+      await refreshCredentials();
     } catch (error) {
       if (mounted.current) setError(messageOf(error));
     } finally {

@@ -9,7 +9,6 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModelsSettings } from "../../src/components/ModelsSettings";
-import { SettingsDialog } from "../../src/components/SettingsDialog";
 import type { store } from "../../src/store";
 import { mockModelMenuLayout } from "./fixtures/model-menu-layout";
 import {
@@ -229,46 +228,6 @@ describe("Models settings configuration and ownership", () => {
     ).toHaveTextContent(/^alias$/);
   });
 
-  it("reselects a saved default without a write and clears model and thinking independently", async () => {
-    const snapshot = modelSettingsSnapshot();
-    snapshot.saved.defaultModel = { provider: "anthropic", id: "claude-haiku" };
-    snapshot.saved.defaultThinkingLevel = "xhigh";
-    fixture.host.readModelSettings.mockResolvedValue(snapshot);
-    fixture.host.saveModelPreferences.mockImplementation(
-      async (_owner, _revision, patch) => {
-        snapshot.saved = { ...snapshot.saved, ...patch };
-        snapshot.settingsRevision = "c".repeat(64);
-        return { saved: true, snapshot: { ...snapshot } };
-      },
-    );
-    render(<ModelsSettings />);
-    const selectedDefault = await screen.findByRole("radio", {
-      name: "Default: Claude Haiku",
-    });
-    expect(selectedDefault).toBeChecked();
-    fireEvent.click(selectedDefault);
-    expect(selectedDefault).toBeChecked();
-    expect(fixture.host.saveModelPreferences).not.toHaveBeenCalled();
-
-    const clearDefault = screen.getByRole("button", {
-      name: "Clear default model",
-    });
-    clearDefault.focus();
-    fireEvent.click(clearDefault);
-    const thinking = screen.getByRole("combobox", { name: "Default thinking" });
-    await waitFor(() => expect(thinking).toHaveFocus());
-    expect(snapshot.saved.defaultModel).toBeNull();
-    expect(thinking).toHaveTextContent("Xhigh");
-    fireEvent.click(thinking);
-    fireEvent.click(screen.getByRole("option", { name: /Model default/ }));
-    await waitFor(() => expect(snapshot.saved.defaultThinkingLevel).toBeNull());
-    expect(fixture.host.saveModelPreferences).toHaveBeenLastCalledWith(
-      { sessionId: "one" },
-      "c".repeat(64),
-      { defaultThinkingLevel: null },
-    );
-  });
-
   it("shows saved and effective project defaults separately, including a provider-only project override", async () => {
     const snapshot = modelSettingsSnapshot({
       saved: {
@@ -377,32 +336,6 @@ describe("Models settings configuration and ownership", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("No models available yet.")).toBeInTheDocument();
     expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
-  });
-  it("uses an explicit prospective owner for reads and edits without borrowing the selected session", async () => {
-    fixture.host.saveModelPreferences.mockResolvedValue({
-      saved: true,
-      snapshot: modelSettingsSnapshot(),
-    });
-    render(
-      <ModelsSettings
-        destination={{ owner: { cwd: "/prospective-project" } }}
-      />,
-    );
-    fireEvent.click(
-      await screen.findByRole("radio", {
-        name: "Default: Claude Haiku",
-      }),
-    );
-    expect(fixture.host.readModelSettings).toHaveBeenCalledWith({
-      cwd: "/prospective-project",
-    });
-    await waitFor(() =>
-      expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
-        { cwd: "/prospective-project" },
-        "a".repeat(64),
-        { defaultModel: { provider: "anthropic", id: "claude-haiku" } },
-      ),
-    );
   });
   it("uses one model list for common/default actions and preserves unavailable identities and native pattern sources", async () => {
     let snapshot = modelSettingsSnapshot({
@@ -599,36 +532,6 @@ describe("Models settings configuration and ownership", () => {
     );
   });
 
-  it("keeps defaults and login before collapsed custom declarations", async () => {
-    render(<ModelsSettings />);
-    const custom = await screen.findByRole("region", {
-      name: "Custom providers",
-    });
-    expect(
-      screen
-        .getAllByRole("heading", { level: 3 })
-        .map((heading) => heading.textContent),
-    ).toEqual(["Models", "Login & API keys", "Custom providers"]);
-    expect(
-      within(custom).queryByRole("button", { name: "Edit provider custom" }),
-    ).toBeNull();
-    const disclosure = within(custom).getByLabelText(
-      "Custom provider declarations",
-    );
-    fireEvent.click(disclosure);
-    expect(
-      await within(custom).findByRole("button", {
-        name: "Edit provider custom",
-      }),
-    ).toBeEnabled();
-    fireEvent.click(disclosure);
-    await waitFor(() =>
-      expect(
-        within(custom).queryByRole("button", { name: "Edit provider custom" }),
-      ).toBeNull(),
-    );
-  });
-
   it("preserves an untouched configured key and refreshes providers after the committed config save", async () => {
     const snapshot = modelSettingsSnapshot();
     fixture.host.editModelConfig.mockResolvedValue({ saved: true, snapshot });
@@ -784,44 +687,6 @@ describe("Models settings configuration and ownership", () => {
     expect(
       screen.getByRole("grid", { name: "Available models" }),
     ).toHaveAttribute("aria-rowcount", "0");
-  });
-
-  it("keeps the inline grid and its active row actions in Settings focus ownership", async () => {
-    render(
-      <SettingsDialog onClose={vi.fn()}>
-        <ModelsSettings />
-      </SettingsDialog>,
-    );
-    const search = await screen.findByRole("combobox", {
-      name: "Search available models",
-    });
-    search.focus();
-    expect(search).not.toHaveAttribute("aria-activedescendant");
-    expect(document.querySelector(".dropdown__option--active")).toBeNull();
-    fireEvent.change(search, { target: { value: "gpt" } });
-    expect(search).not.toHaveAttribute("aria-activedescendant");
-    expect(document.querySelector(".dropdown__option--active")).toBeNull();
-    fireEvent.keyDown(search, { key: "Enter" });
-    expect(fixture.host.saveModelPreferences).not.toHaveBeenCalled();
-    fireEvent.keyDown(search, { key: "ArrowDown" });
-    expect(
-      document.getElementById(search.getAttribute("aria-activedescendant")!),
-    ).toHaveClass("dropdown__option--active");
-    fireEvent.blur(search);
-    expect(search).not.toHaveAttribute("aria-activedescendant");
-    fireEvent.change(search, { target: { value: "" } });
-    search.focus();
-    fireEvent.keyDown(search, { key: "End" });
-    const active = document.getElementById(
-      search.getAttribute("aria-activedescendant")!,
-    )!;
-    expect(active).toHaveTextContent("GPT 5");
-    expect(
-      within(active).getByRole("checkbox", { name: "Common: GPT 5" }),
-    ).toHaveAttribute("tabindex", "0");
-    expect(
-      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
-    ).toHaveAttribute("tabindex", "-1");
   });
 
   it("owns typed declaration fields by the full model identity", async () => {

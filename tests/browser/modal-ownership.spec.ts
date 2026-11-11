@@ -27,8 +27,14 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   await expect(settings).toBeVisible();
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  await page.keyboard.press("Control+k");
+  await expect(palette).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(settings).toHaveCount(0);
+  await openCommandPalette(page);
+  await palette.getByRole("option", { name: /^New session/ }).press("Escape");
+  await expect(palette).toHaveCount(0);
   const sessions = page.getByRole("searchbox", { name: "Search sessions" });
   await sessions.focus();
   await sessions.press("Escape");
@@ -96,6 +102,24 @@ test.describe("phone action dialogs", () => {
           ).toBeVisible();
         };
         await open();
+        if (name === "Command palette") {
+          const palette = page.getByRole("dialog", { name });
+          const filter = palette.getByRole("combobox", {
+            name: "Filter commands",
+          });
+          await expect(palette).toBeFocused();
+          await palette.press("ArrowDown");
+          await expect(filter).toHaveAttribute("aria-activedescendant", /.+/);
+          await filter.fill("rename");
+          await palette.getByRole("option", { name: /Rename session/ }).tap();
+          const rename = palette.getByRole("textbox", {
+            name: "New session name",
+          });
+          await expect(rename).toBeFocused();
+          await rename.press("Escape");
+          await expect(filter).toHaveValue("rename");
+          await expect(palette).toBeFocused();
+        }
         await page.goBack();
         await expect(
           page.getByRole("dialog", { name, exact: true }),

@@ -11,8 +11,8 @@ covers:
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-file.test.ts
   - tests/integration/model-cycle-native.test.ts
-  - tests/web/{model-settings,model-store,model-selector,modal-focus,welcome-model-transition,welcome-new-session}.test.ts*
-  - tests/browser/{model-settings*,model-workflow}.spec.ts
+  - tests/web/{model-settings,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition,welcome-new-session}.test.ts*
+  - tests/browser/{model-settings*,model-workflow,provider-authentication}.spec.ts
   - tests/browser/fixtures/model-scale.ts
 progress: in-progress
 ---

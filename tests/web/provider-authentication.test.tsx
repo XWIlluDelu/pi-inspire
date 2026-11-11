@@ -80,7 +80,7 @@ describe("provider directory", () => {
     view.unmount();
   });
 
-  it("keeps discovery unavailable until an initial provider read succeeds", () => {
+  it("requires initial provider data and keeps loaded choices usable when refresh fails", () => {
     const props = {
       owner: {},
       providers: [],
@@ -88,6 +88,7 @@ describe("provider directory", () => {
       loaded: false,
     };
     const view = render(<ProviderAuthentication {...props} loading />);
+    expect(screen.getByRole("status")).toHaveTextContent("Loading providers…");
     expect(
       screen.getByRole("button", { name: "Connect provider" }),
     ).toBeDisabled();
@@ -101,7 +102,11 @@ describe("provider directory", () => {
     expect(
       screen.getByRole("button", { name: "Connect provider" }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Provider service unavailable",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refresh).toHaveBeenCalledOnce();
     expect(screen.queryByText("No connected providers.")).toBeNull();
     view.rerender(<ProviderAuthentication {...props} loaded />);
     expect(
@@ -120,6 +125,20 @@ describe("provider directory", () => {
       screen.getByRole("button", { name: "Manage Anthropic" }),
     ).toBeEnabled();
     expect(screen.queryByText("Loading providers…")).toBeNull();
+    view.rerender(
+      <ProviderAuthentication
+        {...props}
+        loaded
+        loadError="Offline"
+        providers={loginProviders()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Manage Anthropic" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Provider refresh failed",
+    );
   });
 
   it("emphasizes directory name matches and explains ID-only results without changing method titles", () => {
@@ -141,8 +160,6 @@ describe("provider directory", () => {
     );
     const directory = container.querySelector(".models-auth__providers")!;
     const search = screen.getByLabelText("Search providers");
-    expect(directory.querySelector(".search-match")).toBeNull();
-    expect(directory.querySelector("code")).toBeNull();
     fireEvent.change(search, { target: { value: "  AZURE  " } });
     expect(directory.querySelectorAll(".models-provider-login")).toHaveLength(
       1,
@@ -167,49 +184,6 @@ describe("provider directory", () => {
       ),
     ).toBeNull();
     expect(screen.getByRole("button", { name: "Azure API key" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Back to providers" }));
-    expect(screen.getByLabelText("Search providers")).toHaveValue("RESPONSES");
-    expect(container.querySelector("code .search-match")).toHaveTextContent(
-      "responses",
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Back to connected providers" }),
-    );
-    expect(
-      screen.getByRole("button", { name: "Manage Anthropic" }),
-    ).toBeVisible();
-    expect(
-      container.querySelector(
-        ".search-match, .models-provider-login__matched-id",
-      ),
-    ).toBeNull();
-    expect(host.providerAuth).not.toHaveBeenCalled();
-  });
-  it("keeps the same optional connection entry when nothing is stored", () => {
-    render(
-      <ProviderAuthentication
-        owner={{}}
-        providers={loginProviders().map((provider) => ({
-          ...provider,
-          stored: null,
-        }))}
-        onRefresh={refresh}
-      />,
-    );
-    expect(
-      screen.queryByRole("region", { name: "Connected providers" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Search providers")).not.toBeInTheDocument();
-    const connect = screen.getByRole("button", { name: "Connect provider" });
-    fireEvent.click(connect);
-    expect(screen.getByLabelText("Search providers")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Set up Anthropic" }),
-    ).toBeEnabled();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Back to connected providers" }),
-    );
-    expect(screen.queryByLabelText("Search providers")).not.toBeInTheDocument();
     expect(host.providerAuth).not.toHaveBeenCalled();
   });
   it("opens explicit login discovery and the unique queried provider's native methods", () => {
@@ -251,105 +225,6 @@ describe("provider directory", () => {
     ).toBeEnabled();
     expect(host.providerAuth).not.toHaveBeenCalled();
   });
-  it("discloses native methods and secondary removal for saved credentials without requiring deletion first", () => {
-    render(panel());
-    expect(
-      screen.queryByRole("region", { name: "Available providers" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Search providers")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Anthropic API key" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("Remove credential")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Manage Anthropic" }));
-    expect(
-      screen.getByRole("button", { name: "Anthropic API key" }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "Claude authorization" }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Remove saved credentials for Anthropic",
-      }),
-    ).toBeVisible();
-    expect(host.providerAuth).not.toHaveBeenCalled();
-    expect(screen.queryByText("No saved credential")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
-    expect(
-      screen.queryByRole("button", { name: "Anthropic API key" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Connected providers" }),
-    ).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Search providers"), {
-      target: { value: "copilot" },
-    });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Set up GitHub Copilot" }),
-    );
-    expect(
-      screen.getByRole("button", { name: "GitHub authorization" }),
-    ).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Back to providers" }));
-    expect(screen.getByLabelText("Search providers")).toHaveValue("copilot");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Back to connected providers" }),
-    );
-    expect(
-      screen.getByRole("button", { name: "Manage Anthropic" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: "GitHub authorization" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Anthropic API key" }),
-    ).not.toBeInTheDocument();
-  });
-  it("distinguishes unresolved, failed, loaded no-match and stale loaded data", () => {
-    const props = { owner: {}, providers: [], onRefresh: refresh };
-    const view = render(
-      <ProviderAuthentication {...props} loading loaded={false} />,
-    );
-    expect(screen.getByRole("status")).toHaveTextContent("Loading providers…");
-    expect(screen.queryByText(/No providers/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("region", { name: "Connected providers" }),
-    ).not.toBeInTheDocument();
-    view.rerender(
-      <ProviderAuthentication {...props} loaded={false} loadError="Offline" />,
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Failed to load providers: Offline",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(refresh).toHaveBeenCalledTimes(1);
-    view.rerender(
-      <ProviderAuthentication
-        {...props}
-        providers={loginProviders()}
-        loadError="Offline"
-      />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Manage Anthropic" }),
-    ).toBeEnabled();
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Provider refresh failed",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
-    fireEvent.change(screen.getByLabelText("Search providers"), {
-      target: { value: "nonexistent" },
-    });
-    expect(
-      screen.getByText('No available providers matching "nonexistent"'),
-    ).toBeVisible();
-    expect(
-      within(
-        screen.getByRole("region", { name: "Available providers" }),
-      ).queryByText("Anthropic"),
-    ).not.toBeInTheDocument();
-  });
 });
 
 describe("auth attempt observation and owner retirement", () => {
@@ -390,32 +265,19 @@ describe("auth attempt observation and owner retirement", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(host.refreshModels).toHaveBeenCalledTimes(1);
     expect(modelsRefreshed).toHaveBeenCalledTimes(1);
+    const reconnected = vi.fn(async () => {});
+    view.rerender(
+      <ProviderAuthentication
+        owner={{ sessionId: "one" }}
+        providers={loginProviders()}
+        onRefresh={reconnected}
+        onModelsRefreshed={modelsRefreshed}
+      />,
+    );
     await act(async () => vi.advanceTimersByTimeAsync(1500));
     expect(statusReads).toBe(2);
+    expect(reconnected).not.toHaveBeenCalled();
     view.unmount();
-  });
-
-  it("reveals supplied remote instructions on demand and does not invent method help", async () => {
-    host.providerAuth.mockResolvedValue(pendingLogin());
-    render(panel());
-    expect(screen.queryByText("Remote login")).not.toBeInTheDocument();
-    await start();
-    await screen.findByRole("button", { name: "Copy authorization code" });
-
-    expect(screen.getByText("Remote login")).toBeVisible();
-    expect(
-      screen.queryByText(/then paste the authorization code here/),
-    ).not.toBeInTheDocument();
-    const help = screen.getByRole("button", { name: "About remote login" });
-    fireEvent.click(help);
-    expect(help).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByText(/then paste the authorization code here/),
-    ).toBeVisible();
-    fireEvent.click(help);
-    expect(
-      screen.queryByText(/then paste the authorization code here/),
-    ).not.toBeInTheDocument();
   });
 
   it("retires polls across a prompt mutation so reads cannot restore an old secret input", async () => {

@@ -1,8 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { modelSettingsSnapshot } from "../web/fixtures/model-settings";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { expectConfigurationField } from "./support/configuration-form";
-import { pairAndOpen, openSettings } from "./support/navigation";
+import { openSettings, pairAndOpen } from "./support/navigation";
 
 test.use({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
 
@@ -10,26 +9,14 @@ test("Manage models carries New's prospective project only for its Settings visi
   page,
 }) => {
   const target = "/tmp/inspire-browser-prospective-models";
+  const scenario = await modelSettingsScenario(page);
+  scenario.snapshot().projectOverrides = ["defaultThinkingLevel"];
   let settingsOwner: Record<string, string> | undefined;
-  await page.route("**/api/models**", (route) =>
-    route.fulfill({
-      json: { models: modelSettingsSnapshot().models, commonModels: [] },
-    }),
-  );
-  await page.route("**/api/model-settings**", (route) => {
-    settingsOwner = Object.fromEntries(
-      new URL(route.request().url()).searchParams,
-    );
-    return route.fulfill({
-      json: modelSettingsSnapshot({
-        projectOverrides:
-          settingsOwner.cwd === target ? ["defaultThinkingLevel"] : [],
-      }),
-    });
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === "/api/model-settings" && request.method() === "GET")
+      settingsOwner = Object.fromEntries(url.searchParams);
   });
-  await page.route("**/api/provider-auth**", (route) =>
-    route.fulfill({ json: { result: [] } }),
-  );
   await pairAndOpen(page);
   await page.getByRole("button", { name: "New session", exact: true }).click();
   await page
@@ -48,6 +35,19 @@ test("Manage models carries New's prospective project only for its Settings visi
   await expect(
     settings.getByRole("heading", { name: "Models", exact: true }),
   ).toBeInViewport();
+  const write = page.waitForRequest(
+    (request) =>
+      new URL(request.url()).pathname === "/api/model-settings" &&
+      request.method() === "PATCH",
+  );
+  const defaultModel = settings.getByRole("radio", {
+    name: "Default: Claude Haiku",
+  });
+  await defaultModel.click();
+  expect(Object.fromEntries(new URL((await write).url()).searchParams)).toEqual(
+    { cwd: target },
+  );
+  await expect(defaultModel).toBeChecked();
   await settings
     .getByRole("button", { name: "Add provider", exact: true })
     .click();
@@ -166,6 +166,7 @@ test("Common and Default choices navigate unmounted rows without losing saved fo
   page,
 }) => {
   const scenario = await modelSettingsScenario(page);
+  scenario.snapshot().saved.defaultThinkingLevel = "xhigh";
   scenario.snapshot().models.push(
     ...Array.from({ length: 40 }, (_, index) => ({
       provider: "openai",
@@ -257,10 +258,18 @@ test("Common and Default choices navigate unmounted rows without losing saved fo
 
   await settings.getByRole("button", { name: "Clear default model" }).click();
   await expect(settings.getByRole("radio", { checked: true })).toHaveCount(0);
-  await expect(
-    settings.getByRole("combobox", { name: "Default thinking" }),
-  ).toBeFocused();
+  const thinking = settings.getByRole("combobox", { name: "Default thinking" });
+  await expect(thinking).toBeFocused();
+  await expect(thinking).toHaveText(/^xhigh$/i);
   expect(scenario.snapshot().saved.defaultModel).toBeNull();
+  await thinking.click();
+  await page
+    .getByRole("listbox", { name: "Default thinking", exact: true })
+    .getByRole("option", { name: /^Model default\b/ })
+    .click();
+  await expect
+    .poll(() => scenario.snapshot().saved.defaultThinkingLevel)
+    .toBeNull();
   expect(scenario.errors).toEqual([]);
 });
 
@@ -524,10 +533,16 @@ test("provider -> model -> common/default retains row focus, current model and c
     name: "Settings",
     exact: true,
   });
-  await settings
-    .getByRole("region", { name: "Custom providers" })
-    .getByLabel("Custom provider declarations")
-    .click();
+  await expect(settings.getByRole("heading", { level: 3 })).toHaveText([
+    "Models",
+    "Login & API keys",
+    "Custom providers",
+  ]);
+  const providers = settings.getByRole("region", { name: "Custom providers" });
+  await expect(
+    providers.getByRole("button", { name: "Edit provider custom" }),
+  ).toBeHidden();
+  await providers.getByLabel("Custom provider declarations").click();
   const customProvider = settings.getByRole("region", {
     name: "Custom provider custom",
     exact: true,

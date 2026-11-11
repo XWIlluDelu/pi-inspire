@@ -6,7 +6,7 @@ import { McpConfigService } from "../../server/mcp-config";
 import type { McpConfigEdit, McpConnectionRead } from "../../shared/mcp";
 import { actionGeometry } from "./support/action-geometry";
 import { expectConfigurationField } from "./support/configuration-form";
-import { pairAndOpen, openSettings } from "./support/navigation";
+import { openSettings, pairAndOpen } from "./support/navigation";
 
 async function scenario(page: Page) {
   const root = await mkdtemp(join(tmpdir(), "inspire-browser-mcp-"));
@@ -557,6 +557,11 @@ test("narrow MCP form adds and removes scoped stdio definitions and focuses inhe
     await expect(
       settings.getByRole("combobox", { name: "Enabled in this project" }),
     ).toHaveText("Inherit from user");
+    await expect(save).toBeDisabled();
+    await settings.getByRole("button", { name: "Add tool rule" }).click();
+    await settings.getByLabel("Tool name or pattern").fill("read_*");
+    await expect(save).toBeEnabled();
+    await settings.getByRole("button", { name: "Remove tool rule 1" }).click();
     await expect(save).toBeDisabled();
     await settings
       .getByRole("combobox", { name: "Enabled in this project" })

@@ -147,21 +147,3 @@ it("leaves expanded desktop navigation to its session-row indicators", () => {
   ).not.toHaveAttribute("aria-describedby");
   expect(container.querySelector(".navigation-toggle__attention")).toBeNull();
 });
-
-it("respects the visible selection when the rail shows Welcome", () => {
-  state.sessionStatuses = {
-    selected: { runState: "idle", indicator: "completed" },
-  };
-  render(
-    <Nav
-      collapsed
-      selectedSessionId={null}
-      onToggleNavigation={onToggle}
-      onNewSession={() => {}}
-      onSelectSession={() => {}}
-    />,
-  );
-  expect(
-    screen.getByRole("button", { name: "Expand navigation" }),
-  ).toHaveAccessibleDescription("1 other session needs attention");
-});
