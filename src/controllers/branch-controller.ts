@@ -93,7 +93,6 @@ interface BranchControllerHost {
   selectionGeneration(): number;
   selectionRequest(): number;
   beginForkSelection(): number;
-  transportGeneration(): number;
   handleAuthFailure(): void;
   draftRevision(): number;
   applyNavigation(
@@ -182,11 +181,8 @@ export class BranchController {
     else this.recovery.reset();
     const request = ++this.treeRequest;
     const ticket = this.viewTicket(state);
-    const transportGeneration = this.host.transportGeneration();
     const ownsRequest = (): boolean =>
-      request === this.treeRequest &&
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+      request === this.treeRequest && this.host.api() === api;
     const owns = (): boolean => ownsRequest() && this.ownsView(ticket);
     const persistentFailure =
       "History could not be refreshed. Use Refresh to try again.";
@@ -220,12 +216,7 @@ export class BranchController {
       // A current transport rejection is authoritative even when the user
       // navigated while the request was pending. A replaced transport is not.
       if (error instanceof ApiError && error.status === 401) {
-        if (
-          transportGeneration === this.host.transportGeneration() &&
-          this.host.api() === api
-        ) {
-          this.host.handleAuthFailure();
-        }
+        if (this.host.api() === api) this.host.handleAuthFailure();
         return;
       }
       if (!owns()) return;
@@ -340,7 +331,6 @@ export class BranchController {
     const state = this.host.state();
     if (!api || !state.sessionId) return null;
     const ticket = this.viewTicket(state);
-    const generation = this.host.transportGeneration();
     // Only mounted read-only inspection opts in. A command or Copy gesture
     // keeps its existing single admission and never enters this retry loop.
     const request = recovery ? new AbortController() : null;
@@ -352,7 +342,6 @@ export class BranchController {
     const owns = () =>
       !request?.signal.aborted &&
       this.host.api() === api &&
-      this.host.transportGeneration() === generation &&
       this.ownsView(ticket, ownership);
     try {
       while (owns()) {
@@ -360,11 +349,7 @@ export class BranchController {
           const result = await perform(api, state.sessionId, request?.signal);
           return owns() ? result : null;
         } catch (error) {
-          if (
-            this.host.api() !== api ||
-            this.host.transportGeneration() !== generation
-          )
-            return null;
+          if (this.host.api() !== api) return null;
           if (error instanceof ApiError && error.status === 401) {
             this.host.handleAuthFailure();
             return null;
@@ -445,13 +430,9 @@ export class BranchController {
     if (!sessionId || !targetId) return false;
     const pending = this.fork(targetId);
     const ticket = this.viewTicket(this.host.state());
-    const transport = this.host.transportGeneration();
+    const api = this.host.api();
     const forked = await pending;
-    if (
-      !forked &&
-      this.host.transportGeneration() === transport &&
-      this.ownsView(ticket, "view")
-    ) {
+    if (!forked && this.host.api() === api && this.ownsView(ticket, "view")) {
       this.host.notify(
         "warning",
         this.host.state().branchTreeError ?? "Fork failed",
@@ -543,11 +524,8 @@ export class BranchController {
     onFailure?: (message: string) => void,
   ): Promise<boolean> {
     const actionRequest = ++this.actionRequest;
-    const transportGeneration = this.host.transportGeneration();
     const ownsRequest = (): boolean =>
-      actionRequest === this.actionRequest &&
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+      actionRequest === this.actionRequest && this.host.api() === api;
     // Independent copies capture their prefix at admission. Source progress may
     // continue while publishing; only a replaced view/selection invalidates opening it.
     const owns = (): boolean =>
@@ -562,12 +540,7 @@ export class BranchController {
       return (await commit(response)) !== false;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        if (
-          transportGeneration === this.host.transportGeneration() &&
-          this.host.api() === api
-        ) {
-          this.host.handleAuthFailure();
-        }
+        if (this.host.api() === api) this.host.handleAuthFailure();
         return false;
       }
       if (!owns()) return false;

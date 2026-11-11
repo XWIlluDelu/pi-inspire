@@ -27,7 +27,6 @@ interface UpdateControllerHost {
   state(): UpdateControllerState;
   patch(patch: Partial<UpdateControllerState>): void;
   api(): UpdateApi | null;
-  transportGeneration(): number;
   notify(kind: "warning", text: string): void;
 }
 
@@ -139,10 +138,8 @@ export class UpdateController {
     if (!api || !identity || this.snoozing) return;
     this.snoozing = true;
     const request = ++this.snoozeRequest;
-    const transportGeneration = this.host.transportGeneration();
     const owns = () =>
-      request === this.snoozeRequest &&
-      this.ownsTransport(api, transportGeneration);
+      request === this.snoozeRequest && api === this.host.api();
     void api
       .snoozeUpdate(identity)
       .then((status) => {
@@ -157,13 +154,6 @@ export class UpdateController {
       });
   }
 
-  private ownsTransport(api: UpdateApi, transportGeneration: number): boolean {
-    return (
-      transportGeneration === this.host.transportGeneration() &&
-      api === this.host.api()
-    );
-  }
-
   private check(
     kind: UpdateKind,
     perform: (api: UpdateApi) => Promise<{ updateStatus: HostUpdateStatus }>,
@@ -176,11 +166,9 @@ export class UpdateController {
         : state.piUpdateChecking || state.piUpdateRequestPending;
     if (!api || checking) return;
     const request = ++this.checkRequests[kind];
-    const transportGeneration = this.host.transportGeneration();
     const recovery = this.checkRecoveries[kind];
     const owns = () =>
-      request === this.checkRequests[kind] &&
-      this.ownsTransport(api, transportGeneration);
+      request === this.checkRequests[kind] && api === this.host.api();
     const pending = () => this.host.state()[`${kind}UpdateRequestPending`];
     const patchRequest = (value: boolean, error: string | null = null) =>
       this.host.patch(

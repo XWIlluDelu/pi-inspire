@@ -53,11 +53,10 @@ function fixture() {
     resolveResource: vi.fn(async () => image),
     resourceContent: vi.fn(async () => content),
   };
-  let generation = 1;
+  let current = api;
   const host: Host = {
     state: () => state,
-    api: () => api as unknown as Api,
-    transportGeneration: () => generation,
+    api: () => current as unknown as Api,
     patch: vi.fn(),
     handleAuthFailure: vi.fn(),
     saveDownload: vi.fn(),
@@ -75,7 +74,9 @@ function fixture() {
     host,
     controller,
     load,
-    replaceTransport: () => generation++,
+    replaceTransport: () => {
+      current = { ...api };
+    },
   };
 }
 

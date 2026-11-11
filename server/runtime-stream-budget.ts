@@ -1,7 +1,8 @@
 import { MAX_STREAM_TEXT_CHARS } from "../shared/assistant-stream.js";
+import { jsonRecord } from "../shared/json-record.js";
 import {
-  toolArgumentAt,
   type ToolArgumentUpdate,
+  toolArgumentAt,
 } from "../shared/tool-argument-updates.js";
 
 /** Host-only provenance: message was produced by applyAssistantMessageDelta
@@ -11,12 +12,6 @@ export interface ReducedAssistantDelta {
   event: unknown;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 /** Exact JSON byte growth without revisiting cumulative text. Structural and
  * malformed updates deliberately return null for ordinary full validation. */
 export function assistantDeltaProjectionBytes(
@@ -24,9 +19,9 @@ export function assistantDeltaProjectionBytes(
   delta: ReducedAssistantDelta,
   previousBytes: number,
 ): number | null {
-  const previous = record(delta.previous);
-  const next = record(message);
-  const event = record(delta.event);
+  const previous = jsonRecord(delta.previous);
+  const next = jsonRecord(message);
+  const event = jsonRecord(delta.event);
   if (event?.type === "toolcall_delta") {
     if (
       !previous ||
@@ -37,10 +32,10 @@ export function assistantDeltaProjectionBytes(
       !Array.isArray(event.argumentUpdates)
     )
       return null;
-    const before = record(previous.content[Number(event.contentIndex)]);
-    const after = record(next.content[Number(event.contentIndex)]);
-    const oldPreview = record(before?.__inspireToolCall);
-    const newPreview = record(after?.__inspireToolCall);
+    const before = jsonRecord(previous.content[Number(event.contentIndex)]);
+    const after = jsonRecord(next.content[Number(event.contentIndex)]);
+    const oldPreview = jsonRecord(before?.__inspireToolCall);
+    const newPreview = jsonRecord(after?.__inspireToolCall);
     const oldRevision = previous.__inspireStreamRevision;
     const newRevision = next.__inspireStreamRevision;
     if (
@@ -99,8 +94,8 @@ export function assistantDeltaProjectionBytes(
   )
     return null;
   const index = Number(event.contentIndex);
-  const before = record(previous.content[index]);
-  const after = record(next.content[index]);
+  const before = jsonRecord(previous.content[index]);
+  const after = jsonRecord(next.content[index]);
   const prefix = before?.[field];
   const text = after?.[field];
   const oldRevision = previous.__inspireStreamRevision;

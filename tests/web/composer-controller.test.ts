@@ -12,7 +12,6 @@ function createHarness(sessionId = "session-a") {
   const prompt = vi.fn();
   const uploadAttachments = vi.fn();
   const deleteAttachment = vi.fn().mockResolvedValue(undefined);
-  let generation = 0;
   let authorityId = "11111111-1111-4111-8111-111111111111";
   let api = {
     prompt,
@@ -31,7 +30,6 @@ function createHarness(sessionId = "session-a") {
     state: () => ({ sessionId: activeSessionId, transcriptViewId: null }),
     api: () => api,
     authorityId: () => authorityId,
-    transportGeneration: () => generation,
     patch,
     notify,
     handleAuthFailure,
@@ -51,13 +49,12 @@ function createHarness(sessionId = "session-a") {
     restoreDraftIfEmpty,
     deleteAttachment,
     replaceTransport: (replacement?: Api) => {
-      generation += 1;
-      api = replacement ?? api;
+      api = replacement ?? { ...api };
       controller.invalidateForTransportReplacement();
     },
     replaceAuthority: (replacement: string) => {
       authorityId = replacement;
-      generation += 1;
+      api = { ...api };
       controller.invalidateForTransportReplacement();
     },
     activate: (id: string | null) => {

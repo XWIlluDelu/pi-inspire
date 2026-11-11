@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
+import { isJsonRecord } from "../shared/json-record.js";
 import {
   MCP_CLIENT_REGISTRATIONS,
   MCP_EXPOSURES,
@@ -24,8 +25,6 @@ import { getAgentDir } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
 
 type JsonObject = Record<string, unknown>;
-const isObject = (value: unknown): value is JsonObject =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const text = z.string().max(32_768);
 const exposure = z.enum(MCP_EXPOSURES);
 const clientRegistration = z.enum(MCP_CLIENT_REGISTRATIONS);
@@ -75,7 +74,8 @@ export const mcpConfigEditSchema = mcpConnectionReadSchema.extend({
 });
 const normalExposure = (value: unknown) =>
   value === "codemode-deferred" ? "codemode" : exposure.safeParse(value).data;
-const strings = (value: unknown) => (isObject(value) ? Object.keys(value) : []);
+const strings = (value: unknown) =>
+  isJsonRecord(value) ? Object.keys(value) : [];
 const fieldNames = new Set([
   "type",
   "command",
@@ -95,7 +95,7 @@ const fieldNames = new Set([
 const policyFields = new Set(["enabled", "exposure", "toolExposure"]);
 const isPolicyOnly = (value: unknown, scope: McpConfigScope) =>
   scope === "project" &&
-  isObject(value) &&
+  isJsonRecord(value) &&
   Object.keys(value).every((key) => policyFields.has(key));
 
 function projectEntry(
@@ -103,7 +103,7 @@ function projectEntry(
   raw: unknown,
   scope: McpConfigScope,
 ): McpConfigEntry {
-  const value = isObject(raw) ? raw : {};
+  const value = isJsonRecord(raw) ? raw : {};
   const transport =
     typeof value.url === "string" &&
     [undefined, "http", "streamable-http"].includes(value.type as string)
@@ -113,7 +113,7 @@ function projectEntry(
         ? "stdio"
         : null;
   const policyOnly = isPolicyOnly(raw, scope);
-  const registration = isObject(value.oauth)
+  const registration = isJsonRecord(value.oauth)
     ? clientRegistration.safeParse(value.oauth.clientRegistration).data
     : undefined;
   return {
@@ -141,7 +141,7 @@ function projectEntry(
     oauthFields: strings(value.oauth),
     ...(registration ? { oauthClientRegistration: registration } : {}),
     toolExposure: Object.fromEntries(
-      isObject(value.toolExposure)
+      isJsonRecord(value.toolExposure)
         ? Object.entries(value.toolExposure).flatMap(([key, val]) => {
             const mode = normalExposure(val);
             return mode ? [[key, mode]] : [];
@@ -157,8 +157,8 @@ function parse(source: string | undefined): JsonObject {
     const value: unknown =
       source === undefined ? {} : JSON.parse(source.replace(/^\uFEFF/u, ""));
     if (
-      !isObject(value) ||
-      (value.mcpServers !== undefined && !isObject(value.mcpServers))
+      !isJsonRecord(value) ||
+      (value.mcpServers !== undefined && !isJsonRecord(value.mcpServers))
     )
       throw new Error();
     return value;
@@ -193,7 +193,9 @@ function mergeValues(current: JsonObject, values: McpConfigValues): JsonObject {
   for (const key of ["env", "headers", "oauth", "toolExposure"] as const) {
     if (values[key])
       patch[key] = applyPatch(
-        key !== "toolExposure" && isObject(current[key]) ? current[key] : {},
+        key !== "toolExposure" && isJsonRecord(current[key])
+          ? current[key]
+          : {},
         values[key],
       );
   }
@@ -251,7 +253,7 @@ function validate(
     ),
   );
   if (known.exposure === "codemode-deferred") known.exposure = "codemode";
-  if (isObject(known.toolExposure))
+  if (isJsonRecord(known.toolExposure))
     known.toolExposure = Object.fromEntries(
       Object.entries(known.toolExposure).map(([key, mode]) => [
         key,
@@ -309,7 +311,7 @@ export class McpConfigService {
             path,
             revision: revisionOf(source, target),
             entries: Object.entries(
-              isObject(parsed.mcpServers) ? parsed.mcpServers : {},
+              isJsonRecord(parsed.mcpServers) ? parsed.mcpServers : {},
             ).map(([name, raw]) => projectEntry(name, raw, scope)),
           };
         } catch (error) {
@@ -341,11 +343,11 @@ export class McpConfigService {
         409,
       );
     const parsed = parse(source);
-    const servers = isObject(parsed.mcpServers) ? parsed.mcpServers : {};
+    const servers = isJsonRecord(parsed.mcpServers) ? parsed.mcpServers : {};
     const entry = Object.hasOwn(servers, request.name)
       ? servers[request.name]
       : undefined;
-    if (!isObject(entry))
+    if (!isJsonRecord(entry))
       throw requestError(
         "That server is no longer available in this file",
         409,
@@ -384,7 +386,9 @@ export class McpConfigService {
       },
       async (source) => {
         const parsed = parse(source);
-        const servers = isObject(parsed.mcpServers) ? parsed.mcpServers : {};
+        const servers = isJsonRecord(parsed.mcpServers)
+          ? parsed.mcpServers
+          : {};
         const exists = Object.hasOwn(servers, edit.name);
         if (edit.operation === "add" ? exists : !exists)
           throw requestError(
@@ -396,7 +400,7 @@ export class McpConfigService {
         if (edit.operation === "remove") delete servers[edit.name];
         else {
           const current = edit.operation === "update" ? servers[edit.name] : {};
-          if (!isObject(current))
+          if (!isJsonRecord(current))
             throw requestError(
               "Remove the invalid server entry before adding it again",
               409,
@@ -415,10 +419,10 @@ export class McpConfigService {
                 400,
               );
             const user = parse(await readText(this.path(cwd, "user")));
-            const base = isObject(user.mcpServers)
+            const base = isJsonRecord(user.mcpServers)
               ? user.mcpServers[edit.name]
               : undefined;
-            if (!isObject(base))
+            if (!isJsonRecord(base))
               throw requestError(
                 "Project policy override needs a same-name user server",
                 409,

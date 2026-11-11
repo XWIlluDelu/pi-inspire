@@ -201,8 +201,8 @@ test("sidebar work and unread outcomes share glyph geometry without animating at
         (element) =>
           element.getBoundingClientRect().left -
           element
-            .closest(".nav__row")!
-            .querySelector(".nav__row-meta")!
+            .closest(".nav__group")!
+            .querySelector(".nav__group-name")!
             .getBoundingClientRect().left,
       );
   expect(await idleInset()).toBe(0);

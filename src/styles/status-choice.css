@@ -65,7 +65,7 @@
 @media (pointer: coarse) {
   .dropdown__menu--composed > .dropdown__option { min-height: 44px; }
   .status-choice__track { height: 36px; }
-  .status-choice input { top: -4px; height: 44px; }
+  .status-choice input { height: 44px; }
   .status-choice__dots span:not([data-selected="true"]) { width: 6px; height: 6px; }
 }
 @media (forced-colors: active) {

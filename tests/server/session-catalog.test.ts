@@ -321,6 +321,23 @@ async function withSearchFixture(
   }
 }
 
+describe("catalog search excerpts", () => {
+  it("returns a body excerpt for contiguous hits, including cached pages", async () => {
+    await withSearchFixture(async (_root, _index, catalog) => {
+      const first = await catalog.list({ query: "zirconium" });
+      expect(first.sessions.map((row) => row.id)).toEqual(["search-owner"]);
+      expect(first.sessions[0]!.matchSnippet).toContain("zirconium");
+      expect(first.sessions[0]!.matchSnippet).not.toContain("NEVER_INDEX");
+      const again = await catalog.list({ query: "zirconium" });
+      expect(again.sessions[0]!.matchSnippet).toBe(
+        first.sessions[0]!.matchSnippet,
+      );
+      const browsing = await catalog.list();
+      expect(browsing.sessions.every((row) => !row.matchSnippet)).toBe(true);
+    });
+  });
+});
+
 describe("catalog current metadata", () => {
   it("reuses a search across pages and observes invalidated sources", async () => {
     const searching = vi.spyOn(

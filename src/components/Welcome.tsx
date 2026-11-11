@@ -26,7 +26,6 @@ import { clipboardFiles } from "../clipboard-files";
 import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
-import { relativeTime } from "../format";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { clampThinkingLevel, supportedThinkingLevels } from "../model-options";
 import {
@@ -53,6 +52,7 @@ import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
+import { relativeTime } from "../format";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
 const DIRECTORY_PREVIEW_DELAY_MS = 220;

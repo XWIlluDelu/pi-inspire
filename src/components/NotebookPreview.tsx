@@ -1,4 +1,5 @@
 import { memo, useContext, useMemo } from "react";
+import { jsonRecord } from "../../shared/json-record";
 import { stripTerminalSequences } from "../ansi";
 import { highlightSource } from "../syntax-highlighting";
 import {
@@ -33,12 +34,6 @@ interface NotebookDocument {
   totalCells: number;
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function joinedText(value: unknown, separator = ""): string | null {
   if (typeof value === "string") return value;
   if (Array.isArray(value) && value.every((item) => typeof item === "string"))
@@ -49,7 +44,7 @@ function joinedText(value: unknown, separator = ""): string | null {
 function imageFromBundle(
   value: unknown,
 ): Extract<NotebookOutput, { kind: "image" }> | null {
-  const bundle = record(value);
+  const bundle = jsonRecord(value);
   if (!bundle) return null;
   for (const mimeType of [
     "image/png",
@@ -78,7 +73,7 @@ function imageFromBundle(
 
 function cellAttachments(value: unknown): ReadonlyMap<string, string> {
   const attachments = new Map<string, string>();
-  for (const [name, bundle] of Object.entries(record(value) ?? {}).slice(
+  for (const [name, bundle] of Object.entries(jsonRecord(value) ?? {}).slice(
     0,
     64,
   )) {
@@ -90,7 +85,7 @@ function cellAttachments(value: unknown): ReadonlyMap<string, string> {
 }
 
 function outputFromBundle(value: unknown): NotebookOutput {
-  const bundle = record(value);
+  const bundle = jsonRecord(value);
   if (!bundle) return { kind: "unsupported" };
   const image = imageFromBundle(bundle);
   if (image) return image;
@@ -105,7 +100,7 @@ function outputFromBundle(value: unknown): NotebookOutput {
 }
 
 function normalizeOutput(value: unknown): NotebookOutput {
-  const output = record(value);
+  const output = jsonRecord(value);
   if (!output || typeof output.output_type !== "string")
     return { kind: "unsupported" };
   if (output.output_type === "stream") {
@@ -166,11 +161,11 @@ function parseNotebook(text: string): NotebookDocument | null {
   } catch {
     return null;
   }
-  const notebook = record(value);
+  const notebook = jsonRecord(value);
   if (!notebook || !Array.isArray(notebook.cells)) return null;
-  const metadata = record(notebook.metadata);
-  const languageInfo = record(metadata?.language_info);
-  const kernelspec = record(metadata?.kernelspec);
+  const metadata = jsonRecord(notebook.metadata);
+  const languageInfo = jsonRecord(metadata?.language_info);
+  const kernelspec = jsonRecord(metadata?.kernelspec);
   const language =
     (typeof languageInfo?.name === "string" && languageInfo.name) ||
     (typeof kernelspec?.language === "string" && kernelspec.language) ||
@@ -191,7 +186,7 @@ function parseNotebook(text: string): NotebookDocument | null {
   };
   const cells: NotebookCell[] = [];
   for (const rawCell of notebook.cells.slice(0, MAX_NOTEBOOK_CELLS)) {
-    const cell = record(rawCell);
+    const cell = jsonRecord(rawCell);
     const cellType = cell?.cell_type;
     if (
       !cell ||

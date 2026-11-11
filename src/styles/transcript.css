@@ -398,7 +398,6 @@
   padding: 4px 6px;
   border-radius: var(--radius-xs);
   cursor: pointer;
-  background: transparent;
   transition: background-color var(--dur-micro) var(--ease-standard);
 }
 
@@ -698,14 +697,16 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
-/* Compact mono headings retain intrinsic text width for predictable spacing. */
+/* Activity headings are an ornament, not content: a small tracked mono
+   eyebrow in regular weight, so the conversation's prose stays the voice. */
 .activity-fold__disclosure,
 .activity-fold__boundary,
 .activity-fold__omission {
   font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.045em;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .activity-fold__disclosure > svg,
@@ -723,6 +724,8 @@
   font-size: var(--text-xs);
   font-weight: 400;
   letter-spacing: -0.02em;
+  /* Counts and tool names are data; only the heading is an eyebrow. */
+  text-transform: none;
   text-overflow: ellipsis;
   white-space: nowrap;
   transform: translateY(0.5px);
@@ -1100,6 +1103,18 @@
   }
 }
 
+/* With a mouse, reply Copy waits for the reply: hover or keyboard focus. */
+@media (hover: hover) {
+  .turn__actions--response {
+    opacity: 0;
+  }
+
+  .turn:hover .turn__actions--response,
+  .turn:has(:focus-visible) .turn__actions--response {
+    opacity: 1;
+  }
+}
+
 .turn__action.icon-button {
   width: 24px;
   height: 24px;
@@ -1129,17 +1144,20 @@
   max-width: 84%;
   min-width: 0;
   overflow-wrap: break-word;
+  /* Speech, not a card: a soft fill with rounder corners and no outline, so it
+     stays distinct from the bordered Composer and code surfaces. */
   background: var(--bg-prompt);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-surface);
+  border: 0;
+  border-radius: 14px;
   padding: 10px 14px;
   font-size: var(--text-reading);
-  line-height: 1.5;
+  line-height: var(--leading-reading);
   color: var(--ink);
 }
 
 .user-bubble > .rich-text > p + p {
-  margin-block-start: var(--space-2);
+  /* The same paragraph gap as Pi's prose. */
+  margin-block-start: 0.75em;
 }
 
 @media (max-width: 600px), (pointer: coarse) {

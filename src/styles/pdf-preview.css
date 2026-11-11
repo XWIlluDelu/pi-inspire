@@ -183,3 +183,54 @@
   background: color-mix(in srgb, Highlight 35%, transparent);
   color: transparent;
 }
+
+/* Find replaces the page controls in place; it never adds a row. */
+.pdf-preview__toolbar--find {
+  gap: 4px;
+}
+
+.pdf-preview__find-icon {
+  flex: none;
+  color: var(--faint);
+}
+
+.pdf-preview__find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+  height: var(--floating-tool-size);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--bg-surface);
+  color: var(--ink);
+  font: var(--text-sm) / var(--leading-ui) var(--font-sans);
+}
+
+.pdf-preview__find-input:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -1px;
+}
+
+.pdf-preview__toolbar--find .pdf-preview__page-number {
+  min-width: 5.5em;
+}
+
+/* PDF.js text-layer spans carry transparent glyphs over the canvas; the hit
+   tints the span box behind them. */
+.pdf-preview__text-layer .pdf-preview__hit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warning) 38%, transparent);
+}
+
+/* The shared contents popover (workbench.css) opens below the PDF controls. */
+.reader-contents--pdf {
+  top: 52px;
+  left: var(--space-3);
+}
+
+@container context-pane (max-width: 420px) {
+  .reader-contents--pdf {
+    top: 89px;
+  }
+}

@@ -27,6 +27,7 @@ import {
   userMessageSearchText,
 } from "../events";
 import { messageCopyLoader } from "../message-copy";
+import { usePresentationAdapters } from "../presentation-adapters";
 import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
@@ -135,8 +136,6 @@ interface TranscriptRowProjectionOptions {
   ) => Promise<void>;
   preserveActivityAnchorRef: RefObject<PreserveActivityAnchor>;
 }
-
-import { usePresentationAdapters } from "../presentation-adapters";
 
 export function useTranscriptRows({
   messages,

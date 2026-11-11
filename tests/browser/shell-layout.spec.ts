@@ -389,7 +389,6 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
       ".nav__search input",
       ".nav__group-name",
       ".nav__row-name",
-      ".nav__row-age",
       ...(nav.querySelector(".nav__dock-title") ? [".nav__dock-title"] : []),
     ].map((s) => box(s).x);
     const right = [".nav__new-session", ".nav__search", ".nav__row"].map(

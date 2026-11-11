@@ -12,7 +12,6 @@ interface Handoff {
   fail(error: ApiError): void;
   observation?: {
     api: Api;
-    generation: number;
     promise: Promise<PendingRecovery>;
   };
   applied: boolean;
@@ -20,7 +19,6 @@ interface Handoff {
 interface PendingRecoveryHost {
   api(): Api | null;
   authorityId(): string | null;
-  transportGeneration(): number;
   restore(sessionId: string, recovery: PendingRecovery): boolean;
   handleAuthFailure(): void;
 }
@@ -94,7 +92,6 @@ export class PendingRecoveryController {
     readOnly: boolean,
   ): Promise<boolean> {
     const api = this.host.api();
-    const generation = this.host.transportGeneration();
     if (!api || handoff.request.authorityId !== this.host.authorityId())
       return false;
     const { request } = handoff;
@@ -103,8 +100,7 @@ export class PendingRecoveryController {
         if (
           readOnly ||
           !handoff.observation ||
-          handoff.observation.api !== api ||
-          handoff.observation.generation !== generation
+          handoff.observation.api !== api
         ) {
           const promise = (async () => {
             try {
@@ -137,11 +133,11 @@ export class PendingRecoveryController {
             }
             return result;
           });
-          handoff.observation = { api, generation, promise };
+          handoff.observation = { api, promise };
         }
         const observation = handoff.observation;
         try {
-          // Lightweight socket resume keeps the same API generation. Wake the
+          // Lightweight socket resume keeps the same API. Wake the
           // initiating Return/Stop too when another observer confirms it.
           await Promise.race([observation.promise, handoff.completion]);
         } finally {
@@ -151,7 +147,6 @@ export class PendingRecoveryController {
       }
       if (
         api !== this.host.api() ||
-        generation !== this.host.transportGeneration() ||
         request.authorityId !== this.host.authorityId()
       )
         return false;
@@ -195,11 +190,9 @@ export class PendingRecoveryController {
         continue;
       }
       const api = this.host.api();
-      const generation = this.host.transportGeneration();
       void this.observe(key, handoff, true).catch((error) => {
         if (
           api === this.host.api() &&
-          generation === this.host.transportGeneration() &&
           error instanceof ApiError &&
           error.status === 401
         )

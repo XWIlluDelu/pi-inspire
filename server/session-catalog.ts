@@ -72,6 +72,7 @@ export class SessionCatalog implements SessionCatalogLike {
     query: string;
     sources: readonly SessionRecord[];
     matches: SessionRecord[];
+    snippets: Map<string, string>;
   } | null = null;
   private observedProjectCwds = new Set<string>();
   private issues: SessionCatalogIssue[] = [];
@@ -286,14 +287,23 @@ export class SessionCatalog implements SessionCatalogLike {
       Math.max(1, requestedLimit),
     );
     const issues = [...this.issues];
+    const snippets = new Map<string, string>();
     const filtered = query
-      ? await this.searchRecords(sessions, query, options.signal, issues)
+      ? await this.searchRecords(
+          sessions,
+          query,
+          options.signal,
+          issues,
+          snippets,
+        )
       : sessions;
 
     return {
-      sessions: filtered
-        .slice(offset, offset + limit)
-        .map((session) => this.project(session)),
+      sessions: filtered.slice(offset, offset + limit).map((session) => {
+        const summary = this.project(session);
+        const matchSnippet = snippets.get(session.id);
+        return matchSnippet ? { ...summary, matchSnippet } : summary;
+      }),
       total: filtered.length,
       ...(issues.length
         ? {
@@ -312,6 +322,7 @@ export class SessionCatalog implements SessionCatalogLike {
     query: string,
     signal: AbortSignal | undefined,
     issues: SessionCatalogIssue[],
+    snippets: Map<string, string>,
   ): Promise<SessionRecord[]> {
     signal?.throwIfAborted();
     const cached = this.searchResult;
@@ -320,20 +331,29 @@ export class SessionCatalog implements SessionCatalogLike {
       cached.sources.length === sessions.length &&
       sessions.every((session, index) => session === cached.sources[index])
     ) {
+      for (const [id, snippet] of cached.snippets) snippets.set(id, snippet);
       return cached.matches;
     }
     const generation = this.generation;
     const searchIssues: SessionCatalogIssue[] = [];
+    const found = new Map<string, string>();
     const matches = await searchSessionRecords(
       sessions,
       query,
       signal,
       searchIssues,
+      found,
     );
     issues.push(...searchIssues);
+    for (const [id, snippet] of found) snippets.set(id, snippet);
     // Retain only the last successful query; failed reads remain recoverable.
     if (generation === this.generation && searchIssues.length === 0) {
-      this.searchResult = { query, sources: sessions, matches };
+      this.searchResult = {
+        query,
+        sources: sessions,
+        matches,
+        snippets: found,
+      };
     }
     return matches;
   }

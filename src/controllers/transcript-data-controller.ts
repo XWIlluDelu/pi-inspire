@@ -17,6 +17,7 @@ import {
 } from "../app-state";
 import { asMessage, type ChatMessage, messageKey } from "../events";
 import { RecoveryBackoff } from "../recovery-backoff";
+import type { ResyncOptions } from "../snapshot-transition";
 
 const PROMPT_MAP_PAGE_SIZE = 100;
 
@@ -25,13 +26,11 @@ interface TranscriptDataControllerHost {
   patch(patch: Partial<AppState>): void;
   api(): Api | null;
   selectionGeneration(): number;
-  transportGeneration(): number;
   markSettled(key: string): void;
   resync(
-    expectedSessionId?: string | null,
-    expectedGeneration?: number,
-    minimumRevision?: number,
-    preserveAppendHistory?: boolean,
+    expectedSessionId: string | null,
+    expectedGeneration: number,
+    options?: ResyncOptions,
   ): Promise<void>;
   handleAuthFailure(): void;
   notify(kind: "warning", message: string): void;
@@ -44,7 +43,6 @@ interface TranscriptScope {
   viewId: string;
   incarnation: string | null;
   selectionGeneration: number;
-  transportGeneration: number;
 }
 
 interface ScopedTranscriptPage {
@@ -94,7 +92,6 @@ export class TranscriptDataController {
       viewId: state.transcriptViewId,
       incarnation: state.transcriptIncarnation,
       selectionGeneration: this.host.selectionGeneration(),
-      transportGeneration: this.host.transportGeneration(),
     };
   }
 
@@ -102,7 +99,6 @@ export class TranscriptDataController {
     const state = this.host.state();
     return (
       this.host.api() === scope.api &&
-      this.host.transportGeneration() === scope.transportGeneration &&
       this.host.selectionGeneration() === scope.selectionGeneration &&
       state.sessionId === scope.sessionId &&
       state.transcriptViewId === scope.viewId &&
@@ -148,12 +144,9 @@ export class TranscriptDataController {
     handleFailure: () => void,
   ): Promise<void> {
     if (error instanceof ApiError && error.status === 409) {
-      await this.host.resync(
-        scope.sessionId,
-        scope.selectionGeneration,
-        undefined,
-        false,
-      );
+      await this.host.resync(scope.sessionId, scope.selectionGeneration, {
+        history: "replace",
+      });
     } else if (error instanceof ApiError && error.status === 401) {
       this.host.handleAuthFailure();
     } else {
@@ -727,12 +720,9 @@ export class TranscriptDataController {
               : range,
           ),
       });
-      await this.host.resync(
-        sessionId,
-        scope.selectionGeneration,
-        undefined,
-        false,
-      );
+      await this.host.resync(sessionId, scope.selectionGeneration, {
+        history: "replace",
+      });
       return;
     }
     if (

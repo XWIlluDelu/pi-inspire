@@ -36,11 +36,10 @@ function fixture() {
   };
   const pending = deferred<{ ticket: string; expiresAt: number }>();
   const api = { resourceDownloadTicket: vi.fn(() => pending.promise) };
-  let generation = 1;
+  let current = api;
   const host: Host = {
     state: () => state,
-    api: () => api as unknown as Api,
-    transportGeneration: () => generation,
+    api: () => current as unknown as Api,
     patch: vi.fn(),
     handleAuthFailure: vi.fn(),
     prepareGitForResourceOpen: vi.fn(),
@@ -55,7 +54,7 @@ function fixture() {
     controller,
     pending,
     rotate: () => {
-      generation++;
+      current = { ...api };
     },
   };
 }

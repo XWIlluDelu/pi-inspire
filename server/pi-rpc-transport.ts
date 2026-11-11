@@ -71,6 +71,7 @@ class DirectPiRpcTransport extends EventEmitter implements PiRpcTransport {
     stdout: Readable;
     stderr: Readable;
   };
+  private readonly control: Writable;
   readonly ready = Promise.resolve();
 
   constructor(launch: PiRpcLaunch) {
@@ -84,10 +85,8 @@ class DirectPiRpcTransport extends EventEmitter implements PiRpcTransport {
     }) as DirectPiRpcTransport["child"];
     this.child.on("error", (error) => this.emit("error", error));
     this.child.once("exit", (code, signal) => this.emit("exit", code, signal));
-    (this.child.stdio?.[3] as Writable | null | undefined)?.on(
-      "error",
-      () => {},
-    );
+    this.control = this.child.stdio[3] as Writable;
+    this.control.on("error", () => {});
   }
 
   get pid(): number | null {
@@ -115,9 +114,8 @@ class DirectPiRpcTransport extends EventEmitter implements PiRpcTransport {
   }
 
   async detach(): Promise<void> {
-    const control = this.child.stdio?.[3] as Writable | null | undefined;
     await new Promise<void>((resolve) =>
-      control ? control.end("detach\n", () => resolve()) : resolve(),
+      this.control.end("detach\n", () => resolve()),
     );
     this.child.unref();
   }

@@ -59,13 +59,18 @@ import type {
   MaintenanceRestartOutcome,
   MaintenanceRestartTransition,
 } from "./maintenance-restart.js";
+import type { McpConfigService } from "./mcp-config.js";
+import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
 import { queryModelThinkingLevel } from "./model-metadata.js";
 import { commonModelOptions } from "./model-settings.js";
+import type { ModelSettingsService } from "./model-settings.js";
+import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import { resolveProjectDirectory } from "./paths.js";
 import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
+import type { ProviderAuthService } from "./provider-auth.js";
 import {
   invalidateProjectFiles,
   listProjectDirectory,
@@ -432,12 +437,6 @@ interface MaintenanceRestartLike {
   commit(leaseId: string): MaintenanceRestartTransition;
   release(leaseId: string): MaintenanceRestartTransition;
 }
-
-import type { McpConfigService } from "./mcp-config.js";
-import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
-import type { ModelSettingsService } from "./model-settings.js";
-import { registerModelSettingsRoutes } from "./model-settings-routes.js";
-import type { ProviderAuthService } from "./provider-auth.js";
 
 interface AppDependencies {
   /** An HTTP observation window, never a Pi operation deadline. */

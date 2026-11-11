@@ -130,7 +130,10 @@ describe("generic resource summaries", () => {
       );
       const reference = screen.getByRole("button", { name: path });
       expect(reference).toHaveAttribute("data-file-path", path);
-      expect(reference).toHaveAttribute("title", `Preview ${path}`);
+      expect(reference).toHaveAttribute(
+        "title",
+        `Preview ${path}\nCtrl+click: Show in file manager`,
+      );
       fireEvent.click(reference);
       expect(open).toHaveBeenCalledWith(path);
       expect(
@@ -138,6 +141,21 @@ describe("generic resource summaries", () => {
       ).toBeInTheDocument();
     },
   );
+
+  it("reveals the file on the Host with Ctrl or Command and does not open it", () => {
+    const path = "results/fit_params.csv";
+    const open = vi.spyOn(store, "openResource").mockResolvedValue(undefined);
+    const reveal = vi
+      .spyOn(store, "showInFileManager")
+      .mockResolvedValue(undefined);
+    render(card(undefined, { ...call, arguments: { path } }, "collapsed"));
+    const reference = screen.getByRole("button", { name: path });
+    fireEvent.click(reference, { ctrlKey: true });
+    fireEvent.click(reference, { metaKey: true });
+    expect(reveal).toHaveBeenCalledTimes(2);
+    expect(reveal).toHaveBeenCalledWith(path);
+    expect(open).not.toHaveBeenCalled();
+  });
 
   it.each(["command", "query", "description"])(
     "does not guess a resource from a path-shaped %s",

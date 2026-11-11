@@ -70,3 +70,16 @@ export function sessionSearchMatchRanges(text: string, query: string) {
     }),
   );
 }
+
+/** Literal emphasis for a Host search excerpt. The Host cut the excerpt around
+ * a contiguous hit, so fuzzy subsequences would only scatter marks across it. */
+export function sessionSnippetMatchRanges(text: string, query: string) {
+  query = query.trim();
+  if (!query || query.startsWith("re:")) return [];
+  const terms = [...query.matchAll(/"([^"]*)"|([^\s"]+)/gu)]
+    .map((match) => (match[1] ?? match[2] ?? "").trim())
+    .filter(Boolean);
+  return mergeSearchMatchRanges(
+    terms.flatMap((term) => phraseMatchRanges(text, term)),
+  );
+}

@@ -63,7 +63,8 @@
   --leading-ui: 1.45;
   /* Optical correction for large dialog headings. */
   --ui-text-offset: 1px;
-  --leading-reading: 1.7;
+  /* One reading rhythm for Pi's prose and your messages. */
+  --leading-reading: 1.6;
   --leading-mono: 1.6;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -202,7 +203,7 @@
   --bg-raised: #28241F;
   --bg-inset: #090807;
   --bg-control: #24201C;
-  --bg-prompt: #1E1B17;
+  --bg-prompt: #25211C;
   --bg-code: #090807;
   --ink: #F5F2ED;
   --body: #D4CEC5;
@@ -315,7 +316,7 @@
   --bg-raised: #24222F;
   --bg-inset: #09080C;
   --bg-control: #221F2C;
-  --bg-prompt: #1C1A25;
+  --bg-prompt: #221F2C;
   --bg-code: #09080C;
   --ink: #F2F0F7;
   --body: #CCC8D8;
@@ -418,7 +419,7 @@
   --bg-raised: #222925;
   --bg-inset: #080B09;
   --bg-control: #1F2622;
-  --bg-prompt: #1A211D;
+  --bg-prompt: #1F2622;
   --bg-code: #080B09;
   --ink: #F0F3F1;
   --body: #CBD3CE;
@@ -521,7 +522,7 @@
   --bg-raised: #2A2222;
   --bg-inset: #0A0808;
   --bg-control: #261F1F;
-  --bg-prompt: #201A1A;
+  --bg-prompt: #272020;
   --bg-code: #0A0808;
   --ink: #F6F1F0;
   --body: #D6CBC9;

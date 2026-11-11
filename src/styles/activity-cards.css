@@ -835,7 +835,6 @@
   flex: 1 1 0;
   max-width: 100%;
   overflow: hidden;
-  color: var(--accent-deep);
   font-family: var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -895,7 +894,6 @@
 
 .tool-code {
   --tool-line-number-width: 4.5ch;
-  overflow: auto;
   white-space: pre;
 }
 
@@ -1179,9 +1177,7 @@ span.card__file-arg {
   padding: var(--space-2) var(--space-3);
   max-height: min(24rem, 40vh);
   overflow: auto;
-  border: 1px solid var(--hairline);
   border-radius: var(--radius-control);
-  background: var(--bg-inset);
 }
 
 .codemode-result__text {
@@ -1203,7 +1199,6 @@ span.card__file-arg {
 
 .tool-markdown {
   max-width: 100%;
-  overflow: auto;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xs);
@@ -1220,7 +1215,6 @@ span.card__file-arg {
   max-width: 100%;
   border: 1px solid var(--hairline);
   background: var(--bg-inset);
-  overflow: auto;
   white-space: pre;
   word-break: normal;
 }
@@ -1459,10 +1453,17 @@ span.card__file-arg {
   font-weight: 600;
   line-height: 1.3;
   margin: var(--space-6) 0 var(--space-2);
+  /* No heading ends on one stranded word. */
+  text-wrap: balance;
 }
 
 .rich-text p {
   margin: var(--space-2) 0;
+}
+
+/* Prose avoids a lone last word; the browser only rebalances the tail. */
+.rich-text :is(p, li, blockquote) {
+  text-wrap: pretty;
 }
 
 /* Long-form answers and documents separate top-level blocks by about half a
@@ -1517,7 +1518,9 @@ span.card__file-arg {
   margin: var(--space-3) 0;
   padding-left: var(--space-3);
   border-left: 2px solid var(--hairline-strong);
-  color: var(--muted);
+  /* A quoted passage is often the evidence; the rule marks it, the ink stays
+     readable. */
+  color: var(--body);
 }
 
 .rich-text hr {
@@ -1540,6 +1543,11 @@ span.card__file-arg {
 }
 
 /* Normal flow preserves paragraph margins and nested-list hierarchy. */
+.rich-text .contains-task-list input[type="checkbox"]:checked {
+  border-color: var(--hairline-strong);
+  background: var(--bg-inset);
+}
+
 .rich-text__task-content {
   margin-left: var(--task-indent);
 }
@@ -1554,6 +1562,8 @@ span.card__file-arg {
 /* Task markers share the choice skin, but remain normal-weight document
    content rather than faded unavailable form actions. */
 .rich-text .contains-task-list input[type="checkbox"] {
+  /* A task mark in prose is content, not a control: neutral ink, no accent. */
+  color: var(--body);
   width: 13px;
   height: 13px;
   margin: 0 var(--space-2) 0 calc(-13px - var(--space-2));
@@ -1605,14 +1615,15 @@ span.card__file-arg {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--space-3);
+  padding: var(--space-1) var(--space-2) 0 var(--space-3);
   min-height: 28px;
-  border-bottom: 1px solid var(--line);
 }
 
 .code-block__lang {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -1681,7 +1692,8 @@ span.card__file-arg {
 
 .code-block__pre {
   margin: 0;
-  padding: var(--space-3);
+  /* The language label above is the block's only header; no divider. */
+  padding: var(--space-1) var(--space-3) var(--space-3);
   overflow-x: auto;
   font-size: var(--text-reading-code);
   line-height: var(--leading-mono);

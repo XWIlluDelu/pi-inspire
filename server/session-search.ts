@@ -8,6 +8,8 @@ export function searchSessionRecords(
   query: string,
   signal?: AbortSignal,
   issues?: SessionCatalogIssue[],
+  /** Receives a bounded body excerpt for matches with a contiguous hit. */
+  snippets?: Map<string, string>,
 ): Promise<SessionRecord[]> {
   signal?.throwIfAborted();
   const source = import.meta.url.endsWith(".ts");
@@ -53,8 +55,14 @@ export function searchSessionRecords(
     signal?.addEventListener("abort", cancel, { once: true });
     worker.once(
       "message",
-      (result: { ids: string[]; issues: SessionCatalogIssue[] }) => {
+      (result: {
+        ids: string[];
+        issues: SessionCatalogIssue[];
+        snippets?: Record<string, string>;
+      }) => {
         issues?.push(...result.issues);
+        for (const [id, snippet] of Object.entries(result.snippets ?? {}))
+          snippets?.set(id, snippet);
         finish(undefined, result.ids);
       },
     );

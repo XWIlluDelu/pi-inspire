@@ -9,7 +9,6 @@ import {
 import { deferred } from "./helpers";
 
 function createHarness() {
-  let transportGeneration = 1;
   let state = {
     sessionId: "s1" as string | null,
     cwd: "/project" as string | null,
@@ -18,14 +17,13 @@ function createHarness() {
   const listFiles = vi.fn();
   const searchFiles = vi.fn();
   const handleAuthFailure = vi.fn();
-  const api = { listFiles, searchFiles } as unknown as Api;
+  let api = { listFiles, searchFiles } as unknown as Api;
   const controller = new WorkspaceController({
     state: () => state,
     patch: (patch: Partial<WorkspaceBrowserState>) => {
       state = { ...state, ...patch };
     },
     api: () => api,
-    transportGeneration: () => transportGeneration,
     handleAuthFailure,
   });
   return {
@@ -38,7 +36,7 @@ function createHarness() {
     searchFiles,
     handleAuthFailure,
     replaceTransport: () => {
-      transportGeneration += 1;
+      api = { ...api };
     },
   };
 }

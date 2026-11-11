@@ -920,7 +920,7 @@ export class TerminalSessionManager implements TerminalService {
         this.broadcastOwnership(session, "available");
         this.broadcastDescriptor(session);
       }, this.ownerReconnectGraceMs);
-      session.owner.releaseTimer.unref?.();
+      session.owner.releaseTimer.unref();
     }
     this.touch(session);
     this.broadcastDescriptor(session);

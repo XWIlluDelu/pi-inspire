@@ -37,6 +37,7 @@ covers:
   - src/components/EarlierBranchBanner.tsx
   - src/components/Nav.tsx
   - src/components/NavSessions.tsx
+  - src/needs-you.ts
   - src/components/Welcome.tsx
   - src/components/DirectoryPicker.tsx
   - src/components/CommandPalette.tsx
@@ -96,6 +97,7 @@ covers:
   - tests/web/settings-navigation.test.tsx
   - tests/web/settings-loading.test.tsx
   - tests/browser/loading-states.spec.ts
+  - tests/browser/needs-you.spec.ts
   - tests/web/update-controller.test.ts
   - tests/web/modal-focus.test.tsx
   - tests/web/overlay-and-palette.test.tsx
@@ -104,6 +106,7 @@ covers:
   - tests/web/theme-init.test.ts
   - tests/web/nav.test.ts
   - tests/web/nav-render.test.tsx
+  - tests/web/needs-you.test.ts
   - tests/web/workspace-controller.test.ts
   - tests/web/pane-resize.test.tsx
   - tests/web/branch-tree.test.tsx
@@ -153,24 +156,41 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- Session rows use two compact lines at every width. On the first line the activity mark precedes
-  the title, right-aligned inside the same 16px icon slot and 8px label gap as folder rows. The
-  status mark renders at 10px, scaled about its painted right edge and vertical centre without
-  moving the slot, text axis or selection marker. The text axis stays reserved when no status is
-  present. Age aligns with the title on the quieter second line, followed by cross-project metadata.
-  Hidden keeps enough leading gutter to separate status from its selection marker.
+- The session column has two modes, switched by a bell in its header beside the collapse control
+  (beside Settings and Close in the drawer). With a mouse, the column header's buttons match the
+  conversation header's: 28px targets, 15px glyphs, 4px apart; touch keeps 36px targets. Unlit, the column shows All; lit (pressed, accent ink
+  on the accent tint), it shows Needs you. The bell carries the rail's attention badge: the count,
+  green, or red when anything is waiting or failed. Needs you counts and lists, as one flat cross-project
+  list, the browsable sessions that wait on the person: Pi waiting for input or recovery (including
+  a native Pi blocked on input), then failed runs, then finished runs not yet seen, each group in
+  catalog recency. Running work and Hidden sessions are not listed. Viewing a session clears its
+  unseen outcome as its status mark does, but a session opened from Needs you keeps its place
+  while it stays open. Search
+  filters within the current mode; folders, Pinned, pagination and Hidden belong to All. The mode
+  is remembered per browser with the other navigation disclosures. Logic lives in
+  `src/needs-you.ts`.
 
-  Desktop Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus,
-  without hiding metadata or taking width from the title. Ordinary pointer rows are 44px high;
-  coarse desktop rows keep visible 36px actions. On phone-width layouts or without hover the
+- With a fine pointer, an ordinary session row is one 32px line: the activity mark, the title, and
+  a quiet trailing age at the row's end. The activity mark sits right-aligned inside the same 16px
+  icon slot and 8px label gap as folder rows. The status mark renders at 10px, scaled about its
+  painted right edge and vertical centre without moving the slot, text axis or selection marker.
+  The text axis stays reserved when no status is present. Cross-project rows (Pinned) and rows
+  showing a search excerpt keep the two-line form: title above age, cross-project metadata or the
+  excerpt. Touch and phone-width rows always use two compact lines. Hidden keeps enough leading
+  gutter to separate status from its selection marker.
+
+  Desktop Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus. On a
+  one-line row they take the age's place and the title fades under them without changing width;
+  while a session is opening, its Opening… status keeps that place and the actions wait. Two-line
+  pointer rows are 44px high; coarse desktop rows keep visible 36px actions. On phone-width layouts or without hover the
   actions stay visible; phone-width or touch drawers keep their persistent 36px actions in a
   separate column beside both text lines. Pin and Hide stay directly accessible, not behind an
   overflow menu. The exact timestamp and message count stay in tooltips.
 
   Folder groups use the same spacing in the catalog and Hidden, including the transition from a
   pinned folder to an ordinary folder. The titled Pinned sessions section has its own spacing
-  under [[design-system]]. The title/age line boxes stay at 18/16px with a 1px gap; density changes
-  do not squeeze individual two-line rows. Folder headers
+  under [[design-system]]. The title/age line boxes stay at 18/16px with a 1px gap on two-line
+  rows; density changes do not squeeze individual rows. Folder headers
   keep their label tier, persistent pin state and trailing session count. Desktop New/Search,
   folder headers and session-row surfaces share the same outer inset; their internal icon/text axes
   stay stable.
@@ -236,7 +256,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 - Sidebar search reaches session name, cwd, ID and complete retained user/assistant text through
   the Host catalog, in the existing sidebar without another panel or filter toolbar.
   [[session-continuity]] owns query syntax, matching and source authority; [[design-system]] owns
-  visible match emphasis.
+  visible match emphasis. While a query is active and a row's title does not itself match, the
+  Host's bounded message excerpt takes the age line's place with literal match emphasis; ordinary
+  browsing and title matches keep the age.
 
   Search reveals the immediate parent beside a project group when that parent has a visible
   token/phrase match but the project basename does not. Existing context for colliding basenames

@@ -23,6 +23,7 @@ import {
   resourceReferenceLabel,
   resourceReferenceLine,
 } from "../../shared/resource-references";
+import { delimiterForFile } from "../delimited-text";
 import { formatBytes } from "../format";
 import type { FileSourceJump } from "../resource-preview";
 import { store } from "../store";
@@ -32,12 +33,19 @@ import type { FileReadingState } from "../workbench-session";
 import { ContextPaneState } from "./ContextPaneState";
 import { CopyFeedback } from "./CopyFeedback";
 import type { ContextPaneView } from "./context-pane-view";
+import {
+  DOCUMENT_OUTLINE_MIN_HEADINGS,
+  DocumentOutlineButton,
+  useDocumentHeadingCount,
+} from "./DocumentOutline";
 import { DocumentPreview } from "./DocumentPreview";
 import { ImagePreview } from "./ImagePreview";
 import { NotebookPreview } from "./NotebookPreview";
 import { PdfPreview } from "./PdfPreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
+import { ReaderQuoteAction } from "./ReaderQuoteAction";
+import { TablePreview } from "./TablePreview";
 
 export function PathCopyButton({ path }: { path: string }) {
   const { copied, copying, copy } = useCopied({
@@ -58,6 +66,10 @@ export function PathCopyButton({ path }: { path: string }) {
   );
 }
 
+function tableDelimiter(descriptor: ResourceDescriptor): "," | "\t" | null {
+  return descriptor.kind === "text" ? delimiterForFile(descriptor.name) : null;
+}
+
 function hasSourceAndPreview(
   descriptor: ResourceDescriptor,
   text: string | undefined,
@@ -67,7 +79,8 @@ function hasSourceAndPreview(
     (descriptor.kind === "html" ||
       descriptor.kind === "markdown" ||
       descriptor.kind === "notebook" ||
-      descriptor.mimeType === "image/svg+xml")
+      descriptor.mimeType === "image/svg+xml" ||
+      tableDelimiter(descriptor) !== null)
   );
 }
 
@@ -238,6 +251,16 @@ function ReadyResource({
         icon={<FileText size={17} aria-hidden />}
         title="File too large to preview"
         hint={formatBytes(descriptor.size)}
+      />
+    );
+  const delimiter = tableDelimiter(descriptor);
+  if (delimiter && preview.text !== undefined)
+    return (
+      <TablePreview
+        text={preview.text}
+        delimiter={delimiter}
+        truncated={preview.truncated}
+        name={descriptor.name}
       />
     );
   if (descriptor.kind === "text" && preview.text !== undefined)
@@ -426,10 +449,13 @@ export function FilePreview({
   state,
   readingState,
   changes,
+  onQuote,
 }: {
   state: ContextPaneView;
   readingState?: FileReadingState;
   changes?: { controls: ReactNode; content: ReactNode };
+  /** Body readers only: send a selected passage, with its location, to the composer. */
+  onQuote?: (markdown: string) => void;
 }) {
   const preview = state.resourcePreview;
   const descriptor = preview?.status === "ready" ? preview.descriptor : null;
@@ -468,6 +494,7 @@ export function FilePreview({
   );
   const sourceOnly =
     descriptor?.kind === "text" &&
+    tableDelimiter(descriptor) === null &&
     preview?.status === "ready" &&
     preview.text !== undefined;
   // An exact workspace filename may literally end in ":12"; a resolved
@@ -605,6 +632,16 @@ export function FilePreview({
     }
   };
   const contentRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const headingCount = useDocumentHeadingCount(
+    contentRef,
+    !changes &&
+      viewMode === "preview" &&
+      preview?.status === "ready" &&
+      (descriptor?.kind === "markdown" || descriptor?.kind === "notebook"),
+    descriptor?.id,
+  );
+  const outlineAvailable = headingCount >= DOCUMENT_OUTLINE_MIN_HEADINGS;
   useLayoutEffect(() => {
     const root = contentRef.current;
     const saved = readingState?.rendered.current;
@@ -637,7 +674,7 @@ export function FilePreview({
     return stop;
   }, [readingState, viewMode, preview?.status, descriptor?.id, changes]);
   return (
-    <div className="file-preview">
+    <div className="file-preview" ref={rootRef}>
       <div
         className="file-preview__actions"
         role="toolbar"
@@ -663,6 +700,12 @@ export function FilePreview({
                   (preview?.status === "ready" && preview.text === undefined))
               }
               onChange={showBody}
+            />
+          ) : null}
+          {outlineAvailable ? (
+            <DocumentOutlineButton
+              contentRef={contentRef}
+              portalRef={rootRef}
             />
           ) : null}
           <button
@@ -830,6 +873,15 @@ export function FilePreview({
           />
         )}
       </div>
+      {onQuote ? (
+        <ReaderQuoteAction
+          rootRef={rootRef}
+          contentRef={contentRef}
+          source={displayPath}
+          enabled={!changes && preview?.status === "ready"}
+          onQuote={onQuote}
+        />
+      ) : null}
     </div>
   );
 }

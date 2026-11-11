@@ -37,11 +37,10 @@ function fixture() {
       totalSize: 5,
     }),
   };
-  let generation = 1;
+  let current = api;
   const host: Host = {
     state: () => state,
-    api: () => api as unknown as Api,
-    transportGeneration: () => generation,
+    api: () => current as unknown as Api,
     patch: (patch) => Object.assign(state, patch),
     handleAuthFailure: vi.fn(),
     prepareGitForResourceOpen: () => () => true,
@@ -55,7 +54,7 @@ function fixture() {
     host,
     controller,
     rotate: () => {
-      generation++;
+      current = { ...api };
       controller.invalidateForTransportReplacement();
     },
   };

@@ -23,7 +23,6 @@ interface PreferenceControllerHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
   api(): Api | null;
-  transportGeneration(): number;
   notify(kind: "info" | "warning" | "error", text: string): void;
   handleAuthFailure(): void;
   curationChanged(hydrate: boolean): void;
@@ -168,7 +167,6 @@ export class PreferenceController {
     const fields = Object.keys(patch) as Array<keyof InspirePreferences>;
     const owner = ++this.sequence;
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
     for (const field of fields) {
       this.fieldOwners.set(field, owner);
       this.pendingFieldOwners.set(field, owner);
@@ -200,10 +198,7 @@ export class PreferenceController {
             this.pendingFieldOwners.delete(field);
         }
         let nextPrefs = previousPrefs;
-        if (
-          this.host.api() === api &&
-          this.host.transportGeneration() === transportGeneration
-        ) {
+        if (this.host.api() === api) {
           nextPrefs = this.reconcile(authoritative, responseOwners);
           this.host.patch({ prefs: nextPrefs });
         } else {
@@ -259,8 +254,7 @@ export class PreferenceController {
         if (
           error instanceof ApiError &&
           error.status === 401 &&
-          this.host.api() === api &&
-          this.host.transportGeneration() === transportGeneration
+          this.host.api() === api
         ) {
           this.host.handleAuthFailure();
         } else {
@@ -413,17 +407,12 @@ export class PreferenceController {
   ): Promise<void> {
     const api = this.host.api();
     if (!api) return;
-    const generation = this.host.transportGeneration();
     const owners = this.captureOwners();
     try {
       // A visible page or search result is not the complete folder. Resolve its
       // full catalog membership before leaving the other sessions in Hidden.
       const { sessions } = await api.sessionsByCwds([cwd]);
-      if (
-        this.host.api() !== api ||
-        this.host.transportGeneration() !== generation
-      )
-        return;
+      if (this.host.api() !== api) return;
       const prefs = this.host.state().prefs;
       if (
         !prefs.hiddenProjectCwds.includes(cwd) ||
@@ -463,11 +452,7 @@ export class PreferenceController {
         ].filter((candidate) => candidate !== id),
       });
     } catch (error) {
-      if (
-        this.host.api() !== api ||
-        this.host.transportGeneration() !== generation
-      )
-        return;
+      if (this.host.api() !== api) return;
       if (error instanceof ApiError && error.status === 401)
         this.host.handleAuthFailure();
       else

@@ -52,9 +52,6 @@ interface ResourceControllerHost {
   state(): ResourceControllerState;
   patch(patch: ResourceControllerPatch): void;
   api(): Api | null;
-  /** A resource request belongs to one browser transport/API generation, not
-   * merely to a session/view/revision projection. */
-  transportGeneration(): number;
   handleAuthFailure(): void;
   saveDownload(url: string, name: string): void;
   prepareGitForResourceOpen(contextMode: "files" | "changes"): () => boolean;
@@ -142,12 +139,6 @@ export class ResourceController {
     });
   }
 
-  private ownsTransport(api: Api, generation: number): boolean {
-    return (
-      this.host.api() === api && this.host.transportGeneration() === generation
-    );
-  }
-
   private referenceGeneration(reference: string): number {
     return this.referenceGenerations.get(reference) ?? 0;
   }
@@ -177,7 +168,6 @@ export class ResourceController {
     options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
   ): Promise<SessionResourceListResponse | null> {
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
     const {
       sessionId,
       transcriptViewId: viewId,
@@ -188,7 +178,7 @@ export class ResourceController {
       const response = await api.listResources(sessionId, options);
       const current = this.host.state();
       if (
-        !this.ownsTransport(api, transportGeneration) ||
+        this.host.api() !== api ||
         options.signal?.aborted ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId ||
@@ -200,7 +190,7 @@ export class ResourceController {
         return null;
       return response;
     } catch (error) {
-      if (!this.ownsTransport(api, transportGeneration)) return null;
+      if (this.host.api() !== api) return null;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return null;
@@ -214,7 +204,6 @@ export class ResourceController {
    * and only its own references remain eligible for retry. */
   async probeResources(references: string[]): Promise<void> {
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
     const {
       sessionId,
       transcriptViewId: viewId,
@@ -240,7 +229,7 @@ export class ResourceController {
     const ownsProjection = (): boolean => {
       const current = this.host.state();
       return (
-        this.ownsTransport(api, transportGeneration) &&
+        this.host.api() === api &&
         current.sessionId === sessionId &&
         current.transcriptViewId === viewId &&
         current.transcriptRevision === revision
@@ -342,7 +331,6 @@ export class ResourceController {
    * after a late response or a browser transport replacement. */
   async createHtmlPreview(): Promise<{ url: string; release: () => void }> {
     const api = this.host.api();
-    const generation = this.host.transportGeneration();
     const {
       sessionId,
       transcriptViewId,
@@ -370,7 +358,7 @@ export class ResourceController {
     };
     const current = this.host.state();
     if (
-      !this.ownsTransport(api, generation) ||
+      this.host.api() !== api ||
       current.sessionId !== sessionId ||
       current.transcriptViewId !== transcriptViewId ||
       current.resourcePreview !== preview
@@ -428,7 +416,6 @@ export class ResourceController {
     signal: AbortSignal,
   ): Promise<Blob> {
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
     if (!api || !COMPOSER_HISTORY_IMAGE_REFERENCE.test(reference)) {
       throw new Error("The embedded image reference is invalid");
     }
@@ -436,7 +423,7 @@ export class ResourceController {
       const current = this.host.state();
       return (
         signal.aborted ||
-        !this.ownsTransport(api, transportGeneration) ||
+        this.host.api() !== api ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId ||
         transcriptProjectionKey(
@@ -484,7 +471,7 @@ export class ResourceController {
       if (
         error instanceof ApiError &&
         error.status === 401 &&
-        this.ownsTransport(api, transportGeneration)
+        this.host.api() === api
       ) {
         this.host.handleAuthFailure();
         throw error;
@@ -502,7 +489,6 @@ export class ResourceController {
     signal: AbortSignal,
   ): Promise<Blob> {
     const api = this.host.api();
-    const generation = this.host.transportGeneration();
     const { sessionId, transcriptViewId: viewId } = this.host.state();
     const request = new AbortController();
     const abort = () => request.abort();
@@ -516,7 +502,7 @@ export class ResourceController {
         !sessionId ||
         !viewId ||
         request.signal.aborted ||
-        !this.ownsTransport(api, generation) ||
+        this.host.api() !== api ||
         state.sessionId !== sessionId ||
         state.transcriptViewId !== viewId ||
         !state.resourcesOpen ||
@@ -580,7 +566,6 @@ export class ResourceController {
    * the session/view/transport. The browser streams the complete original file. */
   async downloadResource(): Promise<void> {
     const api = this.host.api();
-    const generation = this.host.transportGeneration();
     const {
       sessionId,
       transcriptViewId: viewId,
@@ -594,7 +579,7 @@ export class ResourceController {
       const state = this.host.state();
       if (
         request.signal.aborted ||
-        !this.ownsTransport(api, generation) ||
+        this.host.api() !== api ||
         state.sessionId !== sessionId ||
         state.transcriptViewId !== viewId ||
         !state.resourcesOpen ||
@@ -650,7 +635,6 @@ export class ResourceController {
     let tabReference = reference;
     const tabView = contextMode === "changes" ? "changes" : undefined;
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
     const {
       sessionId,
       transcriptViewId: viewId,
@@ -704,7 +688,7 @@ export class ResourceController {
       return (
         this.resourceRequest !== request ||
         request.signal.aborted ||
-        !this.ownsTransport(api, transportGeneration) ||
+        this.host.api() !== api ||
         current.selectedResourceReference !== tabReference ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId
@@ -889,7 +873,7 @@ export class ResourceController {
       if (
         error instanceof ApiError &&
         error.status === 401 &&
-        this.ownsTransport(api, transportGeneration)
+        this.host.api() === api
       ) {
         this.host.handleAuthFailure();
         return;

@@ -124,20 +124,19 @@ function harness() {
     availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
     updateSnoozedUntil: 2_000_000,
   });
-  let transportGeneration = 1;
   const notify = vi.fn();
   const api = {
     update: vi.fn(async () => inspireResult(inspireResponse)),
     piUpdate: vi.fn(async () => piResult(piResponse)),
     snoozeUpdate: vi.fn(async () => snoozeResponse),
   };
+  let current = api;
   const controller = new UpdateController({
     state: () => state,
     patch: (patch) => {
       state = { ...state, ...patch };
     },
-    api: () => api,
-    transportGeneration: () => transportGeneration,
+    api: () => current,
     notify,
   });
   return {
@@ -158,7 +157,7 @@ function harness() {
       snoozeResponse = status;
     },
     replaceTransport: () => {
-      transportGeneration += 1;
+      current = { ...api };
       controller.invalidateForTransportReplacement();
     },
   };

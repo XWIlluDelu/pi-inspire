@@ -433,11 +433,13 @@ function FileRefButton({
       className={className}
       data-file-path={fileResourceReference(reference)}
       aria-label={accessibleLabel}
-      title={`Preview ${reference}`}
+      title={`Preview ${reference}\nCtrl+click: Show in file manager`}
       onClick={(event) => {
         event.stopPropagation();
         event.preventDefault();
-        void store.openResource(fileResourceReference(reference));
+        if (event.ctrlKey || event.metaKey)
+          void store.showInFileManager(fileResourceReference(reference));
+        else void store.openResource(fileResourceReference(reference));
       }}
     >
       {children ?? reference}

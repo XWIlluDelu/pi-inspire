@@ -29,25 +29,3 @@ export function userTurnSummary(value: unknown): UserTurnSummary {
     attachmentCount: attachmentCount + references.length,
   };
 }
-
-/** Project an in-memory transcript whose user-turn ordinals are sequential. */
-export function sequentialUserTurnAnchors(
-  messages: readonly unknown[],
-  fallbackIdPrefix: string,
-): UserTurnAnchor[] {
-  const turns: UserTurnAnchor[] = [];
-  for (const [index, value] of messages.entries()) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const record = value as Record<string, unknown>;
-    if (record.role !== "user") continue;
-    turns.push({
-      id:
-        typeof record.__inspireMessageId === "string"
-          ? record.__inspireMessageId
-          : `${fallbackIdPrefix}:${index}`,
-      ordinal: turns.length,
-      ...userTurnSummary(record),
-    });
-  }
-  return turns;
-}

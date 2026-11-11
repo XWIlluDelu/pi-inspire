@@ -1,4 +1,6 @@
 import {
+  Bell,
+  CheckCheck,
   ChevronUp,
   EyeOff,
   Inbox,
@@ -22,6 +24,7 @@ import {
 } from "react";
 import { type SessionSummary } from "../../shared/contracts";
 import { isComposingKeyboardEvent } from "../keyboard-input";
+import { type NeedsYouReason, needsYouRows } from "../needs-you";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import {
@@ -70,6 +73,7 @@ export const Nav = memo(function Nav({
     activeSessionId,
     openingSessionId,
     sessionStatuses,
+    externalSessionActivities,
     sessionQuery,
     sessionListNextOffset,
     sessionListTotal,
@@ -93,6 +97,7 @@ export const Nav = memo(function Nav({
       activeSessionId: state.sessionId,
       openingSessionId: state.openingSessionId,
       sessionStatuses: state.sessionStatuses,
+      externalSessionActivities: state.externalSessionActivities,
       sessionQuery: state.sessionQuery,
       sessionListNextOffset: state.sessionListNextOffset,
       sessionListTotal: state.sessionListTotal,
@@ -127,6 +132,18 @@ export const Nav = memo(function Nav({
     setHiddenOpen(open);
     saveNavigationDisclosure("hiddenSessions", open);
   };
+  // Needs you is a second way to read the same column, not a filter chip.
+  const [needsYouMode, setNeedsYouMode] = useState(() =>
+    readNavigationDisclosure("needsYou"),
+  );
+  const chooseNeedsYouMode = (on: boolean) => {
+    setNeedsYouMode(on);
+    saveNavigationDisclosure("needsYou", on);
+  };
+  const [retainedNeed, setRetainedNeed] = useState<{
+    id: string;
+    reason: NeedsYouReason;
+  } | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchSelection, setSearchSelection] = useState<{
     query: string;
@@ -153,6 +170,39 @@ export const Nav = memo(function Nav({
   );
   const searching = sessionQuery.trim() !== "";
   const hiddenExpanded = searching || hiddenOpen;
+  // Hidden stays curated away; Needs you reads the browsable sessions only.
+  const needsYou = useMemo(
+    () =>
+      needsYouRows(
+        [
+          ...sections.pinned,
+          ...sections.pinnedGroups.flatMap((group) => group.sessions),
+          ...sections.groups.flatMap((group) => group.sessions),
+        ],
+        sessionStatuses,
+        externalSessionActivities,
+        visibleSessionId ?? null,
+        retainedNeed,
+      ),
+    [
+      sections,
+      sessionStatuses,
+      externalSessionActivities,
+      visibleSessionId,
+      retainedNeed,
+    ],
+  );
+  const needsYouCount = needsYou.filter((row) => row.reason).length;
+  const needsYouUrgent = needsYou.some(
+    (row) => row.reason === "attention" || row.reason === "failed",
+  );
+  const selectSession = (id: string) => {
+    const row = needsYouMode
+      ? needsYou.find((candidate) => candidate.session.id === id)
+      : undefined;
+    setRetainedNeed(row?.reason ? { id, reason: row.reason } : null);
+    onSelectSession(id);
+  };
   useLayoutEffect(() => {
     if (!hiddenOpen || searching || collapsed) return;
     const nav = navRef.current;
@@ -167,6 +217,7 @@ export const Nav = memo(function Nav({
     return () => observer.disconnect();
   }, [hiddenOpen, searching, collapsed, navRef]);
   const searchResults = useMemo(() => {
+    if (needsYouMode) return needsYou.map((row) => row.session);
     const folderRows = (groups: typeof sections.groups) =>
       groups.flatMap((group) =>
         searching || !collapsedGroupCwds.includes(group.cwd)
@@ -181,7 +232,14 @@ export const Nav = memo(function Nav({
         ? [...sections.hidden, ...folderRows(sections.hiddenGroups)]
         : []),
     ];
-  }, [sections, searching, hiddenExpanded, collapsedGroupCwds]);
+  }, [
+    sections,
+    searching,
+    hiddenExpanded,
+    collapsedGroupCwds,
+    needsYouMode,
+    needsYou,
+  ]);
   const defaultHighlight = searching ? searchResults[0] : undefined;
   const highlighted = searchFocused
     ? searchSelection.query === sessionQuery
@@ -316,41 +374,67 @@ export const Nav = memo(function Nav({
             <BrandLogo size={24} className="nav__brand-icon" />
             <Wordmark />
           </div>
-          {isModal && onClose ? (
-            <div className="nav__header-actions">
-              {onOpenSettings ? (
-                <button
-                  type="button"
-                  className="icon-button nav__settings"
-                  aria-label="Settings"
-                  title="Settings"
-                  onClick={onOpenSettings}
-                >
-                  <SettingsIcon size={15} aria-hidden />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="icon-button nav__close"
-                aria-label="Close navigation"
-                title="Close navigation"
-                onClick={onClose}
-              >
-                <X size={15} aria-hidden />
-              </button>
-            </div>
-          ) : !isModal ? (
+          <div className="nav__header-actions">
             <button
               type="button"
-              className="icon-button nav__close nav__toggle"
-              aria-label="Collapse navigation"
-              aria-expanded={true}
-              title="Collapse navigation (Ctrl+B)"
-              onClick={onToggleNavigation}
+              className="icon-button nav__needs-you"
+              aria-pressed={needsYouMode}
+              aria-label={
+                needsYouCount > 0 ? `Needs you (${needsYouCount})` : "Needs you"
+              }
+              title={
+                needsYouMode
+                  ? "Showing sessions that need you. Click to show all sessions"
+                  : "Show only sessions waiting for input, failed, or finished and not yet seen"
+              }
+              onClick={() => chooseNeedsYouMode(!needsYouMode)}
             >
-              <PanelLeft size={16} aria-hidden />
+              <Bell size={15} aria-hidden />
+              {needsYouCount > 0 ? (
+                <span
+                  className={`navigation-toggle__attention${needsYouUrgent ? " navigation-toggle__attention--urgent" : ""}`}
+                  aria-hidden
+                >
+                  {needsYouCount > 9 ? "9+" : needsYouCount}
+                </span>
+              ) : null}
             </button>
-          ) : null}
+            {isModal && onClose ? (
+              <>
+                {onOpenSettings ? (
+                  <button
+                    type="button"
+                    className="icon-button nav__settings"
+                    aria-label="Settings"
+                    title="Settings"
+                    onClick={onOpenSettings}
+                  >
+                    <SettingsIcon size={15} aria-hidden />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="icon-button nav__close"
+                  aria-label="Close navigation"
+                  title="Close navigation"
+                  onClick={onClose}
+                >
+                  <X size={15} aria-hidden />
+                </button>
+              </>
+            ) : !isModal ? (
+              <button
+                type="button"
+                className="icon-button nav__close nav__toggle"
+                aria-label="Collapse navigation"
+                aria-expanded={true}
+                title="Collapse navigation (Ctrl+B)"
+                onClick={onToggleNavigation}
+              >
+                <PanelLeft size={15} aria-hidden />
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="nav__controls">
           <button
@@ -412,7 +496,7 @@ export const Nav = memo(function Nav({
                 else event.currentTarget.blur();
               } else if (event.key === "Enter") {
                 if (highlighted && highlighted.id !== openingSessionId)
-                  onSelectSession(highlighted.id);
+                  selectSession(highlighted.id);
               } else if (searchResults.length > 0) {
                 const index = searchResults.findIndex(
                   (session) => session.id === highlightedSessionId,
@@ -444,7 +528,40 @@ export const Nav = memo(function Nav({
         </p>
       ) : null}
       <div className="nav__list">
-        {pinned.length > 0 ? (
+        {needsYouMode ? (
+          needsYou.length > 0 ? (
+            <section
+              className="nav__group nav__group--needs-you"
+              aria-label="Sessions that need you"
+            >
+              {needsYou.map(({ session }) => (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  searchQuery={sessionQuery}
+                  selectedSessionId={visibleSessionId}
+                  highlightedSessionId={highlightedSessionId}
+                  showProject
+                  onSelect={selectSession}
+                />
+              ))}
+            </section>
+          ) : (
+            <div className="empty-state">
+              <CheckCheck size={26} strokeWidth={1.5} aria-hidden />
+              <span className="empty-state__title">
+                {searching
+                  ? "No matching sessions need you"
+                  : "Nothing needs you"}
+              </span>
+              <span className="empty-state__hint">
+                Questions waiting for you, failed runs and finished runs you
+                haven't seen appear here.
+              </span>
+            </div>
+          )
+        ) : null}
+        {!needsYouMode && pinned.length > 0 ? (
           <section
             className="nav__group nav__group--pinned"
             aria-labelledby="nav-pinned-title"
@@ -469,21 +586,23 @@ export const Nav = memo(function Nav({
             ))}
           </section>
         ) : null}
-        {folders.map((group, groupIndex) => {
-          return (
-            <ProjectGroup
-              key={group.cwd}
-              group={group}
-              headingId={`nav-group-title-${groupIndex}`}
-              searching={searching}
-              searchQuery={sessionQuery}
-              showContext={(nameCounts.get(group.name) ?? 0) > 1}
-              selectedSessionId={visibleSessionId}
-              highlightedSessionId={highlightedSessionId}
-              onSelectSession={onSelectSession}
-            />
-          );
-        })}
+        {needsYouMode
+          ? null
+          : folders.map((group, groupIndex) => {
+              return (
+                <ProjectGroup
+                  key={group.cwd}
+                  group={group}
+                  headingId={`nav-group-title-${groupIndex}`}
+                  searching={searching}
+                  searchQuery={sessionQuery}
+                  showContext={(nameCounts.get(group.name) ?? 0) > 1}
+                  selectedSessionId={visibleSessionId}
+                  highlightedSessionId={highlightedSessionId}
+                  onSelectSession={onSelectSession}
+                />
+              );
+            })}
         {sessionListIssues.length ? (
           <div className="nav__pagination">
             <details className="nav__source-issues">
@@ -509,7 +628,7 @@ export const Nav = memo(function Nav({
             </button>
           </div>
         ) : null}
-        {showSessionListActivity ? (
+        {!needsYouMode && showSessionListActivity ? (
           <div className="nav__pagination">
             <span
               className="nav__pagination-status"
@@ -549,7 +668,8 @@ export const Nav = memo(function Nav({
             ) : null}
           </div>
         ) : null}
-        {sessions.length === 0 &&
+        {!needsYouMode &&
+        sessions.length === 0 &&
         !sessionListBusy &&
         !sessionListError &&
         !sessionListIssues.length ? (
@@ -570,7 +690,7 @@ export const Nav = memo(function Nav({
           </div>
         ) : null}
       </div>
-      {hiddenCount > 0 ? (
+      {!needsYouMode && hiddenCount > 0 ? (
         <section
           className="nav__group nav__group--hidden"
           aria-labelledby="nav-hidden-title"

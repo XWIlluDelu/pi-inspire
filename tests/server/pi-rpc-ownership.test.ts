@@ -36,6 +36,7 @@ class SyntheticChild extends EventEmitter {
       done();
     },
   });
+  stdio = [this.stdin, this.stdout, this.stderr, new PassThrough()];
   reply(command: Command | undefined, extra: Record<string, unknown> = {}) {
     if (!command) throw new Error("No synthetic command to reply to");
     this.frame({

@@ -10,7 +10,6 @@ interface SessionManagementHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
   api(): Api | null;
-  transportGeneration(): number;
   notify(kind: "info" | "warning" | "error", text: string): void;
   handleAuthFailure(): void;
   refreshLoadedSessions(): Promise<void>;
@@ -58,13 +57,10 @@ export class SessionManagementController {
   ): Promise<CommandChangeResult> => {
     const api = this.host.api();
     if (!api || !sessionId || !name.trim()) return { status: "stale" };
-    const transportGeneration = this.host.transportGeneration();
     const request = Symbol(sessionId);
     this.latestRename.set(sessionId, request);
     const ownsRequest = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration &&
-      this.latestRename.get(sessionId) === request;
+      this.host.api() === api && this.latestRename.get(sessionId) === request;
     const trimmedName = name.trim();
     try {
       await api.renameSession(sessionId, trimmedName);
@@ -158,10 +154,7 @@ export class SessionManagementController {
     sessionId: string,
   ): Promise<SessionDeleteDisposition | null> => {
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+    const ownsTransport = (): boolean => this.host.api() === api;
     const session = this.host
       .state()
       .sessions.find((candidate) => candidate.id === sessionId);
@@ -262,10 +255,7 @@ export class SessionManagementController {
     projectCwd?: string,
   ): Promise<HiddenClearResponse | null> => {
     const api = this.host.api();
-    const transportGeneration = this.host.transportGeneration();
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration;
+    const ownsTransport = (): boolean => this.host.api() === api;
     if (
       !api ||
       sessionIds.length === 0 ||

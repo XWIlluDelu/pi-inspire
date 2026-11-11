@@ -204,7 +204,7 @@ export class TerminalDaemonServer {
       () => socket.destroy(),
       HANDSHAKE_TIMEOUT_MS,
     );
-    handshakeTimeout.unref?.();
+    handshakeTimeout.unref();
 
     const sendJson = (value: unknown): void => {
       this.write(socket, encodeTerminalIpcJson(value));

@@ -1114,12 +1114,11 @@ export class SessionProjection
    * path may not exist until Pi flushes its first assistant message. */
   static openPending(
     session: SessionRecord,
-    readHooks?: SessionProjectionReadHooks,
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): Promise<SessionProjection> {
     return SessionProjection.openMode(
       session,
-      readHooks,
+      undefined,
       true,
       fileNameForPath,
     );

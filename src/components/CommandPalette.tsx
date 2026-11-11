@@ -31,7 +31,6 @@ import { isTouchFirstDevice } from "../input-device";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { paletteTextMatchRanges, rankPaletteItems } from "../palette-search";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
-import { modelControlsSupported } from "../session-controls";
 import { shallowEqual, store, useAppState } from "../store";
 import {
   queueTerminalAction,
@@ -102,7 +101,7 @@ export const CommandPalette = memo(function CommandPalette({
     return {
       sessionId: appState.sessionId,
       readOnlyReason: appState.readOnlyReason,
-      modelControls: modelControlsSupported(appState),
+      modelControls: Boolean(appState.sessionId),
       copiesBlocked: branchCopiesBlocked(appState),
       external: Boolean(
         appState.sessionId &&

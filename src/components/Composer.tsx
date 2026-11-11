@@ -24,7 +24,6 @@ import {
   resolveModelMetadata,
   supportedThinkingLevels,
 } from "../model-options";
-import { modelControlsSupported } from "../session-controls";
 import {
   sessionDraft,
   sessionDraftRevision,
@@ -439,7 +438,8 @@ export const Composer = memo(function Composer() {
   };
 
   const activeModel = resolveModelMetadata(state.model, state.availableModels);
-  const modelControls = modelControlsSupported(state);
+  // Owned workers and attached terminal Pi both take model and thinking changes.
+  const modelControls = Boolean(state.sessionId);
   const thinkingSupported = activeModel?.reasoning !== false;
   const thinkingLevels = supportedThinkingLevels(activeModel);
 

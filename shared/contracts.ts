@@ -347,6 +347,9 @@ export interface SessionSummary {
   modified: string;
   messageCount: number;
   parentSessionId?: string;
+  /** Search results only: a bounded excerpt around the first contiguous
+   * message-text match, so navigation can show why a session matched. */
+  matchSnippet?: string;
 }
 
 export interface SessionCatalogIssue {

@@ -19,11 +19,10 @@ export interface SessionSelectionState {
 interface SessionSelectionControllerHost {
   state(): SessionSelectionState;
   api(): Api | null;
-  transportGeneration(): number;
   /** Starts a new explicit selection intent and returns its unique owner. */
   beginOpening(sessionId: string | null): number;
   invalidateOpening(): void;
-  ownsOpening(ticket: number, api: Api, transportGeneration: number): boolean;
+  ownsOpening(ticket: number, api: Api): boolean;
   releaseOpening(ticket: number): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   ensureSessionVisible(sessionId: string): void;
@@ -40,8 +39,7 @@ interface SessionSelectionControllerHost {
 /**
  * Owns open/new/deselect request ownership. AppStore remains the only session
  * snapshot and cross-domain commit facade; this controller only accepts a
- * response while its explicit selection owner, API client, and transport
- * generation still match.
+ * response while its explicit selection owner and API client still match.
  */
 export class SessionSelectionController {
   private observation: AbortController | null = null;
@@ -170,20 +168,18 @@ export class SessionSelectionController {
     afterApply: (snapshot: ActiveSnapshot, ticket: number) => T,
     onFailure?: (error: unknown) => T,
   ): Promise<T> {
-    const transportGeneration = this.host.transportGeneration();
     const ticket = this.host.beginOpening(openingSessionId);
     this.observation?.abort();
     const observation = new AbortController();
     this.observation = observation;
     try {
       const snapshot = await request(observation.signal);
-      if (!this.host.ownsOpening(ticket, api, transportGeneration))
-        return staleResult;
+      if (!this.host.ownsOpening(ticket, api)) return staleResult;
       this.host.applySnapshot(snapshot);
       this.host.setActionError(null);
       return afterApply(snapshot, ticket);
     } catch (error) {
-      if (this.host.ownsOpening(ticket, api, transportGeneration)) {
+      if (this.host.ownsOpening(ticket, api)) {
         if (error instanceof ApiError && error.status === 401)
           this.host.handleAuthFailure();
         else {

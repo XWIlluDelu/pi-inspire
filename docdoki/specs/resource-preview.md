@@ -4,11 +4,11 @@ covers:
   - shared/{contracts,resource-references}.ts
   - server/{resources,resource-http,html-preview,image-content,project-files,git-inspection,git-runner,app,runtime,runtime-reads}.ts
   - shared/html-preview.ts
-  - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer}.ts
+  - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer,pdf-find,delimited-text,reader-quote}.ts
   - scripts/vite-pdf-assets.ts
   - server/static-asset-cache.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
-  - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript}.tsx
+  - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript,TablePreview,DocumentOutline,ReaderQuoteAction}.tsx
   - src/components/context-pane-view.ts
   - src/App.tsx
   - src/styles.css
@@ -16,7 +16,8 @@ covers:
   - tests/server/{app-resources,app-auth,resources,resources-windows-paths,resource-reference-identity,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
   - tests/web/{resources,document-resources,document-image-controller,resource-read-recovery,git-controller,workspace-controller,store-resources}.test.ts
   - tests/web/{document-preview,pdf-preview,file-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
-  - tests/web/{source-diff,file-icons,syntax-highlighting}.test.ts
+  - tests/web/{source-diff,file-icons,syntax-highlighting,delimited-text,pdf-find,reader-quote}.test.ts
+  - tests/web/table-preview.test.tsx
   - tests/server/html-preview.test.ts
   - tests/browser/{context-tabs,filesystem-files,document-images,pdf-preview,html-preview,resource-reading}.spec.ts
 ---
@@ -31,7 +32,16 @@ preview; Changes owns Git comparisons. [[composer]] owns file attachment and the
 ## Browse and search
 
 The Files tool tab shows up to five deduplicated **Recent in this chat** references from one
-16-reference Host page, followed by the workspace filesystem tree. Search replaces both sections
+100-reference Host page, followed by the workspace filesystem tree. A reference that any tool call
+in the branch view named for writing (`write`, `edit`, patch/create/save-style names) carries
+`writes`; shell writes are not inferred. Inner calls that a code-running tool records as
+`details.calls[] { name, args, status }` (for example codemode) count under their inner name; a
+call whose status is not `ok` names a file but does not mark it written. The first page also
+carries `produced`, the view's newest 100 written references, so written files are marked even when
+they fall outside the page. Recent is one list: a written file shows a quiet pen after its name
+("Written or edited in this chat", also in its accessible name) rather than moving to another
+list. Spellings of one workspace file merge, and a write under any spelling marks the row. The list
+shows five rows and a `Show all N` / `Show fewer` text control. Search replaces both sections
 while a query is present. Recent occupies only the height of its available rows, with the normal
 section gap before the workspace tree; it reserves no empty slots. Recent rows show an icon,
 filename, subdued parent path, and fixed trailing Git state on one line. File icons,
@@ -64,7 +74,7 @@ Filesystem membership is independent of Git. Browse includes ignored non-hidden 
 directories. **Show hidden files** defaults off and covers dot names plus native filesystem hidden
 attributes. A visibility change retires requests and the previous projection without closing a
 selected preview. Directory/search responses require the same cwd, session, visibility, and browser
-transport generation. Cwd-local state is cached across switching; Refresh revalidates the root,
+API client. Cwd-local state is cached across switching; Refresh revalidates the root,
 expanded levels and current query without first discarding their confirmed contents.
 
 Transient directory/search failures recover automatically in a bounded owner-scoped window. Pending
@@ -197,6 +207,7 @@ retired execution lease.
 | File type | Default and available views |
 | --- | --- |
 | HTML, Markdown, SVG, Jupyter Notebook | Preview; Source is the reciprocal view. |
+| CSV, TSV | Table; Source is the reciprocal view. |
 | Plain text, code, JSON, YAML | Source only. |
 | Image, PDF, audio, video | Preview only. |
 | Unsupported binary | File information. |
@@ -213,6 +224,25 @@ Selected-file actions float above scrolling content. Copy path copies the path. 
 keep one reciprocal view action in a fixed trailing slot; files with no alternative view omit it.
 The same file tab offers body and Git Changes views; Source/Preview applies only within its body
 view. No file-editing controls are added.
+
+The CSV/TSV Table parses RFC 4180 quoting (delimiters, doubled quotes and line breaks inside
+quoted fields, CRLF/LF, BOM) and treats the first record as its header. It shows a sticky header,
+row numbers, right-aligned numeric columns and a header click that cycles ascending, descending and
+original order; blank or non-numeric cells sink in numeric sorts. The preview renders up to
+5,000 rows, 250 columns, and 20,000 cells including headers and row numbers. A truncated transfer
+drops its possibly partial last record. A notice points to Source or Download for omitted data.
+
+Rendered Markdown and notebooks with at least three `h1`–`h3` headings add a **Contents** action to
+the floating group. It lists the headings currently rendered, marks the one at the reading line,
+and scrolls only the reader's own scroller. Shorter documents keep the group unchanged.
+
+Selecting text in a body reader (Source, Markdown, notebook, Table or PDF; not Git Changes or the
+HTML frame) shows one **Quote** control just below the selection. It appends a Markdown block quote
+to the session draft through the same path as terminal selections, preserving KaTeX as `$…$`
+source and bounding the passage to 2,000 characters. The closing citation uses notation the
+transcript already resolves: `path:line[-line]` for Source, `path, page N[–M]` for PDF, and
+`path, § Heading` (nearest preceding heading) for rendered documents. On narrow screens the
+contextual drawer closes to reveal the Composer; the file tab keeps its reading position.
 
 Download mints a 15-second single-use origin/session/resource transfer ticket through
 authenticated fetch, then uses the browser's native download to stream complete raw bytes.
@@ -251,7 +281,8 @@ first source line: at least 4.75rem (3.5rem in panes 360px wide or narrower) and
 Wider counts grow the shared gutter instead of painting over source; unusually long prompts wrap
 within that bound.
 
-Ctrl+click (or Meta+click) on a workspace file, directory, Recent file or filename tab invokes
+Ctrl+click (or Meta+click) on a workspace file, directory, Recent file, filename tab, Changes row,
+conversation file reference or the topbar project location (the project root) invokes
 **Show in file manager** on the Host: select a file in its parent, or open a directory. The Host
 uses the same session file authority and workspace containment checks as browsing, and passes paths
 as data to the native desktop integration without executing them. Missing desktop support or native
@@ -350,6 +381,14 @@ links/forms, and embedded media are inactive. Malformed or password-protected fi
 error and keep Download. Where PDF controls and floating file actions cannot fit side by side, PDF
 controls keep a stable row below the file actions. Expanding or collapsing file actions never moves
 a PDF button during a pointer gesture.
+
+PDF **Find** opens from a trailing search control or Ctrl/⌘+F inside the reader and replaces the
+controls row in place. Matching is case-insensitive and whitespace-normalized within individual
+PDF.js text items, so each hit maps to one text-layer span; a phrase split across items is not
+reported. Enter/Shift+Enter or the arrows step through matches with a `current / total` count, the
+reader scrolls only its own scroller to the hit, and Escape or Close restores the controls. When the
+document has an outline, the page indicator opens a **Contents** list (up to 200 entries, three
+levels) that marks the section containing the visible page.
 
 The reader uses static PDF.js, not an embedded native viewer: a Chromium 153 check found that the
 native viewer blocked rendering in an empty sandbox but executed PDF OpenAction JavaScript without

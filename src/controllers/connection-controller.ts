@@ -11,7 +11,7 @@ import { structuralMessageIdentity } from "../../shared/message-identity";
 import { eventsUrl, HTTP_OBSERVATION_TIMEOUT_MS } from "../api";
 import { socketTicket } from "../browser-auth";
 import type { WireEvent } from "../events";
-import { recordTransportMeasure, transportNow } from "../transport-performance";
+import { recordTransportMeasure } from "../transport-performance";
 
 export const SOCKET_CONNECT_TIMEOUT_MS = 10_000;
 // Snapshot projection can wait on Pi's 30-second reads. Connection setup and
@@ -253,7 +253,7 @@ export class ConnectionController {
     phase: "bootstrap" | "resume",
   ): Promise<void> {
     const request = ++this.socketRequest;
-    const handshakeStartedAt = transportNow();
+    const handshakeStartedAt = performance.now();
     this.reconnectPending = false;
     this.clearReconnectTimer();
     this.clearStreamTimers();
@@ -676,7 +676,7 @@ export class ConnectionController {
   }
 
   private beginStreamMetrics(): void {
-    this.streamMetricStartedAt = transportNow();
+    this.streamMetricStartedAt = performance.now();
     this.streamMetricFrames = 0;
     this.streamMetricCharacters = 0;
     this.streamMetricAssistantEvents = 0;
@@ -693,7 +693,7 @@ export class ConnectionController {
         : event.type === "message_update"
           ? 1
           : 0;
-    if (transportNow() - this.streamMetricStartedAt >= 10_000)
+    if (performance.now() - this.streamMetricStartedAt >= 10_000)
       this.flushStreamMetrics();
   }
 

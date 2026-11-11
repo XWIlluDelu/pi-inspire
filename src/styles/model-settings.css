@@ -292,9 +292,6 @@
   .models-available .model-picker__id {
     grid-area: id;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .models-available .models-row-actions {
     grid-area: actions;
@@ -395,7 +392,6 @@
   .models-advanced-providers__summary { min-height: 44px; }
   .models-common li:has(.models-common__editor) { flex-wrap: wrap; }
   .models-common__editor { flex-basis: 100%; }
-  .models-row-actions { gap: var(--space-1); }
   .models-common li { align-items: flex-start; flex-wrap: wrap; }
   .models-common li > .models-actions { margin-left: auto; }
   .models-subheading { gap: var(--space-1); }
