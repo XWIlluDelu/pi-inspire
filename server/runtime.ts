@@ -85,7 +85,11 @@ import type {
 import { modelOption } from "./model-catalog.js";
 import { refreshWorkerCatalog } from "./model-catalog-refresh.js";
 import type { ModelMetadata, ModelMetadataCatalog } from "./model-metadata.js";
-import { createProjectDirectory, resolveProjectDirectory } from "./paths.js";
+import {
+  createProjectDirectory,
+  resolveProjectDirectory,
+  resolveUserPath,
+} from "./paths.js";
 import {
   isPiRpcOutcomeUnknown,
   PiRpcCancelledError,
@@ -146,7 +150,6 @@ import {
 } from "./session-delete.js";
 import {
   assertExportDestination,
-  resolveExportPath,
   serializeBranchExport,
   writeBranchExport,
 } from "./session-export.js";
@@ -2617,7 +2620,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       }
       this.scheduleExternalSessionRecovery();
     }, 2_000);
-    this.externalRecoveryTimer.unref?.();
+    this.externalRecoveryTimer.unref();
   }
 
   private markExternalActive(slot: RuntimeSlot): void {
@@ -3127,7 +3130,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             firstMessage: "",
             source: null,
           },
-          undefined,
           (path) => this.attachments.promptFileName(path),
         );
         await pendingProjection.suspendReconciliation();
@@ -5112,7 +5114,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (request.command === "export") {
         const output = exportArgumentPath(argument);
         const outputPath = output
-          ? resolveExportPath(output, slot.cwd)
+          ? resolveUserPath(output, slot.cwd)
           : undefined;
         if (outputPath)
           await assertExportDestination(outputPath, slot.sessionPath);
@@ -5174,7 +5176,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         if (!result || typeof result.path !== "string" || !result.path) {
           throw new Error("Pi did not report the exported file path");
         }
-        const exportedPath = resolveExportPath(result.path, slot.cwd);
+        const exportedPath = resolveUserPath(result.path, slot.cwd);
         return {
           command: "export",
           outcome: "completed",

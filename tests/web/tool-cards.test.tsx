@@ -625,7 +625,10 @@ describe("native Pi tool cards", () => {
       const resource = screen.getByRole("button", { name: path });
       const label = resource.querySelector(".resource-path");
       expect(resource).toHaveAttribute("data-file-path", path);
-      expect(resource).toHaveAttribute("title", `Preview ${path}`);
+      expect(resource).toHaveAttribute(
+        "title",
+        `Preview ${path}\nCtrl+click: Show in file manager`,
+      );
       expect(label?.querySelector(".resource-path__visible")).toHaveTextContent(
         path,
       );

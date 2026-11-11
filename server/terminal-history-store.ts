@@ -59,7 +59,7 @@ export class TerminalHistoryStore implements TerminalHistoryBackend {
       this.timer = null;
       this.enqueuePending();
     }, FLUSH_DELAY_MS);
-    this.timer.unref?.();
+    this.timer.unref();
   }
 
   async read(terminalId: string): Promise<Buffer | null> {

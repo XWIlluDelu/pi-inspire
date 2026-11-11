@@ -220,8 +220,17 @@ const ChangeRow = memo(function ChangeRow({
       aria-label={[pathName(change), facet?.label, sourceLabel]
         .filter(Boolean)
         .join(", ")}
-      title={pathName(change)}
-      onClick={() => void store.openGitDiff(change.path.id)}
+      title={
+        change.path.workspacePath
+          ? `${pathName(change)}\nCtrl+click: Show in file manager`
+          : pathName(change)
+      }
+      onClick={(event) => {
+        const workspacePath = change.path.workspacePath;
+        if ((event.ctrlKey || event.metaKey) && workspacePath)
+          void store.showInFileManager(workspacePath, workspacePath);
+        else void store.openGitDiff(change.path.id);
+      }}
     >
       <Icon size={13} aria-hidden />
       <span

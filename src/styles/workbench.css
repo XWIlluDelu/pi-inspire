@@ -652,6 +652,30 @@ body.pane-resizing--vertical .nav {
   padding-bottom: var(--space-3);
 }
 
+.files-browser__more:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}
+
+/* A file that tools wrote or edited in this chat: a quiet pen after its name. */
+.recent-file__produced {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--faint);
+}
+
+.files-browser__more {
+  min-height: 26px;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .files-browser__more:hover {
+    color: var(--ink);
+  }
+}
+
 .files-browser__note {
   display: flex;
   min-height: 30px;
@@ -807,6 +831,117 @@ body.pane-resizing--vertical .nav {
 }
 
 .file-preview__actions-toggle { flex: 0 0 auto; }
+
+/* One contents popover for readers: PDF bookmarks and document headings. */
+.reader-contents {
+  position: absolute;
+  z-index: 4;
+  width: min(320px, calc(100% - 2 * var(--space-3)));
+  max-height: min(60vh, 420px);
+  overflow: auto;
+  padding: 4px 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-file-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.reader-contents--document {
+  top: calc(var(--space-2) + 40px);
+  right: var(--space-3);
+}
+
+.reader-contents__entry {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 5px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: var(--text-sm) / var(--leading-ui) var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.reader-contents__entry > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader-contents__meta {
+  flex: none;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-contents__entry[aria-current="location"] {
+  color: var(--accent);
+}
+
+@media (hover: hover) {
+  .reader-contents__entry:hover {
+    background: var(--bg-inset);
+  }
+}
+
+.reader-contents__entry:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}
+
+@media (pointer: coarse) {
+  .reader-contents__entry {
+    min-height: 40px;
+    align-items: center;
+  }
+}
+
+/* Appears only while reader text is selected; shares the floating file-action
+   surface so it reads as part of the reader, not a new toolbar. */
+.reader-quote {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-file-surface);
+  box-shadow: var(--shadow-1);
+  color: var(--ink);
+  font: 500 var(--text-sm) / 1 var(--font-sans);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.reader-quote > svg {
+  color: var(--accent);
+}
+
+@media (hover: hover) {
+  .reader-quote:hover {
+    border-color: var(--hairline-strong);
+  }
+}
+
+.reader-quote:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .reader-quote {
+    min-height: 36px;
+    padding: 0 14px;
+  }
+}
 
 .file-preview__actions:has(> .file-preview__actions-toggle[aria-expanded="false"]) {
   padding-inline: 2px;
@@ -1432,8 +1567,6 @@ button.res__more:hover {
 }
 
 .changes__jump {
-  display: inline-flex;
-  align-items: center;
   gap: 0;
   border: 0;
   background: transparent;
@@ -1599,6 +1732,103 @@ button.res__more:hover {
 
 .res__preview-document {
   padding: var(--space-2);
+}
+
+/* CSV/TSV: a quiet data grid on the file canvas. The header stays visible,
+   row numbers share the source gutter's voice, numbers align right. */
+.table-preview {
+  padding: var(--space-2);
+}
+
+.table-preview table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font: var(--text-sm) / var(--leading-mono) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.table-preview th,
+.table-preview td {
+  max-width: 28ch;
+  padding: 3px var(--space-2);
+  border-bottom: 1px solid var(--line-subtle);
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.table-preview thead th {
+  position: sticky;
+  top: calc(-1 * var(--space-2));
+  z-index: 1;
+  padding: 0;
+  border-bottom-color: var(--line);
+  background: var(--bg-stage);
+  font-weight: 500;
+}
+
+.table-preview thead button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.table-preview thead button:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .table-preview thead button:hover {
+    color: var(--ink);
+  }
+}
+
+.table-preview th[aria-sort="ascending"] button,
+.table-preview th[aria-sort="descending"] button {
+  color: var(--ink);
+}
+
+.table-preview .table-preview__numeric {
+  text-align: right;
+}
+
+.table-preview .table-preview__numeric button {
+  flex-direction: row-reverse;
+}
+
+.table-preview .table-preview__index {
+  position: sticky;
+  left: calc(-1 * var(--space-2));
+  min-width: 3ch;
+  background: var(--bg-stage);
+  color: var(--faint);
+  font-weight: 400;
+  text-align: right;
+}
+
+.table-preview thead .table-preview__index {
+  z-index: 2;
+}
+
+.table-preview--empty {
+  padding: var(--space-4);
+  color: var(--faint);
+  font-size: var(--text-sm);
+  text-align: center;
 }
 
 @container context-pane (max-width: 420px) {
@@ -1841,8 +2071,19 @@ button.res__more:hover {
   cursor: pointer;
 }
 
-.file-ref--code:hover .inline-code {
+/* A file reference is a link, not a code chip: accent mono text with a faint
+   underline that firms on hover. Chips stay for code that is not a file. */
+.file-ref--code .inline-code {
+  background: transparent;
+  padding: 0;
   text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.22em;
+}
+
+.file-ref--code:hover .inline-code {
+  text-decoration-color: currentColor;
 }
 
 .file-ref--image {

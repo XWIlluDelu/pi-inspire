@@ -56,6 +56,11 @@ function projectKatexSelection(
   return { plain: fragment.textContent ?? "", html };
 }
 
+/** Plain text for a selection, keeping KaTeX formulas as their `$…$` source. */
+export function selectionPlainText(range: Range, root: HTMLElement): string {
+  return projectKatexSelection(range, root)?.plain ?? range.toString();
+}
+
 export function handleRichTextCopy(
   event: ReactClipboardEvent<HTMLElement>,
 ): void {

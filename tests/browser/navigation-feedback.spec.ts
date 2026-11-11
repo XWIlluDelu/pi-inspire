@@ -28,7 +28,7 @@ function navigationRowBounds(row: Locator) {
   });
 }
 
-test("desktop sessions keep titles above metadata and preserve a saved width", async ({
+test("desktop sessions keep one line with a trailing age and preserve a saved width", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -45,8 +45,15 @@ test("desktop sessions keep titles above metadata and preserve a saved width", a
   const actions = row.locator(".nav__row-actions");
   const titleBox = (await title.boundingBox())!;
   const metaBox = (await meta.boundingBox())!;
-  expect(metaBox.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
-  expect((await row.boundingBox())!.height).toBeLessThanOrEqual(46);
+  const rowBox = (await row.boundingBox())!;
+  const middle = (box: { y: number; height: number }) => box.y + box.height / 2;
+  // One line: the age trails the title on its own axis, at the row's end.
+  expect(Math.abs(middle(metaBox) - middle(titleBox))).toBeLessThanOrEqual(1.5);
+  expect(metaBox.x).toBeGreaterThanOrEqual(titleBox.x + titleBox.width);
+  expect(
+    rowBox.x + rowBox.width - (metaBox.x + metaBox.width),
+  ).toBeLessThanOrEqual(12);
+  expect(rowBox.height).toBeLessThanOrEqual(34);
   expect(
     await meta.evaluate((el) =>
       Number.parseFloat(getComputedStyle(el).fontSize),
@@ -60,14 +67,13 @@ test("desktop sessions keep titles above metadata and preserve a saved width", a
   await expect(actions).toHaveCSS("opacity", "0");
   await row.hover();
   await expect(actions).toHaveCSS("opacity", "1");
-  await expect(meta).toHaveCSS("opacity", "1");
+  // Pin/Hide take the age's place; the title keeps its width and fades.
+  await expect(meta).toHaveCSS("visibility", "hidden");
   expect((await title.boundingBox())!.width).toBeCloseTo(titleBox.width, 2);
   for (const action of await actions.getByRole("button").all()) {
     const box = (await action.boundingBox())!;
-    // The larger hit area can use the line gap; its visible mark stays below
-    // the title rather than consuming the title's horizontal space.
     const icon = (await action.locator("svg").boundingBox())!;
-    expect(icon.y).toBeGreaterThanOrEqual(titleBox.y + titleBox.height);
+    expect(Math.abs(middle(icon) - middle(titleBox))).toBeLessThanOrEqual(1.5);
     expect(box.width).toBeGreaterThanOrEqual(24);
   }
   await page.mouse.move(1000, 300);
@@ -75,7 +81,7 @@ test("desktop sessions keep titles above metadata and preserve a saved width", a
   await page.keyboard.press("Tab");
   await expect(actions.getByRole("button").first()).toBeFocused();
   await expect(actions).toHaveCSS("opacity", "1");
-  await expect(meta).toHaveCSS("opacity", "1");
+  await expect(meta).toHaveCSS("visibility", "hidden");
   await page.evaluate(() => localStorage.setItem("inspire.nav-width", "360"));
   await page.reload();
   await expect

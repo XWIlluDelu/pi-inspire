@@ -22,12 +22,17 @@ for (const width of [1440, 768, 390, 320]) {
     await pairedPage(page);
     await openFixtureSession(page, /Formula rendering and spectral analysis/);
     const activity = page.locator(".activity-fold__disclosure").first();
-    await expect(activity).toHaveCSS("text-transform", "none");
+    await expect(activity).toHaveCSS("text-transform", "uppercase");
     await expect(activity).toHaveCSS("font-family", /Flux Mono SC/);
     await activity.click();
     const collapse = page.locator(".activity-fold__boundary--lower").first();
     await expect(collapse).toHaveCSS("font-family", /Flux Mono SC/);
-    await expect(collapse).toHaveCSS("text-transform", "none");
+    await expect(collapse).toHaveCSS("text-transform", "uppercase");
+    // Counts and tool names in the summary stay data, in authored case.
+    await expect(page.locator(".activity-fold__summary").first()).toHaveCSS(
+      "text-transform",
+      "none",
+    );
     await page.getByRole("button", { name: "Toggle resources panel" }).click();
     const modes = page.locator(".ctx__modes");
     await expect(modes).toBeVisible();

@@ -72,7 +72,6 @@ function createHarness(
       state = { ...state, ...patch };
     },
     api: () => api,
-    transportGeneration: () => 1,
     handleAuthFailure,
     openResourceFromGit,
   });

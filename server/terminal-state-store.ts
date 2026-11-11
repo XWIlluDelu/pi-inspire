@@ -96,7 +96,7 @@ export class TerminalStateWriter {
       this.timer = null;
       this.enqueue();
     }, WRITE_DELAY_MS);
-    this.timer.unref?.();
+    this.timer.unref();
   }
 
   async flush(): Promise<void> {

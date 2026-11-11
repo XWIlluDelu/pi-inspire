@@ -370,8 +370,17 @@ const SessionIdent = memo(function SessionIdent({
           <button
             type="button"
             className="topbar__project"
-            onClick={() => void copy(cwd, store.copyOwnership())}
-            title={copied ? "Copied" : `Copy path — ${cwd}`}
+            onClick={(event) => {
+              // Ctrl/⌘+click opens the project folder on the Host desktop.
+              if (event.ctrlKey || event.metaKey)
+                void store.showInFileManager(".", ".", true);
+              else void copy(cwd, store.copyOwnership());
+            }}
+            title={
+              copied
+                ? "Copied"
+                : `Copy path — ${cwd}\nCtrl+click: Show in file manager`
+            }
             aria-label="Copy project path"
           >
             {/* The normal label remains the sole width authority. Copy feedback

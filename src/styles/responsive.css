@@ -491,7 +491,6 @@ body.srail-dragging {
 
   .token-gate {
     min-height: var(--app-height);
-    height: var(--app-height);
     padding: max(var(--space-4), var(--safe-top))
       max(var(--space-4), var(--safe-right))
       max(var(--space-4), var(--safe-bottom))
@@ -505,7 +504,6 @@ body.srail-dragging {
   }
 
   .token-gate form .button {
-    flex: 0 0 auto;
     min-height: 44px;
   }
 
@@ -514,33 +512,15 @@ body.srail-dragging {
   }
 
   .topbar__title-button {
-    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
-  .topbar__project {
-    display: none;
-  }
-
-  /* Preserve workspace-change awareness without competing with the session
-     title and fixed topbar actions on a phone-sized bar. */
+  /* The topbar's own 600px container tier hides the branch text; a phone
+     viewport adds a slightly roomier, squarer chip. */
   .topbar__git {
-    flex: 0 0 auto;
-    max-width: none;
     padding: 2px 6px;
-    white-space: nowrap;
     border-radius: var(--radius-xs);
-    background: transparent;
-  }
-
-  .topbar__git-branch {
-    display: none;
-  }
-
-  .topbar__git-count::before {
-    display: none;
   }
 
   .topbar__status .chip {
@@ -596,7 +576,6 @@ body.srail-dragging {
   }
 
   .composer__meta {
-    gap: var(--space-1);
     min-width: 0;
   }
 
@@ -752,16 +731,11 @@ body.srail-dragging {
     right: 4px;
     width: auto;
     height: 2px;
-    border-radius: var(--radius-pill);
   }
 
   .settings__content,
   .terminal-settings__body {
     padding: var(--space-3) var(--space-3) var(--space-5);
-  }
-
-  .settings__content {
-    gap: var(--space-5);
   }
 
   .terminal-settings__footer {
@@ -876,8 +850,6 @@ body.srail-dragging {
 .transcript,
 .nav__list,
 .nav__hidden-content,
-.palette__list,
-.picker__list,
 .ctx {
   overscroll-behavior: contain;
 }

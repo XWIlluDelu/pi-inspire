@@ -102,7 +102,6 @@ interface ComposerControllerHost {
   state(): ComposerControllerState;
   api(): Api | null;
   authorityId(): string | null;
-  transportGeneration(): number;
   patch(slice: ComposerSlice): void;
   notify(kind: "warning", text: string): void;
   notifyVisible(sessionId: string, message: string): void;
@@ -449,11 +448,9 @@ export class ComposerController {
     const authorityId = this.host.authorityId();
     if (!api || !sessionId || !authorityId) return false;
     this.reconcileAuthority(authorityId);
-    const generation = this.host.transportGeneration();
     const requestEpoch = this.requestEpoch;
     const ownsTransport = (): boolean =>
       this.host.api() === api &&
-      this.host.transportGeneration() === generation &&
       this.requestEpoch === requestEpoch &&
       this.composers.get(sessionId) === composer;
     const composer = this.forSession(sessionId);
@@ -980,13 +977,11 @@ export class ComposerController {
         : [];
     });
     if (!pending.length) return;
-    const generation = this.host.transportGeneration();
     const requestEpoch = this.requestEpoch;
     const upload = new AbortController();
     const ownsTransport = () =>
       this.host.api() === api &&
       this.host.authorityId() === authorityId &&
-      this.host.transportGeneration() === generation &&
       this.requestEpoch === requestEpoch &&
       this.composers.get(sessionId) === composer;
     for (const { item, staged } of pending) {

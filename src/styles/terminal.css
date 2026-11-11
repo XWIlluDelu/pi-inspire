@@ -490,7 +490,6 @@
   width: min(268px, calc(100cqw - 10px));
   max-height: calc(100cqh - 46px);
   overflow-y: auto;
-  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 2px;

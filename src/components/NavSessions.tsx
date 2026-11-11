@@ -13,7 +13,10 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 import { presentSessionActivity } from "../session-activity-presentation";
-import { sessionSearchMatchRanges } from "../session-search-presentation";
+import {
+  sessionSearchMatchRanges,
+  sessionSnippetMatchRanges,
+} from "../session-search-presentation";
 import { shallowEqual, store, useAppState } from "../store";
 import { compactAge, parentSegment, type SessionGroup } from "./nav-model";
 import { PiLoader } from "./PiLoader";
@@ -142,6 +145,12 @@ export const SessionRow = memo(function SessionRow({
   const projectLabel = parentContext
     ? `${parentContext}/${projectName}`
     : projectName;
+  // During search only, and only when the title does not already explain the
+  // hit: the matched excerpt temporarily takes the age line's place.
+  const matchSnippet =
+    searchQuery.trim() && titleMatches.length === 0 && !parentContext
+      ? session.matchSnippet
+      : undefined;
   return (
     <div
       data-session-id={session.id}
@@ -195,6 +204,13 @@ export const SessionRow = memo(function SessionRow({
           {opening && openingSlow ? (
             <span className="nav__row-age" role="status">
               Opening…
+            </span>
+          ) : matchSnippet ? (
+            <span className="nav__row-snippet" title={matchSnippet}>
+              <SearchMatchText
+                text={matchSnippet}
+                ranges={sessionSnippetMatchRanges(matchSnippet, searchQuery)}
+              />
             </span>
           ) : !parentContext ? (
             <SessionAge

@@ -708,6 +708,36 @@ describe("Files pane", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps one Recent list and marks the files tools wrote in this chat", async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const response = await originalFetch(input, init);
+      if (!String(input).startsWith("/api/resources/list")) return response;
+      const body = (await response.json()) as {
+        resources: SessionResourceReference[];
+      };
+      if (body.resources[0]) body.resources[0].writes = true;
+      return Response.json(body);
+    });
+    const { container } = render(<App />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Toggle resources panel" }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".recent-file")).not.toBeNull(),
+    );
+    expect(screen.getByRole("heading", { name: "Recent" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tablist", { name: "Files in this chat" }),
+    ).toBeNull();
+    const rows = [...container.querySelectorAll(".recent-file")];
+    expect(rows.length).toBeGreaterThan(1);
+    // Only the written file carries the pen and says so to assistive tech.
+    expect(rows[0]!.querySelector(".recent-file__produced")).not.toBeNull();
+    expect(rows[0]).toHaveAccessibleName(/written in this chat/);
+    expect(rows[1]!.querySelector(".recent-file__produced")).toBeNull();
+  });
+
   it("keeps native Recent labels readable without changing their encoded open target", async () => {
     const literal = "/outside/Review C#/report%20draft.md";
     const reference = "/outside/Review%20C%23/report%2520draft.md";

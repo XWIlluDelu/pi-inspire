@@ -30,7 +30,6 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
   };
   let selectionRequest = 0;
   let openingOwner: number | null = null;
-  let transportGeneration = 1;
   let currentApi: Api;
   const openSession = vi.fn();
   const deselectSession = vi.fn();
@@ -47,7 +46,6 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
   const controller = new SessionSelectionController({
     state: () => state,
     api: () => currentApi,
-    transportGeneration: () => transportGeneration,
     beginOpening: (sessionId) => {
       const ticket = ++selectionRequest;
       openingOwner = ticket;
@@ -67,11 +65,10 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
         sessionSelectionPending: false,
       };
     },
-    ownsOpening: (ticket, api, generation) =>
+    ownsOpening: (ticket, api) =>
       ticket === selectionRequest &&
       openingOwner === ticket &&
-      currentApi === api &&
-      transportGeneration === generation,
+      currentApi === api,
     releaseOpening: (ticket) => {
       if (openingOwner !== ticket) return;
       openingOwner = null;
@@ -107,7 +104,6 @@ function createHarness(initial: Partial<SessionSelectionState> = {}) {
     handleAuthFailure,
     confirmUncertainCreation,
     replaceTransport: () => {
-      transportGeneration += 1;
       currentApi = {
         openSession: vi.fn(),
         deselectSession: vi.fn(),

@@ -599,6 +599,13 @@ export class ResourceStore {
       nextCursor:
         end < index.resources.length ? encodeResourceCursor(index, end) : null,
       resources: index.resources.slice(offset, end),
+      ...(offset === 0
+        ? {
+            produced: index.resources
+              .filter((resource) => resource.writes)
+              .slice(0, MAX_RESOURCE_LIST_PAGE_SIZE),
+          }
+        : {}),
     };
   }
 

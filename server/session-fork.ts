@@ -3,6 +3,7 @@ import { chmod, link, lstat, mkdtemp, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MAX_SESSION_ID_CHARS } from "../shared/contracts.js";
+import { jsonRecord } from "../shared/json-record.js";
 import { piInstallation } from "./pi-runtime.js";
 import { isolatedProcessOptions, signalProcessTree } from "./process-tree.mjs";
 import type {
@@ -60,12 +61,6 @@ function workerPath(): string {
 function workerArguments(path: string): string[] {
   if (!path.endsWith(".ts")) return [path];
   return ["--import", import.meta.resolve("tsx"), path];
-}
-
-function responseRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function workerError(code: unknown): SessionForkError {
@@ -185,14 +180,14 @@ async function invokeWorker(
 
   let envelope: Record<string, unknown> | null = null;
   try {
-    envelope = responseRecord(
+    envelope = jsonRecord(
       JSON.parse(Buffer.concat(stdout).toString("utf8").trim()),
     );
   } catch {
     // The bounded stderr is intentionally retained only in Host diagnostics.
   }
   if (!envelope || envelope.ok !== true) {
-    const error = responseRecord(envelope?.error);
+    const error = jsonRecord(envelope?.error);
     if (stderr) console.error("[inspire] Session fork worker:", stderr.trim());
     throw workerError(error?.code);
   }
@@ -202,7 +197,7 @@ async function invokeWorker(
       500,
     );
   }
-  const result = responseRecord(envelope.result);
+  const result = jsonRecord(envelope.result);
   if (
     !result ||
     typeof result.destinationId !== "string" ||

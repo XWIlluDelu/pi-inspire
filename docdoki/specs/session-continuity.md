@@ -18,6 +18,7 @@ covers:
   - server/session-search.ts
   - server/session-search-query.ts
   - server/session-search-worker.ts
+  - tests/server/session-search-snippet.test.ts
   - server/session-jsonl.ts
   - server/session-preview.ts
   - server/session-projection.ts
@@ -160,7 +161,10 @@ and text beyond the first-message summary. Exclude tool output, thinking and non
 Results keep chronological catalog order, authoritative totals and explicit pagination; they are
 not a filter over loaded browser rows. Reuse the last successful query across pages while its
 catalog generation and admitted source records remain unchanged; failed or partial scans do not
-become reusable results. [[workbench]] owns labels, emphasis and search interaction.
+become reusable results. A match with a contiguous literal or regex hit in message text carries
+`matchSnippet`: about 120 characters of Markdown-stripped text starting roughly one word before the
+hit. Fuzzy-only and title/ID/cwd matches carry none, and browsing pages never do. The excerpt is
+cached with the reusable query result. [[workbench]] owns labels, emphasis and search interaction.
 
 Read one session's complete admitted JSONL prefix at a time, without a whole-catalog conversation
 cache. Same-inode appends may continue beyond that prefix. Equal-size observations require an

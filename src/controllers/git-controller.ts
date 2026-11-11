@@ -49,7 +49,6 @@ interface GitControllerHost {
   state(): GitControllerState;
   patch(patch: GitControllerPatch): void;
   api(): Api | null;
-  transportGeneration(): number;
   openResourceFromGit(change: GitFileChange): Promise<void>;
   handleAuthFailure(): void;
 }
@@ -58,7 +57,6 @@ interface GitChangeSelection {
   api: Api;
   sessionId: string;
   selectionGeneration: number;
-  transportGeneration: number;
   change: GitFileChange;
 }
 
@@ -148,7 +146,6 @@ export class GitController {
     const api = this.host.api();
     const sessionId = state.sessionId;
     const selectionGeneration = state.selectionGeneration;
-    const transportGeneration = this.host.transportGeneration();
     if (!api || !sessionId) return null;
     let status = state.gitStatus;
     if (!status) {
@@ -157,7 +154,6 @@ export class GitController {
       status = state.gitStatus;
       if (
         this.host.api() !== api ||
-        this.host.transportGeneration() !== transportGeneration ||
         state.sessionId !== sessionId ||
         state.selectionGeneration !== selectionGeneration
       )
@@ -173,7 +169,6 @@ export class GitController {
           api,
           sessionId,
           selectionGeneration,
-          transportGeneration,
           change,
         }
       : null;
@@ -183,8 +178,7 @@ export class GitController {
     selection: GitChangeSelection,
     reveal = true,
   ): Promise<void> {
-    const { api, sessionId, selectionGeneration, transportGeneration, change } =
-      selection;
+    const { api, sessionId, selectionGeneration, change } = selection;
     const pathId = change.path.id;
     const pending = this.diffRead;
     if (
@@ -192,7 +186,6 @@ export class GitController {
       pending.selection.api === api &&
       pending.selection.sessionId === sessionId &&
       pending.selection.selectionGeneration === selectionGeneration &&
-      pending.selection.transportGeneration === transportGeneration &&
       pending.selection.change.path.id === pathId
     )
       return pending.promise;
@@ -218,7 +211,6 @@ export class GitController {
         this.diffRequest === request &&
         !request.signal.aborted &&
         this.host.api() === api &&
-        this.host.transportGeneration() === transportGeneration &&
         currentState.sessionId === sessionId &&
         currentState.selectionGeneration === selectionGeneration &&
         currentState.selectedGitPathId === pathId
@@ -377,7 +369,6 @@ export class GitController {
       const request = new AbortController();
       this.statusRequest = request;
       const selectionGeneration = state.selectionGeneration;
-      const transportGeneration = this.host.transportGeneration();
       const refreshIntent = this.refreshIntent;
       const selectionEpoch = this.selectionEpoch;
       this.host.patch({
@@ -391,7 +382,6 @@ export class GitController {
           this.statusRequest === request &&
           !request.signal.aborted &&
           this.host.api() === api &&
-          this.host.transportGeneration() === transportGeneration &&
           currentState.sessionId === sessionId &&
           currentState.selectionGeneration === selectionGeneration
         );
@@ -459,7 +449,6 @@ export class GitController {
                 api,
                 sessionId,
                 selectionGeneration,
-                transportGeneration,
                 change,
               },
               false,

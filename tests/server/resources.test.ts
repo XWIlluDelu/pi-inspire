@@ -85,6 +85,8 @@ describe("ResourceStore", () => {
       cursor: first.nextCursor!,
       limit: 10,
     });
+    expect(first.produced).toEqual([]);
+    expect(second).not.toHaveProperty("produced");
     expect(second).toMatchObject({ offset: 8, total: 20 });
     expect(second.resources).toHaveLength(10);
     expect(second.resources[0]?.reference).toBe("file-11.md");
@@ -98,6 +100,40 @@ describe("ResourceStore", () => {
         { cursor: first.nextCursor! },
       ),
     ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("returns written files beyond the first page with that page", async () => {
+    const { project } = await workspace();
+    const messages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "edit-1",
+            name: "edit",
+            arguments: { path: "analysis.m" },
+          },
+        ],
+      },
+      ...Array.from({ length: 12 }, (_, index) => ({
+        role: "assistant",
+        content: [{ type: "text", text: `See \`file-${index}.md\`.` }],
+      })),
+    ];
+    const page = await resources.list({
+      sessionId: "s1",
+      viewId: "view-s1",
+      revision: 1,
+      cwd: project,
+      loadMessages: async () => messages,
+    });
+    expect(page.resources.map((resource) => resource.reference)).not.toContain(
+      "analysis.m",
+    );
+    expect(page.produced).toEqual([
+      expect.objectContaining({ reference: "analysis.m", writes: true }),
+    ]);
   });
 
   it("keeps the newest revision cached when an older index completes later", async () => {

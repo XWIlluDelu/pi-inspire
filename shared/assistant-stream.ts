@@ -1,3 +1,4 @@
+import { jsonRecord } from "./json-record.js";
 import {
   applyToolArgumentUpdates,
   MAX_TOOL_ARGUMENT_PREVIEW_CHARS,
@@ -8,12 +9,6 @@ export const MAX_STREAM_TEXT_CHARS = 64_000;
 export const MAX_ASSISTANT_STREAM_BATCH_EVENTS = 2_048;
 
 type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown): JsonRecord | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : null;
-}
 
 function contentIndex(value: unknown): number | null {
   return Number.isSafeInteger(value) &&
@@ -36,20 +31,20 @@ function appendBounded(current: unknown, delta: unknown): string {
 
 /** A cheap integrity witness for ordered stream-delta transport. */
 export function assistantStreamTextLength(value: unknown): number {
-  const message = record(value);
+  const message = jsonRecord(value);
   if (!message) return 0;
   if (typeof message.content === "string") return message.content.length;
   if (!Array.isArray(message.content)) return 0;
   return message.content.reduce((total, part) => {
     if (typeof part === "string") return total + part.length;
-    const item = record(part);
+    const item = jsonRecord(part);
     const text =
       typeof item?.text === "string"
         ? item.text
         : typeof item?.thinking === "string"
           ? item.thinking
           : "";
-    const preview = record(item?.__inspireToolCall);
+    const preview = jsonRecord(item?.__inspireToolCall);
     return (
       total +
       text.length +
@@ -63,7 +58,7 @@ export function assistantStreamTextLength(value: unknown): number {
 /** A failed/aborted assistant cannot have completed its pending tool batch.
  * Preserve the requested content without implying execution or success. */
 export function interruptAssistantToolCalls(value: unknown): unknown {
-  const message = record(value);
+  const message = jsonRecord(value);
   if (
     message?.role !== "assistant" ||
     !["aborted", "error"].includes(String(message.stopReason)) ||
@@ -73,15 +68,15 @@ export function interruptAssistantToolCalls(value: unknown): unknown {
   return {
     ...message,
     content: message.content.map((part) => {
-      const call = record(part);
+      const call = jsonRecord(part);
       if (call?.type !== "toolCall") return part;
       return {
         ...call,
         __inspireToolCall: {
-          ...record(call.__inspireToolCall),
+          ...jsonRecord(call.__inspireToolCall),
           phase: "interrupted",
-          characters: record(call.__inspireToolCall)?.characters ?? 0,
-          truncated: record(call.__inspireToolCall)?.truncated === true,
+          characters: jsonRecord(call.__inspireToolCall)?.characters ?? 0,
+          truncated: jsonRecord(call.__inspireToolCall)?.truncated === true,
         },
       };
     }),
@@ -98,8 +93,8 @@ export function applyAssistantMessageDelta(
   message: unknown,
   assistantMessageEvent: unknown,
 ): JsonRecord | null {
-  const base = record(message);
-  const event = record(assistantMessageEvent);
+  const base = jsonRecord(message);
+  const event = jsonRecord(assistantMessageEvent);
   if (
     !base ||
     base.role !== "assistant" ||
@@ -113,7 +108,7 @@ export function applyAssistantMessageDelta(
   const content = Array.isArray(base.content)
     ? base.content.slice(0, MAX_STREAM_CONTENT_INDEX + 1)
     : [];
-  const existing = record(content[index]);
+  const existing = jsonRecord(content[index]);
 
   switch (event.type) {
     case "thinking_start":
@@ -195,7 +190,7 @@ export function applyAssistantMessageDelta(
     case "toolcall_delta": {
       // Raw Pi argument JSON is parsed/redacted by the Host, never forwarded.
       // Both projections apply only these display-only structured updates.
-      const preview = record(existing?.__inspireToolCall);
+      const preview = jsonRecord(existing?.__inspireToolCall);
       if (
         existing?.type !== "toolCall" ||
         preview?.phase !== "streaming" ||
@@ -222,7 +217,7 @@ export function applyAssistantMessageDelta(
       break;
     }
     case "toolcall_end": {
-      const toolCall = record(event.toolCall);
+      const toolCall = jsonRecord(event.toolCall);
       if (!toolCall || toolCall.type !== "toolCall") return null;
       content[index] = { ...toolCall };
       break;

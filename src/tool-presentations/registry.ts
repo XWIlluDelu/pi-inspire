@@ -4,10 +4,7 @@ import type {
   ToolPresentationConfiguration,
 } from "../../shared/tool-presentation-config";
 import { createCustomMessagePresentationRegistry } from "../custom-message-presentations";
-import {
-  configurePresentationAdapters,
-  subscribePresentationAdapters,
-} from "../presentation-adapters";
+import { configurePresentationAdapters } from "../presentation-adapters";
 import {
   compileThinkingPresentationRule,
   compileToolPresentationRules,
@@ -103,10 +100,6 @@ export let customMessagePresentationRegistry: ReturnType<
 
 export function getCustomMessagePresentationRegistry(): typeof customMessagePresentationRegistry {
   return customMessagePresentationRegistry;
-}
-
-export function subscribeCustomMessagePresentations(listener: () => void) {
-  return subscribePresentationAdapters(listener);
 }
 
 /** Replace the user-owned generation after an authoritative host bootstrap.

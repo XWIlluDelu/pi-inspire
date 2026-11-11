@@ -161,7 +161,7 @@ completion behavior are unchanged.
   fallback is never promoted into session metadata or OS-visible titles. The heading truncates at
   its available width. Beside it, the project location appears as folder name or full path per a
   global preference, with no folder glyph; clicking copies the absolute path without shifting
-  layout.
+  layout, and Ctrl/⌘+click shows the project folder in the Host's file manager.
 
   A quiet clickable Git summary follows. It shows the current branch or detached/unborn identity,
   adds a total only when the worktree has changes, and opens the detailed Changes pane on

@@ -40,6 +40,7 @@ import {
   type UserTurnAnchor,
   type VisibilityPreference,
 } from "../shared/contracts";
+import { jsonRecord } from "../shared/json-record";
 import type {
   ModelCatalogResponse,
   ModelConfigEdit,
@@ -96,10 +97,10 @@ import { UpdateController } from "./controllers/update-controller";
 import { WorkspaceController } from "./controllers/workspace-controller";
 import { appendNotice, type Notice, parseExtensionDisplays } from "./events";
 import { resolveModelMetadata, supportedThinkingLevels } from "./model-options";
+import { TaskNotificationController } from "./notifications";
 import { controlState } from "./presentation-adapters";
 import { isTransientFailure, RecoveryBackoff } from "./recovery-backoff";
 import type { FileSourceJump, ResourceFileTab } from "./resource-preview";
-import { isExternalSession } from "./session-controls";
 import {
   sessionDraft,
   sessionDraftRevision,
@@ -107,6 +108,7 @@ import {
 } from "./session-drafts";
 import {
   deriveSnapshotTransition,
+  type ResyncOptions,
   type SnapshotMode,
   snapshotLifecyclePatch,
 } from "./snapshot-transition";
@@ -131,12 +133,6 @@ const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
   accepted: true,
   historyEntry: null,
 };
-
-function recordOf(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -197,8 +193,6 @@ function downloadFileUrl(url: string, fileName: string): void {
   anchor.click();
 }
 
-import { TaskNotificationController } from "./notifications";
-
 export class AppStore {
   private state: AppState = createInitialAppState();
   private workbenchReady = false;
@@ -209,7 +203,6 @@ export class AppStore {
     string,
     {
       api: Api;
-      generation: number;
       promise: Promise<void>;
     }
   >();
@@ -230,7 +223,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
   });
   /** ResourceController owns request lifecycles only. AppStore supplies every
@@ -240,7 +232,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
     prepareGitForResourceOpen: (contextMode) =>
       this.git.prepareResourceOpen(contextMode),
@@ -263,7 +254,6 @@ export class AppStore {
     }),
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     openResourceFromGit: (change) => this.openGitFileTab(change),
     handleAuthFailure: () => this.handleAuthFailure(),
   });
@@ -277,7 +267,6 @@ export class AppStore {
     selectionGeneration: () => this.selectionGeneration,
     selectionRequest: () => this.selectionRequest,
     beginForkSelection: () => ++this.selectionRequest,
-    transportGeneration: () => this.transportGeneration,
     handleAuthFailure: () => this.handleAuthFailure(),
     draftRevision: () => sessionDraftRevision(this.state.sessionId!),
     applyNavigation: (response, draftRevision) => {
@@ -324,7 +313,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
     curationChanged: (hydrate) => {
@@ -349,7 +337,6 @@ export class AppStore {
   private readonly selection = new SessionSelectionController({
     state: () => this.state,
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     beginOpening: (sessionId) => {
       this.branches.invalidateForSelectionIntent();
       this.set({ sessionActionError: null });
@@ -362,11 +349,10 @@ export class AppStore {
       this.selectionRequest += 1;
       this.releaseOpening();
     },
-    ownsOpening: (ticket, api, transportGeneration) =>
+    ownsOpening: (ticket, api) =>
       ticket === this.selectionRequest &&
       this.openingOwner === ticket &&
-      this.api === api &&
-      this.transportGeneration === transportGeneration,
+      this.api === api,
     releaseOpening: (ticket) => this.releaseOpening(ticket),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
@@ -407,23 +393,17 @@ export class AppStore {
     invalidateResync: () => {
       this.resyncRequest += 1;
     },
-    resync: (sessionId, generation, minimumRevision) =>
-      this.resync(sessionId, generation, minimumRevision),
+    resync: (sessionId, generation, options) =>
+      this.resync(sessionId, generation, options),
   });
   private readonly transcriptData = new TranscriptDataController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
     selectionGeneration: () => this.selectionGeneration,
-    transportGeneration: () => this.transportGeneration,
     markSettled: (key) => this.runtimeEvents.markSettled(key),
-    resync: (sessionId, generation, minimumRevision, preserveAppendHistory) =>
-      this.resync(
-        sessionId,
-        generation,
-        minimumRevision,
-        preserveAppendHistory,
-      ),
+    resync: (sessionId, generation, options) =>
+      this.resync(sessionId, generation, options),
     handleAuthFailure: () => this.handleAuthFailure(),
     notify: (kind, message) => this.notify(kind, message),
   });
@@ -433,7 +413,6 @@ export class AppStore {
     state: () => this.state,
     api: () => this.api,
     authorityId: () => this.hostAuthorityId,
-    transportGeneration: () => this.transportGeneration,
     patch: (slice) => this.set(slice),
     notify: (kind, text) => this.notify(kind, text),
     notifyVisible: (sessionId, message) => {
@@ -451,7 +430,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
     handleAuthFailure: () => this.handleAuthFailure(),
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
@@ -472,7 +450,6 @@ export class AppStore {
   private readonly pendingRecovery = new PendingRecoveryController({
     api: () => this.api,
     authorityId: () => this.hostAuthorityId,
-    transportGeneration: () => this.transportGeneration,
     restore: (sessionId, recovered) =>
       this.restorePendingInput(sessionId, recovered),
     handleAuthFailure: () => this.handleAuthFailure(),
@@ -481,7 +458,6 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     api: () => this.api,
-    transportGeneration: () => this.transportGeneration,
     notify: (kind, text) => this.notify(kind, text),
   });
   /** ConnectionController owns WebSocket lifetime/backoff only. AppStore
@@ -591,7 +567,6 @@ export class AppStore {
     Record<keyof PiRuntimeSettings, number>
   > = {};
   private readyWhileOpening = new Map<string, number>();
-  private transportGeneration = 0;
   private bootstrapRequest: AbortController | null = null;
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -655,13 +630,9 @@ export class AppStore {
   dismissError = (): void => this.set({ error: null, errorSeverity: "error" });
 
   refreshSession = (): Promise<void> =>
-    this.resync(
-      this.state.sessionId,
-      this.selectionGeneration,
-      undefined,
-      true,
-      true,
-    );
+    this.resync(this.state.sessionId, this.selectionGeneration, {
+      explicit: true,
+    });
 
   /** Replace the visible composer's text through the same nonce channel used
    * by branch editing. The welcome flow uses this only after Pi assigns the
@@ -731,14 +702,16 @@ export class AppStore {
 
   /** One transport replacement boundary invalidates every owner before a new
    * API or event stream can publish state. */
-  private replaceTransport(): number {
+  private replaceTransport(): void {
     this.workbenchReady = false;
     // Stop detaches its owned socket before closing it, so the close handler
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
-    const generation = ++this.transportGeneration;
     this.pendingExports.clear();
-    this.set({ transportGeneration: generation, exportingSessions: {} });
+    this.set({
+      transportGeneration: this.state.transportGeneration + 1,
+      exportingSessions: {},
+    });
     this.bootstrapRequest?.abort();
     this.bootstrapRequest = null;
     this.clearingWorkbench = true;
@@ -750,7 +723,6 @@ export class AppStore {
     this.catalog.invalidate();
     this.invalidateTransportRequests();
     this.runtimeEvents.invalidateTransport();
-    return generation;
   }
 
   private handleAuthFailure(): void {
@@ -797,7 +769,7 @@ export class AppStore {
   async init(token: string | null = this.authToken): Promise<void> {
     // Bootstrap owns a fresh transport generation before authenticating or
     // publishing any replacement state.
-    const generation = this.replaceTransport();
+    this.replaceTransport();
     if (!this.state.bootstrapped) this.set({ startupPending: true });
     const api = createApi(token);
     let reconnectToken = token;
@@ -810,8 +782,7 @@ export class AppStore {
     );
     this.authToken = token;
     this.api = api;
-    const ownsBootstrap = (): boolean =>
-      generation === this.transportGeneration && this.api === api;
+    const ownsBootstrap = (): boolean => this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
     const snapshotGeneration = this.snapshotGeneration;
     const autoContinueIntent = this.selectionIntentGeneration;
@@ -1216,6 +1187,11 @@ export class AppStore {
     this.branches.reconcile();
   }
 
+  private visibleSessionIsExternal(): boolean {
+    const id = this.state.sessionId;
+    return Boolean(id && this.state.sessionStatuses[id]?.external);
+  }
+
   /** Deletion temporarily retires the target's projection. Fence older reads,
    * skip new ones until it settles, then refresh any surviving selection. */
   private pauseSessionReads(sessionIds: ReadonlySet<string>): () => void {
@@ -1235,9 +1211,11 @@ export class AppStore {
   private async resync(
     expectedSessionId = this.state.sessionId,
     expectedGeneration = this.selectionGeneration,
-    minimumRevision?: number,
-    preserveAppendHistory = true,
-    explicit = false,
+    {
+      minimumRevision,
+      history = "preserve",
+      explicit = false,
+    }: ResyncOptions = {},
   ): Promise<void> {
     const api = this.api;
     if (
@@ -1248,11 +1226,9 @@ export class AppStore {
         this.pausedSessionReads?.has(expectedSessionId))
     )
       return;
-    const transportGeneration = this.transportGeneration;
     this.resyncRecovery.cancel();
     const request = ++this.resyncRequest;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
+    const ownsTransport = (): boolean => this.api === api;
     try {
       const snapshot = await api.snapshot(expectedSessionId);
       const snapshotSessionId = snapshot.active?.sessionId ?? null;
@@ -1270,10 +1246,7 @@ export class AppStore {
           page.revision < this.state.transcriptRevision)
       )
         return;
-      this.applySnapshot(
-        snapshot,
-        preserveAppendHistory ? "preserve" : "replace",
-      );
+      this.applySnapshot(snapshot, history);
     } catch (error) {
       if (!ownsTransport()) return;
       if (error instanceof ApiError && error.status === 401) {
@@ -1291,12 +1264,10 @@ export class AppStore {
           if (
             this.resyncRecovery.schedule(() => {
               if (request === this.resyncRequest && ownsTransport())
-                void this.resync(
-                  expectedSessionId,
-                  expectedGeneration,
+                void this.resync(expectedSessionId, expectedGeneration, {
                   minimumRevision,
-                  preserveAppendHistory,
-                );
+                  history,
+                });
             })
           )
             return;
@@ -1563,21 +1534,19 @@ export class AppStore {
     format: "html" | "jsonl",
   ): Promise<void> => {
     const api = this.api;
-    const generation = this.transportGeneration;
     if (!api) return Promise.reject(new Error("The Host is unavailable"));
     const existing = this.pendingExports.get(sessionId);
-    if (existing?.api === api && existing.generation === generation)
-      return existing.promise;
+    if (existing?.api === api) return existing.promise;
     const promise: Promise<void> = Promise.resolve().then(async () => {
       try {
         const exported = await api.exportSession({ sessionId, format });
         const blob = await api.exportDownload(sessionId, exported.downloadId);
-        if (this.api !== api || this.transportGeneration !== generation)
+        if (this.api !== api)
           throw new Error("The Host connection changed during export");
         downloadExportBlob(blob, exported.fileName);
         this.notify("info", `Downloaded ${exported.fileName}`);
       } catch (error) {
-        if (this.api === api && this.transportGeneration === generation) {
+        if (this.api === api) {
           if (error instanceof ApiError && error.status === 401)
             this.handleAuthFailure();
           this.notify(
@@ -1595,7 +1564,7 @@ export class AppStore {
         }
       }
     });
-    this.pendingExports.set(sessionId, { api, generation, promise });
+    this.pendingExports.set(sessionId, { api, promise });
     this.set({
       exportingSessions: {
         ...this.state.exportingSessions,
@@ -1613,14 +1582,13 @@ export class AppStore {
       (activity) => activity.id === id,
     )?.download;
     const api = this.api;
-    const generation = this.transportGeneration;
     if (!download || !api) return;
     try {
       const blob = await api.exportDownload(sessionId, download.id);
-      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (this.api !== api) return;
       downloadExportBlob(blob, download.fileName);
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else
@@ -1652,7 +1620,6 @@ export class AppStore {
     );
     this.hostCommandRuns.set(sessionId, id);
     const selectionGeneration = this.selectionGeneration;
-    const transportGeneration = this.transportGeneration;
     void api
       .nativeCommand({
         sessionId,
@@ -1660,10 +1627,7 @@ export class AppStore {
         ...(argument ? { argument } : {}),
       })
       .then((result: HostNativeCommandResponse) => {
-        if (
-          this.api !== api ||
-          this.transportGeneration !== transportGeneration
-        ) {
+        if (this.api !== api) {
           this.updateCommandActivity(sessionId, id, {
             status: "warning",
             message:
@@ -1707,10 +1671,7 @@ export class AppStore {
         void this.resync(sessionId, selectionGeneration);
       })
       .catch((error: unknown) => {
-        if (
-          this.api !== api ||
-          this.transportGeneration !== transportGeneration
-        ) {
+        if (this.api !== api) {
           this.updateCommandActivity(sessionId, id, {
             status: "warning",
             message:
@@ -1754,9 +1715,9 @@ export class AppStore {
   private sessionCommandDetails(): NonNullable<
     NativeCommandActivity["details"]
   > {
-    const stats = recordOf(this.state.sessionStats);
-    const tokens = recordOf(stats?.tokens);
-    const context = recordOf(stats?.contextUsage);
+    const stats = jsonRecord(this.state.sessionStats);
+    const tokens = jsonRecord(stats?.tokens);
+    const context = jsonRecord(stats?.contextUsage);
     const details: NonNullable<NativeCommandActivity["details"]> = [];
     const totalMessages = formattedInteger(stats?.totalMessages);
     if (totalMessages)
@@ -1837,10 +1798,9 @@ export class AppStore {
     value: string,
     sessionId: string | null,
   ): Promise<boolean> => {
-    const transport = this.transportGeneration;
+    const api = this.api;
     const current = () =>
-      this.state.sessionId === sessionId &&
-      this.transportGeneration === transport;
+      this.state.sessionId === sessionId && this.api === api;
     if (!sessionId || !current()) return false;
     if (
       !control.options.some((option) => option.value === value) ||
@@ -1948,7 +1908,7 @@ export class AppStore {
 
     if (
       (command.name === "compact" || command.name === "reload") &&
-      isExternalSession(this.state)
+      this.visibleSessionIsExternal()
     ) {
       this.presentCommandActivity(
         sessionId,
@@ -2182,7 +2142,6 @@ export class AppStore {
       const api = this.api;
       const viewId = this.state.transcriptViewId;
       const selectionGeneration = this.selectionGeneration;
-      const transportGeneration = this.transportGeneration;
       if (!api || !viewId) {
         this.presentCommandActivity(
           sessionId,
@@ -2202,7 +2161,6 @@ export class AppStore {
       );
       const current = () =>
         this.api === api &&
-        this.transportGeneration === transportGeneration &&
         this.selectionGeneration === selectionGeneration &&
         this.state.sessionId === sessionId &&
         this.state.transcriptViewId === viewId;
@@ -2215,7 +2173,6 @@ export class AppStore {
           } catch (error) {
             if (
               this.api === api &&
-              this.transportGeneration === transportGeneration &&
               error instanceof ApiError &&
               error.status === 401
             )
@@ -2249,7 +2206,6 @@ export class AppStore {
         .catch((error: unknown) => {
           if (
             this.api === api &&
-            this.transportGeneration === transportGeneration &&
             error instanceof ApiError &&
             error.status === 401
           )
@@ -2351,7 +2307,6 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return;
     const compacting = this.state.commandActivities[sessionId]?.find(
       (activity) =>
@@ -2369,11 +2324,7 @@ export class AppStore {
         try {
           await this.pendingRecovery.run(sessionId, "recover");
         } catch (error) {
-          if (
-            this.api !== api ||
-            this.transportGeneration !== transportGeneration
-          )
-            return;
+          if (this.api !== api) return;
           if (error instanceof ApiError && error.status === 401) {
             this.handleAuthFailure();
             return;
@@ -2387,14 +2338,12 @@ export class AppStore {
           // Host will clear again or retire the worker rather than resume input.
         }
       }
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return;
+      if (this.api !== api) return;
       // The editor receives the first dequeue before Stop is sent. Host abort
       // clears again at its own boundary, including input arriving meanwhile.
       await this.pendingRecovery.run(sessionId, "abort");
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return;
+      if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else {
@@ -2453,15 +2402,13 @@ export class AppStore {
   recoverPending = async (): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId || this.state.pendingAction) return false;
     const request = ++this.pendingActionRequest;
     this.set({ pendingAction: "recover" });
     try {
       return await this.pendingRecovery.run(sessionId, "recover");
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
+      if (this.api !== api) return false;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else if (this.state.sessionId === sessionId)
@@ -2473,11 +2420,7 @@ export class AppStore {
         );
       return false;
     } finally {
-      if (
-        this.api === api &&
-        this.transportGeneration === transportGeneration &&
-        request === this.pendingActionRequest
-      )
+      if (this.api === api && request === this.pendingActionRequest)
         this.set({ pendingAction: null });
     }
   };
@@ -2488,14 +2431,12 @@ export class AppStore {
   copyOwnership = (): (() => boolean) => {
     const api = this.api;
     const selection = this.selectionGeneration;
-    const transport = this.transportGeneration;
     const session = this.state.sessionId;
     const view = this.state.transcriptViewId;
     const incarnation = this.state.transcriptIncarnation;
     return () =>
       this.api === api &&
       this.selectionGeneration === selection &&
-      this.transportGeneration === transport &&
       this.state.sessionId === session &&
       this.state.transcriptViewId === view &&
       this.state.transcriptIncarnation === incarnation;
@@ -2511,7 +2452,6 @@ export class AppStore {
     const generation = this.selectionGeneration;
     const queueRevision = this.state.queue.revision;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId || !viewId) {
       this.notify("warning", "Complete pending text is unavailable");
       return null;
@@ -2519,7 +2459,6 @@ export class AppStore {
     const owns = () =>
       !signal.aborted &&
       this.api === api &&
-      this.transportGeneration === transportGeneration &&
       this.state.sessionId === sessionId &&
       this.state.transcriptViewId === viewId &&
       this.state.queue.revision === queueRevision &&
@@ -2572,9 +2511,7 @@ export class AppStore {
   clearPending = async (): Promise<boolean> => {
     const sessionId = this.state.sessionId;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
+    const ownsTransport = (): boolean => this.api === api;
     if (!api || !sessionId || this.state.pendingAction) {
       return false;
     }
@@ -2687,9 +2624,7 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
+    const ownsTransport = (): boolean => this.api === api;
     if (!api || !sessionId) return { status: "stale" };
     try {
       const selection = await api.setModel(sessionId, provider, modelId);
@@ -2734,9 +2669,7 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
+    const ownsTransport = (): boolean => this.api === api;
     if (!api || !sessionId) return { status: "stale" };
     const previous = this.state.thinkingLevel;
     const snapshotGeneration = this.snapshotGeneration;
@@ -2824,7 +2757,6 @@ export class AppStore {
   ): Promise<boolean> {
     const sessionId = this.state.sessionId;
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
     if (!api || !sessionId) return false;
     const previous = this.state.runtimeSettings;
     const selectionGeneration = this.selectionGeneration;
@@ -2846,8 +2778,7 @@ export class AppStore {
     });
     try {
       await apply(api, sessionId);
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
+      if (this.api !== api) return false;
       if (
         ownsSelection() &&
         keys.some((key) => this.runtimeSettingOwners[key] === request)
@@ -2855,8 +2786,7 @@ export class AppStore {
         await this.resync(sessionId, selectionGeneration);
       return true;
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== transportGeneration)
-        return false;
+      if (this.api !== api) return false;
       if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
         return false;
@@ -2932,7 +2862,7 @@ export class AppStore {
   private modelCycleQueue: {
     sessionId: string;
     selection: number;
-    transport: number;
+    transport: Api | null;
     pending: Promise<void>;
   } | null = null;
 
@@ -2942,11 +2872,11 @@ export class AppStore {
     const sessionId = this.state.sessionId;
     if (!sessionId) return Promise.resolve();
     const selection = this.selectionGeneration;
-    const transport = this.transportGeneration;
+    const transport = this.api;
     const owns = () =>
       this.state.sessionId === sessionId &&
       this.selectionGeneration === selection &&
-      this.transportGeneration === transport;
+      this.api === transport;
     if (
       this.modelCycleQueue?.sessionId !== sessionId ||
       this.modelCycleQueue.selection !== selection ||
@@ -2989,7 +2919,7 @@ export class AppStore {
         sessionId = this.state.sessionId;
       const selection = this.selectionGeneration;
       if (!api || !sessionId || this.state.readOnlyReason) return;
-      if (isExternalSession(this.state)) {
+      if (this.visibleSessionIsExternal()) {
         this.notify(
           "info",
           "Cycle models in the original Pi terminal. Choose a model here with /model.",
@@ -3070,13 +3000,11 @@ export class AppStore {
     cwd?: string;
   }): Promise<ModelSettingsSnapshot> => {
     const api = this.modelSettingsApi();
-    const transport = this.transportGeneration;
     const selection = this.selectionGeneration;
     const revision = this.modelSettingsRevision;
     const snapshot = await api.modelSettings(owner);
     if (
       api === this.api &&
-      transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
       this.ownsModelSettings(owner) &&
       revision === this.modelSettingsRevision
@@ -3091,13 +3019,11 @@ export class AppStore {
     patch: ModelPreferencesPatch,
   ) => {
     const api = this.modelSettingsApi();
-    const transport = this.transportGeneration;
     const selection = this.selectionGeneration;
     const result = await api.saveModelPreferences(owner, revision, patch);
     if (
       result.snapshot &&
       api === this.api &&
-      transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
       this.ownsModelSettings(owner)
     ) {
@@ -3113,13 +3039,11 @@ export class AppStore {
     edit: ModelConfigEdit,
   ) => {
     const api = this.modelSettingsApi();
-    const transport = this.transportGeneration;
     const selection = this.selectionGeneration;
     const result = await api.editModelConfig(owner, revision, edit);
     if (
       result.snapshot &&
       api === this.api &&
-      transport === this.transportGeneration &&
       selection === this.selectionGeneration &&
       this.ownsModelSettings(owner)
     ) {
@@ -3145,7 +3069,6 @@ export class AppStore {
     cwd?: string;
   }): Promise<string | undefined> => {
     const api = this.api;
-    const transport = this.transportGeneration;
     const selection = this.selectionGeneration;
     const requested = owner ?? { sessionId: this.state.sessionId ?? undefined };
     if (!api) throw new Error("The Host is unavailable");
@@ -3153,7 +3076,6 @@ export class AppStore {
     const result = await api.refreshModels(requested.sessionId, requested.cwd);
     if (
       this.api === api &&
-      this.transportGeneration === transport &&
       this.selectionGeneration === selection &&
       this.ownsModelSettings(requested) &&
       revision === this.modelSettingsRevision
@@ -3204,7 +3126,6 @@ export class AppStore {
     current: ThinkingLevel,
   ): Promise<ThinkingLevel> => {
     const api = this.api;
-    const transport = this.transportGeneration;
     if (!api) throw new Error("The Host is unavailable");
     const result = await api.newSessionThinking(
       cwd,
@@ -3212,8 +3133,7 @@ export class AppStore {
       model.id,
       current,
     );
-    if (this.api !== api || this.transportGeneration !== transport)
-      throw new Error("The Host connection changed");
+    if (this.api !== api) throw new Error("The Host connection changed");
     return result.level;
   };
 
@@ -3268,7 +3188,6 @@ export class AppStore {
   ): Promise<void> => {
     const api = this.api;
     const sessionId = this.state.sessionId;
-    const generation = this.transportGeneration;
     if (!api || !sessionId) return;
     try {
       await api.showInFileManager(
@@ -3278,7 +3197,7 @@ export class AppStore {
         directory,
       );
     } catch (error) {
-      if (this.api !== api || this.transportGeneration !== generation) return;
+      if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       else if (this.state.sessionId === sessionId)
@@ -3315,9 +3234,7 @@ export class AppStore {
     payload: Record<string, unknown>,
   ): Promise<string | null> => {
     const api = this.api;
-    const transportGeneration = this.transportGeneration;
-    const ownsTransport = (): boolean =>
-      this.api === api && this.transportGeneration === transportGeneration;
+    const ownsTransport = (): boolean => this.api === api;
     if (!api || this.state.extensionUiRespondingId) return null;
     const request = this.state.extensionUiRequests[0];
     if (!request || payload.id !== request.id) return null;
@@ -3555,12 +3472,12 @@ export class AppStore {
     }
     const intentTab = this.activeResourceTab();
     const sessionId = this.state.sessionId;
-    const generation = this.transportGeneration;
+    const api = this.api;
     const selection = this.selectionGeneration;
     await this.git.refreshStatus();
     if (
       this.state.sessionId !== sessionId ||
-      this.transportGeneration !== generation ||
+      this.api !== api ||
       this.selectionGeneration !== selection ||
       !this.state.resourcesOpen ||
       this.state.contextMode !== "files" ||

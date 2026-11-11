@@ -352,6 +352,7 @@ boundaries in this contract.
 
 - Structured file paths and explicit local file references in conversation content stay
   distinguishable from external web links and can open the owning session's resource preview.
+  Ctrl/⌘+click instead shows the file in the Host's file manager under [[resource-preview]].
 
 ## Direct shell results
 

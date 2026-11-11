@@ -438,7 +438,7 @@ export class RuntimeExternalSessions {
       () => void this.poll(slot, connection),
       this.pollMs,
     );
-    connection.timer.unref?.();
+    connection.timer.unref();
   }
 
   private async poll(slot: RuntimeSlot, connection: Connection): Promise<void> {

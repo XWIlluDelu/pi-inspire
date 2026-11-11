@@ -12,9 +12,13 @@ import {
   type SessionCatalogIssue,
 } from "../shared/contracts.js";
 import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
+import { jsonRecord } from "../shared/json-record.js";
 import { userMessageTitle } from "../shared/user-message.js";
 import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
-import { sessionSearchMatcher } from "./session-search-query.js";
+import {
+  sessionSearchMatcher,
+  sessionSearchSnippet,
+} from "./session-search-query.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
 const MAX_SESSION_PATH_CHARS = 32_768;
@@ -68,12 +72,6 @@ interface CachedSessionRecord {
   record: SessionRecord | null;
 }
 
-function recordValue(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function timestamp(value: unknown): number | null {
   const parsed =
     typeof value === "number"
@@ -91,11 +89,11 @@ function searchMessageText(message: Record<string, unknown>): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   const imageCount = content.filter(
-    (value) => recordValue(value)?.type === "image",
+    (value) => jsonRecord(value)?.type === "image",
   ).length;
   return content
     .flatMap((value) => {
-      const block = recordValue(value);
+      const block = jsonRecord(value);
       return block?.type === "text" && typeof block.text === "string"
         ? [stripImageDimensionNotes(block.text, imageCount)]
         : [];
@@ -176,7 +174,7 @@ function applyEntry(
   }
   if (entry.type !== "message") return;
   state.messageCount += 1;
-  const message = recordValue(entry.message);
+  const message = jsonRecord(entry.message);
   if (!message) return;
   if (message.role !== "user" && message.role !== "assistant") return;
   const activity = timestamp(message.timestamp) ?? timestamp(entry.timestamp);
@@ -501,6 +499,7 @@ export class SessionMetadataIndex {
     sessions: readonly SessionRecord[],
     query: string,
     issues?: SessionCatalogIssue[],
+    snippets?: Map<string, string>,
   ): Promise<SessionRecord[]> {
     const matchesQuery = sessionSearchMatcher(query);
     const matches: SessionRecord[] = [];
@@ -540,7 +539,7 @@ export class SessionMetadataIndex {
                   ? entry.name.trim() || undefined
                   : undefined;
             if (entry.type !== "message") return;
-            const message = recordValue(entry.message);
+            const message = jsonRecord(entry.message);
             if (message?.role !== "user" && message?.role !== "assistant")
               return;
             const text = searchMessageText(message);
@@ -555,15 +554,21 @@ export class SessionMetadataIndex {
         ) {
           throw new Error("Session source changed while searching; try again");
         }
+        const allMessagesText = messages.join(" ");
         if (
           matchesQuery({
             id: session.id,
             cwd: session.cwd,
             name,
-            allMessagesText: messages.join(" "),
+            allMessagesText,
           })
-        )
+        ) {
           matches.push(session);
+          const snippet = snippets
+            ? sessionSearchSnippet(query, allMessagesText)
+            : undefined;
+          if (snippet) snippets?.set(session.id, snippet);
+        }
       } catch (error) {
         readFailure(issues, session.path, error);
       } finally {

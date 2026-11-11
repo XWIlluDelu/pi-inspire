@@ -1,10 +1,14 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Minus,
   Plus,
+  Search,
+  X,
 } from "lucide-react";
 import type {
   PDFDocumentLoadingTask,
@@ -21,6 +25,13 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  markOccurrence,
+  normalizeFindQuery,
+  type PdfFindMatch,
+  type PdfOutlineEntry,
+  pageMatches,
+} from "../pdf-find";
 import { ContextPaneState } from "./ContextPaneState";
 import { PiLoader } from "./PiLoader";
 import "../styles/pdf-preview.css";
@@ -67,6 +78,8 @@ function PdfPage({
   top,
   height,
   onDimensions,
+  hit = null,
+  onHit,
 }: {
   loaded: LoadedPdf;
   index: number;
@@ -75,11 +88,27 @@ function PdfPage({
   top: number;
   height: number;
   onDimensions: (index: number, dimensions: PageDimensions) => void;
+  /** The current find occurrence when it lies on this page. */
+  hit?: { needle: string; occurrence: number } | null;
+  onHit?: (span: HTMLElement) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
   );
+  const hitNeedle = hit?.needle ?? "";
+  const hitOccurrence = hit?.occurrence ?? -1;
+  useEffect(() => {
+    const layer = rootRef.current?.querySelector(".pdf-preview__text-layer");
+    if (!layer || status !== "ready") return;
+    const span = markOccurrence(
+      layer,
+      hitNeedle,
+      hitOccurrence,
+      "pdf-preview__hit",
+    );
+    if (span) onHit?.(span);
+  }, [status, hitNeedle, hitOccurrence, onHit]);
   useEffect(() => {
     const root = rootRef.current;
     if (!root || width <= 0) return;
@@ -193,11 +222,13 @@ function PdfPages({
   zoom,
   navigationRef,
   onPageChange,
+  hit = null,
 }: {
   loaded: LoadedPdf;
   zoom: number;
   navigationRef: Ref<PdfNavigation>;
   onPageChange: (number: number) => void;
+  hit?: (PdfFindMatch & { needle: string }) | null;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const dimensionsRef = useRef(new Map<number, PageDimensions>());
@@ -307,6 +338,20 @@ function PdfPages({
     }),
     [capturePosition, pages, onPageChange],
   );
+  // Bring a find hit to the upper third of the reader without scrolling any
+  // ancestor (scrollIntoView would also move clipped outer panes).
+  const revealHit = useCallback((span: HTMLElement) => {
+    const root = scrollRef.current;
+    if (!root) return;
+    const spanBox = span.getBoundingClientRect();
+    const rootBox = root.getBoundingClientRect();
+    if (
+      spanBox.top >= rootBox.top + 24 &&
+      spanBox.bottom <= rootBox.bottom - 24
+    )
+      return;
+    root.scrollTop += spanBox.top - rootBox.top - root.clientHeight / 3;
+  }, []);
   const measurePage = useCallback(
     (index: number, natural: PageDimensions) => {
       dimensionsRef.current.set(index, {
@@ -358,6 +403,8 @@ function PdfPages({
               top={page.start}
               height={page.size}
               onDimensions={measurePage}
+              hit={hit && hit.page === page.index + 1 ? hit : null}
+              onHit={revealHit}
             />
           ))}
         </div>
@@ -366,12 +413,133 @@ function PdfPages({
   );
 }
 
+async function readOutline(
+  document: PDFDocumentProxy,
+): Promise<PdfOutlineEntry[]> {
+  const outline = await document.getOutline();
+  const entries: PdfOutlineEntry[] = [];
+  const visit = async (
+    items: Awaited<ReturnType<PDFDocumentProxy["getOutline"]>>,
+    depth: number,
+  ) => {
+    for (const item of items ?? []) {
+      if (entries.length >= 200) return;
+      try {
+        const destination =
+          typeof item.dest === "string"
+            ? await document.getDestination(item.dest)
+            : item.dest;
+        const target = destination?.[0];
+        const index =
+          typeof target === "number"
+            ? target
+            : target
+              ? await document.getPageIndex(target)
+              : null;
+        const title = item.title.replace(/\s+/gu, " ").trim();
+        if (index !== null && title)
+          entries.push({ title, page: index + 1, depth });
+      } catch {
+        // External links and broken destinations are not contents entries.
+      }
+      if (depth < 2) await visit(item.items, depth + 1);
+    }
+  };
+  await visit(outline, 0);
+  return entries;
+}
+
 export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
   const [loaded, setLoaded] = useState<LoadedPdf | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [number, setNumber] = useState(1);
   const [zoom, setZoom] = useState(1);
   const navigationRef = useRef<PdfNavigation>(null);
+  const [outline, setOutline] = useState<PdfOutlineEntry[]>([]);
+  const [contentsOpen, setContentsOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState<PdfFindMatch[] | null>(null);
+  const [current, setCurrent] = useState(0);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const pageText = useRef(new Map<number, string[]>());
+  const needle = normalizeFindQuery(query);
+  useEffect(() => {
+    pageText.current = new Map();
+    setOutline([]);
+    setContentsOpen(false);
+    setFindOpen(false);
+    setQuery("");
+    if (!loaded) return;
+    let retired = false;
+    void readOutline(loaded.document)
+      .then((entries) => {
+        if (!retired) setOutline(entries);
+      })
+      .catch(() => {});
+    return () => {
+      retired = true;
+    };
+  }, [loaded]);
+  useEffect(() => {
+    setMatches(null);
+    setCurrent(0);
+    if (!loaded || !findOpen || !needle) return;
+    let retired = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const found: PdfFindMatch[] = [];
+        for (let page = 1; page <= loaded.document.numPages; page += 1) {
+          let items = pageText.current.get(page);
+          if (!items) {
+            const content = await (
+              await loaded.document.getPage(page)
+            ).getTextContent();
+            items = content.items.flatMap((item) =>
+              "str" in item ? [item.str] : [],
+            );
+            pageText.current.set(page, items);
+          }
+          if (retired) return;
+          found.push(...pageMatches(page, items, needle));
+        }
+        if (retired) return;
+        setMatches(found);
+        if (found[0]) navigationRef.current?.scrollToPage(found[0].page);
+      })().catch(() => {
+        if (!retired) setMatches([]);
+      });
+    }, 160);
+    return () => {
+      retired = true;
+      window.clearTimeout(timer);
+    };
+  }, [findOpen, loaded, needle]);
+  const step = (delta: number) => {
+    if (!matches?.length) return;
+    const next = (current + delta + matches.length) % matches.length;
+    setCurrent(next);
+    navigationRef.current?.scrollToPage(matches[next]!.page);
+  };
+  const openFind = () => {
+    setContentsOpen(false);
+    setFindOpen(true);
+    requestAnimationFrame(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    });
+  };
+  const closeFind = () => {
+    setFindOpen(false);
+    setQuery("");
+  };
+  const hit =
+    findOpen && matches?.[current] ? { ...matches[current]!, needle } : null;
+  // The last contents entry starting at or before the visible page.
+  let currentContentsIndex = -1;
+  outline.forEach((entry, index) => {
+    if (entry.page <= number) currentContentsIndex = index;
+  });
   const changeZoom = (next: number) => {
     navigationRef.current?.capturePosition();
     setZoom(next);
@@ -407,13 +575,93 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
     };
   }, [blob]);
   return (
-    <div className="pdf-preview" role="document" aria-label={`Preview ${name}`}>
+    <div
+      className="pdf-preview"
+      role="document"
+      aria-label={`Preview ${name}`}
+      onKeyDown={(event) => {
+        if (
+          loaded &&
+          (event.ctrlKey || event.metaKey) &&
+          !event.altKey &&
+          event.key.toLowerCase() === "f"
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          openFind();
+        }
+      }}
+    >
+      {loaded && findOpen ? (
+        <div
+          className="pdf-preview__toolbar pdf-preview__toolbar--find"
+          role="search"
+          aria-label="Find in PDF"
+        >
+          <Search size={14} className="pdf-preview__find-icon" aria-hidden />
+          <input
+            ref={findInputRef}
+            className="pdf-preview__find-input"
+            type="search"
+            value={query}
+            placeholder="Find in PDF"
+            aria-label="Find in PDF"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                step(event.shiftKey ? -1 : 1);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                closeFind();
+              }
+            }}
+          />
+          <span className="pdf-preview__page-number" aria-live="polite">
+            {!needle
+              ? ""
+              : matches === null
+                ? "…"
+                : matches.length === 0
+                  ? "No matches"
+                  : `${current + 1} / ${matches.length}`}
+          </span>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Previous match"
+            disabled={!matches?.length}
+            onClick={() => step(-1)}
+          >
+            <ChevronUp size={16} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Next match"
+            disabled={!matches?.length}
+            onClick={() => step(1)}
+          >
+            <ChevronDown size={16} aria-hidden />
+          </button>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close find"
+            onClick={closeFind}
+          >
+            <X size={16} aria-hidden />
+          </button>
+        </div>
+      ) : null}
       {loaded ? (
         <>
           <div
             className="pdf-preview__toolbar"
             role="group"
             aria-label="PDF controls"
+            style={findOpen ? { display: "none" } : undefined}
           >
             <button
               type="button"
@@ -424,9 +672,23 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
             >
               <ChevronLeft size={16} aria-hidden />
             </button>
-            <span className="pdf-preview__page-number" aria-live="polite">
-              {number} / {loaded.document.numPages}
-            </span>
+            {outline.length > 0 ? (
+              <button
+                type="button"
+                className="pdf-preview__fit pdf-preview__page-number"
+                aria-haspopup="true"
+                aria-expanded={contentsOpen}
+                aria-label={`Page ${number} of ${loaded.document.numPages}. Show contents`}
+                title="Contents"
+                onClick={() => setContentsOpen(!contentsOpen)}
+              >
+                {number} / {loaded.document.numPages}
+              </button>
+            ) : (
+              <span className="pdf-preview__page-number" aria-live="polite">
+                {number} / {loaded.document.numPages}
+              </span>
+            )}
             <button
               type="button"
               className="icon-button"
@@ -464,12 +726,54 @@ export function PdfPreview({ blob, name }: { blob: Blob; name: string }) {
             >
               <Plus size={16} aria-hidden />
             </button>
+            <span className="pdf-preview__spacer" />
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Find in PDF"
+              title="Find (Ctrl+F)"
+              onClick={openFind}
+            >
+              <Search size={16} aria-hidden />
+            </button>
           </div>
+          {contentsOpen ? (
+            <nav
+              className="reader-contents reader-contents--pdf"
+              aria-label="PDF contents"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  setContentsOpen(false);
+                }
+              }}
+            >
+              {outline.map((entry, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  className="reader-contents__entry"
+                  style={{ paddingInlineStart: `${12 + entry.depth * 14}px` }}
+                  aria-current={
+                    index === currentContentsIndex ? "location" : undefined
+                  }
+                  onClick={() => {
+                    setContentsOpen(false);
+                    navigationRef.current?.scrollToPage(entry.page);
+                  }}
+                >
+                  <span>{entry.title}</span>
+                  <span className="reader-contents__meta">{entry.page}</span>
+                </button>
+              ))}
+            </nav>
+          ) : null}
           <PdfPages
             loaded={loaded}
             zoom={zoom}
             navigationRef={navigationRef}
             onPageChange={setNumber}
+            hit={hit}
           />
         </>
       ) : (

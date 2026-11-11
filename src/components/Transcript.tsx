@@ -558,7 +558,9 @@ export const Transcript = memo(function Transcript({
     const reference = resourceReferenceFromEventTarget(event.target);
     if (!reference) return;
     event.preventDefault();
-    void store.openResource(reference);
+    // Ctrl/⌘+click reveals the file on the Host desktop, as in Files.
+    if (event.ctrlKey || event.metaKey) void store.showInFileManager(reference);
+    else void store.openResource(reference);
   };
 
   return (

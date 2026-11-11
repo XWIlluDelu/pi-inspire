@@ -34,8 +34,6 @@
 /* The one place the reticle and wordmark appear at brand scale — the same
    pair the nav header carries at 22px. */
 .welcome__lockup {
-  display: flex;
-  align-items: center;
   gap: var(--space-3);
 }
 

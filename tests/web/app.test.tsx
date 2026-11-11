@@ -724,7 +724,10 @@ describe("welcome flow", () => {
         else write.reject(new Error("Retired project copy failed"));
         await write.promise.catch(() => {});
       });
-      expect(project).toHaveAttribute("title", "Copy path — /demo");
+      expect(project).toHaveAttribute(
+        "title",
+        "Copy path — /demo\nCtrl+click: Show in file manager",
+      );
       expect(
         project.querySelector(".topbar__project-feedback--visible"),
       ).toBeNull();

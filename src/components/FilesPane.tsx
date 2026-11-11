@@ -1,10 +1,11 @@
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, PenLine } from "lucide-react";
 import {
   type MutableRefObject,
   memo,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import {
   projectNameFromCwd,
@@ -28,6 +29,9 @@ import {
 } from "./WorkspaceBrowser";
 
 type ResourceStanding = ResourceProbeResult | undefined;
+
+/** Rows shown before "Show all" in the chat's file list. */
+const RECENT_ROWS = 5;
 
 function workspaceLabel(cwd: string | null): string {
   return cwd ? projectNameFromCwd(cwd) : "Project files";
@@ -71,6 +75,7 @@ const RecentFileRow = memo(function RecentFileRow({
       aria-current={selected || undefined}
       aria-label={[
         displayPath,
+        row.writes ? "written in this chat" : null,
         facet?.label,
         unavailable
           ? `File unavailable: ${availability?.message ?? availability?.availability}`
@@ -91,6 +96,14 @@ const RecentFileRow = memo(function RecentFileRow({
       >
         {row.name}
       </span>
+      {row.writes ? (
+        <span
+          className="recent-file__produced"
+          title="Written or edited in this chat"
+        >
+          <PenLine size={11} aria-hidden />
+        </span>
+      ) : null}
       {parent ? (
         <span className="recent-file__path">
           <ResourcePathLabel path={parent} />
@@ -143,18 +156,27 @@ function FileBrowser({
       savedScrollTop.current = scroller.scrollTop;
     };
   }, [savedScrollTop]);
-  const recent = useMemo(() => {
-    const seen = new Set<string>();
-    return rows.filter((row) => {
+  const [showAll, setShowAll] = useState(false);
+  // One Recent list. Spellings of one file merge; a write under any spelling
+  // marks the row, so produced files read in place instead of on a tab.
+  const listed = useMemo(() => {
+    const seen = new Map<string, ResourceRow>();
+    for (const row of rows) {
       const reference = row.reference ?? row.label;
       const standing = state.resourceStanding[reference];
-      if (standing?.availability === "invalid") return false;
+      if (standing?.availability === "invalid") continue;
       const key = standing?.workspacePath ?? reference;
-      if (seen.has(key) || seen.size >= 5) return false;
-      seen.add(key);
-      return true;
-    });
+      const existing = seen.get(key);
+      if (existing) {
+        if (row.writes && !existing.writes)
+          seen.set(key, { ...existing, writes: true });
+        continue;
+      }
+      seen.set(key, row);
+    }
+    return [...seen.values()];
   }, [rows, state.resourceStanding]);
+  const recent = showAll ? listed : listed.slice(0, RECENT_ROWS);
   const searching = Boolean(state.workspaceQuery.trim());
   const projectLabel = workspaceLabel(state.cwd);
   const selectedPath = selectedWorkspacePath(state);
@@ -217,6 +239,16 @@ function FileBrowser({
                     No files referenced yet.
                   </div>
                 ) : null}
+                {listed.length > RECENT_ROWS ? (
+                  <button
+                    type="button"
+                    className="files-browser__note files-browser__more"
+                    aria-expanded={showAll}
+                    onClick={() => setShowAll(!showAll)}
+                  >
+                    {showAll ? "Show fewer" : `Show all ${listed.length}`}
+                  </button>
+                ) : null}
               </div>
             </section>
             <section className="files-browser__section files-browser__section--workspace">
@@ -237,6 +269,7 @@ export function FilesPane({
   error,
   browseScrollTop,
   readingState,
+  onQuote,
 }: {
   state: ContextPaneView;
   rows: ResourceRow[];
@@ -244,6 +277,7 @@ export function FilesPane({
   error: string | null;
   browseScrollTop: MutableRefObject<number>;
   readingState?: FileReadingState;
+  onQuote?: (markdown: string) => void;
 }) {
   if (state.fileBrowserView === "browse")
     return (
@@ -281,6 +315,7 @@ export function FilesPane({
           key={state.selectedResourceReference}
           state={state}
           readingState={readingState}
+          onQuote={onQuote}
         />
       )}
     </div>

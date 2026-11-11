@@ -6,7 +6,10 @@ import {
   SearchMatchText,
   searchMatchRanges,
 } from "../../src/components/SearchMatchText";
-import { sessionSearchMatchRanges } from "../../src/session-search-presentation";
+import {
+  sessionSearchMatchRanges,
+  sessionSnippetMatchRanges,
+} from "../../src/session-search-presentation";
 
 describe("fuzzy search match presentation", () => {
   it.each([
@@ -141,3 +144,15 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+describe("sessionSnippetMatchRanges", () => {
+  it("marks only literal occurrences, never scattered fuzzy letters", () => {
+    const text = "…the instrument resolution of 0.1 ms is far below";
+    expect(
+      sessionSnippetMatchRanges(text, "resolution ms").map(({ start, end }) =>
+        text.slice(start, end),
+      ),
+    ).toEqual(["resolution", "ms"]);
+    expect(sessionSnippetMatchRanges(text, "re:res")).toEqual([]);
+  });
+});

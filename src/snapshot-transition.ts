@@ -9,6 +9,14 @@ import {
 import { asMessage, type ChatMessage, messageKey } from "./events";
 
 export type SnapshotMode = "replace" | "preserve";
+
+export interface ResyncOptions {
+  /** Ignore a snapshot older than the revision that requested this read. */
+  minimumRevision?: number;
+  history?: SnapshotMode;
+  /** A user-requested refresh reports failure instead of retrying quietly. */
+  explicit?: boolean;
+}
 type SnapshotTransitionKind =
   | "same-projection"
   | "append"

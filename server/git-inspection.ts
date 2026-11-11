@@ -258,7 +258,6 @@ interface ParsedRepository {
 export function parsePorcelainV2(
   output: Buffer,
   workspacePrefix = Buffer.alloc(0),
-  fileLimit = MAX_GIT_STATUS_FILES,
 ): ParsedRepository {
   if (output.length === 0 || output[output.length - 1] !== 0) {
     throw new GitInspectionError("Git returned incomplete status data");
@@ -400,7 +399,7 @@ export function parsePorcelainV2(
       throw new GitInspectionError("Git returned duplicate path identities");
     }
     seenIds.set(change.path.id, change);
-    if (files.length < fileLimit) files.push(change);
+    files.push(change);
   }
 
   if (branchOid === undefined || branchHead === undefined)
@@ -656,11 +655,7 @@ export class GitInspectionService implements GitInspectionLike {
       { stdoutLimit: GIT_STATUS_OUTPUT_BYTES, signal },
     );
     return {
-      ...parsePorcelainV2(
-        status.stdout,
-        Buffer.from(workspacePrefix),
-        Number.MAX_SAFE_INTEGER,
-      ),
+      ...parsePorcelainV2(status.stdout, Buffer.from(workspacePrefix)),
       repoRoot,
       workspacePrefix: Buffer.from(workspacePrefix),
     };

@@ -100,7 +100,8 @@
 }
 
 .nav__close,
-.nav__settings {
+.nav__settings,
+.nav__needs-you {
   flex: 0 0 36px;
   width: 36px;
   height: 36px;
@@ -125,12 +126,6 @@
   flex: 0 0 auto;
   width: 24px;
   height: 24px;
-}
-
-.welcome__hero-icon {
-  flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
 }
 
 .nav__new-session {
@@ -276,6 +271,39 @@
   padding: var(--space-1) var(--space-3) var(--space-4);
 }
 
+/* Needs you is a mode of the column: the bell is lit while the list shows
+   only the sessions waiting on you. Its badge shares the rail's attention. */
+.nav__needs-you {
+  position: relative;
+}
+
+.nav__needs-you[aria-pressed="true"] {
+  color: var(--accent-deep);
+  background: var(--accent-tint);
+}
+
+.nav__needs-you .navigation-toggle__attention {
+  top: 3px;
+  right: 2px;
+}
+
+/* With a mouse, the column header's buttons match the conversation header:
+   28px targets, 15px glyphs, 4px apart. Touch keeps its 36px targets. */
+@media (min-width: 901px) and (pointer: fine) {
+  .nav__close,
+  .nav__settings,
+  .nav__needs-you {
+    flex-basis: 28px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .nav__needs-you .navigation-toggle__attention {
+    top: -3px;
+    right: -4px;
+  }
+}
+
 .nav__error {
   margin: calc(var(--space-3) * -1) var(--space-3) var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -388,8 +416,10 @@
   transition: background var(--dur-micro) var(--ease-standard);
 }
 
+/* Hover lifts toward the ink in both themes; an inset well reads as a hole
+   on dark navigation. */
 .nav__row:hover {
-  background: var(--bg-inset);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .nav__row--active,
@@ -441,7 +471,7 @@
 
 .nav__row-action:hover {
   color: var(--accent-deep);
-  background: var(--bg-inset);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .nav__row-action--danger:hover:not(:disabled),
@@ -554,6 +584,83 @@
   text-align: left;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
+}
+
+/* A search excerpt borrows the age slot: same scale and quiet ink, one line. */
+.nav__row-snippet {
+  order: -1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (hover: hover) and (min-width: 601px) {
+  /* An excerpt runs to the row's edge until the hover actions take the space. */
+  .nav__row:not(:hover, :has(:focus-visible))
+    .nav__row-meta:has(.nav__row-snippet) {
+    padding-inline-end: 0;
+  }
+}
+
+/* With a fine pointer a session is one line: the title, then a quiet
+   trailing age that Pin/Hide replace on hover. Search excerpts and
+   cross-project rows keep their second line. */
+@media (hover: hover) and (min-width: 601px) {
+  .nav__row:not(.nav__row--cross-project, :has(.nav__row-snippet))
+    .nav__row-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 18px;
+    column-gap: var(--space-2);
+    min-height: 32px;
+  }
+
+  .nav__row:not(.nav__row--cross-project, :has(.nav__row-snippet))
+    .nav__row-meta {
+    grid-area: 1 / 2;
+    justify-content: flex-end;
+    padding-inline-end: 0;
+    /* The age returns only after Pin/Hide have faded, never beneath them. */
+    transition: visibility 0s linear var(--dur-micro);
+  }
+
+  .nav__row:not(.nav__row--cross-project, :has(.nav__row-snippet))
+    .nav__row-actions {
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+
+  .nav__row:not(
+      .nav__row--cross-project,
+      :has(.nav__row-snippet),
+      :has([aria-busy="true"])
+    ):is(:hover, :has(:focus-visible))
+    .nav__row-meta {
+    visibility: hidden;
+    transition-delay: 0s;
+  }
+
+  /* A slow open keeps its Opening… status in place of the actions. */
+  .nav__row:not(.nav__row--cross-project, :has(.nav__row-snippet)):has(
+      [aria-busy="true"]
+    )
+    .nav__row-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The actions are wider than an age; the title fades under them. */
+  .nav__row:not(
+      .nav__row--cross-project,
+      :has(.nav__row-snippet),
+      :has([aria-busy="true"])
+    ):is(:hover, :has(:focus-visible))
+    .nav__row-name {
+    mask-image: linear-gradient(to left, transparent 14px, #000 30px);
+  }
 }
 
 /* The age carries the row's runtime state colour beside its status mark. */

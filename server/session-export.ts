@@ -1,13 +1,8 @@
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import { resolveUserPath } from "./paths.js";
 import { CURRENT_SESSION_VERSION } from "./pi-runtime.js";
 import { requestError } from "./request-error.js";
-
-export function resolveExportPath(path: string, cwd: string): string {
-  return resolveUserPath(path, cwd);
-}
 
 /** Export must never overwrite its canonical input, including symlink/hardlink aliases. */
 export async function assertExportDestination(

@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import { stripImageDimensionNotes } from "../../shared/image-dimension-notes";
-import {
-  sequentialUserTurnAnchors,
-  userTurnSummary,
-} from "../../shared/user-turns";
+import { userTurnSummary } from "../../shared/user-turns";
 
 const dimensionNote =
   "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
@@ -79,36 +76,5 @@ describe("user-turn projection", () => {
     expect(
       Array.from(userTurnSummary({ content: "😀".repeat(181) }).snippet),
     ).toHaveLength(180);
-  });
-
-  it("assigns sequential ordinals without trusting stale projected values", () => {
-    expect(
-      sequentialUserTurnAnchors(
-        [
-          { role: "assistant", content: "skip" },
-          {
-            role: "user",
-            __inspireMessageId: "known",
-            __inspireUserTurnIndex: 99,
-            content: "first",
-          },
-          { role: "user", content: [{ type: "image", data: "image" }] },
-        ],
-        "fallback",
-      ),
-    ).toEqual([
-      {
-        id: "known",
-        ordinal: 0,
-        snippet: "first",
-        attachmentCount: 0,
-      },
-      {
-        id: "fallback:2",
-        ordinal: 1,
-        snippet: "Image attachment",
-        attachmentCount: 1,
-      },
-    ]);
   });
 });

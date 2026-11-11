@@ -17,6 +17,7 @@ import {
   reduceEvent,
   type WireEvent,
 } from "../events";
+import type { ResyncOptions } from "../snapshot-transition";
 
 interface RuntimeEventHost {
   state(): AppState;
@@ -36,7 +37,7 @@ interface RuntimeEventHost {
   resync(
     sessionId: string | null,
     generation: number,
-    minimumRevision?: number,
+    options?: ResyncOptions,
   ): Promise<void>;
 }
 
@@ -155,11 +156,9 @@ export class RuntimeEventController {
     this.resyncTimer = setTimeout(() => {
       this.resyncTimer = null;
       this.pendingResync = null;
-      void this.host.resync(
-        request.sessionId,
-        request.generation,
-        request.minimumRevision,
-      );
+      void this.host.resync(request.sessionId, request.generation, {
+        minimumRevision: request.minimumRevision,
+      });
     }, 16);
   }
 

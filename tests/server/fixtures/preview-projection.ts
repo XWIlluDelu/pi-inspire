@@ -19,10 +19,33 @@ import type {
   ComposerHistoryPage,
   TranscriptActivityPage,
   TranscriptPage,
+  UserTurnAnchor,
   UserTurnIndexPage,
   UserTurnTranscriptPage,
 } from "../../../shared/contracts.js";
-import { sequentialUserTurnAnchors } from "../../../shared/user-turns.js";
+import { jsonRecord } from "../../../shared/json-record.js";
+import { userTurnSummary } from "../../../shared/user-turns.js";
+
+/** Index an in-memory transcript's user inputs with sequential ordinals. */
+function sequentialUserTurnAnchors(
+  messages: readonly unknown[],
+  fallbackIdPrefix: string,
+): UserTurnAnchor[] {
+  const turns: UserTurnAnchor[] = [];
+  for (const [index, value] of messages.entries()) {
+    const record = jsonRecord(value);
+    if (record?.role !== "user") continue;
+    turns.push({
+      id:
+        typeof record.__inspireMessageId === "string"
+          ? record.__inspireMessageId
+          : `${fallbackIdPrefix}:${index}`,
+      ordinal: turns.length,
+      ...userTurnSummary(record),
+    });
+  }
+  return turns;
+}
 
 /**
  * Snapshot-only projection for runtime scheduling and UI fixtures. Persistence

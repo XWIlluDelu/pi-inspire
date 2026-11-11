@@ -280,8 +280,12 @@ authoritative bootstrap so it does not compete with first render, and fetches on
 subsets. Structural labels (`--font-label`: resource tabs, Settings section headings and command-palette
 group headings) share IBM Plex Sans SC in authored sentence case without tracking, using 500 (600
 for Settings sections, selected resource tabs and palette groups). Activity headers, boundaries and
-Earlier activity use Flux Mono SC at 13px and 500 with tightened tracking, matching the voice of
-the tool rows they contain while remaining above their 12.5px labels. Other headings also keep
+Earlier activity are an ornament, not content: Flux Mono SC eyebrows at 11.5px and 400, uppercase
+with 0.08em tracking, never louder than the 12.5px tool rows they contain. The expanded summary's
+counts and tool names stay in authored case. Code-block language labels share that eyebrow.
+Reply headings use balanced wrapping and prose uses pretty wrapping, so no heading or paragraph
+ends on one stranded word. Task-list marks in prose are content, not controls: neutral ink and a
+quiet fill when checked, without the accent. Other headings also keep
 authored casing; technical identifiers keep their spelling.
 
 The type scale is 11.5, 12.5, 14, 15.5, 17, 21, 26 and 32px, with maximum weight 600. CJK running
@@ -307,7 +311,7 @@ within their content edges. Settings status and Host availability explanations s
 text columns, preserving payload text, field widths and action geometry.
 
 Shared geometry follows a 4px spacing scale: 2px inline corners, 4px controls, 8px resting surfaces
-and 10px overlays. User message bubbles and Composer both use the 8px surface radius.
+and 10px overlays. Composer uses the 8px surface radius; user message bubbles use 14px.
 Fully round `999px` radii are for capsules, status geometry, scroll thumbs and
 thin resize strokes. Inset menu highlights and compact file/search/terminal actions, including PDF Fit, use the
 control radius; model-list highlight insets leave virtual-row heights unchanged. Nested radii account
@@ -409,7 +413,7 @@ Workspace and History search share a 34px field, 13px search icon, 12px inner in
 
 Selected session rows have a translucent lifted surface; collapsed folders containing the selection
 have a quiet accent tint. Both use an inset straight, round-ended accent marker, with neutral ordinary
-hover. The row retains selection fill even when its select button is disabled. Folder rows/headings
+hover that lifts toward the ink (6%) in light and dark alike, never an inset well. The row retains selection fill even when its select button is disabled. Folder rows/headings
 use control-radius corners, a clear icon gutter beside the marker and a common text axis with their
 sessions. Folder, Workspace and Hidden keyboard outlines remain inset within clipping boundaries.
 
@@ -422,18 +426,20 @@ status groups.
 
 ## Conversation surfaces
 
-User messages are right-aligned, content-sized bubbles with 14px corners, a neutral border and no
-accent edge. Copy/Fork fit to the bubble's left with an 8px gap and bottom-aligned targets; otherwise
+User messages are right-aligned, content-sized bubbles with 14px corners, a borderless `--bg-prompt`
+fill and no accent edge; every dark palette keeps that fill a visible step above its stage. Copy/Fork fit to the bubble's left with an 8px gap and bottom-aligned targets; otherwise
 they wrap below at the same right edge with a 4px gap. This rule covers text and image-only bubbles
 without shrinking or rewrapping them; bubbles and attachments stay within the reading width.
 Actions use centered 13px glyphs, 24px mouse or 32px narrow/touch targets and a 4px inter-action
 gap; assistant response Copy uses the same target sizes. Visibility follows
 [Action-button presentation](#action-button-presentation).
 
-User-bubble prose starts flush left and uses a 1.5 line height. Adjacent paragraphs have an 8px gap.
-Single line breaks and automatic wrapping follow the same line height.
+User-bubble prose starts flush left and shares assistant prose's reading rhythm: the
+`--leading-reading` line height (1.6) and a 0.75em gap between paragraphs. Single line breaks and
+automatic wrapping follow the same line height.
 
-Assistant prose and expanded Thinking use open reading flow. Activity headers are transparent
+Assistant prose and expanded Thinking use open reading flow. File references in prose read as links: accent mono text with a faint
+underline that firms on hover, without the inline-code chip, which stays for code that is not a file. Activity headers are transparent
 disclosure rows; [[activity-presentation]] owns their guides, density and reading rhythm. Context
 events share the leading disclosure axis and transcript-row gap, without extra outer inset. Titles
 keep intrinsic width; adjacent metrics wrap to the title's text axis and share its baseline. Expanded
@@ -781,7 +787,8 @@ result updates and viewport resizing must not steal focus from a field the user 
 
 Icon-only actions have centered, nonshrinking square glyphs without native button padding. Code-block
 Copy and Insert in terminal use 13px glyphs in separate 24px mouse / 36px coarse-pointer targets,
-with an 8px touch gap. Focus rings stay inside the compact header, clear of its separator. Hover is
+with an 8px touch gap. Code blocks have one frame: the language eyebrow and actions float above the code with no
+divider, and focus rings stay inside that compact header. Hover is
 mouse-only; touch uses local pressed feedback. Inline full-output actions in tool notices and shell
 records use 24px fine-pointer and 32px coarse-pointer targets, including in History. Tool notices
 add 2px vertical padding per side. Shell records keep their own footer padding, and notices wrap
@@ -804,7 +811,7 @@ Message/content action assignments:
 | Branch/compaction summary Copy | Revealed | Expanded content only; hover or visible keyboard focus in its header |
 | Displayed custom-message Copy | Revealed | Hover or visible keyboard focus within the message header |
 | Extension text-widget Copy | Revealed | Hover or visible keyboard focus within the whole widget |
-| Assistant-response footer Copy | Emphasized | Whole-message hover/focus changes desktop opacity from 0.50 to 1 |
+| Assistant-response footer Copy | Revealed with a fine pointer; Emphasized (0.75) on touch | Whole-message hover or visible keyboard focus |
 | All Pending Copy, Return and Clear controls | Emphasized | Whole-panel hover/focus changes effective opacity from 0.75 to 1 |
 | Selected History entry, image-viewer Copy, system error/update information, code blocks, direct Shell results, file/project paths and Terminal text-reader Copy | Constant | Visibility and opacity stay unchanged |
 

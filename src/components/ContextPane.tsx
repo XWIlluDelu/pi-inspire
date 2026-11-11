@@ -19,13 +19,17 @@ import {
 } from "react";
 import { fencedMarkdown } from "../../shared/markdown-fence";
 import {
-  RESOURCE_LIST_INITIAL_SIZE,
+  MAX_RESOURCE_LIST_PAGE_SIZE,
   resourceReferenceLabel,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
 import { gitChangeCount } from "../git-presentation";
+import { appendDraftBlock } from "../reader-quote";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
-import { resourceRows as toResourceRows } from "../resources";
+import {
+  resourceRows as toResourceRows,
+  withProducedResources,
+} from "../resources";
 import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
@@ -110,7 +114,7 @@ export const ContextPane = memo(function ContextPane({
     () =>
       resourcePage?.sessionId === state.sessionId &&
       resourcePage.viewId === state.transcriptViewId
-        ? toResourceRows(resourcePage.resources)
+        ? toResourceRows(withProducedResources(resourcePage))
         : [],
     [resourcePage, state.sessionId, state.transcriptViewId],
   );
@@ -135,7 +139,8 @@ export const ContextPane = memo(function ContextPane({
       setResourceError(null);
       try {
         const response = await store.loadSessionResources({
-          limit: RESOURCE_LIST_INITIAL_SIZE,
+          // One page covers a long session's Used/Produced lists.
+          limit: MAX_RESOURCE_LIST_PAGE_SIZE,
           signal: request.signal,
         });
         if (
@@ -267,6 +272,28 @@ export const ContextPane = memo(function ContextPane({
     store.setContextMode("files");
     void store.openResource(reference, "files");
   }, []);
+
+  const handleReaderQuote = useCallback(
+    (markdown: string) => {
+      const sessionId = store.getState().sessionId;
+      if (!sessionId) return;
+      const next = appendDraftBlock(sessionDraft(sessionId), markdown);
+      setSessionDraft(sessionId, next);
+      store.replaceComposerText(next);
+      // On a narrow screen the drawer yields to the conversation; Back and the
+      // file tab keep the reader at the same place.
+      if (isModal) onClose?.();
+      requestAnimationFrame(() => {
+        if (store.getState().sessionId !== sessionId || hasActiveModal())
+          return;
+        const input =
+          document.querySelector<HTMLTextAreaElement>(".composer__input");
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      });
+    },
+    [isModal, onClose],
+  );
 
   const handleTerminalSelection = useCallback(
     (text: string) => {
@@ -542,6 +569,7 @@ export const ContextPane = memo(function ContextPane({
             error={resourceError}
             browseScrollTop={browseScrollTop}
             readingState={fileReading}
+            onQuote={handleReaderQuote}
           />
         </div>
       ) : state.contextMode === "changes" ? (

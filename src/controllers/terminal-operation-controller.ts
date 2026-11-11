@@ -1,3 +1,4 @@
+import { isJsonRecord } from "../../shared/json-record";
 import type { TerminalOperationIdentity } from "../../shared/terminal-contracts";
 import { authenticatedFetch } from "../browser-auth";
 
@@ -27,10 +28,6 @@ interface PendingOperation {
   identity: TerminalOperationIdentity;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function operationKey(path: string, method: string, body?: string): string {
   const knownMutation =
     (method === "POST" &&
@@ -55,7 +52,7 @@ function operationKey(path: string, method: string, body?: string): string {
 
 function restoredOperation(value: unknown): PendingOperation {
   if (
-    !isRecord(value) ||
+    !isJsonRecord(value) ||
     Object.keys(value).some(
       (key) => !["key", "path", "method", "body", "identity"].includes(key),
     ) ||
@@ -65,7 +62,7 @@ function restoredOperation(value: unknown): PendingOperation {
     value.path.length > 128 ||
     typeof value.method !== "string" ||
     (value.body !== undefined && typeof value.body !== "string") ||
-    !isRecord(value.identity) ||
+    !isJsonRecord(value.identity) ||
     Object.keys(value.identity).some((key) => !["id", "epoch"].includes(key)) ||
     typeof value.identity.id !== "string" ||
     !IDENTITY_PART.test(value.identity.id) ||

@@ -366,7 +366,7 @@ export class TerminalDaemonClient implements TerminalService {
           ? LIFECYCLE_RPC_TIMEOUT_MS
           : RPC_TIMEOUT_MS,
       );
-      timeout.unref?.();
+      timeout.unref();
 
       const finish = (error?: unknown, result?: Result): void => {
         if (settled) return;

@@ -11,9 +11,15 @@ const { sessions, query, partial } = workerData as {
   partial: boolean;
 };
 const issues: SessionCatalogIssue[] = [];
+const snippets = new Map<string, string>();
 const matches = await new SessionMetadataIndex().scanSearch(
   sessions,
   query,
   partial ? issues : undefined,
+  snippets,
 );
-parentPort!.postMessage({ ids: matches.map((session) => session.id), issues });
+parentPort!.postMessage({
+  ids: matches.map((session) => session.id),
+  issues,
+  snippets: Object.fromEntries(snippets),
+});

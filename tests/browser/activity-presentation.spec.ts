@@ -128,9 +128,11 @@ test("the full activity header discloses content with Copy beside its text", asy
         itemWeight: parseFloat(item.fontWeight),
       };
     });
-    expect(hierarchy.groupSize).toBeGreaterThan(hierarchy.itemSize);
+    // Group headings are a small tracked eyebrow: never louder than the
+    // tool rows they contain, and both boundaries share one voice.
+    expect(hierarchy.groupSize).toBeLessThanOrEqual(hierarchy.itemSize);
     expect(hierarchy.groupWeight).toBeLessThanOrEqual(hierarchy.itemWeight);
-    expect(hierarchy.actionSize).toBeGreaterThanOrEqual(hierarchy.itemSize);
+    expect(hierarchy.actionSize).toBe(hierarchy.groupSize);
     const copy = header.locator(".card__copy");
     await copy.focus();
     await page.keyboard.press("Shift+Tab");
@@ -162,7 +164,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
   });
   await expect(disclosure).toBeVisible();
   await expect(disclosure).toHaveCSS("font-family", /Flux Mono SC/);
-  await expect(disclosure).toHaveCSS("text-transform", "none");
+  await expect(disclosure).toHaveCSS("text-transform", "uppercase");
   const matrix = await disclosure
     .locator(".activity-fold__matrix")
     .boundingBox();
@@ -427,7 +429,7 @@ test("Earlier activity expands the hidden prefix independently of the visible ta
   const earlier = page.locator(".activity-fold__omission");
   await expect(earlier).toBeVisible();
   await expect(earlier).toHaveCSS("font-family", /Flux Mono SC/);
-  await expect(earlier).toHaveCSS("text-transform", "none");
+  await expect(earlier).toHaveCSS("text-transform", "uppercase");
   await page.evaluate(() => document.fonts.ready);
   await expectActivityMarksCentered(earlier);
   await expect(page.locator(".card--thinking")).toHaveCount(24);

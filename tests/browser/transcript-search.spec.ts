@@ -90,7 +90,8 @@ test("compact code actions keep square centered icons before and after copying",
             width: parseFloat(style.outlineWidth),
             contained:
               box.top - outset >= bar.top &&
-              box.bottom + outset <= bar.bottom - 1 &&
+              // One frame, no divider: the ring only has to stay in the header.
+              box.bottom + outset <= bar.bottom &&
               box.left - outset >= bar.left &&
               box.right + outset <= bar.right,
           };

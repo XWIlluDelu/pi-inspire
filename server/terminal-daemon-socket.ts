@@ -21,7 +21,7 @@ export function addressAcceptsConnections(address: string): Promise<boolean> {
       socket.destroy();
       resolvePromise(false);
     }, 250);
-    timeout.unref?.();
+    timeout.unref();
     socket.once("connect", () => {
       clearTimeout(timeout);
       socket.destroy();

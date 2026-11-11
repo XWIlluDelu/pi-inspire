@@ -1,37 +1,66 @@
 import { AlertTriangle, Trash2, X } from "lucide-react";
 import { isBusyRunState, type SessionSummary } from "../../shared/contracts";
+import type { AppState } from "../app-state";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
 import { PiLoader } from "./PiLoader";
 
-export function SessionDeleteDialog({
-  session,
+/** A live worker, terminal Pi, or busy run is closed by moving its file. */
+export function sessionOpenInPi(
+  state: Pick<AppState, "sessionStatuses" | "externalSessionActivities">,
+  sessionId: string,
+): boolean {
+  const status = state.sessionStatuses[sessionId];
+  return (
+    status?.external === true ||
+    isBusyRunState(status?.runState ?? "idle") ||
+    state.externalSessionActivities[sessionId] !== undefined
+  );
+}
+
+/** Shared Trash confirmation for one session or a Hidden batch. */
+export function TrashConfirmDialog({
+  id,
+  focusKey,
+  title,
+  closeLabel,
+  subject,
+  subjectTitle,
+  description,
+  warning,
+  confirmLabel,
+  busyLabel,
+  deleting,
+  onConfirm,
   onClose,
 }: {
-  session: SessionSummary;
+  id: string;
+  focusKey: string;
+  title: string;
+  closeLabel: string;
+  subject: string;
+  subjectTitle?: string;
+  description: readonly string[];
+  /** Shown only when the confirmation closes running or attached sessions. */
+  warning: string | null;
+  confirmLabel: string;
+  busyLabel: string;
+  deleting: boolean;
+  onConfirm: () => void;
   onClose: () => void;
 }) {
-  const { deletingSessionId, error, reviewRequired, openInPi } = useAppState(
+  const { error, reviewRequired } = useAppState(
     (state) => ({
-      deletingSessionId: state.deletingSessionId,
       error: state.sessionDeleteError,
       reviewRequired: state.sessionDeleteReviewRequired,
-      openInPi:
-        state.sessionStatuses[session.id]?.external === true ||
-        isBusyRunState(state.sessionStatuses[session.id]?.runState ?? "idle") ||
-        state.externalSessionActivities[session.id] !== undefined,
     }),
     shallowEqual,
   );
-  const deleting = deletingSessionId === session.id;
-  const dialogRef = useModalFocus<HTMLDivElement>(true, session.id, () => {
+  const dialogRef = useModalFocus<HTMLDivElement>(true, focusKey, () => {
     if (!deleting) onClose();
   });
-
-  const confirm = async () => {
-    if (await store.deleteSession(session.id)) onClose();
-  };
+  const label = reviewRequired ? "Review Hidden" : confirmLabel;
 
   return (
     <div
@@ -44,8 +73,8 @@ export function SessionDeleteDialog({
         className="dialog session-delete"
         role="alertdialog"
         aria-modal="true"
-        aria-labelledby="session-delete-title"
-        aria-describedby={`session-delete-description${openInPi ? " session-delete-warning" : ""}`}
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-description${warning ? ` ${id}-warning` : ""}`}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
       >
@@ -53,36 +82,36 @@ export function SessionDeleteDialog({
           <span className="session-delete__icon" aria-hidden>
             <Trash2 size={17} />
           </span>
-          <h2 className="dialog__title" id="session-delete-title">
-            Delete session?
+          <h2 className="dialog__title" id={`${id}-title`}>
+            {title}
           </h2>
           <button
             type="button"
             className="icon-button"
             onClick={onClose}
             disabled={deleting}
-            aria-label="Close delete confirmation"
+            aria-label={closeLabel}
             title="Close"
           >
             <X size={15} aria-hidden />
           </button>
         </header>
 
-        <div className="session-delete__session" title={session.title}>
-          {session.title || "New session"}
+        <div className="session-delete__session" title={subjectTitle}>
+          {subject}
         </div>
         <p
           className="dialog__message session-delete__description"
-          id="session-delete-description"
+          id={`${id}-description`}
         >
-          <span>Moves this session to Trash.</span>
-          <span>If Trash is unavailable, deletion is permanent.</span>
-          <span>Session copies and project files stay.</span>
+          {description.map((line) => (
+            <span key={line}>{line}</span>
+          ))}
         </p>
-        {openInPi ? (
-          <p className="session-delete__warning" id="session-delete-warning">
+        {warning ? (
+          <p className="session-delete__warning" id={`${id}-warning`}>
             <AlertTriangle size={14} aria-hidden />
-            This closes the session and stops any work in progress.
+            {warning}
           </p>
         ) : null}
         {error ? (
@@ -103,7 +132,7 @@ export function SessionDeleteDialog({
           <button
             type="button"
             className={`button ${reviewRequired ? "button--primary" : "button--danger"}`}
-            onClick={reviewRequired ? onClose : () => void confirm()}
+            onClick={reviewRequired ? onClose : onConfirm}
             disabled={deleting}
             aria-busy={deleting}
           >
@@ -112,18 +141,58 @@ export function SessionDeleteDialog({
             ) : !reviewRequired ? (
               <Trash2 size={14} aria-hidden />
             ) : null}
-            <ButtonLabel
-              reserve={reviewRequired ? "Review Hidden" : "Delete session"}
-            >
-              {deleting
-                ? "Deleting…"
-                : reviewRequired
-                  ? "Review Hidden"
-                  : "Delete session"}
+            <ButtonLabel reserve={label}>
+              {deleting ? busyLabel : label}
             </ButtonLabel>
           </button>
         </footer>
       </div>
     </div>
+  );
+}
+
+export function SessionDeleteDialog({
+  session,
+  onClose,
+}: {
+  session: SessionSummary;
+  onClose: () => void;
+}) {
+  const { deleting, openInPi } = useAppState(
+    (state) => ({
+      deleting: state.deletingSessionId === session.id,
+      openInPi: sessionOpenInPi(state, session.id),
+    }),
+    shallowEqual,
+  );
+
+  return (
+    <TrashConfirmDialog
+      id="session-delete"
+      focusKey={session.id}
+      title="Delete session?"
+      closeLabel="Close delete confirmation"
+      subject={session.title || "New session"}
+      subjectTitle={session.title}
+      description={[
+        "Moves this session to Trash.",
+        "If Trash is unavailable, deletion is permanent.",
+        "Session copies and project files stay.",
+      ]}
+      warning={
+        openInPi
+          ? "This closes the session and stops any work in progress."
+          : null
+      }
+      confirmLabel="Delete session"
+      busyLabel="Deleting…"
+      deleting={deleting}
+      onConfirm={() => {
+        void store.deleteSession(session.id).then((deleted) => {
+          if (deleted) onClose();
+        });
+      }}
+      onClose={onClose}
+    />
   );
 }

@@ -16,7 +16,7 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-function readAvailability(): InstallAvailability {
+export function installAvailability(): InstallAvailability {
   if (
     window.matchMedia("(display-mode: standalone)").matches ||
     window.matchMedia("(display-mode: window-controls-overlay)").matches
@@ -31,10 +31,6 @@ export function subscribeInstallAvailability(listener: () => void): () => void {
   return () => {
     listeners.delete(listener);
   };
-}
-
-export function installAvailability(): InstallAvailability {
-  return readAvailability();
 }
 
 /** Returns the user's choice, or "unavailable" when the browser has not

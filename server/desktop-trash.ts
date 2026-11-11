@@ -39,7 +39,8 @@ function percentEncodePath(path: string): string {
   return encoded;
 }
 
-function localDeletionDate(date = new Date()): string {
+function localDeletionDate(): string {
+  const date = new Date();
   const part = (value: number) => String(value).padStart(2, "0");
   return (
     `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}` +

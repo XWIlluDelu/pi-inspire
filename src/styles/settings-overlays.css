@@ -544,7 +544,6 @@
   }
   .session-action-order__popover-item {
     min-height: 44px;
-    font-size: var(--text-sm);
   }
 }
 

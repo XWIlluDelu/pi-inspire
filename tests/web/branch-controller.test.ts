@@ -31,14 +31,13 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   };
   let selectionGeneration = 1;
   let selectionRequest = 1;
-  let transportGeneration = 1;
   const branchTree = vi.fn();
   const navigateBranch = vi.fn();
   const forkBranch = vi.fn();
   const cloneBranch = vi.fn();
   const branchEntry = vi.fn();
   const branchImage = vi.fn();
-  const api = {
+  let api = {
     branchTree,
     navigateBranch,
     forkBranch,
@@ -60,7 +59,6 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     selectionGeneration: () => selectionGeneration,
     selectionRequest: () => selectionRequest,
     beginForkSelection: () => ++selectionRequest,
-    transportGeneration: () => transportGeneration,
     draftRevision: () => 0,
     handleAuthFailure,
     applyNavigation,
@@ -80,7 +78,7 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
       controller.invalidateForSelectionIntent();
     },
     replaceTransport: () => {
-      transportGeneration += 1;
+      api = { ...api };
       controller.invalidateForTransportReplacement();
     },
     branchTree,

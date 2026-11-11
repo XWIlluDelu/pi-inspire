@@ -1,3 +1,4 @@
+import { jsonRecord } from "../shared/json-record";
 import type { AppState } from "./app-state";
 import type { ResourceFileTab } from "./resource-preview";
 
@@ -12,6 +13,8 @@ const NAV_DISCLOSURES = `${PREFIX}navigation-disclosures`;
 const NAV_DISCLOSURE_DEFAULTS = {
   recentSessions: true,
   hiddenSessions: false,
+  /** The session column shows only sessions waiting on you. */
+  needsYou: false,
 };
 type NavigationDisclosure = keyof typeof NAV_DISCLOSURE_DEFAULTS;
 
@@ -64,12 +67,6 @@ function write(key: string, value: unknown): void {
   }
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function path(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
@@ -86,7 +83,7 @@ export function workbenchSessionKey(
 export function lastWorkbenchSession(): {
   sessionId: string | null;
 } | null {
-  const saved = record(read(LAST_SESSION));
+  const saved = jsonRecord(read(LAST_SESSION));
   return saved && (saved.sessionId === null || path(saved.sessionId))
     ? { sessionId: saved.sessionId }
     : null;
@@ -105,7 +102,7 @@ export function saveNavCollapsed(collapsed: boolean): void {
 }
 
 export function readNavigationDisclosure(name: NavigationDisclosure): boolean {
-  const value = record(read(NAV_DISCLOSURES))?.[name];
+  const value = jsonRecord(read(NAV_DISCLOSURES))?.[name];
   return typeof value === "boolean" ? value : NAV_DISCLOSURE_DEFAULTS[name];
 }
 
@@ -113,15 +110,18 @@ export function saveNavigationDisclosure(
   name: NavigationDisclosure,
   open: boolean,
 ): void {
-  write(NAV_DISCLOSURES, { ...record(read(NAV_DISCLOSURES)), [name]: open });
+  write(NAV_DISCLOSURES, {
+    ...jsonRecord(read(NAV_DISCLOSURES)),
+    [name]: open,
+  });
 }
 
 export function readWorkbench(key: string | null): SavedWorkbench | null {
-  const saved = key ? record(read(key)) : null;
+  const saved = key ? jsonRecord(read(key)) : null;
   if (!saved || !Array.isArray(saved.resourceTabs)) return null;
   const resourceTabs: ResourceFileTab[] = [];
   for (const value of saved.resourceTabs) {
-    const tab = record(value);
+    const tab = jsonRecord(value);
     if (
       !tab ||
       !path(tab.reference) ||
@@ -129,7 +129,7 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
       resourceTabs.some((previous) => previous.reference === tab.reference)
     )
       continue;
-    const git = record(tab.git);
+    const git = jsonRecord(tab.git);
     resourceTabs.push({
       reference: tab.reference,
       ...(path(tab.workspacePath) ? { workspacePath: tab.workspacePath } : {}),
@@ -206,11 +206,11 @@ export function saveWorkbench(
   );
   // Restoring a tab can save its new mode before its reader mounts. Preserve
   // the old comparison's position before that write retires its side metadata.
-  const previousTabs = record(read(key))?.resourceTabs;
+  const previousTabs = jsonRecord(read(key))?.resourceTabs;
   if (Array.isArray(previousTabs)) {
     for (const value of previousTabs) {
-      const tab = record(value);
-      const git = record(tab?.git);
+      const tab = jsonRecord(value);
+      const git = jsonRecord(tab?.git);
       if (
         path(tab?.reference) &&
         (git?.side === "staged" || git?.side === "unstaged") &&
@@ -229,7 +229,7 @@ function readingKey(key: string, reference: string): string {
 }
 
 function position(value: unknown): { top: number; left: number } | null {
-  const offset = record(value);
+  const offset = jsonRecord(value);
   return offset &&
     typeof offset.top === "number" &&
     Number.isFinite(offset.top) &&
@@ -243,7 +243,7 @@ function position(value: unknown): { top: number; left: number } | null {
 
 export function readHistoryReading(key: string | null): HistoryReadingState {
   const storageKey = key ? `${key}:history` : null;
-  const saved = storageKey ? record(read(storageKey)) : null;
+  const saved = storageKey ? jsonRecord(read(storageKey)) : null;
   const outline = position(saved?.outline);
   const state: HistoryReadingState = {
     restored: outline !== null,
@@ -281,9 +281,9 @@ export function readFileReading(
     key && !reference.startsWith("pi-embedded://")
       ? readingKey(key, reference)
       : null;
-  const saved = storageKey ? record(read(storageKey)) : null;
+  const saved = storageKey ? jsonRecord(read(storageKey)) : null;
   const changePosition = (value: unknown): FileReadingState["changes"] => {
-    const reading = record(value);
+    const reading = jsonRecord(value);
     const offset = position(reading);
     return offset
       ? {
@@ -299,12 +299,12 @@ export function readFileReading(
   };
   let changes = changePosition(saved?.changes);
   if (!changes) {
-    const savedChanges = record(saved?.changes);
-    const tabs = key ? record(read(key))?.resourceTabs : null;
+    const savedChanges = jsonRecord(saved?.changes);
+    const tabs = key ? jsonRecord(read(key))?.resourceTabs : null;
     const tab = Array.isArray(tabs)
-      ? tabs.map(record).find((item) => item?.reference === reference)
+      ? tabs.map(jsonRecord).find((item) => item?.reference === reference)
       : null;
-    const previousSide = record(tab?.git)?.side;
+    const previousSide = jsonRecord(tab?.git)?.side;
     changes =
       changePosition(savedChanges?.worktree) ??
       (previousSide === "staged" || previousSide === "unstaged"

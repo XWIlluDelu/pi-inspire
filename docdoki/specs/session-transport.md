@@ -107,15 +107,15 @@ are never replayed; persistent synchronization loss follows [[workbench]].
 
 ### Latest-wins ownership
 
-Open/new/deselect responses require the original API, transport generation and explicit selection
-owner. A newer open, new-session, deselection, unaddressed selection push, bootstrap or transport
+Open/new/deselect responses require the original API client and explicit selection owner; each
+transport replacement installs a new client. A newer open, new-session, deselection, unaddressed selection push, bootstrap or transport
 replacement supersedes the previous operation without serializing navigation. Addressed stream
 snapshots refresh existing detail interest without retiring a newer HTTP selection. Successful
 new-session selection clears the previous opener; stale completion/cleanup cannot clear a newer one.
 Every open/new endpoint finishes fallible projection and runtime-metadata reads before committing
 selection or identity.
 
-Bootstrap likewise captures API identity and transport generation. Only the current request may
+Bootstrap likewise captures its API identity. Only the current request may
 apply state, load launch preferences, create a socket or interpret 401 as pairing failure. A snapshot
 already committed by selection/resync supersedes an older bootstrap snapshot and digest, while Host
 metadata may still refresh. Launch continuation honors the intent captured before bootstrap began.

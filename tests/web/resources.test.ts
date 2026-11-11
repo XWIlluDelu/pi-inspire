@@ -9,7 +9,7 @@ import {
   resourceReferenceLine,
   stripResourceLocation,
 } from "../../shared/resource-references";
-import { resourceRows } from "../../src/resources";
+import { resourceRows, withProducedResources } from "../../src/resources";
 
 describe("Pi resource references", () => {
   it("displays native percent/hash filenames without decoding their original labels twice", () => {
@@ -324,6 +324,55 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`,
       source: "tool",
       toolName: "write",
     });
+  });
+
+  it("reads inner tool calls that a code-running tool records in its details", () => {
+    const resources = collectSessionResourceReferences([
+      {
+        role: "toolResult",
+        toolName: "codemode",
+        content: [{ type: "text", text: "done" }],
+        details: {
+          calls: [
+            { name: "read", args: '{"path":"notes/plan.md"}', status: "ok" },
+            { name: "edit", args: '{"path":"runExperiment.m"}', status: "ok" },
+            { name: "write", args: { path: "out/summary.md" }, status: "ok" },
+            { name: "edit", args: '{"path":"broken.m"}', status: "error" },
+            { name: "bash", args: "not json", status: "ok" },
+          ],
+        },
+      },
+    ]);
+    expect(
+      resources.map(({ reference, toolName, writes }) => ({
+        reference,
+        toolName,
+        writes,
+      })),
+    ).toEqual([
+      { reference: "broken.m", toolName: undefined, writes: undefined },
+      { reference: "out/summary.md", toolName: "write", writes: true },
+      { reference: "runExperiment.m", toolName: "edit", writes: true },
+      { reference: "notes/plan.md", toolName: "read", writes: undefined },
+    ]);
+  });
+
+  it("adds written files from outside the first page once, after the page", () => {
+    const row = (key: string, writes?: true) => ({
+      key,
+      reference: key,
+      label: key,
+      source: "tool" as const,
+      ...(writes ? { writes } : {}),
+    });
+    const page = { resources: [row("a.md"), row("b.m", true)] };
+    expect(withProducedResources(page)).toBe(page.resources);
+    expect(
+      withProducedResources({
+        ...page,
+        produced: [row("b.m", true), row("old.m", true)],
+      }).map((resource) => resource.key),
+    ).toEqual(["a.md", "b.m", "old.m"]);
   });
 
   it("does not surface hidden custom content or independently hidden thinking", () => {

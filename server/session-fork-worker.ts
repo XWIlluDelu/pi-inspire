@@ -8,6 +8,7 @@ import type {
   SessionHeader,
   SessionMessageEntry,
 } from "@earendil-works/pi-coding-agent";
+import { jsonRecord } from "../shared/json-record.js";
 import { CURRENT_SESSION_VERSION, SessionManager } from "./pi-runtime.js";
 
 const MAX_REQUEST_BYTES = 128 * 1024;
@@ -52,14 +53,8 @@ class WorkerInputError extends Error {
   }
 }
 
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function parseRequest(value: unknown): SessionForkWorkerRequest {
-  const record = objectValue(value);
+  const record = jsonRecord(value);
   if (!record)
     throw new WorkerInputError("INVALID_REQUEST", "Expected an object");
   const stringFields = [
@@ -121,7 +116,7 @@ async function readHeader(path: string): Promise<SessionHeader> {
         "Source header is invalid JSON",
       );
     }
-    const header = objectValue(parsed);
+    const header = jsonRecord(parsed);
     if (
       !header ||
       header.type !== "session" ||
@@ -223,7 +218,7 @@ function isUserMessage(
   entry: SessionEntry | undefined,
 ): entry is SessionMessageEntry {
   return (
-    entry?.type === "message" && objectValue(entry.message)?.role === "user"
+    entry?.type === "message" && jsonRecord(entry.message)?.role === "user"
   );
 }
 

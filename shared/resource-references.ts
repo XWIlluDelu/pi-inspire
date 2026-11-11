@@ -174,10 +174,10 @@ const RESOURCE_LOCATION_FRAGMENT = /#L(\d+)(?:-L\d+)?$/i;
 const RESOURCE_LOCATION_SUFFIX = /(?::(\d+)(?::\d+)?|\((\d+)(?:,\s*\d+)?\))$/u;
 const RESOURCE_URL = /^(?:file:\/\/|vscode:\/\/file\/|pi-embedded:\/\/)/iu;
 
-/** Native filesystem text enters the resource protocol only through this
- * adapter. Preserve path separators/drive identity, but protect every byte
- * that the link/diagnostic grammar would otherwise interpret. */
-function literalPathReference(path: string): string {
+/** Encode a literal filesystem path as a resource reference. Separators and
+ * drive identity survive; every byte the link/diagnostic grammar would
+ * interpret is escaped, so a URL-looking filename never gains URI authority. */
+export function fileResourceReference(path: string): string {
   return encodeURIComponent(path)
     .replace(
       /[!'()*]/gu,
@@ -188,12 +188,6 @@ function literalPathReference(path: string): string {
     .replace(/^([A-Za-z])%3A(?=[\\/])/u, "$1:");
 }
 
-/** Structured file fields are literal filesystem paths, never URL or
- * diagnostic syntax. A URL-looking filename must not gain URI authority. */
-export function fileResourceReference(value: string): string {
-  return literalPathReference(value);
-}
-
 /** Text may explicitly append a diagnostic location. Extract that syntax
  * before encoding the native path; never reinterpret a literal tool path. */
 export function diagnosticResourceReference(value: string): string {
@@ -202,8 +196,8 @@ export function diagnosticResourceReference(value: string): string {
     RESOURCE_LOCATION_FRAGMENT.exec(value) ??
     RESOURCE_LOCATION_SUFFIX.exec(value);
   return location
-    ? literalPathReference(value.slice(0, location.index)) + location[0]
-    : literalPathReference(value);
+    ? fileResourceReference(value.slice(0, location.index)) + location[0]
+    : fileResourceReference(value);
 }
 
 /** Human-readable path projection of a link-form reference, decoded once.
@@ -263,6 +257,17 @@ export interface SessionResourceReference {
   source: ResourceReferenceSource;
   toolName?: string;
   mimeType?: string;
+  /** Some tool call in this branch view wrote or edited the file. */
+  writes?: true;
+}
+
+const WRITING_TOOL_NAME =
+  /(?:^|[_\-.])(?:write|edit|multi_?edit|create|patch|apply_?patch|save|replace|insert|append|rename|move|copy|notebook_?edit)(?:$|[_\-.])/iu;
+
+/** Native write/edit tools and conventionally named custom tools. A tool not
+ * named for writing is treated as a reader; shell writes are not inferred. */
+function isWritingToolName(name: string | undefined): boolean {
+  return Boolean(name) && WRITING_TOOL_NAME.test(name!);
 }
 
 export const RESOURCE_LIST_INITIAL_SIZE = 8;
@@ -282,6 +287,9 @@ export interface SessionResourceListResponse {
   total: number;
   nextCursor: string | null;
   resources: SessionResourceReference[];
+  /** First page only: written files from the whole view, newest first, so
+   * Produced is complete even when writes fall outside the page. */
+  produced?: SessionResourceReference[];
 }
 
 function trimReference(value: string): string {
@@ -528,10 +536,18 @@ export function collectSessionResourceReferences(
   limit = Number.POSITIVE_INFINITY,
 ): SessionResourceReference[] {
   const resources: SessionResourceReference[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, SessionResourceReference>();
   const add = (resource: SessionResourceReference) => {
-    if (resources.length >= limit || seen.has(resource.key)) return;
-    seen.add(resource.key);
+    const existing = seen.get(resource.key);
+    // Newest-first order keeps the latest identity; an older write still
+    // marks the file as produced in this view.
+    if (existing) {
+      if (isWritingToolName(resource.toolName)) existing.writes = true;
+      return;
+    }
+    if (resources.length >= limit) return;
+    if (isWritingToolName(resource.toolName)) resource.writes = true;
+    seen.set(resource.key, resource);
     resources.push(resource);
   };
   const addToolArgumentReferences = (
@@ -613,8 +629,41 @@ export function collectSessionResourceReferences(
       }
     }
 
-    if (message.details && typeof message.details === "object")
-      addToolArgumentReferences(message.details as Record<string, unknown>);
+    if (message.details && typeof message.details === "object") {
+      const details = message.details as Record<string, unknown>;
+      addToolArgumentReferences(details);
+      // Code-running tools (e.g. codemode) record each inner tool call as
+      // { name, args } in details.calls; their paths carry the inner name.
+      const calls = Array.isArray(details.calls) ? details.calls : [];
+      for (let call = calls.length - 1; call >= 0; call -= 1) {
+        const inner = nestedToolCall(calls[call]);
+        if (inner) addToolArgumentReferences(inner.args, inner.metadata);
+      }
+    }
   }
   return resources;
+}
+
+function nestedToolCall(value: unknown): {
+  args: Record<string, unknown>;
+  metadata: Pick<SessionResourceReference, "toolName">;
+} | null {
+  if (!value || typeof value !== "object") return null;
+  const call = value as Record<string, unknown>;
+  if (typeof call.name !== "string") return null;
+  let args = call.args ?? call.arguments;
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return null;
+    }
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  // A failed inner call is still a reference, but it produced nothing.
+  const failed = typeof call.status === "string" && call.status !== "ok";
+  return {
+    args: args as Record<string, unknown>,
+    metadata: failed ? {} : { toolName: call.name },
+  };
 }

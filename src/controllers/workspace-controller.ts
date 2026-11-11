@@ -44,7 +44,6 @@ interface WorkspaceControllerHost {
   state(): WorkspaceOwnerState;
   patch(patch: Partial<WorkspaceBrowserState>): void;
   api(): Api | null;
-  transportGeneration(): number;
   handleAuthFailure(): void;
 }
 
@@ -74,16 +73,10 @@ export class WorkspaceController {
 
   constructor(private readonly host: WorkspaceControllerHost) {}
 
-  private owns(
-    api: Api,
-    transportGeneration: number,
-    sessionId: string,
-    cwd: string,
-  ): boolean {
+  private owns(api: Api, sessionId: string, cwd: string): boolean {
     const state = this.host.state();
     return (
       this.host.api() === api &&
-      this.host.transportGeneration() === transportGeneration &&
       state.sessionId === sessionId &&
       state.cwd === cwd
     );
@@ -193,13 +186,12 @@ export class WorkspaceController {
     )
       return;
     const request = new AbortController();
-    const transportGeneration = this.host.transportGeneration();
     this.directoryRequests.set(dir, request);
     const recovery = new RecoveryBackoff();
     const currentRequest = () =>
       this.directoryRequests.get(dir) === request &&
       !request.signal.aborted &&
-      this.owns(api, transportGeneration, sessionId, cwd);
+      this.owns(api, sessionId, cwd);
     const before = this.host.state();
     this.host.patch({
       workspaceLoadingDirs: [...new Set([...before.workspaceLoadingDirs, dir])],
@@ -333,13 +325,12 @@ export class WorkspaceController {
     this.searchRequest?.abort();
     const request = new AbortController();
     const recovery = new RecoveryBackoff();
-    const transportGeneration = this.host.transportGeneration();
     this.searchRequest = request;
     const showHidden = this.host.state().workspaceShowHidden;
     const ownsQuery = () =>
       this.searchRequest === request &&
       !request.signal.aborted &&
-      this.owns(api, transportGeneration, sessionId, cwd) &&
+      this.owns(api, sessionId, cwd) &&
       this.host.state().workspaceQuery === query;
     this.host.patch({
       workspaceSearchLoading: true,

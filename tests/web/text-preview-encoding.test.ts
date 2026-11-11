@@ -118,7 +118,6 @@ describe("authorized Unicode resource previews", () => {
         state: () => state,
         patch: (patch) => Object.assign(state, patch),
         api: () => api,
-        transportGeneration: () => 1,
         handleAuthFailure: vi.fn(),
         saveDownload: vi.fn(),
         prepareGitForResourceOpen: () => () => true,

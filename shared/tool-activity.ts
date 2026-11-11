@@ -1,3 +1,4 @@
+import { jsonRecord } from "./json-record.js";
 /** Host/browser activity mirrors native receipts, never child result payloads. */
 export interface ChildCall {
   key: string;
@@ -31,12 +32,6 @@ const encoder = new TextEncoder();
 const argumentBytes = (value: unknown) =>
   encoder.encode(JSON.stringify(value)).byteLength;
 
-function record(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
 function callMetadata(value: Record<string, unknown>) {
   return {
     ...(typeof value.durationMs === "number" &&
@@ -53,7 +48,7 @@ function callMetadata(value: Record<string, unknown>) {
 /** Codemode snapshots append records in call order; temporary ids repeat and later change.
  * Array position is its stable visual identity, independent of generic execution ids. */
 export function codemodeCalls(details: unknown): ChildCallList | undefined {
-  const values = record(details)?.calls;
+  const values = jsonRecord(details)?.calls;
   if (!Array.isArray(values)) return undefined;
   const calls: ChildCall[] = [];
   let complete = values.length <= MAX_CHILD_CALLS;
@@ -62,7 +57,7 @@ export function codemodeCalls(details: unknown): ChildCallList | undefined {
     index < Math.min(values.length, MAX_CHILD_CALLS);
     index++
   ) {
-    const value = record(values[index]);
+    const value = jsonRecord(values[index]);
     if (
       !value ||
       typeof value.name !== "string" ||
@@ -85,14 +80,14 @@ export function codemodeCalls(details: unknown): ChildCallList | undefined {
 
 /** The persisted native summary is top-level toolResult.nestedCalls, not details. */
 function nestedCalls(summary: unknown): ChildCallList | undefined {
-  const source = record(summary);
+  const source = jsonRecord(summary);
   if (!source || !Array.isArray(source.calls)) return undefined;
   const calls: ChildCall[] = [];
   let complete =
     source.complete === true && source.calls.length <= MAX_CHILD_CALLS;
   let bytes = 0;
   for (const item of source.calls.slice(0, MAX_CHILD_CALLS)) {
-    const value = record(item);
+    const value = jsonRecord(item);
     if (
       !value ||
       typeof value.id !== "string" ||
@@ -134,7 +129,7 @@ function boundedChildArguments(
 }
 
 export function resultChildCalls(message: unknown): ChildCallList | undefined {
-  const value = record(message);
+  const value = jsonRecord(message);
   if (!value) return undefined;
   return value.toolName === "codemode"
     ? codemodeCalls(value.details)
@@ -143,14 +138,14 @@ export function resultChildCalls(message: unknown): ChildCallList | undefined {
 
 export function childCallFromEvent(event: Record<string, unknown>): ChildCall {
   const error =
-    event.isError === true ? record(event.result)?.content : undefined;
+    event.isError === true ? jsonRecord(event.result)?.content : undefined;
   const errorText =
     typeof error === "string"
       ? error
       : Array.isArray(error)
         ? error
-            .filter((part) => record(part)?.type === "text")
-            .map((part) => String(record(part)?.text ?? ""))
+            .filter((part) => jsonRecord(part)?.type === "text")
+            .map((part) => String(jsonRecord(part)?.text ?? ""))
             .join("\n")
         : "";
   return {
