@@ -32,7 +32,7 @@ import {
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { hasActiveModal } from "../use-modal-focus";
 import { EarlierBranchBanner } from "./EarlierBranchBanner";
-import { EmbeddedImageOwnerContext } from "./ImagePreview";
+import { TranscriptImageOwnerContext } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { PromptMap } from "./PromptMap";
 import { handleRichTextCopy } from "./rich-text-copy";
@@ -681,7 +681,7 @@ export const Transcript = memo(function Transcript({
               ) : null}
             </div>
           ) : null}
-          <EmbeddedImageOwnerContext value={imageOwner}>
+          <TranscriptImageOwnerContext value={imageOwner}>
             {rows.length === 0 ? (
               <div className="transcript__column">
                 <div className="empty-state empty-state--conversation">
@@ -744,7 +744,7 @@ export const Transcript = memo(function Transcript({
                 ))}
               </div>
             )}
-          </EmbeddedImageOwnerContext>
+          </TranscriptImageOwnerContext>
           {queue.totalCount > 0 || genericExtensionDisplays.length > 0 ? (
             <div className="transcript__column transcript__pending">
               <PendingQueueGroups

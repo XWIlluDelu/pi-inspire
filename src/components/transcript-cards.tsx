@@ -69,9 +69,9 @@ import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
 import {
-  EmbeddedImageOwnerContext,
   ImagePreview,
-  PersistedImage,
+  TranscriptImage,
+  TranscriptImageOwnerContext,
 } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
@@ -810,7 +810,7 @@ export function ToolResultCard({
   result: ChatMessage;
   visibility: StaticVisibility;
 }) {
-  const owner = useContext(EmbeddedImageOwnerContext);
+  const owner = useContext(TranscriptImageOwnerContext);
   const name = typeof result.toolName === "string" ? result.toolName : "Tool";
   const calls = result.__inspireCalls ?? resultChildCalls(result);
   const output =
@@ -1018,13 +1018,13 @@ function ToolImage({
 }: {
   block: Extract<ToolPresentationBlock, { type: "image" }>;
 }) {
-  const owner = useContext(EmbeddedImageOwnerContext);
+  const owner = useContext(TranscriptImageOwnerContext);
   return (
     <figure className="tool-image-block">
       <ToolBlockHeading label={block.label} />
       {block.reference ? (
         owner ? (
-          <PersistedImage
+          <TranscriptImage
             {...owner}
             reference={block.reference}
             alt={block.alt}
@@ -1676,7 +1676,7 @@ export function ToolCard({
   onManualOpenChange?: (open: boolean) => void;
 }) {
   usePresentationAdapters();
-  const owner = useContext(EmbeddedImageOwnerContext);
+  const owner = useContext(TranscriptImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const complete = toolComplete(result, activity) || dynamicActive === false;
   const dynamicOpen = useDynamicCardOpen(
@@ -1804,7 +1804,7 @@ export function CollapsedActivityStrip({
   activities: CollapsedActivity[];
   live: boolean;
 }) {
-  const owner = useContext(EmbeddedImageOwnerContext);
+  const owner = useContext(TranscriptImageOwnerContext);
   const { configuration } = usePresentationAdapters();
   const visibleActivityIds = useVisibleActivityItemIds();
   const [selectedKey, setSelectedKey] = useActivityStripSelection(

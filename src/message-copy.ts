@@ -94,7 +94,7 @@ export async function messageCopyContent(
       if (Number.isSafeInteger(message.__inspireMessageIndex)) {
         if (!owner) throw new Error("The image's conversation is unavailable");
         images.push(
-          await store.loadEmbeddedImage(
+          await store.loadTranscriptImage(
             owner.sessionId,
             owner.viewId,
             owner.projectionKey,

@@ -7,7 +7,7 @@ import { getCustomMessagePresentationRegistry } from "../tool-presentations/regi
 import { CopyAction } from "./CopyAction";
 import { DetailSummary } from "./DetailSummary";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { ImagePreview, TranscriptImage } from "./ImagePreview";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 
 function inspect(value: unknown): string {
@@ -112,7 +112,7 @@ export const CustomMessage = memo(function CustomMessage({
                     viewId
                   ) {
                     return (
-                      <PersistedImage
+                      <TranscriptImage
                         key={index}
                         sessionId={sessionId}
                         viewId={viewId}

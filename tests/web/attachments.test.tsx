@@ -197,9 +197,9 @@ describe("attachment presentation", () => {
   });
 
   it("normalizes a recalled image without a projection incarnation", async () => {
-    const originalLoad = store.loadEmbeddedImage;
+    const originalLoad = store.loadTranscriptImage;
     const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
-    store.loadEmbeddedImage = load;
+    store.loadTranscriptImage = load;
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
       value: vi.fn(() => "blob:recalled-image"),
@@ -244,7 +244,7 @@ describe("attachment presentation", () => {
         ),
       );
     } finally {
-      store.loadEmbeddedImage = originalLoad;
+      store.loadTranscriptImage = originalLoad;
     }
   });
 });
@@ -353,9 +353,9 @@ it("uses one clipboard projection without duplicating one paste or merging disti
 
 describe("persisted user images", () => {
   it("loads a stable embedded-image reference and opens a keyboard-accessible preview", async () => {
-    const originalLoad = store.loadEmbeddedImage;
+    const originalLoad = store.loadTranscriptImage;
     const load = vi.fn(async () => new Blob(["png"], { type: "image/png" }));
-    store.loadEmbeddedImage = load;
+    store.loadTranscriptImage = load;
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
       value: vi.fn(() => "blob:persisted-image"),
@@ -428,7 +428,7 @@ describe("persisted user images", () => {
         ).not.toBeInTheDocument(),
       );
     } finally {
-      store.loadEmbeddedImage = originalLoad;
+      store.loadTranscriptImage = originalLoad;
     }
   });
 });

@@ -750,52 +750,61 @@ describe("resource previews", () => {
     });
   });
 
-  it("loads an embedded transcript image only inside its owning branch view", async () => {
-    let range: string | null = null;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/resources/resolve")) {
-        const body = jsonBody(init) as { sessionId: string; reference: string };
-        return {
-          body: {
-            id: "embedded-image",
-            sessionId: body.sessionId,
-            viewId: "view-s1",
-            reference: body.reference,
-            name: "Embedded image",
-            mimeType: "image/png",
-            size: 3,
-            kind: "image",
-          },
-        };
-      }
-      if (url.includes("/api/resources/embedded-image/content")) {
-        range = new Headers(init.headers).get("Range");
-        return { body: "png" };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    expect(store.getState().transcriptViewId).toBe("view-s1");
+  it.each([
+    ["embedded", "pi-embedded://4/0", "pi-embedded://4/0"],
+    ["local", "chart.png", "./figures/chart.png"],
+  ])(
+    "loads a %s transcript image only inside its owning branch view",
+    async (_kind, reference, resolvedReference) => {
+      let range: string | null = null;
+      installFetch((url, init) => {
+        if (url.startsWith("/api/resources/resolve")) {
+          const body = jsonBody(init) as {
+            sessionId: string;
+            reference: string;
+          };
+          return {
+            body: {
+              id: "embedded-image",
+              sessionId: body.sessionId,
+              viewId: "view-s1",
+              reference: resolvedReference,
+              name: "Chart",
+              mimeType: "image/png",
+              size: 3,
+              kind: "image",
+            },
+          };
+        }
+        if (url.includes("/api/resources/embedded-image/content")) {
+          range = new Headers(init.headers).get("Range");
+          return { body: "png", headers: { "Content-Type": "image/png" } };
+        }
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      expect(store.getState().transcriptViewId).toBe("view-s1");
 
-    const blob = await store.loadEmbeddedImage(
-      "s1",
-      "view-s1",
-      "view-s1\u0000projection-1",
-      "pi-embedded://4/0",
-      new AbortController().signal,
-    );
-    expect(await blob.text()).toContain("png");
-    expect(range).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
-    await expect(
-      store.loadEmbeddedImage(
+      const blob = await store.loadTranscriptImage(
         "s1",
-        "obsolete",
-        "obsolete\u0000projection-1",
-        "pi-embedded://4/0",
+        "view-s1",
+        "view-s1\u0000projection-1",
+        reference,
         new AbortController().signal,
-      ),
-    ).rejects.toMatchObject({ name: "AbortError" });
-  });
+      );
+      expect(await blob.text()).toContain("png");
+      expect(range).toBe(`bytes=0-${MAX_MEDIA_PREVIEW_BYTES}`);
+      await expect(
+        store.loadTranscriptImage(
+          "s1",
+          "obsolete",
+          "obsolete\u0000projection-1",
+          reference,
+          new AbortController().signal,
+        ),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    },
+  );
 
   it("rejects embedded-image bytes from a replaced projection incarnation", async () => {
     const oldContent = deferred<RouteResponse>();
@@ -824,7 +833,7 @@ describe("resource previews", () => {
     });
     const { store, socket } = await initStore();
 
-    const loading = store.loadEmbeddedImage(
+    const loading = store.loadTranscriptImage(
       "s1",
       "view-s1",
       "view-s1\u0000projection-1",
@@ -870,7 +879,7 @@ describe("resource previews", () => {
     });
     const { store } = await initStore();
 
-    const loading = store.loadEmbeddedImage(
+    const loading = store.loadTranscriptImage(
       "s1",
       "view-s1",
       "view-s1\u0000projection-1",
