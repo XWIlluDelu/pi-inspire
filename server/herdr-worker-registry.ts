@@ -201,7 +201,7 @@ export class HerdrWorkerRegistry {
     await replacePrivateStateFile(
       join(this.directory, releaseName(owner)),
       `${JSON.stringify(record)}\n`,
-      verify && (async () => verify()),
+      { beforeReplace: verify },
     );
   }
 

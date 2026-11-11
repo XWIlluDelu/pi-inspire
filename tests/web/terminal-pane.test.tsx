@@ -1031,11 +1031,9 @@ describe("terminal project ownership", () => {
     vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
       {
         key: "confirmed",
-        path: "/api/terminals",
         label: "Create terminal · /A",
-        uncertain: false,
         busy: false,
-        confirmed: "completed",
+        outcome: "completed",
       },
     ]);
     api.retryTerminalOperation.mockResolvedValue(undefined);
@@ -1056,9 +1054,8 @@ describe("terminal project ownership", () => {
     const pending = [
       {
         key: "lost",
-        path: "/api/terminals",
         label: "Create terminal · /A",
-        uncertain: true,
+        outcome: "unknown" as const,
         busy: false,
       },
     ];

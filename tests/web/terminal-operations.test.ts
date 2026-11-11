@@ -60,12 +60,12 @@ describe("browser terminal operation identity", () => {
     const state = controller.snapshot()[0]!;
     expect(state).toMatchObject({
       label: "Create terminal · /fixture",
-      uncertain: true,
+      outcome: "unknown",
       busy: false,
     });
     const result = controller.retry(null, state.key);
     expect(controller.snapshot()[0]).toMatchObject({
-      uncertain: true,
+      outcome: "unknown",
       busy: true,
     });
     gate.resolve(reply(sent));
@@ -304,9 +304,7 @@ describe("browser terminal operation identity", () => {
       if (outcome === "completed")
         await expect(result).resolves.toEqual({ id: "created" });
       else await expect(result).rejects.toThrow("Definite refusal");
-      expect(controller.snapshot()).toMatchObject([
-        { confirmed: outcome, uncertain: false },
-      ]);
+      expect(controller.snapshot()).toMatchObject([{ outcome }]);
       const key = controller.snapshot()[0]!.key;
       await expect(controller.retry(null, key)).rejects.toThrow(
         "Synthetic retirement failure",
@@ -425,8 +423,8 @@ describe("terminal operation recovery", () => {
     controller.restore();
 
     expect(controller.snapshot()).toEqual(
-      pending.map(({ key, path }) =>
-        expect.objectContaining({ key, path, busy: false, uncertain: true }),
+      pending.map(({ key }) =>
+        expect.objectContaining({ key, busy: false, outcome: "unknown" }),
       ),
     );
     expect(transport).not.toHaveBeenCalled();
@@ -452,10 +450,9 @@ describe("terminal operation recovery", () => {
     expect(controller.snapshot()).toEqual([
       {
         key: entry.key,
-        path: entry.path,
         label: `Reorder terminals · ${cwd}`,
         busy: false,
-        uncertain: true,
+        outcome: "unknown",
       },
     ]);
   });

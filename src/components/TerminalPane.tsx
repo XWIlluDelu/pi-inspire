@@ -140,12 +140,9 @@ export const TerminalPane = memo(function TerminalPane({
   onCommandComplete,
 }: TerminalPaneProps) {
   const api = useMemo(() => createApi(), []);
-  const pendingOperations = useSyncExternalStore(
+  const recoveryOperations = useSyncExternalStore(
     terminalOperations.subscribe,
     terminalOperations.snapshot,
-  );
-  const recoveryOperations = pendingOperations.filter(
-    (operation) => operation.uncertain || operation.confirmed,
   );
   const launchTarget = useMemo(readTerminalLaunchTarget, []);
   const lastSessionCwdRef = useRef(sessionCwd);
@@ -1637,8 +1634,8 @@ export const TerminalPane = memo(function TerminalPane({
                   {operation.label}
                 </span>
                 <span>
-                  {operation.confirmed
-                    ? `${operation.confirmed === "completed" ? "Completed" : "Rejected"} · Could not clear tracking`
+                  {operation.outcome !== "unknown"
+                    ? `${operation.outcome === "completed" ? "Completed" : "Rejected"} · Could not clear tracking`
                     : "Outcome unknown"}
                 </span>
               </span>
@@ -1665,19 +1662,19 @@ export const TerminalPane = memo(function TerminalPane({
               >
                 <ButtonLabel
                   reserve={
-                    operation.confirmed
+                    operation.outcome !== "unknown"
                       ? "Clear recovery record"
                       : "Retry same operation"
                   }
                 >
                   {operation.busy
                     ? "Checking…"
-                    : operation.confirmed
+                    : operation.outcome !== "unknown"
                       ? "Clear recovery record"
                       : "Retry same operation"}
                 </ButtonLabel>
               </button>
-              {!operation.confirmed ? (
+              {operation.outcome === "unknown" ? (
                 <button
                   type="button"
                   className="button button--quiet"

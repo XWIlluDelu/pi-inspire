@@ -6,11 +6,14 @@ import { rename, rm, writeFile } from "node:fs/promises";
 export async function replacePrivateStateFile(
   path: string,
   serialized: string,
-  beforeReplace?: () => Promise<void>,
+  {
+    beforeReplace,
+    flush,
+  }: { beforeReplace?: () => void | Promise<void>; flush?: boolean } = {},
 ): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, serialized, { mode: 0o600, flag: "wx" });
+    await writeFile(temporary, serialized, { mode: 0o600, flag: "wx", flush });
     await beforeReplace?.();
     await rename(temporary, path);
   } finally {

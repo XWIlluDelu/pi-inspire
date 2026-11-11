@@ -30,14 +30,12 @@ describe("private state publication", () => {
     const publish = new Promise<void>((resolve) => {
       allowPublish = resolve;
     });
-    const replacement = replacePrivateStateFile(
-      path,
-      '{"complete":true}\n',
-      () => {
+    const replacement = replacePrivateStateFile(path, '{"complete":true}\n', {
+      beforeReplace: () => {
         markPrepared();
         return publish;
       },
-    );
+    });
     await prepared;
     try {
       expect(await fs.readFile(path, "utf8")).toBe("old state");
