@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type {
-  SessionRuntimeStatus,
-  SessionSummary,
-} from "../../shared/contracts";
+import type { SessionRuntimeStatus } from "../../shared/contracts";
 import { needsYouReason, needsYouRows } from "../../src/needs-you";
-
-const session = (id: string) => ({ id }) as SessionSummary;
+import { sessionSummary } from "./helpers";
 
 describe("Needs you", () => {
   it.each([
@@ -31,8 +27,10 @@ describe("Needs you", () => {
     expect(needsYouReason(undefined, "working", false)).toBeNull();
   });
 
-  it("orders waiting, then failed, then finished, each by catalog recency", () => {
-    const sessions = ["a", "b", "c", "d", "e"].map(session);
+  it("orders by priority and newest activity even when the input is out of order", () => {
+    const sessions = ["a", "b", "c", "d", "e"].map((id, index) =>
+      sessionSummary({ id, modified: new Date(index * 1000).toISOString() }),
+    );
     const rows = needsYouRows(
       sessions,
       {
@@ -49,13 +47,13 @@ describe("Needs you", () => {
     expect(rows.map((row) => [row.session.id, row.reason])).toEqual([
       ["d", "attention"],
       ["b", "failed"],
-      ["a", "completed"],
       ["e", "completed"],
+      ["a", "completed"],
     ]);
   });
 
   it("keeps the session opened from the list in place while it stays open", () => {
-    const sessions = ["a", "b"].map(session);
+    const sessions = ["a", "b"].map((id) => sessionSummary({ id }));
     const statuses: Record<string, SessionRuntimeStatus> = {
       a: { runState: "idle", indicator: "completed" },
       b: { runState: "failed", indicator: "failed" },

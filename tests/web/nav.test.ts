@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import {
-  compactAge,
   groupSessionsByCwd,
   hiddenDeletionBlockReason,
   type NavCuration,
   splitNavSections,
 } from "../../src/components/nav-model";
+import { compactAge } from "../../src/format";
 import { sessionSummary } from "./helpers";
 
 const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
@@ -25,6 +25,7 @@ describe("hidden deletion eligibility", () => {
     sessionListLoadingOlder: false,
     sessionListHydrating: false,
     sessionListError: null,
+    sessionListIssues: [],
     clearingHidden: false,
     deletingSessionId: null,
   });
@@ -126,21 +127,6 @@ describe("splitNavSections", () => {
     expect(pinned.map((session) => session.id)).toEqual(["b", "a"]);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.sessions.map((session) => session.id)).toEqual(["c"]);
-  });
-
-  it("never duplicates a pinned session into its cwd group", () => {
-    const pinnedSession = sessionSummary({ id: "p", cwd: "/home/u/alpha" });
-    const other = sessionSummary({ id: "o", cwd: "/home/u/alpha" });
-    const { pinned, groups } = splitNavSections(
-      [pinnedSession, other],
-      curation({ pinnedSessionIds: ["p"] }),
-    );
-    expect(pinned.map((session) => session.id)).toEqual(["p"]);
-    const groupedIds = groups.flatMap((group) =>
-      group.sessions.map((session) => session.id),
-    );
-    expect(groupedIds).not.toContain("p");
-    expect(groupedIds).toEqual(["o"]);
   });
 
   it("lifts pinned folders out of the ordinary groups, keeping their own order", () => {

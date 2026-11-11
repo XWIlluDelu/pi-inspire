@@ -231,6 +231,47 @@ describe("session navigation controls", () => {
     expect(screen.queryByText("No sessions yet")).toBeNull();
   });
 
+  it("uses pins in All and activity order in Needs you", () => {
+    const state = store.getState();
+    const hidden = sessionSummary({ id: "hidden", title: "Hidden session" });
+    const waiting = { runState: "running", needsInput: true } as const;
+    vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      sessions: [alpha, beta, gamma, hidden],
+      prefs: {
+        ...state.prefs,
+        pinnedSessionIds: [alpha.id],
+        pinnedProjectCwds: [gamma.cwd],
+        hiddenSessionIds: [hidden.id],
+      },
+      sessionStatuses: {
+        alpha: waiting,
+        beta: waiting,
+        gamma: waiting,
+        hidden: waiting,
+      },
+    });
+    render(
+      <Nav
+        collapsed={false}
+        onToggleNavigation={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+      />,
+    );
+    expect(groupNames().slice(0, 3)).toEqual(["Pinned", "gamma", "beta"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Needs you (3)" }));
+    const needsYou = screen.getByRole("region", {
+      name: "Sessions that need you",
+    });
+    expect(
+      Array.from(needsYou.querySelectorAll("[data-session-id]"), (row) =>
+        row.getAttribute("data-session-id"),
+      ),
+    ).toEqual([beta.id, gamma.id, alpha.id]);
+  });
+
   it("renders brand lockup and provides new session action in both nav widths", () => {
     const onNewSession = vi.fn();
     const { container, rerender } = render(

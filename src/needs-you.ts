@@ -34,9 +34,8 @@ interface NeedsYouRow {
 }
 
 /**
- * The Needs you list: urgent first, then the catalog's recency order. The
- * session you just opened from this list stays in its place while it is open
- * (`retained`), so the row you clicked does not vanish under the pointer.
+ * Sort by urgency, then newest activity. An opened row keeps its priority
+ * while selected so clearing its unseen outcome does not remove it.
  */
 export function needsYouRows(
   sessions: readonly SessionSummary[],
@@ -45,18 +44,22 @@ export function needsYouRows(
   selectedId: string | null,
   retained: { id: string; reason: NeedsYouReason } | null,
 ): NeedsYouRow[] {
-  const rows: Array<NeedsYouRow & { rank: number; order: number }> = [];
-  sessions.forEach((session, order) => {
+  const rows: Array<NeedsYouRow & { rank: number }> = [];
+  for (const session of sessions) {
     const reason = needsYouReason(
       statuses[session.id],
       externals[session.id],
       session.id === selectedId,
     );
-    if (reason) rows.push({ session, reason, rank: RANK[reason], order });
+    if (reason) rows.push({ session, reason, rank: RANK[reason] });
     else if (retained?.id === session.id && session.id === selectedId)
-      rows.push({ session, reason: null, rank: RANK[retained.reason], order });
-  });
+      rows.push({ session, reason: null, rank: RANK[retained.reason] });
+  }
   return rows
-    .sort((left, right) => left.rank - right.rank || left.order - right.order)
+    .sort(
+      (left, right) =>
+        left.rank - right.rank ||
+        Date.parse(right.session.modified) - Date.parse(left.session.modified),
+    )
     .map(({ session, reason }) => ({ session, reason }));
 }
