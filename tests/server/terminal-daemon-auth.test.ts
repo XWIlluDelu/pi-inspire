@@ -10,6 +10,7 @@ import { defaultTerminalDaemonAddress } from "../../server/terminal-daemon-proto
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
 import { addressAcceptsConnections } from "../../server/terminal-daemon-socket.js";
 import {
+  connectTerminalDaemon,
   resolveTerminalDaemonSecret,
   terminalDaemonSecretPath,
 } from "../../server/terminal-daemon-tls.js";
@@ -153,26 +154,36 @@ describe("terminal daemon peer authentication", () => {
     }
   });
 
-  it("stops pending unauthenticated connections without waiting for their TLS deadline", async () => {
+  it("stops raw and TLS peers without waiting for handshake deadlines", async () => {
     const f = await fixture();
     const server = new TerminalDaemonServer(
       f.address,
       f.token,
       new TerminalSessionManager(),
     );
-    let raw: Socket | undefined;
+    const peers: Socket[] = [];
     try {
       await server.start();
-      raw = createConnection(f.address);
-      raw.on("error", () => {});
-      const closed = new Promise<void>((resolve) =>
-        raw!.once("close", () => resolve()),
+      const raw = createConnection(f.address);
+      const secure = connectTerminalDaemon(f.address, f.token);
+      peers.push(raw, secure);
+      const closed = Promise.all(
+        peers.map(
+          (peer) =>
+            new Promise<void>((resolve) => {
+              peer.on("error", () => {});
+              peer.once("close", () => resolve());
+            }),
+        ),
       );
-      await new Promise<void>((resolve) => raw!.once("connect", resolve));
+      await Promise.all([
+        new Promise<void>((resolve) => raw.once("connect", resolve)),
+        new Promise<void>((resolve) => secure.once("secureConnect", resolve)),
+      ]);
       await server.stop();
       await closed;
     } finally {
-      raw?.destroy();
+      for (const peer of peers) peer.destroy();
       await server.stop();
       await rm(f.root, { recursive: true, force: true });
     }

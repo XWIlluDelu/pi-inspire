@@ -152,7 +152,9 @@ function projectEntry(
       .length,
   };
 }
-function parse(source: string | undefined): JsonObject {
+function parse(
+  source: string | undefined,
+): JsonObject & { mcpServers?: JsonObject } {
   try {
     const value: unknown =
       source === undefined ? {} : JSON.parse(source.replace(/^\uFEFF/u, ""));
@@ -280,8 +282,11 @@ export class McpConfigService {
       );
     return join(cwd, ".pi", "mcp.json");
   }
-  private async target(cwd: string | null, scope: McpConfigScope) {
-    const path = this.path(cwd, scope);
+  private async target(
+    cwd: string | null,
+    scope: McpConfigScope,
+    path: string,
+  ) {
     const project =
       scope === "project" ? await resolveProjectDirectory(cwd!) : null;
     const target = await configurationFileTarget(path);
@@ -296,6 +301,15 @@ export class McpConfigService {
       );
     return target;
   }
+  private async source(
+    cwd: string | null,
+    scope: McpConfigScope,
+    path = this.path(cwd, scope),
+  ) {
+    const target = await this.target(cwd, scope, path);
+    const source = await readText(target);
+    return { source, revision: revisionOf(source, target) };
+  }
   async read(cwd: string | null): Promise<McpConfigSnapshot> {
     const scopes: McpConfigScope[] =
       cwd === null ? ["user"] : ["user", "project"];
@@ -303,16 +317,14 @@ export class McpConfigService {
       scopes.map(async (scope) => {
         const path = this.path(cwd, scope);
         try {
-          const target = await this.target(cwd, scope);
-          const source = await readText(path);
-          const parsed = parse(source);
+          const { source, revision } = await this.source(cwd, scope, path);
           return {
             scope,
             path,
-            revision: revisionOf(source, target),
-            entries: Object.entries(
-              isJsonRecord(parsed.mcpServers) ? parsed.mcpServers : {},
-            ).map(([name, raw]) => projectEntry(name, raw, scope)),
+            revision,
+            entries: Object.entries(parse(source).mcpServers ?? {}).map(
+              ([name, raw]) => projectEntry(name, raw, scope),
+            ),
           };
         } catch (error) {
           return {
@@ -335,15 +347,13 @@ export class McpConfigService {
     input: McpConnectionRead,
   ): Promise<McpConnectionValues> {
     const request = mcpConnectionReadSchema.parse(input);
-    const target = await this.target(cwd, request.scope);
-    const source = await readText(target);
-    if (revisionOf(source, target) !== request.revision)
+    const { source, revision } = await this.source(cwd, request.scope);
+    if (revision !== request.revision)
       throw requestError(
         "MCP configuration changed elsewhere. Refresh files before viewing saved values.",
         409,
       );
-    const parsed = parse(source);
-    const servers = isJsonRecord(parsed.mcpServers) ? parsed.mcpServers : {};
+    const servers = parse(source).mcpServers ?? {};
     const entry = Object.hasOwn(servers, request.name)
       ? servers[request.name]
       : undefined;
@@ -369,26 +379,19 @@ export class McpConfigService {
     await editConfigurationFile(
       {
         path,
-        resolveTarget: () => this.target(cwd, edit.scope),
+        resolveTarget: () => this.target(cwd, edit.scope, path),
         expectedRevision: edit.revision,
         revision: revisionOf,
         // Add shares the user authority so concurrent user/project additions
         // cannot each validate against the other file's old namespace.
         alsoLock:
           edit.scope === "project" && edit.operation === "add"
-            ? [
-                {
-                  path: this.path(cwd, "user"),
-                  resolveTarget: () => this.target(cwd, "user"),
-                },
-              ]
+            ? [{ path: this.path(cwd, "user") }]
             : [],
       },
       async (source) => {
         const parsed = parse(source);
-        const servers = isJsonRecord(parsed.mcpServers)
-          ? parsed.mcpServers
-          : {};
+        const servers = (parsed.mcpServers ??= {});
         const exists = Object.hasOwn(servers, edit.name);
         if (edit.operation === "add" ? exists : !exists)
           throw requestError(
@@ -418,10 +421,8 @@ export class McpConfigService {
                 "Project policy overrides can only edit enabled, exposure and toolExposure",
                 400,
               );
-            const user = parse(await readText(this.path(cwd, "user")));
-            const base = isJsonRecord(user.mcpServers)
-              ? user.mcpServers[edit.name]
-              : undefined;
+            const { source } = await this.source(cwd, "user");
+            const base = parse(source).mcpServers?.[edit.name];
             if (!isJsonRecord(base))
               throw requestError(
                 "Project policy override needs a same-name user server",
@@ -432,12 +433,14 @@ export class McpConfigService {
           } else {
             validate(edit.name, value, edit.scope);
           }
-          const names =
-            edit.operation === "add"
-              ? (await this.read(cwd)).files.flatMap((file) =>
-                  file.entries.map((entry) => entry.name),
-                )
-              : Object.keys(servers);
+          const names = Object.keys(servers);
+          if (edit.operation === "add" && cwd !== null) {
+            const other = edit.scope === "user" ? "project" : "user";
+            const otherNames = await this.source(cwd, other)
+              .then(({ source }) => Object.keys(parse(source).mcpServers ?? {}))
+              .catch(() => []);
+            names.push(...otherNames);
+          }
           if (
             names.some(
               (name) =>
@@ -456,7 +459,6 @@ export class McpConfigService {
             writable: true,
           });
         }
-        parsed.mcpServers = servers;
         const indent = source?.match(/^([ \t]+)\S/m)?.[1] ?? "  ";
         return `${JSON.stringify(parsed, null, indent)}\n`;
       },

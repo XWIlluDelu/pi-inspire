@@ -41,8 +41,10 @@ export class TaskNotificationController {
   private generation = 0;
   private groupingGeneration = 0;
   private groupingSync = 0;
-  private pendingSettings: TaskAlertSettings | null = null;
-  private pendingSettingsApi: Api | null = null;
+  private pendingSettings: {
+    value: TaskAlertSettings;
+    api: Api | null;
+  } | null = null;
   private groupingSettings: Pick<
     TaskAlertSettings,
     "grouping" | "groupingUpdatedAt" | "publicKey"
@@ -160,7 +162,6 @@ export class TaskNotificationController {
     this.groupingSync++;
     this.initialSettingsApi = null;
     this.pendingSettings = null;
-    this.pendingSettingsApi = null;
     this.patch({ busy: false, groupingBusy: false });
   }
 
@@ -175,12 +176,25 @@ export class TaskNotificationController {
       this.host.state().taskAlerts.busy ||
       this.host.state().taskAlerts.groupingBusy
     ) {
-      this.pendingSettings = settings;
-      this.pendingSettingsApi = this.host.api();
+      this.pendingSettings = { value: settings, api: this.host.api() };
       return;
     }
     if (settings.mode !== this.host.state().taskAlerts.mode) this.generation++;
     const groupingCurrent = this.acceptGroupingSettings(settings);
+    this.projectSettings(settings, groupingCurrent);
+    if (settings.mode === "off") this.host.clear();
+    const initial =
+      this.initialSettingsApi !== null &&
+      this.initialSettingsApi === this.host.api();
+    if (initial) {
+      this.initialSettingsApi = null;
+      void this.initialize(settings);
+    } else if (groupingCurrent) void this.syncGrouping(settings);
+  }
+  private projectSettings(
+    settings: TaskAlertSettings,
+    groupingCurrent: boolean,
+  ): void {
     this.patch({
       mode: settings.mode,
       ...(groupingCurrent
@@ -192,14 +206,6 @@ export class TaskNotificationController {
       subscribed: settings.subscribed,
       error: settings.error,
     });
-    if (settings.mode === "off") this.host.clear();
-    const initial =
-      this.initialSettingsApi !== null &&
-      this.initialSettingsApi === this.host.api();
-    if (initial) {
-      this.initialSettingsApi = null;
-      void this.initialize(settings);
-    } else if (groupingCurrent) void this.syncGrouping(settings);
   }
   private acceptGroupingSettings(settings: TaskAlertSettings): boolean {
     const state = this.host.state().taskAlerts;
@@ -221,17 +227,17 @@ export class TaskNotificationController {
   private flushPendingSettings(): void {
     const state = this.host.state().taskAlerts;
     if (state.busy || state.groupingBusy) return;
-    const settings = this.pendingSettings;
+    const pending = this.pendingSettings;
     this.pendingSettings = null;
-    if (this.pendingSettingsApi !== this.host.api()) return;
+    if (!pending || pending.api !== this.host.api()) return;
+    const { value: settings } = pending;
     // Same-choice echoes must not hide a later permission/setup failure.
     if (
-      settings &&
-      ((this.initialSettingsApi !== null &&
-        this.initialSettingsApi === this.host.api()) ||
-        settings.mode !== state.mode ||
-        settings.publicKey !== this.groupingSettings?.publicKey ||
-        settings.groupingUpdatedAt > state.groupingUpdatedAt)
+      (this.initialSettingsApi !== null &&
+        this.initialSettingsApi === pending.api) ||
+      settings.mode !== state.mode ||
+      settings.publicKey !== this.groupingSettings?.publicKey ||
+      settings.groupingUpdatedAt > state.groupingUpdatedAt
     )
       this.applySettings(settings);
   }
@@ -241,22 +247,13 @@ export class TaskNotificationController {
     const api = this.host.api();
     if (!api) return;
     const generation = this.generation;
+    const current = () =>
+      generation === this.generation && api === this.host.api();
     const groupingGeneration = this.groupingGeneration;
     try {
       let settings = initialSettings ?? (await api.taskAlertSettings());
-      if (generation !== this.generation || this.host.api() !== api) return;
+      if (!current()) return;
       this.initialSettingsApi = null;
-      if (settings.mode === "off" || settings.mode === "title") {
-        await this.updateEnrollment(async () => {
-          if (generation !== this.generation || this.host.api() !== api) return;
-          const registration = await navigator.serviceWorker?.getRegistration();
-          const subscription =
-            await registration?.pushManager?.getSubscription();
-          if (generation === this.generation && this.host.api() === api)
-            await subscription?.unsubscribe();
-        });
-        if (generation !== this.generation || this.host.api() !== api) return;
-      }
       if (settings.mode === "desktop") {
         const registration = await navigator.serviceWorker?.getRegistration();
         const subscription = await registration?.pushManager?.getSubscription();
@@ -267,7 +264,7 @@ export class TaskNotificationController {
               .replace(/\+/g, "-")
               .replace(/\//g, "_")
           : null;
-        if (generation !== this.generation || this.host.api() !== api) return;
+        if (!current()) return;
         if (
           browserNotificationPermission() !== "granted" ||
           encoded !== settings.publicKey
@@ -287,25 +284,17 @@ export class TaskNotificationController {
             api,
           );
         }
-        if (generation !== this.generation || this.host.api() !== api) return;
+      } else {
+        await this.updateEnrollment(() => this.unsubscribe(current));
       }
+      if (!current()) return;
       const groupingCurrent =
         groupingGeneration === this.groupingGeneration &&
         this.acceptGroupingSettings(settings);
-      this.patch({
-        mode: settings.mode,
-        ...(groupingCurrent
-          ? {
-              grouping: settings.grouping,
-              groupingUpdatedAt: settings.groupingUpdatedAt,
-            }
-          : {}),
-        subscribed: settings.subscribed,
-        error: settings.error,
-      });
+      this.projectSettings(settings, groupingCurrent);
       if (groupingCurrent) await this.syncGrouping(settings);
     } catch (error) {
-      if (generation === this.generation && this.host.api() === api)
+      if (current())
         this.patch({
           error:
             error instanceof Error
@@ -313,6 +302,16 @@ export class TaskNotificationController {
               : "Notification setup is unavailable",
         });
     }
+  }
+
+  private async unsubscribe(current: () => boolean): Promise<boolean> {
+    if (!current()) return false;
+    const registration = await navigator.serviceWorker?.getRegistration();
+    if (!current()) return false;
+    const subscription = await registration?.pushManager?.getSubscription();
+    if (!current()) return false;
+    await subscription?.unsubscribe();
+    return current();
   }
   private registration(): Promise<ServiceWorkerRegistration> {
     if (!("serviceWorker" in navigator))
@@ -450,19 +449,12 @@ export class TaskNotificationController {
         this.save(mode, mode === "desktop" ? undefined : null, undefined, api),
       ]);
       if (!current()) return false;
-      this.patch({ permission: granted });
-      this.patch({ subscribed: saved.subscribed });
+      this.patch({ permission: granted, subscribed: saved.subscribed });
       return await this.updateEnrollment(async () => {
         if (!current()) return false;
         if (mode !== "desktop") {
           // Disable the server destination first; failure to unsubscribe cannot reactivate it.
-          const registration = await navigator.serviceWorker?.getRegistration();
-          if (!current()) return false;
-          const subscription =
-            await registration?.pushManager?.getSubscription();
-          if (!current()) return false;
-          await subscription?.unsubscribe();
-          return current();
+          return this.unsubscribe(current);
         }
         if (granted !== "granted") {
           const disabled = await this.save(undefined, null, undefined, api);
@@ -518,8 +510,7 @@ export class TaskNotificationController {
         if (!current()) return false;
         this.patch({ subscribed: enrolled.subscribed, error: enrolled.error });
         if (enrolled.mode !== "desktop") {
-          this.pendingSettings = enrolled;
-          this.pendingSettingsApi = this.host.api();
+          this.pendingSettings = { value: enrolled, api };
           await subscription.unsubscribe();
           return false;
         }

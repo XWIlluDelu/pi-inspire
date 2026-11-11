@@ -25,7 +25,7 @@ import {
   availableStatusControls,
   usePresentationAdapters,
 } from "../presentation-adapters";
-import { RecoveryBackoff } from "../recovery-backoff";
+import { recoverableRead, RecoveryBackoff } from "../recovery-backoff";
 import {
   sessionDraft,
   setSessionDraft,
@@ -457,33 +457,27 @@ export const Welcome = memo(function Welcome({
       setModelStatus("ready");
       return;
     }
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const transportGeneration = state.transportGeneration;
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
+    const request = recoverableRead(
+      () => store.getState().transportGeneration === state.transportGeneration,
+    );
     const inputGeneration = thinkingInputGeneration.current;
     setModelWarning(null);
     setModelStatus("loading");
     void (async () => {
       try {
-        const level = await recovery.read(
-          () =>
-            store.resolveNewSessionThinking(
-              effectiveDirectory,
-              pickedModel,
-              thinkingRef.current,
-            ),
-          request.signal,
-          owns,
+        const level = await request.read(() =>
+          store.resolveNewSessionThinking(
+            effectiveDirectory,
+            pickedModel,
+            thinkingRef.current,
+          ),
         );
-        if (!owns()) return;
+        if (!request.current()) return;
         if (thinkingInputGeneration.current === inputGeneration)
           setThinkingLevel(clampThinkingLevel(pickedModel, level));
         setModelStatus("ready");
       } catch (error) {
-        if (!owns()) return;
+        if (!request.current()) return;
         setModelWarning(
           error instanceof Error
             ? error.message
@@ -492,10 +486,7 @@ export const Welcome = memo(function Welcome({
         setModelStatus("error");
       }
     })();
-    return () => {
-      request.abort();
-      recovery.reset();
-    };
+    return request.abort;
   }, [
     effectiveDirectory,
     modelKey,
@@ -509,22 +500,17 @@ export const Welcome = memo(function Welcome({
   useEffect(() => {
     const sessionId = inheritance?.sessionId;
     if (!sourcePending || modelTouched || !sessionId) return;
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const transportGeneration = state.transportGeneration;
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
+    const request = recoverableRead(
+      () => store.getState().transportGeneration === state.transportGeneration,
+    );
     setModelWarning(null);
     setModelStatus("loading");
     void (async () => {
       try {
-        const result = await recovery.read(
-          () => store.readNewSessionModels(sessionId, inheritance.cwd, true),
-          request.signal,
-          owns,
+        const result = await request.read(() =>
+          store.readNewSessionModels(sessionId, inheritance.cwd, true),
         );
-        if (!owns()) return;
+        if (!request.current()) return;
         const selection = result.selection ?? result.defaults;
         if (!selection) {
           setModelStatus("error");
@@ -535,7 +521,7 @@ export const Welcome = memo(function Welcome({
         setModelWarning(result.warning ?? null);
         setModelStatus(selection.model ? "ready" : "idle");
       } catch (error) {
-        if (!owns()) return;
+        if (!request.current()) return;
         setModelWarning(
           error instanceof Error
             ? error.message
@@ -544,10 +530,7 @@ export const Welcome = memo(function Welcome({
         setModelStatus("error");
       }
     })();
-    return () => {
-      request.abort();
-      recovery.reset();
-    };
+    return request.abort;
   }, [
     inheritance?.sessionId,
     inheritance?.cwd,

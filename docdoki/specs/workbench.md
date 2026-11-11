@@ -325,44 +325,25 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   when a model was chosen manually. Failed open/create operations stay in the navigation and start
   surfaces without replacing a transcript integrity error.
 
-- The project directory can be typed or chosen through a host-side directory picker. The host
-  process lists its own filesystem (`GET /api/host/dirs`, authenticated, session-independent), so
-  over SSH forwards or remote deployments the browsed tree is always the machine sessions run on,
-  and entry paths arrive joined with the host's own separators. Root discovery is host-owned:
-  POSIX exposes `/`, while Windows enumerates assigned drive names without filesystem availability
-  probes, so a user can cross from `C:\` to `D:\` without a nonexistent common parent.
-  Availability is checked when the user enters a drive. Drive discovery loads independently of the
-  current directory: a disconnected mapping, slow native query or failed root request cannot
-  withhold a valid local listing or confirmation. Discovery failure offers typed-path guidance
-  without turning a successful directory load into an error; late discovery belongs to the dialog
-  lifetime, not a superseded directory request.
+- Type a project directory or browse the Host filesystem through authenticated, session-independent
+  reads. Paths use the Host's separators. POSIX exposes `/`; Windows lists assigned drive names
+  without probing availability until a drive is opened. Root discovery belongs to the dialog and
+  runs independently of navigation. Failure leaves the listing usable and offers typed-path guidance.
 
-  An empty or relative starting point uses the Host home. Transient failures retry the requested
-  starting path. A confirmed invalid or inaccessible starting path falls back to the Host home.
-  The editable picker path wraps and grows with content and available width. Typed project paths expand
-  Host-native `~`/`~/` (also `~\` on Windows) before browsing, model/file observations, explicit
-  creation and session start. The browser machine's home, environment variables, globs and other
-  users' homes are never expanded. Enter browses the typed path without selecting it. Use this
-  directory validates an edited path against the Host before selection instead of choosing the old
-  listing. Errors keep the draft; editing clears the error for retry. While browsing, the path is
-  temporarily read-only but keeps keyboard focus, and stale or dismissed requests cannot select a
-  directory. Navigation withdraws the old listing, while a reload of the same path and filter
-  retains it during the read. If loading displaced list focus,
-  completion focuses the first available folder (or list container) only while no newer control
-  owns focus.
+  An empty, relative or confirmed inaccessible starting path uses the Host home. Transient failures
+  retry the requested path. Typed `~` and `~/` (also `~\` on Windows) resolve to the Host home
+  before browsing, discovery, creation or startup. Other users' homes, environment variables and
+  globs remain literal. The editable path wraps, and Enter browses it. **Use this directory**
+  validates edits before selecting. Loading keeps the path read-only and blocks confirmation.
+  A same-path/filter reload retains confirmed rows, while navigation withdraws them. Focus returns
+  to the first available folder or the list only if the read displaced it.
 
-- The directory picker places an eye-icon `Show hidden folders` toggle button immediately after
-  the `Choose project directory` heading, with an accessible label, tooltip, and `aria-pressed`
-  state. It is keyboard-operable, off on each opening, and retained while navigating directories
-  or drive roots. Unless `showHidden=1` is explicitly requested, the Host excludes dot-prefixed
-  names on every platform, plus Windows Hidden attributes and macOS UF_HIDDEN flags. This is a
-  visibility filter, not access control: a typed hidden path stays usable, and readable directory
-  links stay navigable. Native attribute inspection is bounded and nonrecursive; its failure is
-  reported rather than silently showing hidden entries, and explicit show-hidden browsing bypasses
-  that inspection.
-
-  Rapid visibility/navigation changes and dismissal retire old request writebacks; pending or
-  failed loads cannot confirm an earlier directory as the requested destination.
+- **Show hidden folders** is a keyboard-operable toggle beside the heading. It starts off and
+  persists while navigating. The default listing excludes dot-prefixed names, Windows Hidden
+  attributes and macOS UF_HIDDEN flags. Readable links and explicitly typed hidden paths remain
+  usable. Native attribute reads are bounded and nonrecursive. Failure is reported, and showing
+  hidden folders bypasses those reads. Visibility changes preserve unsubmitted path edits.
+  Navigation, visibility and transport changes or dismissal retire obsolete reads.
 
 ## Feedback scope
 

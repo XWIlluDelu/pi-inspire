@@ -14,11 +14,8 @@ interface RuntimeSessionDeletionHost {
   clearSelection(sessionId: string): void;
   hasSelectionReservation(sessionId: string): boolean;
   opening(sessionId: string): Promise<RuntimeSlot> | undefined;
-  hasOpening(sessionId: string): boolean;
   loadingSlot(sessionId: string): Promise<RuntimeSlot> | undefined;
-  hasLoadingSlot(sessionId: string): boolean;
   loadingPath(path: string): Promise<RuntimeSlot> | undefined;
-  hasLoadingPath(path: string): boolean;
   hasProvisionalReservation(sessionId: string, path?: string): boolean;
   hasForkReservation(sessionId: string, path: string): boolean;
   slot(sessionId: string): RuntimeSlot | undefined;
@@ -79,20 +76,20 @@ export class RuntimeSessionDeletionController {
   }
 
   private isSessionOpeningOrChanging(sessionId: string, path: string): boolean {
-    return (
+    return Boolean(
       this.host.hasSelectionReservation(sessionId) ||
-      this.host.hasLoadingSlot(sessionId) ||
-      this.host.hasLoadingPath(path) ||
-      this.host.hasOpening(sessionId) ||
-      this.host.hasProvisionalReservation(sessionId, path) ||
-      this.host.hasForkReservation(sessionId, path)
+        this.host.loadingSlot(sessionId) ||
+        this.host.loadingPath(path) ||
+        this.host.opening(sessionId) ||
+        this.host.hasProvisionalReservation(sessionId, path) ||
+        this.host.hasForkReservation(sessionId, path),
     );
   }
 
   private async deleteSessionInside(
     sessionId: string,
     authorizedSession?: SessionRecord,
-  ): Promise<SessionDeleteResponse> {
+  ): Promise<HiddenClearResponse["deleted"][number]> {
     if (
       this.host.hasSelectionReservation(sessionId) ||
       this.host.hasProvisionalReservation(sessionId)
@@ -176,68 +173,42 @@ export class RuntimeSessionDeletionController {
   }
 
   deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
-    return this.host.withMaintenance(() =>
-      this.deleteSessionRequest(sessionId),
-    );
-  }
-
-  private deleteSessionRequest(
-    sessionId: string,
-  ): Promise<SessionDeleteResponse> {
-    this.host.assertNotClosing();
-    const pending = this.deleting.get(sessionId);
-    if (pending) return pending;
-    if (this.hiddenDeletionIds.has(sessionId)) {
-      return Promise.reject(requestError("That session is being deleted", 409));
-    }
-    const deletion = this.deleteSessionInside(sessionId);
-    this.deleting.set(sessionId, deletion);
-    const clear = () => {
-      if (this.deleting.get(sessionId) === deletion)
-        this.deleting.delete(sessionId);
-    };
-    void deletion.then(clear, clear);
-    return deletion;
+    return this.host.withMaintenance(() => {
+      this.host.assertNotClosing();
+      const pending = this.deleting.get(sessionId);
+      if (pending) return pending;
+      if (this.hiddenDeletionIds.has(sessionId))
+        throw requestError("That session is being deleted", 409);
+      const deletion = this.deleteSessionInside(sessionId).finally(() => {
+        if (this.deleting.get(sessionId) === deletion)
+          this.deleting.delete(sessionId);
+      });
+      this.deleting.set(sessionId, deletion);
+      return deletion;
+    });
   }
 
   /** Deletes precisely the reviewed catalog selection derived from Hidden's
    * individual ids and complete project folders. */
-  async clearHiddenSessions(
+  clearHiddenSessions(
     expectedSessionIds: readonly string[],
     hiddenSessionIds: readonly string[],
     hiddenProjectCwds: readonly string[],
   ): Promise<HiddenClearResponse> {
-    return this.host.withMaintenance(() =>
-      this.clearHiddenSessionsRequest(
+    return this.host.withMaintenance(() => {
+      this.host.assertNotClosing();
+      if (this.clearingHidden)
+        throw requestError("Hidden is already being cleared", 409);
+      const deletion = this.clearHiddenSessionsInside(
         expectedSessionIds,
         hiddenSessionIds,
         hiddenProjectCwds,
-      ),
-    );
-  }
-
-  private clearHiddenSessionsRequest(
-    expectedSessionIds: readonly string[],
-    hiddenSessionIds: readonly string[],
-    hiddenProjectCwds: readonly string[],
-  ): Promise<HiddenClearResponse> {
-    this.host.assertNotClosing();
-    if (this.clearingHidden) {
-      return Promise.reject(
-        requestError("Hidden is already being cleared", 409),
-      );
-    }
-    const deletion = this.clearHiddenSessionsInside(
-      expectedSessionIds,
-      hiddenSessionIds,
-      hiddenProjectCwds,
-    );
-    this.clearingHidden = deletion;
-    const clear = () => {
-      if (this.clearingHidden === deletion) this.clearingHidden = null;
-    };
-    void deletion.then(clear, clear);
-    return deletion;
+      ).finally(() => {
+        if (this.clearingHidden === deletion) this.clearingHidden = null;
+      });
+      this.clearingHidden = deletion;
+      return deletion;
+    });
   }
 
   private assertHiddenClearReady(records: readonly SessionRecord[]): void {
@@ -305,11 +276,7 @@ export class RuntimeSessionDeletionController {
         await this.host.validateSessionRecord(session);
       for (const session of records) {
         try {
-          const result = await this.deleteSessionInside(session.id, session);
-          deleted.push({
-            sessionId: result.sessionId,
-            disposition: result.disposition,
-          });
+          deleted.push(await this.deleteSessionInside(session.id, session));
         } catch (error) {
           return {
             deleted,

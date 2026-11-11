@@ -147,6 +147,13 @@ export function ModelsSettings({
     generation = useRef(0),
     choicesGeneration = useRef(0),
     providerGeneration = useRef(0);
+  const ownsSettings = useCallback(
+    () =>
+      mounted.current &&
+      currentOwner.current.owner === owner &&
+      currentOwner.current.transport === state.transport,
+    [owner, state.transport],
+  );
   const captureFocus = (): FocusTicket => {
     focusTicketRef.current?.release();
     const origin =
@@ -165,11 +172,9 @@ export function ModelsSettings({
       allowed: () =>
         !released &&
         !moved &&
-        mounted.current &&
+        ownsSettings() &&
         activeRef.current &&
-        Boolean(rootRef.current?.isConnected) &&
-        currentOwner.current.owner === owner &&
-        currentOwner.current.transport === state.transport,
+        Boolean(rootRef.current?.isConnected),
       release: () => {
         released = true;
         document.removeEventListener("focusin", observe, true);
@@ -267,36 +272,27 @@ export function ModelsSettings({
     await load();
   }, [load]);
   const refreshProviders = useCallback(async () => {
-    const owns = () =>
-      mounted.current &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport;
-    if (!owns()) return;
+    if (!ownsSettings()) return;
     const current = ++providerGeneration.current;
+    const owns = () => ownsSettings() && providerGeneration.current === current;
     setProvidersLoading(true);
     try {
       const auth = await store.providerAuth(owner, { operation: "providers" });
-      if (owns() && providerGeneration.current === current) {
+      if (owns()) {
         setProviders(auth as ProviderLoginOption[]);
         setProvidersLoaded(true);
         setAuthError(null);
       }
     } catch (error) {
-      if (owns() && providerGeneration.current === current)
-        setAuthError(messageOf(error));
+      if (owns()) setAuthError(messageOf(error));
     } finally {
-      if (owns() && providerGeneration.current === current)
-        setProvidersLoading(false);
+      if (owns()) setProvidersLoading(false);
     }
-  }, [owner, state.transport]);
+  }, [owner, ownsSettings]);
   const refreshChoices = useCallback(async () => {
     const request = ++choicesGeneration.current;
     const settingsGeneration = generation.current;
-    const owns = () =>
-      mounted.current &&
-      choicesGeneration.current === request &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport;
+    const owns = () => ownsSettings() && choicesGeneration.current === request;
     if (!owns()) return;
     try {
       const warning = await store.refreshModels(owner);
@@ -309,7 +305,7 @@ export function ModelsSettings({
       if (owns() && generation.current === settingsGeneration)
         setError(messageOf(error));
     }
-  }, [owner, state.transport, load]);
+  }, [owner, load, ownsSettings]);
   useEffect(() => {
     mounted.current = true;
     setSnapshot(null);
@@ -363,10 +359,6 @@ export function ModelsSettings({
     target: "config" | "common" | null = null,
   ): Promise<boolean> => {
     if (busy) return false;
-    const owns = () =>
-      mounted.current &&
-      currentOwner.current.owner === owner &&
-      currentOwner.current.transport === state.transport;
     const ticket = captureFocus();
     let focus: FocusPlan = (ticket) => focusElement(ticket, ticket.origin);
     ++generation.current;
@@ -375,7 +367,7 @@ export function ModelsSettings({
     setErrorTarget(target);
     try {
       const next = await operation();
-      if (!owns()) return false;
+      if (!ownsSettings()) return false;
       ++generation.current;
       if (next.snapshot) {
         setSnapshot(next.snapshot);
@@ -386,7 +378,7 @@ export function ModelsSettings({
       if (onSaved) focus = onSaved(next);
       return true;
     } catch (error) {
-      if (owns()) {
+      if (ownsSettings()) {
         setError(messageOf(error));
         if (target)
           focus = (ticket) =>
@@ -401,7 +393,7 @@ export function ModelsSettings({
       }
       return false;
     } finally {
-      if (owns()) {
+      if (ownsSettings()) {
         setBusy(false);
         setFocusHandoff({ ticket, focus });
       } else ticket.release();
@@ -758,12 +750,7 @@ export function ModelsSettings({
                   type="button"
                   className="button button--danger"
                   disabled={busy}
-                  onClick={async () => {
-                    if (await edit(removing)) {
-                      setRemoving(null);
-                      setEditor(null);
-                    }
-                  }}
+                  onClick={() => void edit(removing)}
                 >
                   Remove configuration
                 </button>

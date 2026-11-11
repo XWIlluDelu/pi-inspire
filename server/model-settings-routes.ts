@@ -1,8 +1,8 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { type ModelOption, THINKING_LEVELS } from "../shared/contracts.js";
-import type { ModelConfigEdit } from "../shared/model-settings.js";
 import type { ProviderAuthOperation } from "../shared/provider-auth-bridge.js";
+import { savedConfiguration } from "./configuration-file.js";
 import { modelOption } from "./model-catalog.js";
 import type { ModelMetadataCatalog } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
@@ -138,66 +138,59 @@ export function registerModelSettingsRoutes(
       };
     }
   }
+  async function readSettings(
+    service: ModelSettingsService,
+    owner: Awaited<ReturnType<typeof context>>,
+    refresh = false,
+  ) {
+    const { models, modelsWarning } = await modelsFor(owner, refresh);
+    return {
+      ...(await service.read(owner.cwd, models)),
+      ...(modelsWarning ? { modelsWarning } : {}),
+    };
+  }
+  const saveWarning =
+    "Saved to Pi. Model settings could not reload; reload settings before the next edit.";
   app.get("/api/model-settings", async (request, response) => {
     response.setHeader("Cache-Control", "no-store");
     if (!deps.modelSettings)
       throw requestError("Model settings are unavailable on this Host", 503);
-    const owner = await context(request.query);
-    const { models, modelsWarning } = await modelsFor(owner);
-    response.json({
-      ...(await deps.modelSettings.read(owner.cwd, models)),
-      ...(modelsWarning ? { modelsWarning } : {}),
-    });
+    response.json(
+      await readSettings(deps.modelSettings, await context(request.query)),
+    );
   });
   app.patch("/api/model-settings", async (request, response) => {
     const body = z
       .object({ revision, patch: preferences })
       .strict()
       .parse(request.body);
-    if (!deps.modelSettings)
-      throw requestError("Model settings are unavailable", 503);
+    const service = deps.modelSettings;
+    if (!service) throw requestError("Model settings are unavailable", 503);
     const owner = await context(request.query);
-    await deps.modelSettings.savePreferences(body.revision, body.patch);
+    await service.savePreferences(body.revision, body.patch);
     deps.invalidateModels?.();
-    response.json(await savedSnapshot(owner.cwd, await modelsFor(owner)));
+    response.json(
+      await savedConfiguration(() => readSettings(service, owner), saveWarning),
+    );
   });
   app.patch("/api/model-settings/config", async (request, response) => {
     const body = z
       .object({ revision, edit: configEdit })
       .strict()
       .parse(request.body);
-    if (!deps.modelSettings)
-      throw requestError("Model settings are unavailable", 503);
+    const service = deps.modelSettings;
+    if (!service) throw requestError("Model settings are unavailable", 503);
     const owner = await context(request.query);
-    await deps.modelSettings.saveConfig(
-      owner.cwd,
-      body.revision,
-      body.edit as ModelConfigEdit,
-    );
+    await service.saveConfig(owner.cwd, body.revision, body.edit);
     deps.invalidateModels?.();
     // Refresh the edited reader; invalidated workspace catalogs reload on demand.
-    response.json(await savedSnapshot(owner.cwd, await modelsFor(owner, true)));
+    response.json(
+      await savedConfiguration(
+        () => readSettings(service, owner, true),
+        saveWarning,
+      ),
+    );
   });
-  async function savedSnapshot(
-    cwd: string,
-    { models, modelsWarning }: Awaited<ReturnType<typeof modelsFor>>,
-  ): Promise<import("../shared/model-settings.js").ModelSettingsWriteResult> {
-    try {
-      return {
-        saved: true,
-        snapshot: {
-          ...(await deps.modelSettings!.read(cwd, models)),
-          ...(modelsWarning ? { modelsWarning } : {}),
-        },
-      };
-    } catch {
-      return {
-        saved: true,
-        warning:
-          "Saved to Pi. Model settings could not reload; reload settings before the next edit.",
-      };
-    }
-  }
   type AuthEndpoint = {
     request(operation: ProviderAuthOperation): Promise<unknown>;
     isCurrent(): boolean;

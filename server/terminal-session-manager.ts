@@ -8,7 +8,6 @@ import {
   encodeTerminalServerDataFrame,
   INSPIRE_SHELL_OSC,
   MAX_TERMINAL_COLS,
-  MAX_TERMINAL_COMMAND_CHARS,
   MAX_TERMINAL_CWD_CHARS,
   MAX_TERMINAL_HISTORY_DAYS,
   MAX_TERMINAL_PROFILE_ID_CHARS,
@@ -20,6 +19,7 @@ import {
   MIN_TERMINAL_COLS,
   MIN_TERMINAL_HISTORY_DAYS,
   MIN_TERMINAL_ROWS,
+  parseTerminalShellMarker,
   type TerminalCatalogResponse,
   type TerminalCreateRequest,
   type TerminalDescriptor,
@@ -244,26 +244,6 @@ function cleanTerminalText(value: string, maxChars: number): string {
     .replace(/\s+/gu, " ")
     .trim()
     .slice(0, maxChars);
-}
-
-function cleanTerminalCommand(value: string): string {
-  if (
-    value.length < 1 ||
-    value.length > MAX_TERMINAL_COMMAND_CHARS ||
-    /[\u0000\u0007\u001b]/u.test(value) ||
-    !/\S/u.test(value)
-  )
-    return "";
-  return value;
-}
-
-function decodedShellMarkerPayload(phase: string, payload: string): string {
-  if (!phase.endsWith("1")) return payload;
-  try {
-    return decodeURIComponent(payload);
-  } catch {
-    return "";
-  }
 }
 
 function cleanTerminalPath(value: string): string {
@@ -1175,23 +1155,18 @@ export class TerminalSessionManager implements TerminalService {
   }
 
   private handleShellMarker(session: ManagedTerminal, value: string): void {
-    const separator = value.indexOf(";");
-    const phase = separator < 0 ? value : value.slice(0, separator);
-    const payload = decodedShellMarkerPayload(
-      phase,
-      separator < 0 ? "" : value.slice(separator + 1),
-    );
-    if (phase === "P" || phase === "P1") {
-      const cwd = cleanTerminalPath(payload);
+    const marker = parseTerminalShellMarker(value);
+    if (!marker) return;
+    if (marker.type === "cwd") {
+      const cwd = cleanTerminalPath(marker.cwd);
       if (!cwd || !isAbsolute(cwd) || cwd === session.currentCwd) return;
       session.currentCwd = cwd;
       this.touch(session);
       this.broadcastDescriptor(session);
       return;
     }
-    if (phase === "C" || phase === "C1") {
-      const command = cleanTerminalCommand(payload);
-      if (!command) return;
+    if (marker.type === "command") {
+      const { command } = marker;
       const commandTitle = cleanTerminalText(command, MAX_TERMINAL_TITLE_CHARS);
       session.activeCommand = command;
       session.commandStartedAt = this.now().getTime();
@@ -1201,9 +1176,7 @@ export class TerminalSessionManager implements TerminalService {
       this.broadcastDescriptor(session);
       return;
     }
-    if (phase !== "D" || !session.activeCommand) return;
-    const parsedExitCode = Number(payload);
-    const exitCode = Number.isInteger(parsedExitCode) ? parsedExitCode : null;
+    if (!session.activeCommand) return;
     const completedAt = this.now().getTime();
     const durationMs =
       session.commandStartedAt === null
@@ -1219,7 +1192,7 @@ export class TerminalSessionManager implements TerminalService {
       type: "command_complete",
       command,
       currentCwd: session.currentCwd,
-      exitCode,
+      exitCode: marker.exitCode,
       durationMs,
     });
     this.broadcastDescriptor(session);

@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, rm } from "node:fs/promises";
+import { chmod, lstat, rm } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { dirname } from "node:path";
 import { createServer, type Server } from "node:tls";
@@ -6,6 +6,7 @@ import {
   decodeTerminalInputFrame,
   type TerminalClientControlMessage,
 } from "../shared/terminal-contracts.js";
+import { ensurePrivateDirectory } from "./private-directory.js";
 import type { TerminalDaemonInfo } from "./terminal-daemon-configuration.js";
 import {
   TERMINAL_DAEMON_PROTOCOL_VERSION,
@@ -52,22 +53,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 async function prepareUnixSocket(address: string): Promise<void> {
-  const directory = dirname(address);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const directoryInfo = await lstat(directory);
-  if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink())
-    throw new Error(`The terminal IPC directory is invalid: ${directory}`);
-  if (
-    typeof process.getuid === "function" &&
-    directoryInfo.uid !== process.getuid()
-  )
-    throw new Error(
-      `The terminal IPC directory is owned by another user: ${directory}`,
-    );
-  if ((directoryInfo.mode & 0o077) !== 0)
-    throw new Error(
-      `The terminal IPC directory must not be accessible by other users; use a private directory: ${directory}`,
-    );
+  await ensurePrivateDirectory(dirname(address), "terminal IPC directory");
   try {
     const info = await lstat(address);
     if (!info.isSocket() || info.isSymbolicLink())
@@ -100,7 +86,6 @@ function errorPayload(error: unknown): {
 
 export class TerminalDaemonServer {
   private server: Server | null = null;
-  private readonly sockets = new Set<Socket>();
   private readonly connections = new Set<Socket>();
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
@@ -173,8 +158,6 @@ export class TerminalDaemonServer {
       this.server = null;
       for (const socket of this.connections) socket.destroy();
       this.connections.clear();
-      for (const socket of this.sockets) socket.destroy();
-      this.sockets.clear();
       if (server)
         await new Promise<void>((resolvePromise) =>
           server.close(() => resolvePromise()),
@@ -188,11 +171,6 @@ export class TerminalDaemonServer {
   }
 
   private accept(socket: Socket): void {
-    if (this.sockets.size >= CONNECTION_LIMIT) {
-      socket.destroy();
-      return;
-    }
-    this.sockets.add(socket);
     socket.setNoDelay(true);
     const decoder = new TerminalIpcDecoder();
     let authenticated = false;
@@ -308,7 +286,6 @@ export class TerminalDaemonServer {
     socket.once("error", () => {});
     socket.once("close", () => {
       clearTimeout(handshakeTimeout);
-      this.sockets.delete(socket);
       attachment?.detach();
     });
   }

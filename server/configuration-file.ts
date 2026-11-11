@@ -13,6 +13,18 @@ import { basename, dirname, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { requestError } from "./request-error.js";
 
+/** A readback failure after publication leaves the save committed. */
+export async function savedConfiguration<T>(
+  read: () => Promise<T>,
+  warning: string,
+): Promise<{ saved: true; snapshot: T } | { saved: true; warning: string }> {
+  try {
+    return { saved: true, snapshot: await read() };
+  } catch {
+    return { saved: true, warning };
+  }
+}
+
 export async function readConfigurationText(
   path: string,
 ): Promise<string | undefined> {

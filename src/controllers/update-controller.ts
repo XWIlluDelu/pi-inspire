@@ -160,25 +160,16 @@ export class UpdateController {
   ): void {
     const api = this.host.api();
     const state = this.host.state();
-    const checking =
-      kind === "inspire"
-        ? state.inspireUpdateChecking || state.inspireUpdateRequestPending
-        : state.piUpdateChecking || state.piUpdateRequestPending;
-    if (!api || checking) return;
+    const pendingField = `${kind}UpdateRequestPending` as const;
+    const errorField = `${kind}UpdateRequestError` as const;
+    if (!api || state[`${kind}UpdateChecking`] || state[pendingField]) return;
     const request = ++this.checkRequests[kind];
     const recovery = this.checkRecoveries[kind];
     const owns = () =>
       request === this.checkRequests[kind] && api === this.host.api();
-    const pending = () => this.host.state()[`${kind}UpdateRequestPending`];
+    const pending = () => this.host.state()[pendingField];
     const patchRequest = (value: boolean, error: string | null = null) =>
-      this.host.patch(
-        kind === "inspire"
-          ? {
-              inspireUpdateRequestPending: value,
-              inspireUpdateRequestError: error,
-            }
-          : { piUpdateRequestPending: value, piUpdateRequestError: error },
-      );
+      this.host.patch({ [pendingField]: value, [errorField]: error });
     const run = async () => {
       if (!owns() || !pending()) return;
       try {

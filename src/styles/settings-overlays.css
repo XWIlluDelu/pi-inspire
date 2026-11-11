@@ -6,13 +6,13 @@
   overflow: clip;
 }
 
-.host-restart__actions {
+.settings-confirmation__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
-.host-restart__actions .button {
+.settings-confirmation__actions .button {
   min-height: 32px;
   padding: var(--space-1) var(--space-3);
   font-size: var(--text-sm);
@@ -26,15 +26,15 @@
   overflow-wrap: anywhere;
 }
 
-.host-restart-confirm {
+.settings-confirmation {
   width: min(420px, 92vw);
 }
 
-.host-restart-confirm .host-restart__actions {
+.settings-confirmation .settings-confirmation__actions {
   justify-content: flex-end;
 }
 
-.host-restart-confirm .host-restart__actions .button {
+.settings-confirmation .settings-confirmation__actions .button {
   min-height: 36px;
 }
 
@@ -365,7 +365,7 @@
   letter-spacing: normal;
 }
 
-.host-restart__actions .button {
+.settings-confirmation__actions .button {
   padding-block: var(--space-1);
 }
 
@@ -894,7 +894,7 @@
   .settings__field .dropdown__option,
   .settings-switch,
   .settings__nav-item,
-  .host-restart__actions .button {
+  .settings-confirmation__actions .button {
     min-height: 40px;
   }
 }

@@ -104,6 +104,11 @@ const MAX_TERMINAL_ATTACH_TICKETS = 2_048;
 const MAX_TERMINAL_SOCKET_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_TERMINAL_SOCKETS = 128;
 
+interface TerminalSocketState {
+  responsive: boolean;
+  attachment: TerminalAttachment | "attaching" | null;
+}
+
 /** Register after /api authentication. Upgrade admission remains in the Host:
  * exact-origin single-use socket tickets are required before attach is read.
  * This gateway owns only tickets/attachments; the daemon still owns the PTYs. */
@@ -265,9 +270,7 @@ export function createTerminalGateway(
     maxPayload: MAX_TERMINAL_INPUT_BYTES + 5,
     perMessageDeflate: false,
   });
-  const terminalSockets = new Set<WebSocket>();
-  const terminalAttachments = new Map<WebSocket, TerminalAttachment>();
-  const responsiveTerminalSockets = new Map<WebSocket, boolean>();
+  const terminalSockets = new Map<WebSocket, TerminalSocketState>();
   const sendTerminalBounded = (
     socket: WebSocket,
     message: string | Uint8Array,
@@ -291,45 +294,38 @@ export function createTerminalGateway(
   };
   const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
   const heartbeatInterval = setInterval(() => {
-    for (const socket of terminalSockets) {
+    for (const [socket, peer] of terminalSockets) {
       if (socket.readyState !== WebSocket.OPEN) continue;
-      if (!responsiveTerminalSockets.get(socket)) {
+      if (!peer.responsive) {
         socket.terminate();
         continue;
       }
-      responsiveTerminalSockets.set(socket, false);
+      peer.responsive = false;
       try {
         socket.ping();
       } catch {
         socket.terminate();
         continue;
       }
-      if (terminalAttachments.has(socket))
+      if (peer.attachment && peer.attachment !== "attaching")
         sendTerminalBounded(socket, heartbeatMessage);
     }
   }, heartbeatIntervalMs);
   heartbeatInterval.unref();
 
   terminalWebsocket.on("connection", (socket, upgradeRequest) => {
-    terminalSockets.add(socket);
-    responsiveTerminalSockets.set(socket, true);
-    let attachment: TerminalAttachment | null = null;
-    let attaching = false;
-    let closed = false;
+    const peer: TerminalSocketState = { responsive: true, attachment: null };
+    terminalSockets.set(socket, peer);
     const attachTimeout = setTimeout(() => {
-      if (!attachment && socket.readyState === WebSocket.OPEN)
+      if (!peer.attachment && socket.readyState === WebSocket.OPEN)
         socket.close(1008, "Terminal attach timed out");
     }, TERMINAL_ATTACH_TICKET_TTL_MS);
     attachTimeout.unref();
     const close = (): void => {
-      if (closed) return;
-      closed = true;
+      if (!terminalSockets.delete(socket)) return;
       clearTimeout(attachTimeout);
-      terminalSockets.delete(socket);
-      responsiveTerminalSockets.delete(socket);
-      terminalAttachments.delete(socket);
-      attachment?.detach();
-      attachment = null;
+      if (peer.attachment && peer.attachment !== "attaching")
+        peer.attachment.detach();
     };
     const sendError = (code: string, message: string, fatal: boolean): void => {
       sendTerminalBounded(
@@ -350,16 +346,19 @@ export function createTerminalGateway(
         if (socket.readyState === WebSocket.OPEN) socket.close(code, reason);
       },
     };
-    socket.on("pong", () => responsiveTerminalSockets.set(socket, true));
+    socket.on("pong", () => {
+      peer.responsive = true;
+    });
     socket.on("error", () => {
       close();
       socket.terminate();
     });
     socket.on("close", close);
     socket.on("message", (raw, isBinary) => {
-      if (closed) return;
-      if (!attachment) {
-        if (attaching || isBinary) {
+      if (!terminalSockets.has(socket)) return;
+      const attachment = peer.attachment;
+      if (!attachment || attachment === "attaching") {
+        if (attachment === "attaching" || isBinary) {
           sendError(
             "terminal_attach_required",
             "Attach before using the terminal",
@@ -395,21 +394,17 @@ export function createTerminalGateway(
           socket.close(1008, "Invalid terminal ticket");
           return;
         }
-        attaching = true;
+        peer.attachment = "attaching";
         clearTimeout(attachTimeout);
         const { ticket: _ticket, type: _type, ...options } = request;
         void requireTerminal()
           .attach({ ...options, terminalId: ticket.terminalId }, sink)
           .then((handle) => {
-            attaching = false;
-            if (closed) handle.detach();
-            else {
-              attachment = handle;
-              terminalAttachments.set(socket, handle);
-            }
+            if (terminalSockets.has(socket)) peer.attachment = handle;
+            else handle.detach();
           })
           .catch((error: unknown) => {
-            attaching = false;
+            peer.attachment = null;
             const code =
               typeof (error as { code?: unknown })?.code === "string"
                 ? String((error as { code: string }).code)
@@ -463,7 +458,7 @@ export function createTerminalGateway(
     close(): void {
       clearInterval(heartbeatInterval);
       terminalTickets.clear();
-      for (const socket of terminalSockets)
+      for (const socket of terminalSockets.keys())
         socket.close(1001, "Server shutting down");
     },
     async terminateRemaining(): Promise<void> {

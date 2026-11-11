@@ -1,5 +1,6 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { z } from "zod";
+import { savedConfiguration } from "./configuration-file.js";
 import {
   type McpConfigService,
   mcpConfigEditSchema,
@@ -33,38 +34,35 @@ export function registerMcpConfigRoutes(
     // Project availability belongs to the project file, not user configuration.
     return root ? resolveUserPath(root, process.cwd()) : null;
   }
-  app.get("/api/mcp-config", async (request, response) => {
+  function configuration(response: Response): McpConfigService {
     response.setHeader("Cache-Control", "no-store");
     if (!deps.mcpConfig)
       throw requestError("MCP configuration is unavailable on this Host", 503);
-    response.json(await deps.mcpConfig.read(context(request.query)));
+    return deps.mcpConfig;
+  }
+  app.get("/api/mcp-config", async (request, response) => {
+    response.json(await configuration(response).read(context(request.query)));
   });
   app.post("/api/mcp-config/connection", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    if (!deps.mcpConfig)
-      throw requestError("MCP configuration is unavailable on this Host", 503);
+    const service = configuration(response);
     const input = mcpConnectionReadSchema.safeParse(request.body);
     if (!input.success) throw requestError("Invalid MCP connection read", 400);
     response.json(
-      await deps.mcpConfig.readConnection(context(request.query), input.data),
+      await service.readConnection(context(request.query), input.data),
     );
   });
   app.patch("/api/mcp-config", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
-    if (!deps.mcpConfig)
-      throw requestError("MCP configuration is unavailable on this Host", 503);
+    const service = configuration(response);
     const edit = mcpConfigEditSchema.safeParse(request.body);
     if (!edit.success)
       throw requestError("Invalid MCP configuration edit", 400);
     const cwd = context(request.query);
-    await deps.mcpConfig.save(cwd, edit.data);
-    try {
-      response.json({ saved: true, snapshot: await deps.mcpConfig.read(cwd) });
-    } catch {
-      response.json({
-        saved: true,
-        warning: "Saved to Pi. Refresh files before the next edit.",
-      });
-    }
+    await service.save(cwd, edit.data);
+    response.json(
+      await savedConfiguration(
+        () => service.read(cwd),
+        "Saved to Pi. Refresh files before the next edit.",
+      ),
+    );
   });
 }

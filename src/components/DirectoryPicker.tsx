@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { HostDirEntry, HostDirListing } from "../../shared/contracts";
 import { ApiError } from "../api";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { isTransientFailure, recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
 import { PiLoader } from "./PiLoader";
@@ -24,7 +24,11 @@ export function DirectoryPicker({
   onCancel: () => void;
   onPick: (path: string) => void;
 }) {
-  const [listing, setListing] = useState<HostDirListing | null>(null);
+  const [confirmed, setConfirmed] = useState<{
+    listing: HostDirListing;
+    transport: number;
+    hidden: boolean;
+  } | null>(null);
   const [location, setLocation] = useState(initial?.trim() ?? "");
   const [draftPath, setDraftPath] = useState<string | null>(null);
   const path = draftPath ?? location;
@@ -34,12 +38,17 @@ export function DirectoryPicker({
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
   const transportGeneration = useAppState((state) => state.transportGeneration);
+  const listing =
+    confirmed?.transport === transportGeneration ? confirmed.listing : null;
   const initialTransport = useRef(transportGeneration);
   const pathRef = useRef(path);
   pathRef.current = path;
-  const listingTransport = useRef<number | null>(null);
   // Each new read aborts its predecessor, including its pending retry and late result.
-  const listingRequest = useRef<AbortController | null>(null);
+  const listingRequest = useRef<ReturnType<typeof recoverableRead> | null>(
+    null,
+  );
+  const ownsTransport = () =>
+    store.getState().transportGeneration === transportGeneration;
   const dialogRef = useModalFocus<HTMLDivElement>(
     true,
     "directory-picker",
@@ -67,7 +76,7 @@ export function DirectoryPicker({
     fallbackHome?: boolean;
   }>({});
 
-  const load = (
+  const load = async (
     path?: string,
     {
       fallbackHome = false,
@@ -78,68 +87,51 @@ export function DirectoryPicker({
     } = {},
   ) => {
     listingRequest.current?.abort();
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
+    const request = recoverableRead(ownsTransport);
     listingRequest.current = request;
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
     requested.current = { path, fallbackHome };
     restoreListFocus.current = Boolean(
       listRef.current?.contains(document.activeElement),
     );
     setLocation(path ?? "");
-    if (
-      listing?.path !== path ||
-      hidden !== showHidden ||
-      listingTransport.current !== transportGeneration
-    )
-      setListing(null);
+    setConfirmed((current) =>
+      current?.listing.path === path &&
+      current?.hidden === hidden &&
+      current?.transport === transportGeneration
+        ? current
+        : null,
+    );
     setLoading(true);
     setError(null);
     const read = (target?: string) =>
-      recovery.read(
-        () => store.browseHostDirs(target, hidden),
-        request.signal,
-        owns,
-      );
-    return read(path)
-      .catch((cause: unknown) => {
-        if (!owns()) return undefined;
+      request.read(() => store.browseHostDirs(target, hidden));
+    try {
+      const result = await read(path).catch((cause: unknown) => {
         if (
+          request.current() &&
           fallbackHome &&
           path &&
           cause instanceof ApiError &&
           [400, 403, 404].includes(cause.status)
-        ) {
-          recovery.reset();
+        )
           return read(undefined);
-        }
         throw cause;
-      })
-      .then((result) => {
-        if (!owns() || !result) return;
-        requested.current = { path: result.path };
-        listingTransport.current = transportGeneration;
-        setListing(result);
-        setLocation(result.path);
-        return result;
-      })
-      .catch((cause: unknown) => {
-        if (!owns()) return;
-        if (!isTransientFailure(cause)) {
-          setListing(null);
-          listingTransport.current = null;
-        }
-        setError(
-          cause instanceof Error ? cause.message : "Cannot open that directory",
-        );
-      })
-      .finally(() => {
-        recovery.reset();
-        if (owns()) setLoading(false);
-        if (listingRequest.current === request) listingRequest.current = null;
       });
+      if (!request.current()) return;
+      requested.current = { path: result.path };
+      setConfirmed({ listing: result, transport: transportGeneration, hidden });
+      setLocation(result.path);
+      return result;
+    } catch (cause) {
+      if (!request.current()) return;
+      if (!isTransientFailure(cause)) setConfirmed(null);
+      setError(
+        cause instanceof Error ? cause.message : "Cannot open that directory",
+      );
+    } finally {
+      if (request.current()) setLoading(false);
+      if (listingRequest.current === request) listingRequest.current = null;
+    }
   };
 
   const navigate = (target?: string) => {
@@ -149,11 +141,7 @@ export function DirectoryPicker({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: transport replacement revalidates the live path; navigation and visibility own their own reads.
   useEffect(() => {
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
+    const request = recoverableRead(ownsTransport);
     setDraftPath(null);
     void load(pathRef.current.trim() || undefined, {
       fallbackHome: initialTransport.current === transportGeneration,
@@ -163,21 +151,14 @@ export function DirectoryPicker({
     // Advisory drive discovery must not block directory navigation.
     void (async () => {
       try {
-        const result = await recovery.read(
-          () => store.browseHostRoots(),
-          request.signal,
-          owns,
-        );
-        if (owns()) setRoots(result.roots);
+        const result = await request.read(() => store.browseHostRoots());
+        if (request.current()) setRoots(result.roots);
       } catch {
-        if (owns()) setRootsUnavailable(true);
-      } finally {
-        recovery.reset();
+        if (request.current()) setRootsUnavailable(true);
       }
     })();
     return () => {
       request.abort();
-      recovery.reset();
       listingRequest.current?.abort();
     };
   }, [transportGeneration]);

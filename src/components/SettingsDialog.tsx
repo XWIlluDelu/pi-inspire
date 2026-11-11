@@ -1,8 +1,65 @@
 import { AlertTriangle, X } from "lucide-react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useModalFocus } from "../use-modal-focus";
 import { ContextPaneState } from "./ContextPaneState";
 import { PiLoader } from "./PiLoader";
+
+export function SettingsConfirmation({
+  id,
+  title,
+  description,
+  confirmLabel,
+  onClose,
+  onConfirm,
+}: {
+  id: string;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const ref = useModalFocus<HTMLDivElement>(true, id, onClose);
+  return createPortal(
+    <div className="overlay" role="presentation" onClick={onClose}>
+      <div
+        ref={ref}
+        className="dialog settings-confirmation"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-description`}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2 className="dialog__title" id={`${id}-title`}>
+          {title}
+        </h2>
+        <p className="dialog__message" id={`${id}-description`}>
+          {description}
+        </p>
+        <div className="settings-confirmation__actions">
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="button button--danger"
+            onClick={onConfirm}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 /** Static, inert placeholders keep the deferred body's columns and footer stable. */
 export function SettingsLoading({ onRetry }: { onRetry?: () => void }) {

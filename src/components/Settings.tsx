@@ -22,7 +22,6 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   ACTIVITY_FOLD_VISIBILITIES,
   type ActivityFoldVisibilityPreference,
@@ -50,7 +49,6 @@ import {
 } from "../install-app";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
-import { useModalFocus } from "../use-modal-focus";
 import { Dropdown } from "./Dropdown";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
@@ -65,58 +63,9 @@ import {
   SettingsFeedback,
   SettingsSwitch,
 } from "./SettingsControls";
+import { SettingsConfirmation } from "./SettingsDialog";
 import { SettingsSection as Section } from "./SettingsSection";
 import { SystemVersionsCard } from "./SystemVersionsCard";
-
-function ResetPreferencesConfirmation({
-  onClose,
-  onConfirm,
-}: {
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  const ref = useModalFocus<HTMLDivElement>(true, "reset-preferences", onClose);
-  return createPortal(
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog host-restart-confirm"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="reset-preferences-title"
-        aria-describedby="reset-preferences-description"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="dialog__title" id="reset-preferences-title">
-          Reset preferences?
-        </h2>
-        <p className="dialog__message" id="reset-preferences-description">
-          Restore Display, Conversation, Behavior, and Herdr preferences to
-          their defaults. Pi session settings, models, credentials, MCP servers,
-          and pinned or hidden sessions stay unchanged.
-        </p>
-        <div className="host-restart__actions">
-          <button
-            type="button"
-            className="button button--quiet"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="button button--danger"
-            onClick={onConfirm}
-          >
-            Reset preferences
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 const THEMES: Choice<ThemePreference>[] = [
   { value: "light", label: "Light", icon: <Sun size={13} aria-hidden /> },
@@ -871,7 +820,11 @@ export const SettingsContent = memo(function SettingsContent({
         </footer>
       </div>
       {confirmingReset && !suspended ? (
-        <ResetPreferencesConfirmation
+        <SettingsConfirmation
+          id="reset-preferences"
+          title="Reset preferences?"
+          description="Restore Display, Conversation, Behavior, and Herdr preferences to their defaults. Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged."
+          confirmLabel="Reset preferences"
           onClose={() => setConfirmingReset(false)}
           onConfirm={() => {
             store.restoreDefaultSettings();

@@ -6,6 +6,7 @@ covers:
   - server/configuration-file.ts
   - shared/*mcp*.ts
   - src/components/*Mcp*.tsx
+  - src/components/ConfigurationForm.tsx
   - src/styles/mcp-settings.css
   - tests/server/*mcp*.ts
   - tests/server/configuration-file.test.ts
@@ -40,14 +41,11 @@ remains decided but deferred until public runtime interfaces can support it.
 
 Settings → MCP groups file entries under **User** and **Project**, with quiet source-path captions.
 Rows show name, transport, file-disabled state and an understated same-name project override, not
-connection health. Add sits beside the section title; entry rows share Models' quiet Edit/Remove
-icon actions with explicit accessible names and tooltips. Advanced fields use the shared Settings
-disclosure chevron. Focused Edit and confirmed Remove keep their existing behavior, with Save/Cancel
-reachable while the form body scrolls. Policy-only Edit focuses the first policy control (Tool
-exposure) without opening its menu; ordinary edits focus the URL or program. New-server entry
-focuses Server name without scrolling its label above the form body, including in short narrow
-layouts. Project trust is explained briefly in the project editor, not repeated as a policy/status
-block in each group.
+connection health. Add sits beside the section title. Rows use the Models edit and remove buttons
+with accessible names and tooltips. Advanced fields use the shared disclosure. The model/MCP form
+keeps Save/Cancel reachable while the body scrolls and reveals the focused field's label. New-server
+forms focus Server name. Ordinary edits focus URL or Program. Policy edits focus Tool exposure
+with its menu closed. The project editor explains trust.
 
 A user server with no same-name project entry offers **Customize for this project** when the selected
 project file is editable. This opens the existing policy form with a fixed name/project target and
@@ -158,14 +156,9 @@ Configured MCP tools and Codemode composition continue through Pi.
 
 ## Checks
 
-Use isolated native configuration and local fixtures to verify:
-
-- source-preserving edits, policy inheritance, namespace collisions, merged OAuth validation and
-  revision/file/symlink authority;
-- secret-safe snapshots and explicit revision-bound value reads without executing hooks;
-- draft retention across category changes/conflicts, withdrawal on owner changes, and scoped edits
-  in desktop and narrow layouts;
-- native loading after save, with a distinct explicit Reload boundary for existing workers.
+File tests cover native parsing, revision authority, scoped policy, and protected values. Component
+tests cover draft ownership and Reload admission. Browser tests cover the responsive editor,
+stored-value editing, and saving and removing project definitions and overrides.
 
 ## Related interfaces
 

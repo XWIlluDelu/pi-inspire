@@ -1,6 +1,6 @@
 import type { ProjectDirEntry } from "../../shared/contracts";
 import { type Api, ApiError, type ProjectFileResult } from "../api";
-import { RecoveryBackoff } from "../recovery-backoff";
+import { recoverableRead } from "../recovery-backoff";
 
 export interface WorkspaceBrowserState {
   workspaceShowHidden: boolean;
@@ -65,8 +65,11 @@ function parentsOf(path: string): string[] {
  * response cannot refill another workspace.
  */
 export class WorkspaceController {
-  private directoryRequests = new Map<string, AbortController>();
-  private searchRequest: AbortController | null = null;
+  private directoryRequests = new Map<
+    string,
+    ReturnType<typeof recoverableRead>
+  >();
+  private searchRequest: ReturnType<typeof recoverableRead> | null = null;
   private refreshGeneration = 0;
   private revealNonce = 0;
   private statesByCwd = new Map<string, WorkspaceBrowserState>();
@@ -92,54 +95,35 @@ export class WorkspaceController {
 
   changeOwner(nextCwd: string | null): WorkspaceBrowserState {
     const current = this.host.state();
-    // Touch the destination before saving the departing workspace. Otherwise,
-    // inserting into a full LRU can evict the very projection being restored.
-    if (nextCwd && nextCwd !== current.cwd) {
-      const destination = this.statesByCwd.get(nextCwd);
-      if (destination) {
-        this.statesByCwd.delete(nextCwd);
-        this.statesByCwd.set(nextCwd, destination);
-      }
-    }
     if (current.cwd) {
-      const cached: WorkspaceBrowserState = {
+      this.statesByCwd.delete(current.cwd);
+      // Browser projections are replaced on update, so cached rows can share
+      // the confirmed snapshot without copying it on both sides of a switch.
+      this.statesByCwd.set(current.cwd, {
         workspaceShowHidden: current.workspaceShowHidden,
-        workspaceTruncatedDirs: { ...current.workspaceTruncatedDirs },
+        workspaceTruncatedDirs: current.workspaceTruncatedDirs,
         workspaceSearchTruncated: current.workspaceSearchTruncated,
-        workspaceLevels: { ...current.workspaceLevels },
-        workspaceExpandedDirs: [...current.workspaceExpandedDirs],
+        workspaceLevels: current.workspaceLevels,
+        workspaceExpandedDirs: current.workspaceExpandedDirs,
         workspaceLoadingDirs: [],
-        workspaceDirectoryErrors: { ...current.workspaceDirectoryErrors },
+        workspaceDirectoryErrors: current.workspaceDirectoryErrors,
         workspaceQuery: current.workspaceQuery,
-        workspaceMatches: [...current.workspaceMatches],
+        workspaceMatches: current.workspaceMatches,
         workspaceSearchLoading: current.workspaceSearchLoading,
         workspaceSearchError: current.workspaceSearchError,
         workspaceRevealRequest: null,
-      };
-      this.statesByCwd.delete(current.cwd);
-      this.statesByCwd.set(current.cwd, cached);
-      while (this.statesByCwd.size > 8) {
-        const oldest = this.statesByCwd.keys().next().value as
-          | string
-          | undefined;
-        if (!oldest) break;
-        this.statesByCwd.delete(oldest);
-      }
+      });
     }
     this.cancelRequests();
-    if (!nextCwd) return emptyWorkspaceBrowserState();
-    const cached = this.statesByCwd.get(nextCwd);
-    if (!cached) return emptyWorkspaceBrowserState();
-    this.statesByCwd.delete(nextCwd);
-    this.statesByCwd.set(nextCwd, cached);
-    return {
-      ...cached,
-      workspaceLevels: { ...cached.workspaceLevels },
-      workspaceExpandedDirs: [...cached.workspaceExpandedDirs],
-      workspaceLoadingDirs: [],
-      workspaceDirectoryErrors: { ...cached.workspaceDirectoryErrors },
-      workspaceMatches: [...cached.workspaceMatches],
-    };
+    const cached = nextCwd ? this.statesByCwd.get(nextCwd) : undefined;
+    // Promote the destination before enforcing the cache limit.
+    if (nextCwd && cached) {
+      this.statesByCwd.delete(nextCwd);
+      this.statesByCwd.set(nextCwd, cached);
+    }
+    if (this.statesByCwd.size > 8)
+      this.statesByCwd.delete(this.statesByCwd.keys().next().value!);
+    return cached ?? emptyWorkspaceBrowserState();
   }
 
   resumeSearch(): void {
@@ -155,17 +139,19 @@ export class WorkspaceController {
   }
 
   invalidateForTransportReplacement(): void {
-    this.cancelRequests();
     this.statesByCwd.clear();
-    const state = this.host.state();
+    this.resetProjection(this.host.state().workspaceShowHidden);
+  }
+
+  private resetProjection(showHidden: boolean): void {
+    this.cancelRequests();
+    const { workspaceExpandedDirs, workspaceQuery } = this.host.state();
     this.host.patch({
       ...emptyWorkspaceBrowserState(),
-      // Navigation belongs to the browser; fetched rows belong to the retired
-      // transport. Keep intent available to gestures made during bootstrap.
-      workspaceShowHidden: state.workspaceShowHidden,
-      workspaceExpandedDirs: state.workspaceExpandedDirs,
-      workspaceQuery: state.workspaceQuery,
-      workspaceSearchLoading: Boolean(state.workspaceQuery.trim()),
+      workspaceShowHidden: showHidden,
+      workspaceExpandedDirs,
+      workspaceQuery,
+      workspaceSearchLoading: Boolean(workspaceQuery.trim()),
     });
   }
 
@@ -174,45 +160,35 @@ export class WorkspaceController {
     options: { refresh?: boolean } = {},
   ): Promise<void> {
     const api = this.host.api();
-    const { sessionId, cwd, workspaceLevels } = this.host.state();
+    const before = this.host.state();
+    const { sessionId, cwd, workspaceLevels } = before;
     if (
       !api ||
       !sessionId ||
       !cwd ||
       this.directoryRequests.has(dir) ||
       (!options.refresh &&
-        Object.prototype.hasOwnProperty.call(workspaceLevels, dir) &&
-        !this.host.state().workspaceDirectoryErrors[dir])
+        Object.hasOwn(workspaceLevels, dir) &&
+        !before.workspaceDirectoryErrors[dir])
     )
       return;
-    const request = new AbortController();
+    const request = recoverableRead(() => this.owns(api, sessionId, cwd));
     this.directoryRequests.set(dir, request);
-    const recovery = new RecoveryBackoff();
-    const currentRequest = () =>
-      this.directoryRequests.get(dir) === request &&
-      !request.signal.aborted &&
-      this.owns(api, sessionId, cwd);
-    const before = this.host.state();
+    const errors = { ...before.workspaceDirectoryErrors };
+    delete errors[dir];
     this.host.patch({
       workspaceLoadingDirs: [...new Set([...before.workspaceLoadingDirs, dir])],
-      workspaceDirectoryErrors: Object.fromEntries(
-        Object.entries(before.workspaceDirectoryErrors).filter(
-          ([path]) => path !== dir,
-        ),
-      ),
+      workspaceDirectoryErrors: errors,
     });
     try {
-      const response = await recovery.read(
-        () =>
-          api.listFiles(sessionId, dir, {
-            signal: request.signal,
-            refresh: options.refresh,
-            showHidden: before.workspaceShowHidden,
-          }),
-        request.signal,
-        currentRequest,
+      const response = await request.read((signal) =>
+        api.listFiles(sessionId, dir, {
+          signal,
+          refresh: options.refresh,
+          showHidden: before.workspaceShowHidden,
+        }),
       );
-      if (!currentRequest()) return;
+      if (!request.current()) return;
       const current = this.host.state();
       this.host.patch({
         workspaceLevels: {
@@ -223,14 +199,9 @@ export class WorkspaceController {
           ...current.workspaceTruncatedDirs,
           [dir]: Boolean(response.truncated),
         },
-        workspaceDirectoryErrors: Object.fromEntries(
-          Object.entries(current.workspaceDirectoryErrors).filter(
-            ([path]) => path !== dir,
-          ),
-        ),
       });
     } catch (error) {
-      if (!currentRequest()) return;
+      if (!request.current()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;
@@ -243,7 +214,6 @@ export class WorkspaceController {
         },
       });
     } finally {
-      recovery.reset();
       if (this.directoryRequests.get(dir) === request) {
         this.directoryRequests.delete(dir);
         const current = this.host.state();
@@ -262,7 +232,7 @@ export class WorkspaceController {
     if (expanded.has(dir)) expanded.delete(dir);
     else {
       expanded.add(dir);
-      if (!Object.prototype.hasOwnProperty.call(state.workspaceLevels, dir))
+      if (!Object.hasOwn(state.workspaceLevels, dir))
         void this.loadDirectory(dir);
     }
     this.host.patch({ workspaceExpandedDirs: [...expanded] });
@@ -278,7 +248,7 @@ export class WorkspaceController {
       workspaceRevealRequest: { path, nonce: ++this.revealNonce },
     });
     for (const dir of ["", ...parents]) {
-      if (!Object.prototype.hasOwnProperty.call(state.workspaceLevels, dir))
+      if (!Object.hasOwn(state.workspaceLevels, dir))
         void this.loadDirectory(dir);
     }
   }
@@ -291,15 +261,7 @@ export class WorkspaceController {
 
   setShowHidden(showHidden: boolean): void {
     if (showHidden === this.host.state().workspaceShowHidden) return;
-    const state = this.host.state();
-    this.cancelRequests();
-    // A visibility change is a different projection, not an in-place refresh.
-    this.host.patch({
-      ...emptyWorkspaceBrowserState(),
-      workspaceShowHidden: showHidden,
-      workspaceExpandedDirs: state.workspaceExpandedDirs,
-      workspaceQuery: state.workspaceQuery,
-    });
+    this.resetProjection(showHidden);
     void this.refresh();
   }
 
@@ -323,27 +285,22 @@ export class WorkspaceController {
     const { sessionId, cwd } = this.host.state();
     if (!api || !sessionId || !cwd) return;
     this.searchRequest?.abort();
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    this.searchRequest = request;
     const showHidden = this.host.state().workspaceShowHidden;
-    const ownsQuery = () =>
-      this.searchRequest === request &&
-      !request.signal.aborted &&
-      this.owns(api, sessionId, cwd) &&
-      this.host.state().workspaceQuery === query;
+    const request = recoverableRead(
+      () =>
+        this.owns(api, sessionId, cwd) &&
+        this.host.state().workspaceQuery === query,
+    );
+    this.searchRequest = request;
     this.host.patch({
       workspaceSearchLoading: true,
       workspaceSearchError: null,
     });
     try {
-      const response = await recovery.read(
-        () =>
-          api.searchFiles(sessionId, query, 100, request.signal, showHidden),
-        request.signal,
-        ownsQuery,
+      const response = await request.read((signal) =>
+        api.searchFiles(sessionId, query, 100, signal, showHidden),
       );
-      if (!ownsQuery()) return;
+      if (!request.current()) return;
       this.host.patch({
         workspaceMatches: response.files,
         workspaceSearchTruncated: Boolean(response.truncated),
@@ -351,7 +308,7 @@ export class WorkspaceController {
         workspaceSearchError: null,
       });
     } catch (error) {
-      if (!ownsQuery()) return;
+      if (!request.current()) return;
       if (error instanceof ApiError && error.status === 401) {
         this.host.handleAuthFailure();
         return;
@@ -361,7 +318,6 @@ export class WorkspaceController {
         workspaceSearchError: messageOf(error, "Workspace search failed"),
       });
     } finally {
-      recovery.reset();
       if (this.searchRequest === request) this.searchRequest = null;
     }
   }
