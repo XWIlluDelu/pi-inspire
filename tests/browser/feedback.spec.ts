@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { renderedColors, resolvedColor } from "./support/colors";
 import { routeSnapshots } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
@@ -50,9 +51,13 @@ for (const [width, theme] of [
     await expect(banner).toContainText(
       "Could not refresh this conversation. Showing the last loaded version.",
     );
-    await expect(
-      banner.getByRole("button", { name: "Retry", exact: true }),
-    ).toBeVisible();
+    const retry = banner.getByRole("button", { name: "Retry", exact: true });
+    await expect(retry).toBeVisible();
+    const bannerInk = await resolvedColor(banner, "warning-ink");
+    await expect(banner).toHaveCSS("color", bannerInk);
+    await retry.hover();
+    await expect(retry).toHaveCSS("color", bannerInk);
+    expect((await renderedColors(retry)).contrast).toBeGreaterThanOrEqual(4.5);
 
     await page.route("**/api/prompt", async (route) => {
       const request = route.request().postDataJSON();
@@ -74,6 +79,14 @@ for (const [width, theme] of [
       .click();
     const notice = page.locator(".notices .notice--warning");
     await expect(notice).toContainText("provider is temporarily unavailable");
+    const noticeText = notice.locator(".notice__text");
+    expect((await renderedColors(noticeText)).contrast).toBeGreaterThanOrEqual(
+      4.5,
+    );
+    await expect(notice.locator(".notice__title svg")).toHaveCSS(
+      "color",
+      await resolvedColor(notice, "warning"),
+    );
     await expect(banner).toContainText(
       "Could not refresh this conversation. Showing the last loaded version.",
     );

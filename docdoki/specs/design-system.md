@@ -194,7 +194,7 @@ both this glow and wordmark color transitions.
   | Role | Use |
   | --- | --- |
   | `--accent` / `--accent-deep` | Theme marks and running feedback / readable accent text. |
-  | `--accent-fill` + `--on-accent` | Solid actions and checked switches: white foreground in light mode, dark foreground in dark mode. Hover/active fill roles darken light fills and lift dark fills; decorative accent variants are not assumed safe behind small text. |
+  | `--accent-fill` + `--on-accent` | Solid actions and checked switches use white foreground in light mode and dark foreground in dark mode. Hover and press darken light fills and lift dark fills. |
   | `--on-status` | Foreground for semantic error fills, with the same luminosity-aware hover/active treatment. |
   | `--accent-focus` | Outlines, focused borders and inset focus strokes. Maps to `--accent` in botanical palettes and `--accent-deep` in Jade/Amber. Focus leaves text, semantic errors and other selection markers unchanged. |
   | `--nav-active-bg` | Selected-session `--accent-tint`; the extra `--accent-soft` inset outline is transparent. |
@@ -890,11 +890,10 @@ follows [Content copying](#content-copying), independently of presentation type.
 ## Checks
 
 - `tests/web/styles-contract.test.ts` checks that project CSS variable references have declarations.
-- Theme bootstrap and overlay ownership have focused web tests; isolated
-  browser coverage checks desktop and narrow workbench behavior, including the
-  320px and 390px controls, drawer dismissal, and keyboard/accessibility paths.
-- Check affected visual roles in both luminosities and every palette where they appear, using actual
-  foreground/background pairs and interaction states.
+- Web tests cover theme bootstrap and overlay ownership. Browser tests exercise desktop and narrow
+  controls, drawer dismissal and keyboard focus.
+- The browser contrast matrix uses the shipped CSS in every palette and luminosity. Component
+  workflows verify the rendered foreground, background and interaction states of actual controls.
 
 ## Non-goals
 

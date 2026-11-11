@@ -1,11 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { PALETTE_LABELS } from "../../src/preference-labels";
-import { pairAndOpen, openSettings } from "./support/navigation";
+import { renderedColors, resolvedColor } from "./support/colors";
+import { openSettings, pairAndOpen } from "./support/navigation";
 
 test("botanical swatches persist independently of luminosity and fit narrow Settings", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await pairAndOpen(page);
   await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -43,6 +45,13 @@ test("botanical swatches persist independently of luminosity and fit narrow Sett
       await expect(page.locator("html")).toHaveAttribute(
         "data-theme",
         theme.toLowerCase(),
+      );
+      await expect(choice).toHaveCSS(
+        "color",
+        await resolvedColor(choice, "accent-deep"),
+      );
+      expect((await renderedColors(choice)).contrast).toBeGreaterThanOrEqual(
+        4.5,
       );
     }
   }

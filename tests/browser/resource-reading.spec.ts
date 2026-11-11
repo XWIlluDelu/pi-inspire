@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { customMessageConfiguration } from "../web/fixtures/custom-message-presentation";
+import { renderedColors, resolvedColor } from "./support/colors";
 import { openEventSession } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import {
@@ -654,6 +655,11 @@ for (const operation of ["download", "interaction"] as const) {
       .click();
     const notice = pane.locator(".file-preview__notice");
     await expect(notice).toHaveText(message);
+    await expect(notice).toHaveCSS(
+      "color",
+      await resolvedColor(notice, "warning-ink"),
+    );
+    expect((await renderedColors(notice)).contrast).toBeGreaterThanOrEqual(4.5);
     await page.evaluate(() => document.fonts.ready);
     for (const [width, height] of [
       [1280, 900],

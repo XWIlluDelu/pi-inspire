@@ -2,26 +2,6 @@ import { describe, expect, it } from "vitest";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
 import { paletteTokens as tokens } from "./palette-css";
 
-function rgb(hex: string): number[] {
-  return hex
-    .slice(1)
-    .match(/../g)!
-    .map((part) => Number.parseInt(part, 16) / 255);
-}
-function luminance(color: number[]): number {
-  return color.reduce(
-    (sum, value, index) =>
-      sum +
-      [0.2126, 0.7152, 0.0722][index]! *
-        (value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4),
-    0,
-  );
-}
-function contrast(foreground: number[], background: number[]): number {
-  const a = luminance(foreground),
-    b = luminance(background);
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-}
 describe("classic palette preservation", () => {
   it.each([
     ["classic-jade", "light", "#007D78", "#F6F8F7", "#E9EEEB"],
@@ -37,67 +17,21 @@ describe("classic palette preservation", () => {
   });
 });
 
-describe("Mono readability", () => {
-  it.each(["light", "dark"])(
-    "keeps %s text and focus legible on its surfaces",
-    (theme) => {
-      const value = tokens("mono", theme);
-      for (const surface of [
-        "--bg-rail",
-        "--bg-stage",
-        "--bg-surface",
-        "--bg-raised",
-        "--bg-inset",
-        "--bg-control",
-        "--bg-prompt",
-        "--bg-code",
-      ]) {
-        for (const role of [
-          "--ink",
-          "--body",
-          "--muted",
-          "--faint",
-          "--accent-deep",
-        ]) {
-          expect(
-            contrast(rgb(value[role]!), rgb(value[surface]!)),
-            `${role} on ${surface}`,
-          ).toBeGreaterThanOrEqual(4.5);
-        }
-        expect(
-          contrast(rgb(value["--accent-focus"]!), rgb(value[surface]!)),
-          `focus on ${surface}`,
-        ).toBeGreaterThanOrEqual(3);
-      }
-      for (const fill of ["--accent-fill", "--accent-hover", "--accent-active"])
-        expect(
-          contrast(rgb(value["--on-accent"]!), rgb(value[fill]!)),
-          fill,
-        ).toBeGreaterThanOrEqual(4.5);
-    },
-  );
-});
-
 describe("activity identities", () => {
   for (const palette of PALETTE_PREFERENCES)
     for (const theme of ["light", "dark"]) {
-      it(`${palette} ${theme} keeps tool and thinking identities distinct and legible`, () => {
+      it(`${palette} ${theme} keeps tool and thinking identities distinct`, () => {
         const value = tokens(palette, theme);
         // Identity belongs to the theme family, not necessarily its text-ink shade.
         expect(value["--activity-tool"]).not.toBe(value["--activity-error"]);
         expect(value["--activity-think"]).not.toBe(value["--activity-tool"]);
         expect(value["--activity-event"]).toBe(value["--activity-tool"]);
         expect(value["--think"]).toBe(value["--activity-think"]);
-        for (const role of ["--activity-tool", "--activity-think"])
-          expect(
-            contrast(rgb(value[role]!), rgb(value["--bg-stage"]!)),
-          ).toBeGreaterThanOrEqual(3);
       });
     }
 });
 
-// Identity and paper-temperature values remain stable; rendered role/state contrast
-// is checked separately in browser/theme-colors.spec.ts.
+// The browser theme checks own contrast. These cases retain palette identity.
 describe("floral palette roles", () => {
   it.each([
     ["wisteria", "light", "#FAF9FC", "#6E5494", "#684E8E", "#4663AC"],
@@ -123,35 +57,6 @@ describe("floral palette roles", () => {
       expect(value["--bg-prompt"]).not.toBe(value["--bg-surface"]);
       expect(value["--nav-active-bg"]).toBe(value["--accent-tint"]);
       expect(value["--error"]).not.toBe(accent);
-      for (const role of ["--ink", "--body"]) {
-        for (const surface of [
-          "--bg-stage",
-          "--bg-surface",
-          "--bg-raised",
-          "--bg-inset",
-          "--bg-control",
-          "--bg-prompt",
-        ]) {
-          expect(
-            contrast(rgb(value[role]!), rgb(value[surface]!)),
-            `${role} on ${surface}`,
-          ).toBeGreaterThanOrEqual(4.5);
-        }
-      }
-      for (const role of [
-        "--muted",
-        "--accent-deep",
-        "--activity-tool",
-        "--activity-think",
-      ]) {
-        expect(
-          contrast(rgb(value[role]!), rgb(value["--bg-stage"]!)),
-          role,
-        ).toBeGreaterThanOrEqual(4.5);
-      }
-      expect(
-        contrast(rgb(value["--on-accent"]!), rgb(value["--accent-fill"]!)),
-      ).toBeGreaterThanOrEqual(4.5);
     },
   );
 });

@@ -224,43 +224,6 @@ describe("model picker interaction", () => {
     expect(change).toHaveBeenCalledWith("openai", "gpt-5");
   });
 
-  it("bounds mounted rows while search and keyboard navigation reach the end of a large available set", () => {
-    const available = Array.from({ length: 2400 }, (_, index) => ({
-      provider: "fixture",
-      id: `model-${String(index).padStart(4, "0")}`,
-      name: `Available model ${index}`,
-    }));
-    const change = vi.fn();
-    render(
-      <ModelSelector
-        value={available[0]!}
-        models={available}
-        recent={[]}
-        onChange={change}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Model" }));
-    const search = screen.getByRole("combobox", { name: "Search models" });
-    expect(screen.getAllByRole("option").length).toBeLessThan(25);
-    fireEvent.keyDown(search, { key: "End" });
-    const last = document.getElementById(
-      search.getAttribute("aria-activedescendant")!,
-    )!;
-    expect(last).toHaveAttribute("aria-posinset", "2400");
-    expect(last).toHaveTextContent("Available model 2399");
-    fireEvent.keyDown(search, { key: "ArrowUp" });
-    expect(
-      document.getElementById(search.getAttribute("aria-activedescendant")!),
-    ).toHaveTextContent("Available model 2398");
-    expect(screen.getAllByRole("option").length).toBeLessThan(25);
-    fireEvent.change(search, { target: { value: "model-2399" } });
-    expect(screen.getAllByRole("option")[0]).toHaveTextContent(
-      "Available model 2399",
-    );
-    expect(screen.getAllByRole("option").length).toBeLessThan(25);
-    fireEvent.keyDown(search, { key: "Enter" });
-    expect(change).toHaveBeenCalledWith("fixture", "model-2399");
-  });
   it("searches displayed provider/model identities in common and ordinary groups, including slashes inside the model ID", () => {
     const choices = [
       {

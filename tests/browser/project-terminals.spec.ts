@@ -7,6 +7,7 @@ import {
 } from "../../shared/terminal-contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { actionGeometry } from "./support/action-geometry";
+import { renderedColors, resolvedColor } from "./support/colors";
 import { focusRingClipping } from "./support/focus-bounds";
 import { hostRequest } from "./support/host-request";
 import {
@@ -400,8 +401,23 @@ for (const source of ["catalog", "connection"] as const) {
       source === "catalog" ? ".terminal-pane__error" : ".terminal-view__error",
     );
     await expect(error).toHaveAttribute("role", "alert");
-    await expect(error.locator(".notice__title")).toHaveText("Error");
-    await expect(error.locator(".notice__text")).toHaveText(message);
+    const title = error.locator(".notice__title");
+    const body = error.locator(".notice__text");
+    await expect(title).toHaveText("Error");
+    await expect(body).toHaveText(message);
+    await expect(error).toHaveCSS(
+      "border-left-color",
+      await resolvedColor(error, "error"),
+    );
+    await expect(title).toHaveCSS(
+      "color",
+      await resolvedColor(title, "error-ink"),
+    );
+    for (const label of [title, body]) {
+      expect((await renderedColors(label)).contrast).toBeGreaterThanOrEqual(
+        4.5,
+      );
+    }
     await page.evaluate(() => document.fonts.ready);
 
     const copy = error.getByRole("button", { name: "Copy error", exact: true });
