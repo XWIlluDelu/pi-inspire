@@ -93,10 +93,10 @@ model cycling remains a terminal operation; use the model picker for explicit se
 Settings for model files, defaults and credentials remain independent of live-control support.
 
 New sessions inherit the visible model and effort when available; otherwise Inspire reads Pi's
-startup defaults for the chosen workspace. Switching the model on that surface uses Pi's configured
-per-model/global thinking defaults and supported-level clamping. For example, `xhigh` or `max`
-becomes `high` on a model supporting through `high`, rather than disabling thinking. You can still
-choose another effort afterward. These are session choices, not writes to saved defaults.
+startup defaults for the chosen workspace. Switching models follows Pi's per-model and global
+thinking defaults until you choose an effort yourself. After that, a model switch preserves your
+choice up to the new model's supported level. For example, `xhigh` becomes `high` on a model that
+supports through `high`. These choices apply to the new session.
 
 Virtual models are marked **Router**. The picker and New inheritance retain your selected router
 when a physical model answers. If a router is no longer registered, reopened sessions follow Pi's
@@ -261,10 +261,9 @@ compaction, the ring shows `—` while the hint retains known capacity and expla
 updates after the next reply.
 
 For an idle Inspire-owned session, `/reload` replaces its worker to reload extensions, skills,
-prompts and context files, resetting worker-local extension state. Other sessions and the Host stay
-unchanged. **Restart Host** replaces Inspire-owned workers and applies changed Host configuration.
-For an attached terminal Pi, run `/reload` in its terminal. `inspire restart --host-only` keeps every
-Pi process, including Inspire's own workers, and its running work.
+prompts and context files, resetting worker-local extension state. For an attached Pi, run
+`/reload` in its terminal. To apply a Host configuration change, see
+[Host restart scopes](host.md#host-and-terminal-maintenance).
 
 <a id="updates"></a>
 
@@ -274,8 +273,8 @@ Settings → System checks Inspire, the installed Pi version and global/user ext
 It reports available releases and installation commands; checking does not install them. After installing
 updates, **Check again** refreshes the result without restarting Inspire. If the Host still has an
 older Pi version loaded, the row shows **Restart Host to apply** instead of another update command.
-Extension **No updates** describes installation only. Use `/reload` in an idle session to load changed
-resources. Terminal Pi sessions keep their own reload lifecycle even after Take over.
+Extension **No updates** describes installed packages. Reload the session to apply resource
+changes.
 
 ## Sessions and terminal use
 

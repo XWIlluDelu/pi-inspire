@@ -5,16 +5,9 @@ export interface SearchMatchRange {
   end: number;
 }
 
-/** Match literal terms and preserve original-text offsets after case folding. */
-export function searchMatchRanges(
-  text: string,
-  terms: readonly string[],
-  fold: (value: string) => string = (value) => value.toLowerCase(),
-): SearchMatchRange[] {
-  const words = terms.map(fold).filter(Boolean);
-  if (!words.length) return [];
+// Lowercasing can expand a character (e.g. İ); map back to original text.
+function foldedTextOffsets(text: string, fold: (value: string) => string) {
   const folded = fold(text);
-  // Lowercasing can expand a character (e.g. İ); map back to original text.
   const starts: number[] = [];
   const ends: number[] = [];
   let offset = 0;
@@ -25,6 +18,18 @@ export function searchMatchRanges(
     }
     offset += character.length;
   }
+  return { folded, starts, ends };
+}
+
+/** Match literal terms and preserve original-text offsets after case folding. */
+export function searchMatchRanges(
+  text: string,
+  terms: readonly string[],
+  fold: (value: string) => string = (value) => value.toLowerCase(),
+): SearchMatchRange[] {
+  const words = terms.map(fold).filter(Boolean);
+  if (!words.length) return [];
+  const { folded, starts, ends } = foldedTextOffsets(text, fold);
   const matches: SearchMatchRange[] = [];
   for (const word of words) {
     let from = 0;
@@ -68,17 +73,7 @@ export function fuzzySearchMatchRanges(
     const direct = searchMatchRanges(text, [query], fold);
     if (direct.length) return direct;
   }
-  const folded = fold(text);
-  const starts: number[] = [],
-    ends: number[] = [];
-  let offset = 0;
-  for (const character of text) {
-    for (let i = 0; i < fold(character).length; i++) {
-      starts.push(offset);
-      ends.push(offset + character.length);
-    }
-    offset += character.length;
-  }
+  const { folded, starts, ends } = foldedTextOffsets(text, fold);
   const matches: SearchMatchRange[] = [];
   let cursor = 0;
   for (const character of query) {

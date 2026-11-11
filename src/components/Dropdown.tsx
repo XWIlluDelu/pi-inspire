@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
@@ -148,14 +149,6 @@ export function Dropdown({
   useEffect(() => {
     const trigger = triggerRef.current;
     if (!open || !trigger) return;
-    const onOutside = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !rootRef.current?.contains(target) &&
-        !listRef.current?.contains(target)
-      )
-        setOpen(false);
-    };
     // The portaled menu can stay visible after scrolling clips its trigger.
     const visibility = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) return;
@@ -164,14 +157,9 @@ export function Dropdown({
       setOpen(false);
     });
     visibility.observe(trigger);
-    window.addEventListener("pointerdown", onOutside);
-    window.addEventListener("focusin", onOutside);
-    return () => {
-      visibility.disconnect();
-      window.removeEventListener("pointerdown", onOutside);
-      window.removeEventListener("focusin", onOutside);
-    };
+    return () => visibility.disconnect();
   }, [open]);
+  useFloatingMenuDismissal(open, rootRef, listRef, () => setOpen(false));
 
   useEffect(() => {
     if (!open || !keyboardActive) return;

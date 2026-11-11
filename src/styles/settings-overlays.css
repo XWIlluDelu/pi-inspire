@@ -281,7 +281,6 @@
 }
 
 .dialog.settings .button,
-.dialog.settings .settings-section-action .button,
 .dialog.settings .host-restart .button,
 .dialog.settings .models-provider-disclosure {
   height: var(--set-control-h);
@@ -293,7 +292,6 @@
 
 @media (pointer: coarse) {
   .dialog.settings .button,
-  .dialog.settings .settings-section-action .button,
   .dialog.settings .host-restart .button,
   .dialog.settings .models-provider-disclosure {
     min-height: 40px;
@@ -2363,15 +2361,6 @@
 
 .terminal-settings__field--subordinate {
   padding-left: calc(14px + 16px);
-}
-
-/* --- Utilities --- */
-.chevron-rotate {
-  transition: transform var(--dur-micro) var(--ease-standard);
-}
-
-.chevron-rotate--open {
-  transform: rotate(180deg);
 }
 
 .export-dialog__hint {

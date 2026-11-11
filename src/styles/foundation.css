@@ -1265,21 +1265,6 @@ input[type="search"]::-webkit-search-cancel-button:hover {
   }
 }
 
-.spin {
-  animation: spin 0.9s linear infinite;
-}
-
-/* Ambient rotation for ongoing background work (compacting). */
-.spin-slow {
-  animation: spin 2.4s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .status-success {
   color: var(--success);
 }

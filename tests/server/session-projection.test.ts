@@ -89,6 +89,44 @@ afterEach(async () => {
 });
 
 describe("SessionProjection framing and last-good state", () => {
+  it("reads legacy session entries without modifying their JSONL bytes", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "inspire-projection-legacy-"));
+    directories.push(cwd);
+    const path = join(cwd, "legacy.jsonl");
+    const id = "legacy";
+    const timestamp = new Date(0);
+    const original =
+      [
+        { type: "session", id, cwd, timestamp },
+        {
+          type: "message",
+          timestamp,
+          message: { role: "user", content: "legacy", timestamp: 0 },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n";
+    await writeFile(path, original);
+    const projection = await SessionProjection.open({
+      id,
+      cwd,
+      path,
+      source: null,
+      created: timestamp,
+      modified: timestamp,
+      messageCount: 1,
+      firstMessage: "legacy",
+    });
+    try {
+      expect(projection.latestPage().messages).toMatchObject([
+        { role: "user", content: "legacy" },
+      ]);
+      expect(await readFile(path, "utf8")).toBe(original);
+    } finally {
+      await projection.close();
+    }
+  });
+
   it("finds the latest saved continuation independently for interleaved sibling branches", async () => {
     const { projection } = await fixture([
       message("root", null, "user", "root", 1),

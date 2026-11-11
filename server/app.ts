@@ -742,7 +742,7 @@ export function createInspireServer(deps: AppDependencies): {
   // the original HTTPS protocol, but arbitrary network hops never gain trust.
   app.set("trust proxy", "loopback");
   app.disable("x-powered-by");
-  app.use((request, response, next) => {
+  app.use((_request, response, next) => {
     response.set({
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
@@ -764,8 +764,10 @@ export function createInspireServer(deps: AppDependencies): {
         "form-action 'self'",
       ].join("; "),
     });
-    if (request.path.startsWith("/api/"))
-      response.set("Cache-Control", "no-store");
+    next();
+  });
+  app.use("/api", (_request, response, next) => {
+    response.set("Cache-Control", "no-store");
     next();
   });
   app.use((request, response, next) => {
@@ -834,7 +836,6 @@ export function createInspireServer(deps: AppDependencies): {
   // Neither readiness nor maintenance sends the reusable Host bearer to a
   // possibly replaced listener. Ordinary explicit-bearer APIs remain separate.
   app.post("/api/host/local-control", async (request, response) => {
-    response.set("Cache-Control", "no-store");
     const state = deps.instanceState?.();
     if (!state || state.token !== deps.token)
       return response
@@ -1024,7 +1025,6 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/host/herdr", async (_request, response) => {
-    response.set("Cache-Control", "no-store");
     if (!deps.getHerdrStatus)
       throw requestError(
         "Herdr enhancement status is unavailable for this Host.",
@@ -1034,7 +1034,6 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.get("/api/host/restart", async (_request, response) => {
-    response.set("Cache-Control", "no-store");
     response.json(
       deps.hostRestart
         ? await deps.hostRestart.status()
@@ -1219,7 +1218,6 @@ export function createInspireServer(deps: AppDependencies): {
   registerModelSettingsRoutes(app, deps);
   registerMcpConfigRoutes(app, deps);
   app.get("/api/models", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
     const {
       sessionId,
       cwd: requestedCwd,
@@ -1259,7 +1257,6 @@ export function createInspireServer(deps: AppDependencies): {
     });
   });
   app.get("/api/new-session/thinking", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
     const query = z
       .object({
         cwd: z.string().min(1).max(4_096),
@@ -1388,8 +1385,6 @@ export function createInspireServer(deps: AppDependencies): {
     const image = await deps.attachments.imagePreview(
       attachmentIdSchema.parse(request.params.id),
     );
-    response.setHeader("Cache-Control", "no-store");
-    response.setHeader("X-Content-Type-Options", "nosniff");
     response.type(image.mimeType).send(image.bytes);
   });
   app.delete("/api/attachments/:id", async (request, response) => {
@@ -1492,14 +1487,12 @@ export function createInspireServer(deps: AppDependencies): {
       .json(await observePrompt(operationId, operation, response));
   });
   app.get("/api/pi/changelog", async (_request, response) => {
-    response.setHeader("Cache-Control", "no-store");
     response.json(await installedPiChangelog());
   });
   app.post("/api/sessions/takeover", async (request, response) => {
     const { sessionId } = z
       .object({ sessionId: sessionIdField })
       .parse(request.body);
-    response.setHeader("Cache-Control", "no-store");
     response.json(await deps.runtime.takeOverSession(sessionId));
   });
   /** A command that resumes this session in a terminal Pi. Copying it changes
@@ -1524,7 +1517,6 @@ export function createInspireServer(deps: AppDependencies): {
     );
     const changeDirectory =
       process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --";
-    response.setHeader("Cache-Control", "no-store");
     response.json(
       projectDirectoryMissing
         ? { command, projectDirectoryMissing }
@@ -1538,7 +1530,6 @@ export function createInspireServer(deps: AppDependencies): {
         format: z.enum(["html", "jsonl"]),
       })
       .parse(request.body);
-    response.setHeader("Cache-Control", "no-store");
     response.json(
       await generatedExports.create(sessionId, format, (path) =>
         deps.runtime.nativeCommand({
@@ -1561,7 +1552,6 @@ export function createInspireServer(deps: AppDependencies): {
         file.fileName,
         {
           headers: {
-            "Cache-Control": "no-store",
             "Content-Type": "application/octet-stream",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "sandbox",
@@ -1574,7 +1564,6 @@ export function createInspireServer(deps: AppDependencies): {
     },
   );
   app.post("/api/control/native-command", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
     const command = nativeCommandSchema.parse(request.body);
     const result = await deps.runtime.nativeCommand(command);
     if (result.export) {
@@ -1610,10 +1599,7 @@ export function createInspireServer(deps: AppDependencies): {
       });
   };
   app.get("/api/pending/operations/:operationId", async (request, response) => {
-    response.set({
-      "Cache-Control": "no-store",
-      "X-Inspire-Authority": authorityId,
-    });
+    response.set("X-Inspire-Authority", authorityId);
     const operation = pendingOperationSchema
       .extend({ action: z.enum(["recover", "abort"]) })
       .parse({
@@ -1631,7 +1617,6 @@ export function createInspireServer(deps: AppDependencies): {
     response.set("X-Inspire-Authority", authorityId);
     const operation = pendingOperationSchema.parse(request.body);
     assertPendingAuthority(operation.authorityId);
-    response.setHeader("Cache-Control", "no-store");
     const recovered = await pendingOperations.run(
       { ...operation, action: "abort" },
       () => deps.runtime.abort(operation.sessionId, operation.expectedViewId),
@@ -1642,13 +1627,11 @@ export function createInspireServer(deps: AppDependencies): {
     });
   });
   app.post("/api/pending/text", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
     response.json(
       await deps.runtime.pendingText(pendingReadSchema.parse(request.body)),
     );
   });
   app.post("/api/pending/recover", async (request, response) => {
-    response.setHeader("Cache-Control", "no-store");
     response.set("X-Inspire-Authority", authorityId);
     const operation = pendingOperationSchema.parse(request.body);
     assertPendingAuthority(operation.authorityId);
@@ -2037,7 +2020,6 @@ export function createInspireServer(deps: AppDependencies): {
     const { sessionId } = z
       .object({ sessionId: sessionIdField })
       .parse(request.query);
-    response.setHeader("Cache-Control", "no-store");
     response.json(await deps.runtime.branchLeaves(sessionId));
   });
   app.post("/api/branches/select", async (request, response) => {

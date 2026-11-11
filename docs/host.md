@@ -175,14 +175,16 @@ that Pi to apply the update.
 
 | Action | Effect |
 | --- | --- |
-| **Restart Host** | Restarts Inspire and its own Pi workers. Attached Pi processes keep their loaded settings. To apply changes in a terminal Pi, run `/reload` in its terminal. |
+| **Restart Host** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
 | **Restart all** | Like Restart Host, and also restarts the installed Linux terminal service, closing its project terminals. |
 
-Restart Host and Restart all check for unfinished work before submitting the restart. After a
-workload refusal, the same row offers **Stop work and restart**. Idle workers allow an ordinary
-restart. If confirmation of a submitted restart is delayed, use **Recheck status** to see its
-progress. **Reset restart recovery…** clears an invalid browser record while any submitted restart
-continues on the Host.
+Both scopes check for unfinished work, including work in a taken-over Pi. After a workload refusal,
+the same row offers **Stop work and restart** or **Stop work and restart all**. If the Host cannot
+confirm Stop for an attached Pi, it lists the affected sessions and waits for your decision.
+**Restart anyway** or **Restart all anyway** proceeds without another attached Pi Stop request.
+
+Use **Recheck status** if a restart request is unconfirmed. **Reset restart recovery…** clears
+an invalid browser record while any submitted restart continues on the Host.
 
 `inspire restart --host-only` detaches Inspire's Pi workers so their work and loaded settings
 can continue. When the session opens again, Inspire reconnects automatically to a sole idle
@@ -190,22 +192,18 @@ worker. **Take over** reconnects to a busy worker and restores pending browser q
 The [Herdr lifecycle notes](../docdoki/specs/herdr-enhancement.md#worker-lifecycle)
 describe lease recovery for pane-backed workers.
 
-Page restart works on Windows, macOS and Linux for a Host started through `inspire` or
-`npm run inspire`, and for the installed Linux service. It keeps the launcher, environment, instance
-configuration and pairing, and opens no new browser window. **Restart Host** also keeps project
-terminals running. If preparation fails, the Host keeps running. A failed Pi cleanup prevents Host
-replacement. A Host started from an internal server entry point must be restarted by its operator.
+Page restart works with the Inspire launcher on Windows, macOS and Linux, and with the installed
+Linux service. It reuses the launcher or service, configuration and browser pairing. Preparation
+or worker-retirement failure prevents replacement. A Host started directly from the internal
+server entry point needs an operator restart.
 
 Restarts leave connection services running. `inspire restart --all` requires the installed Linux
 services and an external OS terminal, since the project terminal running the command could close
 before it shows the result. Settings shows the availability of both restart scopes.
 
-Ordinary CLI restart requires authenticated preparation from the running Host. `--host-only`
-ties worker preservation to an authenticated shutdown request and starts the replacement after
-that Host confirms clean shutdown. If the running Host predates durable worker release, restart
-it once with `inspire restart` before using `--host-only`. If the listener is down, use `inspire stop`
-with the running Host's port and state-path overrides, then start Inspire again after shutdown
-completes. Stopping an installed service also ends its project terminals.
+If the listener is down, use `inspire stop` with the running Host's port and state-path overrides,
+then start Inspire after shutdown. Stopping an installed service also ends its project terminals.
+For earlier releases, see [Older Hosts and restart preparation](#older-hosts-and-restart-preparation).
 
 ### Terminal-service maintenance
 
@@ -408,6 +406,9 @@ cookie may contain a copy of it that still works as an explicit bearer. Replace 
 secret configuration and restart the Host. Old browser bundles must reload and pair again.
 
 ### Older Hosts and restart preparation
+
+Hosts that predate durable worker release need one ordinary restart before `--host-only` can
+preserve their workers.
 
 An older Host such as the v0.6.5 release can authenticate readiness without supporting signed
 restart preparation. After updating that installation in place, open **Settings → System → Host**

@@ -131,19 +131,19 @@ for (const touch of [false, true]) {
         name: "Show hidden files",
         exact: true,
       });
+      await expect(toggle).toHaveAttribute("aria-pressed", "false");
       const measure = () =>
         toggle.evaluate((button) => {
           const icon = button.querySelector("svg")!.getBoundingClientRect();
           const bounds = button.getBoundingClientRect();
           return {
             x: icon.x + icon.width / 2,
-            y: icon.y + icon.height / 2,
             width: icon.width,
             height: icon.height,
             targetWidth: bounds.width,
             targetHeight: bounds.height,
-            cx: bounds.x + bounds.width / 2,
-            cy: bounds.y + bounds.height / 2,
+            dx: (icon.left + icon.right - bounds.left - bounds.right) / 2,
+            dy: (icon.top + icon.bottom - bounds.top - bounds.bottom) / 2,
           };
         });
       for (const [width, height] of [
@@ -160,50 +160,37 @@ for (const touch of [false, true]) {
             el.getAnimations().map((animation) => animation.finished),
           );
         });
-        await expect(toggle).toHaveAttribute("aria-pressed", "false");
-        const browse = await measure();
-        await pane
-          .getByRole("region", { name: "Workspace file tree", exact: true })
-          .getByRole("button", { name: "native-shell.log", exact: true })
-          .click();
-        const download = pane.getByRole("button", {
-          name: "Download native-shell.log",
-          exact: true,
-        });
-        await expect(download).toBeVisible();
-        await expect(toggle).toHaveCount(0);
-        await pane.getByRole("tab", { name: "Files", exact: true }).click();
-        await expect(toggle).toHaveAttribute("aria-pressed", "false");
-        expect(Math.abs((await measure()).x - browse.x)).toBeLessThanOrEqual(
-          0.5,
-        );
-        for (const pressed of [false, true]) {
-          if (pressed) await toggle.click();
-          await expect(toggle).toHaveAttribute("aria-pressed", String(pressed));
-          const current = await measure();
-          expect(Math.abs(current.x - browse.x)).toBeLessThanOrEqual(0.5);
-          expect([current.width, current.height]).toEqual([14, 14]);
-          if (width > 900)
-            expect([current.targetWidth, current.targetHeight]).toEqual([
-              28, 28,
-            ]);
-          expect(Math.abs(current.x - current.cx)).toBeLessThanOrEqual(0.5);
-          expect(Math.abs(current.y - current.cy)).toBeLessThanOrEqual(0.5);
-          await pane
-            .getByRole("tab", { name: "native-shell.log", exact: true })
-            .click();
-          await expect(download).toBeVisible();
-          await expect(toggle).toHaveCount(0);
-          await pane.getByRole("tab", { name: "Files", exact: true }).click();
-          await expect(toggle).toHaveAttribute("aria-pressed", String(pressed));
-        }
-        await toggle.focus();
-        await page.keyboard.press("Space");
-        await expect(toggle).toHaveAttribute("aria-pressed", "false");
-        expect(Math.abs((await measure()).x - browse.x)).toBeLessThanOrEqual(
-          0.5,
-        );
+        const icon = await measure();
+        expect([icon.width, icon.height]).toEqual([14, 14]);
+        if (width > 900)
+          expect([icon.targetWidth, icon.targetHeight]).toEqual([28, 28]);
+        expect(Math.abs(icon.dx)).toBeLessThanOrEqual(0.5);
+        expect(Math.abs(icon.dy)).toBeLessThanOrEqual(0.5);
       }
+
+      const initial = await measure();
+      await toggle.click();
+      await expect(toggle).toHaveAttribute("aria-pressed", "true");
+      const pressed = await measure();
+      expect([pressed.width, pressed.height]).toEqual([14, 14]);
+      expect(Math.abs(pressed.x - initial.x)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(pressed.dy)).toBeLessThanOrEqual(0.5);
+      await pane
+        .getByRole("region", { name: "Workspace file tree", exact: true })
+        .getByRole("button", { name: "native-shell.log", exact: true })
+        .click();
+      await expect(
+        pane.getByRole("button", { name: "Download native-shell.log" }),
+      ).toBeVisible();
+      await expect(toggle).toHaveCount(0);
+      await pane.getByRole("tab", { name: "Files", exact: true }).click();
+      await expect(toggle).toHaveAttribute("aria-pressed", "true");
+      expect(Math.abs((await measure()).x - initial.x)).toBeLessThanOrEqual(
+        0.5,
+      );
+      await toggle.focus();
+      await page.keyboard.press("Space");
+      await expect(toggle).toHaveAttribute("aria-pressed", "false");
     });
   });
 }

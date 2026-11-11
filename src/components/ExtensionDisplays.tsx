@@ -21,6 +21,7 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { CopyAction } from "./CopyAction";
@@ -121,23 +122,7 @@ export const ExtensionStatus = memo(function ExtensionStatus() {
     popoverRef.current = node;
     node?.focus({ preventScroll: true });
   }, []);
-  useEffect(() => {
-    if (!open) return;
-    const dismiss = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !rootRef.current?.contains(target) &&
-        !popoverRef.current?.contains(target)
-      )
-        setOpen(false);
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("focusin", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("focusin", dismiss);
-    };
-  }, [open]);
+  useFloatingMenuDismissal(open, rootRef, popoverRef, () => setOpen(false));
 
   if (!text) return null;
   return (

@@ -79,13 +79,11 @@ syntax, order, unmatched entries and unrelated settings. Common matches appear f
 in the picker; without a configured common scope, the picker has no Common group.
 
 Model cycling must preserve a single native cycle's cached scope, effort defaults and extension-event
-order. Forward cycling uses the owning worker's RPC `cycle_model`, followed by an effective read;
-never replace it with model/effort setters. Pi 1.3.0 RPC and its extension contexts expose no owning
-backward-cycle action, so Previous model reports that limitation and leaves selection unchanged; the
-model picker remains available. [[pi-capability-gaps]] tracks the backward-cycle requirement, which
-repeated forward calls cannot reproduce. Explicit thinking selection and thinking-cycle commands keep
-their separate native semantics. Startup-default edits leave the current session model and thinking
-level unchanged.
+order. Forward cycling uses the owning worker's RPC `cycle_model` and rereads the effective
+selection. Previous model reports that backward cycling is unavailable and preserves selection.
+The model picker remains usable. [[pi-capability-gaps]] tracks the missing native operation.
+Thinking selection and cycling retain their native semantics. Startup-default edits leave the
+current session's model and effort intact.
 
 Gestures execute in order within their session/transport owner and respect editors, menus, modals
 and IME. macOS uses Control+Command+M/P/R; other browser platforms use Alt+Shift+M/P/R only when the

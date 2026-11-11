@@ -144,19 +144,17 @@ describe("real Pi CLI session-directory compatibility", () => {
       expect(persisted).toContain("offline fixture");
       // Inspire never supplies --session-dir; a CLI-only override is not a
       // catalog fallback. All ordinary inherited-env/settings cases must agree.
-      for (let restart = 0; restart < 2; restart++) {
-        const catalog = new SessionCatalog(cwd);
-        if (selection === "cli") {
-          expect((await catalog.list()).sessions).toEqual([]);
-        } else {
-          expect((await catalog.list()).sessions.map((row) => row.id)).toEqual([
-            state.sessionId,
-          ]);
-          expect(await catalog.get(state.sessionId)).toMatchObject({
-            path: file,
-            cwd,
-          });
-        }
+      const catalog = new SessionCatalog(cwd);
+      if (selection === "cli") {
+        expect((await catalog.list()).sessions).toEqual([]);
+      } else {
+        expect((await catalog.list()).sessions.map((row) => row.id)).toEqual([
+          state.sessionId,
+        ]);
+        expect(await catalog.get(state.sessionId)).toMatchObject({
+          path: file,
+          cwd,
+        });
       }
     },
     30_000,

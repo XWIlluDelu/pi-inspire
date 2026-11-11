@@ -18,6 +18,7 @@ import { RecoveryBackoff } from "../recovery-backoff";
 import { store, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
@@ -118,23 +119,7 @@ export function ProjectFilePicker({
   useModalPortal(Boolean(placement), anchorRef, menuRef);
   useSearchFocus(Boolean(placement), inputRef, menuRef);
 
-  useEffect(() => {
-    if (!placement) return;
-    const dismiss = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !menuRef.current?.contains(target) &&
-        !anchorRef.current?.contains(target)
-      )
-        onClose();
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("focusin", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("focusin", dismiss);
-    };
-  }, [anchorRef, onClose, placement]);
+  useFloatingMenuDismissal(Boolean(placement), anchorRef, menuRef, onClose);
   const availableIndexes = useMemo(
     () =>
       results.flatMap((file, index) =>

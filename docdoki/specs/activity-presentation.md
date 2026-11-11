@@ -46,10 +46,8 @@ groups have separate upper/lower controls, each with its own reading anchor. On 
 returns to the unified disclosure with `preventScroll`.
 
 Adjacent activity items share one spacing rhythm across assistant-message boundaries; prose and
-expanded details keep their own internal spacing. On fine-pointer desktop layouts, individual
-activity headers have a 28px minimum height and adjacent Activity/context-checkpoint groups have an
-8px gap. This density refinement leaves prose/prompt boundary spacing, narrow/coarse-pointer hit
-targets, font sizes and reading line heights unchanged.
+expanded details keep their internal spacing. On fine-pointer desktops, activity headers are at
+least 28px high and adjacent Activity groups and context checkpoints are 8px apart.
 
 A single neutral vertical guide connects the open group's activity. Assistant-turn attribution rows
 and divider ticks are absent inside and outside groups. The group heading uses Flux Mono at 13px,
@@ -108,8 +106,7 @@ the matrix through the existing bounded materialization path; a collapsed header
 extra history fetch.
 
 The PWA titlebar needles keep the paired-track motif independently of the transcript folds, using
-the active theme's Tool/Thinking identity roles; [[design-system]] owns their presentation. The
-unused legacy fold and its isolated stylesheet are not product components to preserve.
+the active theme's Tool/Thinking identity roles. [[design-system]] owns their presentation.
 
 Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
 and deferred materialization within the branch view. Manual disclosure stops automatic collapse.
