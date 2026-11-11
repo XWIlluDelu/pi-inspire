@@ -338,8 +338,11 @@ export interface RuntimeLike extends RestartLeaseOwner {
     hiddenProjectCwds: readonly string[],
   ): Promise<HiddenClearResponse>;
   prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null>;
-  abort(sessionId: string): Promise<PendingRecovery>;
-  recoverPending(sessionId: string): Promise<PendingRecovery>;
+  abort(sessionId: string, expectedViewId?: string): Promise<PendingRecovery>;
+  recoverPending(
+    sessionId: string,
+    expectedViewId?: string,
+  ): Promise<PendingRecovery>;
   pendingText(request: PendingReadRequest): Promise<PendingCopyContent>;
   clearPending(sessionId: string): Promise<void>;
   rename(sessionId: string, name: string): Promise<void>;
@@ -559,6 +562,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           );
         },
         followLeaf: (slot, leafId) => this.followAttachedLeaf(slot, leafId),
+        renewView: (slot) => this.renewView(slot),
         syncUi: (slot, requests, owner) =>
           this.extensionUi.synchronize(slot, requests, owner),
         assertUsable: (slot) => {
@@ -3939,7 +3943,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private requireIdleBranchSlot(slot: RuntimeSlot, revision: number): void {
     this.requireFreshBranchRevision(slot, revision);
     if (
-      slot.runState !== "idle" ||
+      isBusyRunState(slot.runState) ||
+      slot.runState === "conflict" ||
+      slot.stoppingInput ||
       Boolean(slot.nativeBash) ||
       slot.pendingExtensionUiRequests.size > 0 ||
       slot.pendingQueues.totalCount > 0
@@ -4626,6 +4632,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private async recoverPendingInside(
     slot: RuntimeSlot,
   ): Promise<PendingRecovery> {
+    const rpc = slot.process;
+    const viewId = slot.viewId;
     const held = slot.deferredPrompts.splice(0);
     const host: PendingRecovery = {
       steering: held
@@ -4678,7 +4686,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           recoveredAttachments: hostImages.get(item)!,
         }),
       );
-    const rpc = slot.process;
+    if (slot.process !== rpc || slot.viewId !== viewId)
+      return {
+        ...host,
+        error: "The session view changed while recovering Pending input.",
+      };
     if (!rpc || !slot.ready) {
       return slot.piPendingQueues.totalCount > 0
         ? {
@@ -4732,7 +4744,21 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
-  recoverPending(sessionId: string): Promise<PendingRecovery> {
+  private assertPendingView(slot: RuntimeSlot, expectedViewId?: string): void {
+    if (expectedViewId !== undefined && slot.viewId !== expectedViewId)
+      throw requestError(
+        "The session view changed. Try again on the current view.",
+        409,
+        {
+          code: "PENDING_VIEW_CHANGED",
+        },
+      );
+  }
+
+  recoverPending(
+    sessionId: string,
+    expectedViewId?: string,
+  ): Promise<PendingRecovery> {
     return this.withMaintenanceOperation(async () => {
       const slot = this.requireSlot(sessionId);
       const worker = slot.process;
@@ -4740,6 +4766,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       // Queue removal must not wait behind a suspended pre-prompt hook. Pi's
       // public clear_queue is independent of the prompt/persistence FIFO.
       return this.useSlot(slot, async () => {
+        this.assertPendingView(slot, expectedViewId);
         if (
           slot.process !== worker ||
           slot.deliveryNavigationEpoch !== navigationEpoch ||
@@ -4755,20 +4782,28 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  async abort(sessionId: string): Promise<PendingRecovery> {
-    return this.withMaintenanceOperation(() => this.abortInside(sessionId));
+  async abort(
+    sessionId: string,
+    expectedViewId?: string,
+  ): Promise<PendingRecovery> {
+    return this.withMaintenanceOperation(() =>
+      this.abortInside(sessionId, expectedViewId),
+    );
   }
 
-  private async abortInside(sessionId: string): Promise<PendingRecovery> {
-    const externalSlot = this.requireSlot(sessionId);
-    if (this.externalSessions?.has(externalSlot)) {
-      await this.useSlot(externalSlot, () =>
-        this.externalSessions!.abort(externalSlot),
+  private async abortInside(
+    sessionId: string,
+    expectedViewId?: string,
+  ): Promise<PendingRecovery> {
+    const initialSlot = this.requireSlot(sessionId);
+    this.assertPendingView(initialSlot, expectedViewId);
+    if (this.externalSessions?.has(initialSlot)) {
+      await this.useSlot(initialSlot, () =>
+        this.externalSessions!.abort(initialSlot),
       );
       // The attached Pi interrupts agent work, not its own shell commands.
       return { steering: [], followUp: [], interruptionScope: "agent" };
     }
-    const initialSlot = this.requireSlot(sessionId);
     if (initialSlot.conflict) {
       await this.useSlot(initialSlot, async () => {
         let slot = initialSlot;
@@ -4778,6 +4813,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           slot = await this.prepareSlot(session);
         }
         await this.mutateSlot(slot, async () => {
+          this.assertPendingView(slot, expectedViewId);
           if (!slot.conflict) return;
           // A conflicted worker has lost write ownership. Recovery is therefore
           // a hard stop, including extension-blocked workers that cannot safely
@@ -4844,7 +4880,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ]);
       } catch {
         // Native abort_bash cannot interrupt a suspended user_bash hook.
-        await this.stopWriter(slot, "bash");
+        if (!slot.process || slot.process === bash.worker)
+          await this.stopWriter(slot, "bash");
       } finally {
         clearTimeout(timer);
         slot.stoppingInput = false;
@@ -4872,10 +4909,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                 : "Pending recovery failed",
           };
         }
+        this.assertPendingView(slot, expectedViewId);
+        if (slot.process !== rpc)
+          throw requestError("The Pi worker changed before Stop.", 409);
         if (recovered.error) {
           // Abort alone can resume Pi's queue. If clearing failed, retire its
           // worker rather than risk running input the user explicitly stopped.
           await this.stopWriter(slot);
+          if (slot.process) return;
           slot.runState = slot.conflict ? "conflict" : "aborted";
           this.emitSlotEvent(slot, { type: "prompt_cancelled" });
           this.extensionUi.clear(slot, "aborted");
@@ -4903,14 +4944,17 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           } catch {
             // Only explicit cancellation has a grace budget. An unresponsive
             // hook retires through the existing actual-stop/writer fence.
-            for (const expectation of slot.persistenceExpectations)
-              expectation.settle((entry) => entry.type === "compaction");
-            await this.stopWriter(slot, "compact");
+            if (slot.process === rpc) {
+              for (const expectation of slot.persistenceExpectations)
+                expectation.settle((entry) => entry.type === "compaction");
+            }
+            if (!slot.process || slot.process === rpc)
+              await this.stopWriter(slot, "compact");
           } finally {
             clearTimeout(timer);
           }
           if (slot.process === rpc) await this.extensionUi.cancel(slot, rpc);
-          else this.extensionUi.clear(slot, "aborted");
+          else if (!slot.process) this.extensionUi.clear(slot, "aborted");
           return;
         }
         if (
@@ -4942,8 +4986,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               }),
             ]);
           } catch {
-            await this.stopWriter(slot, "prompt");
-            slot.runState = slot.conflict ? "conflict" : "aborted";
+            if (!slot.process || slot.process === rpc) {
+              await this.stopWriter(slot, "prompt");
+              if (!slot.process)
+                slot.runState = slot.conflict ? "conflict" : "aborted";
+            }
           } finally {
             clearTimeout(timer);
           }
@@ -4951,6 +4998,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           // Pi abort need not interrupt a pre-prompt hook. Explicit Stop retires
           // its owner outside the persistence FIFO waiting on that same hook.
           await this.stopWriter(slot, "prompt");
+          if (slot.process) return;
           slot.runState = slot.conflict ? "conflict" : "aborted";
           this.emitSlotEvent(slot, { type: "prompt_cancelled" });
         } else {
@@ -4958,13 +5006,15 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             await rpc.request({ type: "abort" }, 30_000);
           } catch {
             // Grace for an explicit Stop, not a runtime work allowance.
+            if (slot.process && slot.process !== rpc) return;
             await this.stopWriter(slot);
+            if (slot.process) return;
             slot.runState = slot.conflict ? "conflict" : "aborted";
             this.emitSlotEvent(slot, { type: "prompt_cancelled" });
           }
         }
         if (slot.process === rpc) await this.extensionUi.cancel(slot, rpc);
-        else this.extensionUi.clear(slot, "aborted");
+        else if (!slot.process) this.extensionUi.clear(slot, "aborted");
       });
       return recovered!;
     } catch (error) {

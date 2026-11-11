@@ -111,6 +111,7 @@ async function directAttachment(
       corresponds: () => true,
       continues: () => true,
       followLeaf: vi.fn(),
+      renewView: vi.fn(),
       log: vi.fn(),
       reconcile: async () => {},
       ...host,

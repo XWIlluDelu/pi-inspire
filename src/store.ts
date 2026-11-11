@@ -2305,6 +2305,7 @@ export class AppStore {
 
   abort = async (): Promise<void> => {
     const sessionId = this.state.sessionId;
+    const viewId = this.state.transcriptViewId ?? undefined;
     const selectionGeneration = this.selectionGeneration;
     const api = this.api;
     if (!api || !sessionId) return;
@@ -2322,9 +2323,14 @@ export class AppStore {
         !(this.state.bashRunning && !isBusyRunState(this.state.runState))
       ) {
         try {
-          await this.pendingRecovery.run(sessionId, "recover");
+          await this.pendingRecovery.run(sessionId, "recover", viewId);
         } catch (error) {
           if (this.api !== api) return;
+          if (
+            error instanceof ApiError &&
+            error.code === "PENDING_VIEW_CHANGED"
+          )
+            throw error;
           if (error instanceof ApiError && error.status === 401) {
             this.handleAuthFailure();
             return;
@@ -2341,7 +2347,7 @@ export class AppStore {
       if (this.api !== api) return;
       // The editor receives the first dequeue before Stop is sent. Host abort
       // clears again at its own boundary, including input arriving meanwhile.
-      await this.pendingRecovery.run(sessionId, "abort");
+      await this.pendingRecovery.run(sessionId, "abort", viewId);
     } catch (error) {
       if (this.api !== api) return;
       if (error instanceof ApiError && error.status === 401)
@@ -2406,7 +2412,11 @@ export class AppStore {
     const request = ++this.pendingActionRequest;
     this.set({ pendingAction: "recover" });
     try {
-      return await this.pendingRecovery.run(sessionId, "recover");
+      return await this.pendingRecovery.run(
+        sessionId,
+        "recover",
+        this.state.transcriptViewId ?? undefined,
+      );
     } catch (error) {
       if (this.api !== api) return false;
       if (error instanceof ApiError && error.status === 401)

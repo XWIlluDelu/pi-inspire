@@ -131,6 +131,7 @@ describe("composer-adjacent status and queued controls", () => {
     await waitFor(() =>
       expect(host.abortBodies.at(-1)).toEqual({
         sessionId: "s1",
+        expectedViewId: "view-s1",
         authorityId: TEST_HOST_AUTHORITY,
         operationId: expect.any(String),
       }),
