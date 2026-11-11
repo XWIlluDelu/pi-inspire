@@ -10,15 +10,17 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import {
   SESSION_ACTION_IDS,
   type SessionActionId,
 } from "../../shared/contracts";
-import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
-import { sessionHeading } from "../../src/components/AppTopbar";
+import { createInitialAppState } from "../../src/app-state";
+import { AppTopbar, sessionHeading } from "../../src/components/AppTopbar";
 import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
 import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
 import { store } from "../../src/store";
+import { deferred } from "./helpers";
 
 function Harness({
   onCopyError = vi.fn(),
@@ -83,6 +85,106 @@ describe("Session headings", () => {
     },
   );
 });
+
+function renderTopbar() {
+  let state = {
+    ...createInitialAppState(),
+    sessionId: "s1",
+    sessionName: "Original title",
+    cwd: "/workspace/report",
+    gitStatus: { kind: "not-repository" as const },
+  };
+  vi.spyOn(store, "getState").mockImplementation(() => state);
+  const listeners = new Set<() => void>();
+  vi.spyOn(store, "subscribe").mockImplementation((listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  });
+  const noop = () => {};
+  render(
+    <AppTopbar
+      narrowViewport={false}
+      mobileNavOpen={false}
+      settingsOpen={false}
+      onToggleNavigation={noop}
+      onOpenCommandPalette={noop}
+      onExportSession={noop}
+      onToggleSettings={noop}
+      onToggleResources={noop}
+    />,
+  );
+  return (sessionId: string, sessionName: string) =>
+    act(() => {
+      state = { ...state, sessionId, sessionName };
+      for (const publish of listeners) publish();
+    });
+}
+
+it("keeps rename writes owned by the active editor and session", async () => {
+  const select = renderTopbar();
+  const receipt = deferred<boolean>();
+  const rename = vi
+    .spyOn(store, "renameSession")
+    .mockReturnValue(receipt.promise);
+  const edit = () => {
+    fireEvent.click(screen.getByRole("button", { name: /^Session actions:/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename session" }));
+    return screen.getByRole("textbox", { name: "Session name" });
+  };
+  for (const value of ["Original title", "   "]) {
+    const input = edit();
+    fireEvent.change(input, { target: { value } });
+    fireEvent.blur(input, { relatedTarget: null });
+    expect(input).not.toBeInTheDocument();
+  }
+  const cancelled = edit();
+  fireEvent.change(cancelled, { target: { value: "Discard this edit" } });
+  fireEvent.keyDown(cancelled, { key: "Escape" });
+  expect(rename).not.toHaveBeenCalled();
+
+  const original = edit();
+  fireEvent.change(original, { target: { value: "  Committed title  " } });
+  const save = screen.getByRole("button", { name: "Save session name" });
+  fireEvent.blur(original, { relatedTarget: save });
+  expect(rename).not.toHaveBeenCalled();
+  fireEvent.click(save);
+  expect(rename).toHaveBeenCalledExactlyOnceWith("s1", "Committed title");
+  fireEvent.keyDown(original, { key: "Escape" });
+  const reopened = edit();
+  await act(async () => receipt.resolve(true));
+  expect(reopened).toBeInTheDocument();
+
+  select("s2", "Other session");
+  expect(reopened).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Other session" })).toBeVisible();
+});
+
+it.each(["resolve", "reject"] as const)(
+  "retires project path copy %s when the session owner changes",
+  async (outcome) => {
+    renderTopbar();
+    const write = deferred<void>();
+    userEvent.setup();
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockReturnValue(write.promise);
+    let owned = true;
+    vi.spyOn(store, "copyOwnership").mockReturnValue(() => owned);
+    const report = vi
+      .spyOn(store, "reportCopyError")
+      .mockImplementation(() => {});
+    const path = screen.getByRole("button", { name: "Copy project path" });
+    fireEvent.click(path);
+    expect(writeText).toHaveBeenCalledWith("/workspace/report");
+    owned = false;
+    await act(async () => {
+      if (outcome === "resolve") write.resolve();
+      else write.reject(new Error("Retired clipboard result"));
+    });
+    expect(path).not.toHaveAttribute("title", "Copied");
+    expect(report).not.toHaveBeenCalled();
+  },
+);
 
 describe("Session actions", () => {
   beforeEach(() => {

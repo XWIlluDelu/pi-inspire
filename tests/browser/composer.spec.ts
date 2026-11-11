@@ -276,6 +276,36 @@ test("composer selectors stay readable in narrow desktop panes without moving or
   }
 });
 
+test("a delayed model refusal leaves focus on the closed picker trigger", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openFixtureSession(page, /Review extension event lifecycle/);
+  const error = "Model unavailable after selection";
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/control/model", async (route) => {
+    await pending;
+    await route.fulfill({ status: 409, json: { error } });
+  });
+  const picker = page.getByRole("button", { name: "Model", exact: true });
+  await picker.click();
+  const list = page.getByRole("listbox", { name: "Available models" });
+  const requested = page.waitForRequest("**/api/control/model");
+  try {
+    await list.getByRole("option", { selected: false }).first().click();
+    await requested;
+    await expect(list).toHaveCount(0);
+    await expect(picker).toBeFocused();
+  } finally {
+    release();
+  }
+  await expect(page.getByText(error, { exact: true })).toBeVisible();
+  await expect(picker).toBeFocused();
+});
+
 test("running halo animates independently and retains focus and reduced-motion feedback", async ({
   page,
 }) => {

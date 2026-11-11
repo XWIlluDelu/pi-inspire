@@ -49,3 +49,28 @@ it("reuses controlled dialog content without a session store or transport", () =
     screen.getByRole("alert"),
   );
 });
+
+it("offers cancellation and inspectable details for an unsupported request", () => {
+  const cancel = vi.fn();
+  render(
+    <ExtensionDialogContent
+      request={{
+        sessionId: "example",
+        id: "choose-files",
+        method: "chooseFiles",
+        unsupported: true,
+        payload: { paths: ["report.md"] },
+      }}
+      value=""
+      pending={false}
+      error={null}
+      onValueChange={vi.fn()}
+      onRespond={vi.fn()}
+      onCancel={cancel}
+    />,
+  );
+  expect(screen.getByText(/can't handle this extension request/)).toBeVisible();
+  expect(screen.getByText("chooseFiles")).not.toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel request" }));
+  expect(cancel).toHaveBeenCalledOnce();
+});

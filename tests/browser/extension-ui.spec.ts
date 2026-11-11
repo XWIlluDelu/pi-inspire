@@ -86,6 +86,7 @@ async function openExample(page: Page, theme: "light" | "dark") {
   await reload(() => reloadSession(page, exampleSessionId));
   return {
     responses,
+    emit,
     reload,
     question(fields: Omit<SupportedExtensionUiRequest, "sessionId">) {
       pending = { ...fields, sessionId: sessionId! };
@@ -270,6 +271,59 @@ test("phone Back retains a failed native cancellation and can cancel the next qu
       page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
     )
     .toBe(0);
+});
+
+test("Escape cancels an extension question during work and aborts during a projection conflict", async ({
+  page,
+}) => {
+  const demo = await openExample(page, "light");
+  let aborts = 0;
+  await page.route("**/api/control/abort", (route) => {
+    aborts++;
+    return route.fulfill({ json: { steering: [], followUp: [] } });
+  });
+  demo.emit({ type: "agent_start" });
+  await expect(
+    page.getByRole("button", { name: "Abort running task" }),
+  ).toBeVisible();
+  demo.question({
+    id: "during-run",
+    method: "confirm",
+    title: "Continue work?",
+  });
+  const normal = page.getByRole("dialog", { name: "Continue work?" });
+  await expect(normal).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(normal).toHaveCount(0);
+  expect(demo.responses).toMatchObject([{ id: "during-run", cancelled: true }]);
+  expect(aborts).toBe(0);
+
+  demo.question({
+    id: "during-conflict",
+    method: "confirm",
+    title: "Pending question",
+  });
+  demo.emit({
+    type: "session_projection_conflict",
+    conflict: {
+      kind: "external-change",
+      message: "External writer conflict",
+      revision: 2,
+      incidentId: "inc_extension_recovery",
+    },
+    sessionStatus: { runState: "conflict" },
+  });
+  const blocked = page.getByRole("dialog", { name: "Pending question" });
+  await expect(blocked).toBeVisible();
+  await expect(page.locator(".banner")).toContainText(
+    "External writer conflict",
+  );
+  await expect(
+    page.locator('[aria-label="Diagnostic incident"]'),
+  ).toContainText("inc_extension_recovery");
+  await page.keyboard.press("Escape");
+  await expect.poll(() => aborts).toBe(1);
+  expect(demo.responses).toHaveLength(1);
 });
 
 for (const touch of [false, true]) {

@@ -725,11 +725,11 @@ export function createApi() {
         { signal },
       ),
     refreshSessions: () => post<{ ok: boolean }>("/api/sessions/refresh"),
-    sessionsByIds: (ids: string[]) =>
+    sessionsByIds: (ids: string[], signal?: AbortSignal) =>
       post<{ sessions: SessionListResponse["sessions"] }>(
         "/api/sessions/by-id",
         { ids },
-        {},
+        { signal },
         { mutation: false },
       ),
     sessionsByCwds: (cwds: string[]) =>

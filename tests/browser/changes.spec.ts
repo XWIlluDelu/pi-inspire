@@ -628,6 +628,9 @@ test("Files and Changes share a tab and restore its comparison after reload", as
   );
   await resources.getByRole("tab", { name: "Changes", exact: true }).click();
   await expect(resources.locator(".res__list")).toBeVisible();
+  await expect(
+    resources.getByRole("button", { name: /page\.html, modified/ }),
+  ).toHaveAttribute("aria-current", "true");
   await expect(resources.locator(".file-preview__actions")).toHaveCount(0);
   await fileTab.click();
   await expect(frame.locator("h1")).toHaveText(

@@ -316,8 +316,7 @@ export const Nav = memo(function Nav({
   const sessionListBusy =
     sessionListLoading || sessionListLoadingOlder || sessionListHydrating;
   const foregroundSessionListBusy =
-    sessionListBusy &&
-    sessionListOperation !== "curation" &&
+    (sessionListLoading || sessionListLoadingOlder) &&
     (sessionListOperation !== "refresh" || sessions.length === 0);
   const showSessionListActivity =
     hasOlderSessions || sessionListError !== null || foregroundSessionListBusy;

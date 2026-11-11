@@ -411,6 +411,7 @@ test("files navigation preserves context across desktop and narrow workspaces", 
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
@@ -427,6 +428,14 @@ test("files navigation preserves context across desktop and narrow workspaces", 
     pane.getByRole("tab", { name: "WorkspaceBrowser.tsx", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(pane.locator(".files-browser")).toHaveCount(0);
+  await pane
+    .getByRole("button", {
+      name: "Copy path src/components/WorkspaceBrowser.tsx",
+    })
+    .click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe("src/components/WorkspaceBrowser.tsx");
 
   await page.setViewportSize({ width: 390, height: 844 });
   const drawer = page.getByRole("dialog", { name: "Context panel" });
@@ -436,13 +445,25 @@ test("files navigation preserves context across desktop and narrow workspaces", 
     drawer.getByRole("searchbox", { name: "Search workspace files" }),
   ).toHaveValue("WorkspaceBrowser.tsx");
   await drawer.getByRole("button", { name: "Close context pane" }).click();
+  await expect(drawer).toHaveCount(0);
 
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  const file = drawer.getByRole("tab", {
+    name: "WorkspaceBrowser.tsx",
+    exact: true,
+  });
+  await file.click();
+  await drawer.getByRole("tab", { name: "Files", exact: true }).click();
+  await file.click();
+  await expect(file).toHaveAttribute("aria-selected", "true");
+  await page.goBack();
   await expect(drawer).toHaveCount(0);
 });
 
 test("document readers preserve source toggles, intrinsic SVG geometry and independent source scrolling", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await pairedPage(page);
   await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
@@ -472,7 +493,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
     resources.getByRole("region", { name: "File source" }),
   ).toContainText('"nbformat": 4');
 
-  await resources.getByRole("tab", { name: "Files", exact: true }).click();
+  await resources.getByRole("button", { name: "Close notebook.ipynb" }).click();
   await search.fill("file-previews/vector.svg");
   await resources
     .locator(
@@ -507,7 +528,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
     resources.getByRole("region", { name: "File source" }),
   ).toContainText("<svg");
 
-  await resources.getByRole("tab", { name: "Files", exact: true }).click();
+  await resources.getByRole("button", { name: "Close vector.svg" }).click();
   await search.fill("file-previews/document.md");
   await resources
     .locator(
@@ -548,7 +569,7 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
     1,
   );
 
-  await resources.getByRole("tab", { name: "Files", exact: true }).click();
+  await resources.getByRole("button", { name: "Close document.md" }).click();
   await search.fill("FilePreview.tsx");
   await resources
     .locator('[data-workspace-path="src/components/FilePreview.tsx"]')
@@ -569,4 +590,38 @@ test("document readers preserve source toggles, intrinsic SVG geometry and indep
   await expect
     .poll(() => source.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(0);
+  const previewTop = await source.evaluate((element) => element.scrollTop);
+
+  await resources.getByRole("tab", { name: "Files", exact: true }).click();
+  await search.fill("WorkspaceBrowser.tsx");
+  await resources
+    .locator('[data-workspace-path="src/components/WorkspaceBrowser.tsx"]')
+    .click();
+  await expect(source).toBeVisible();
+  expect(await source.evaluate((element) => element.scrollTop)).toBe(0);
+  await source.evaluate((element) => {
+    element.scrollTop = 160;
+  });
+  const browserTab = resources.getByRole("tab", {
+    name: "WorkspaceBrowser.tsx",
+    exact: true,
+  });
+  const previewTab = resources.getByRole("tab", {
+    name: "FilePreview.tsx",
+    exact: true,
+  });
+  await previewTab.click();
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBe(previewTop);
+  await resources.getByRole("tab", { name: "Changes", exact: true }).click();
+  await browserTab.click();
+  await expect
+    .poll(() => source.evaluate((element) => element.scrollTop))
+    .toBe(160);
+  await resources
+    .getByRole("button", { name: "Close FilePreview.tsx" })
+    .click();
+  await expect(previewTab).toHaveCount(0);
+  await expect(browserTab).toHaveAttribute("aria-selected", "true");
 });

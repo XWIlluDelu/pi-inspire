@@ -336,7 +336,7 @@ describe("navigation curation", () => {
     expect(store.getState()).toMatchObject({
       sessionListLoading: false,
       sessionListHydrating: true,
-      sessionListOperation: "curation",
+      sessionListOperation: null,
       sessionListNextOffset: 1,
       sessionListTotal: 8,
     });

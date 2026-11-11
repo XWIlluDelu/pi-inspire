@@ -75,7 +75,7 @@ const diff: Extract<GitDiffResponse, { kind: "text" }> = {
     { kind: "add", text: "+new", oldLine: null, newLine: 3 },
   ],
 };
-function ready(result = diff): ContextPaneView {
+function ready(result: GitDiffResponse = diff): ContextPaneView {
   const { id, display, utf8Path } = result.path;
   const reference = utf8Path ?? display;
   return {
@@ -138,6 +138,45 @@ describe("Changes file list", () => {
 });
 
 describe("File Changes rendering and navigation", () => {
+  const path = diff.path;
+  const nonTextChanges: [string, GitDiffResponse, string][] = [
+    ["Binary change", { kind: "binary", path }, "no line-based source view"],
+    [
+      "Unresolved conflict",
+      { kind: "conflict", path, code: "UU" },
+      "Conflict state UU",
+    ],
+    [
+      "Submodule change",
+      {
+        kind: "submodule",
+        path,
+        state: {
+          commitChanged: true,
+          trackedModified: false,
+          untracked: false,
+        },
+      },
+      "commit changed",
+    ],
+    [
+      "Source unavailable",
+      { kind: "unsupported", path, reason: "path-encoding" },
+      "cannot be represented as UTF-8",
+    ],
+  ];
+  it.each(nonTextChanges)(
+    "explains %s without showing a diff",
+    (title, result, hint) => {
+      render(<Detail state={ready(result)} />);
+      expect(screen.getByText(title)).toBeInTheDocument();
+      expect(screen.getByText(hint, { exact: false })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("region", { name: /Source changes/ }),
+      ).toBeNull();
+    },
+  );
+
   it("retains escaped highlighted source and exposes bounded hunk navigation within the file", () => {
     const open = vi.spyOn(store, "openGitDiff").mockResolvedValue();
     vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {

@@ -4,6 +4,7 @@ import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
+  deferred,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -195,73 +196,88 @@ describe("session list pagination", () => {
     ]);
   });
 
-  it("invalidates an in-flight older page when curation changes without dropping the newly hydrated row", async () => {
-    let releaseOlder!: () => void;
-    let olderStarted!: () => void;
-    const olderGate = new Promise<void>((resolve) => {
-      releaseOlder = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      olderStarted = resolve;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/preferences"))
-        return {
-          body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-        };
-      if (url.startsWith("/api/sessions/by-id")) {
-        const ids = (jsonBody(init).ids as string[]) ?? [];
-        return {
-          body: {
-            sessions: ids.map((id) =>
-              sessionSummary({ id, cwd: "/work/curated" }),
-            ),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        const offset = offsetOf(url);
-        if (offset === 0)
+  it.each(["older", "curation"])(
+    "keeps an older page and curation hydration independent when %s finishes first",
+    async (first) => {
+      const olderGate = deferred<void>();
+      const olderStarted = deferred<void>();
+      const curationGate = deferred<void>();
+      const curationStarted = deferred<void>();
+      installFetch(async (url, init) => {
+        if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
+        if (url.startsWith("/api/preferences"))
           return {
-            body: sessionPage([sessionSummary({ id: "recent" })], 2, offset),
+            body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
           };
-        olderStarted();
-        await olderGate;
-        return {
-          body: sessionPage(
-            [sessionSummary({ id: "obsolete-page" })],
-            2,
-            offset,
-          ),
-        };
+        if (url.startsWith("/api/sessions/by-id")) {
+          const ids = (jsonBody(init).ids as string[]) ?? [];
+          curationStarted.resolve();
+          await curationGate.promise;
+          return {
+            body: {
+              sessions: ids.map((id) =>
+                sessionSummary({ id, cwd: "/work/curated" }),
+              ),
+            },
+          };
+        }
+        if (url.startsWith("/api/sessions?")) {
+          const offset = offsetOf(url);
+          if (offset === 0)
+            return {
+              body: sessionPage([sessionSummary({ id: "recent" })], 2, offset),
+            };
+          olderStarted.resolve();
+          await olderGate.promise;
+          return {
+            body: sessionPage(
+              [sessionSummary({ id: "older-page" })],
+              2,
+              offset,
+            ),
+          };
+        }
+        return undefined;
+      });
+      const { store } = await initStore();
+      await vi.waitFor(() =>
+        expect(store.getState().sessionListNextOffset).toBe(1),
+      );
+
+      const older = store.loadOlderSessions();
+      await olderStarted.promise;
+      store.toggleSessionPin("curated-outside-page");
+      await curationStarted.promise;
+
+      const finishCuration = async () => {
+        curationGate.resolve();
+        await vi.waitFor(() =>
+          expect(
+            store
+              .getState()
+              .sessions.some((row) => row.id === "curated-outside-page"),
+          ).toBe(true),
+        );
+      };
+      if (first === "curation") {
+        await finishCuration();
+        expect(store.getState().sessionListNextOffset).toBe(1);
       }
-      return undefined;
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListNextOffset).toBe(1),
-    );
+      olderGate.resolve();
+      await older;
+      if (first === "older") {
+        expect(store.getState().sessionListHydrating).toBe(true);
+        await finishCuration();
+      }
 
-    const older = store.loadOlderSessions();
-    await started;
-    store.toggleSessionPin("curated-outside-page");
-    await vi.waitFor(() =>
-      expect(
-        store
-          .getState()
-          .sessions.some((session) => session.id === "curated-outside-page"),
-      ).toBe(true),
-    );
-    releaseOlder();
-    await older;
-
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "recent",
-      "curated-outside-page",
-    ]);
-    expect(store.getState().sessionListNextOffset).toBe(1);
-  });
+      expect(store.getState().sessions.map((session) => session.id)).toEqual([
+        "recent",
+        "older-page",
+        "curated-outside-page",
+      ]);
+      expect(store.getState().sessionListNextOffset).toBe(2);
+    },
+  );
 
   it("retains confirmed pages after an error and retries the same authoritative offset", async () => {
     let attempts = 0;
