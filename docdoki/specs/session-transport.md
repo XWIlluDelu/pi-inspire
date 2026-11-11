@@ -174,21 +174,16 @@ no confirmation. Non-JSON error pages keep HTTP status and edge markers for conn
 
 ## Prompt delivery observations
 
-Each prompt carries a random operation id and process-lifetime Host authority. Bounded Host
-fingerprints admit it once: concurrent/near-term duplicates await or return the same result, changed
-content under the same id is refused, and replaced-Host identities fail explicitly.
+The Host admits each random prompt operation id once for its process lifetime and checks that
+retries carry the original payload. POST waits up to 20 seconds before returning a pending receipt.
+Authenticated GETs observe that receipt without resending the payload. Each browser request has a
+30-second deadline. Replacing the transport cancels the browser observation while execution continues.
 
-POST observes delivery for at most 20 seconds, then returns a pending receipt. Authenticated GETs
-bound to the same identity/authority continue observation without resending payloads. Each browser
-observation has a 30-second limit; cancellation/reconnect retires observation, not execution, and
-only its current owner may apply the result. Acceptance can exceed those windows.
-
-Same-Host headers identify the respondent, not the result. Refusal requires matched Host authority,
-operation id and a retained rejected outcome. Receipt lookup 401/404/500, timeouts, marked-edge errors,
-unowned 5xx and unknown/retired outcomes remain uncertain. Unchanged-draft retry reuses the exact
-id/payload while authority is unchanged, including after a delivery-mode change. After Host restart,
-inspect refreshed history before resending. [[composer]] owns handoff/restoration;
-[[state-ownership]] explains the observation/execution distinction.
+The browser API confirms refusal only from a retained rejected receipt with matching Host authority
+and operation id. Transport failures and unavailable or unknown receipts leave delivery unconfirmed.
+[[composer]] restores the input and retains the original id and payload for an unchanged-draft retry
+on the same Host, including after a delivery-mode change. After a Host restart, Inspire asks the
+user to inspect refreshed history before resending.
 
 ## Pending handoff observations
 

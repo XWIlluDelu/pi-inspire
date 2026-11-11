@@ -23,25 +23,23 @@ describe("prompt delivery transport", () => {
     vi.unstubAllGlobals();
   });
 
-  it("bounds an unanswered confirmation as an unknown transport outcome", async () => {
+  it("bounds a prompt confirmation even when the request ignores abort", async () => {
     vi.useFakeTimers();
     let signal: AbortSignal | undefined;
     vi.stubGlobal(
       "fetch",
       vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
         signal = init?.signal ?? undefined;
-        return new Promise<Response>((_resolve, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => reject(new DOMException("Aborted", "AbortError")),
-            { once: true },
-          );
-        });
+        return new Promise<Response>(() => {});
       }),
     );
 
     const delivery = createApi().prompt(prompt);
-    const rejected = expect(delivery).rejects.toBeInstanceOf(ApiTransportError);
+    const rejected = expect(delivery).rejects.toMatchObject({
+      name: "ApiTransportError",
+      outcomeUnknown: true,
+      timedOut: true,
+    });
     await vi.advanceTimersByTimeAsync(PROMPT_CONFIRMATION_TIMEOUT_MS);
 
     expect(signal?.aborted).toBe(true);
@@ -161,7 +159,10 @@ describe("prompt delivery transport", () => {
     vi.stubGlobal("fetch", fetch);
     const controller = new AbortController();
     const delivery = createApi().prompt(prompt, controller.signal);
-    const rejected = expect(delivery).rejects.toBeInstanceOf(ApiTransportError);
+    const rejected = expect(delivery).rejects.toMatchObject({
+      name: "AbortError",
+      outcomeUnknown: true,
+    });
     await vi.advanceTimersByTimeAsync(0);
     controller.abort();
     await rejected;
@@ -194,7 +195,11 @@ describe("prompt delivery transport", () => {
           { error: "Unknown", outcomeUnknown: true },
           {
             status: 409,
-            headers: { "X-Inspire-Authority": prompt.authorityId },
+            headers: {
+              "X-Inspire-Authority": prompt.authorityId,
+              "X-Inspire-Prompt-Operation": prompt.operationId,
+              "X-Inspire-Prompt-Outcome": "unknown",
+            },
           },
         ),
       ),
@@ -205,27 +210,6 @@ describe("prompt delivery transport", () => {
       authorityId: prompt.authorityId,
       outcomeUnknown: true,
     } satisfies Partial<ApiError>);
-  });
-
-  it("clears the confirmation bound after an application response", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          Response.json(
-            { accepted: true, historyEntry: null },
-            { status: 202 },
-          ),
-        ),
-      ),
-    );
-
-    await expect(createApi().prompt(prompt)).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

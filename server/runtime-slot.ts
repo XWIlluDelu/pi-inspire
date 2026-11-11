@@ -170,15 +170,6 @@ export function clearWorkerPresentation(slot: WorkerPresentation): void {
   slot.toolActivity = {};
 }
 
-/** The worker's last reported Pi queue. A stop keeps it so Stop can report
- * input the stopped worker still held; a replaced worker starts empty. */
-export function clearPiQueueMirror(
-  slot: Pick<RuntimeSlot, "piPendingQueues" | "piPendingInput">,
-): void {
-  slot.piPendingQueues = emptyPendingQueues();
-  slot.piPendingInput = { steering: [], followUp: [] };
-}
-
 export interface RuntimeOperationQueue {
   tail: Promise<void>;
   pending: number;
@@ -204,8 +195,7 @@ export interface RuntimeSlot {
   /** A reclaimed worker must finish stopping before the same session starts
    * another one, preserving Pi's one-writer-per-session rule. */
   stopping: Promise<void> | null;
-  /** Worker owning a prompt whose Pi receipt is still pending. */
-  pendingPrompt: PiRpcProcess | null;
+  /** Prompt RPCs still unwinding on the current worker. */
   pendingPromptCount: number;
   nativeBash: NativeBashExecution | null;
   /** Standalone compaction owns its native command boundary and cancellation evidence. */
@@ -218,7 +208,9 @@ export interface RuntimeSlot {
   deliveryNavigationEpoch: number;
   /** Host-held input awaiting a safe Pi prompt boundary; not persisted Pi history. */
   deferredPrompts: Array<{
-    request: PromptRequest;
+    request: PromptRequest & {
+      behavior: NonNullable<PromptRequest["behavior"]>;
+    };
     worker: PiRpcProcess;
     navigationEpoch: number;
     incarnationId: string;
@@ -244,8 +236,7 @@ export interface RuntimeSlot {
   pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
-  piPendingQueues: PendingQueues;
-  /** Latest complete public Pi queue event; never sent in a browser snapshot. */
+  /** Native queue text, or null when the observation was incomplete. */
   piPendingInput: PendingInput | null;
   /** Worker-bound artifact ownership, not a queue/scheduling authority. */
   pendingImages: PendingImageRecovery | null;
@@ -324,7 +315,6 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     startupPhase: "idle",
     startupError: null,
     stopping: null,
-    pendingPrompt: null,
     pendingPromptCount: 0,
     nativeBash: null,
     manualCompaction: null,
@@ -343,7 +333,6 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     pendingExtensionUiTimers: new Map(),
     extensionResponseQueue: emptyOperationQueue(),
     pendingQueues: emptyPendingQueues(),
-    piPendingQueues: emptyPendingQueues(),
     piPendingInput: { steering: [], followUp: [] },
     pendingImages: null,
     stoppingInput: false,

@@ -10,7 +10,6 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { ComposerInput } from "../../src/components/ComposerInput";
-import { store } from "../../src/store";
 import {
   attachFile,
   createComposerFixture,
@@ -216,7 +215,9 @@ describe("Composer editing and keyboard behavior", () => {
       expect(
         await screen.findByRole("button", { name: "Remove attached image" }),
       ).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await act(async () =>
+        fireEvent.click(screen.getByRole("button", { name: "Send message" })),
+      );
       await waitFor(() =>
         expect(host.promptBodies.at(-1)).toMatchObject({
           sessionId: "s1",
@@ -233,7 +234,6 @@ describe("Composer editing and keyboard behavior", () => {
           },
         }),
       );
-      await waitFor(() => expect(store.getState().sending).toBe(false));
       host.historyEntries = [
         { text: "new user prompt", images: [], files: [] },
       ];

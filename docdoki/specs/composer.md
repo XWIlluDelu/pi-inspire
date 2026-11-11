@@ -304,11 +304,9 @@ target. Artifacts are released only on confirmed acceptance, explicit Clear, or 
 restoration. Known acceptance remains non-retryable even if later projection reconciliation
 conflicts; [[session-persistence]] owns the resulting writer fence.
 
-Pending uploads, failed chips and artifact limits block send/staging with local warning notices, not
-a session-wide error banner. Late results update their original partition and visible Restore
-affordance immediately; they change the global error only while that session still owns the
-surface. Unchanged-draft retries after uncertain acceptance preserve the exact operation and payload
-under [[session-transport]], even if the default delivery mode has since changed.
+Pending uploads, failed chips and artifact limits block send or staging with local warnings. Late
+results update their session's draft and Restore affordance. Error notices require that session to
+own the visible surface. [[session-transport]] defines receipt proof and retry identity.
 
 `running`, `retrying`, `queued` and `compacting` share Host/browser delivery authority. Active work
 exposes Steer / Queue; the selected mode sets the placeholder and Send's accessible name. Compaction
@@ -340,7 +338,9 @@ transport instructions. Preview length and truncation describe this readable tex
 use the exact input. Known images have wrapping, clickable thumbnails from retained handles through
 the attachment endpoint. Until handles arrive, count-only rows show Image / N images; unknown empty
 rows imply no image. Consumed image admissions leave the public view even if Pi retains empty
-captions. Display, full copy and recovery share that unconsumed view across runs.
+captions. The Host combines complete Pi queue observations with Host-held input for display, copy
+and recovery. An incomplete event leaves the last preview visible, and exact copy reports that
+full content is unavailable.
 
 - **Copy:** item copy reads complete text and original images at the matching Host queue
   revision/coordinate, including image-only items, uploads held during compaction and recalled

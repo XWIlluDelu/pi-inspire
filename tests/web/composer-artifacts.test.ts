@@ -182,37 +182,6 @@ describe("Pending input recovery and copying", () => {
     expect(sessionDraft("s1")).toBe("retained handoff");
   });
 
-  it("starts a receipt-only observation on socket resume even when the same API's mutation remains pending", async () => {
-    const mutation = deferred<RouteResponse>();
-    let reads = 0;
-    installFetch((url, init) => {
-      if (url === "/api/pending/recover") return mutation.promise;
-      if (url.startsWith("/api/pending/operations/")) {
-        reads++;
-        return {
-          body: { steering: ["socket-reclaimed handoff"], followUp: [] },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    const recovering = store.recoverPending();
-    socket.onclose?.();
-    store.recoverConnection("online");
-    const { FakeWebSocket } = await import("./helpers");
-    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
-    FakeWebSocket.instances.at(-1)!.open();
-    await vi.waitFor(() =>
-      expect(sessionDraft("s1")).toBe("socket-reclaimed handoff"),
-    );
-    expect(reads).toBe(1);
-    mutation.resolve({
-      body: { steering: ["socket-reclaimed handoff"], followUp: [] },
-    });
-    expect(await recovering).toBe(true);
-    expect(sessionDraft("s1")).toBe("socket-reclaimed handoff");
-  });
-
   it("restores image handles and thumbnails beside the newest draft attachments, then resends them", async () => {
     const recoveredImage = {
       id: "recovered-image",

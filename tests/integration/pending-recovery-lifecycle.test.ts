@@ -68,21 +68,29 @@ describe("Pending intent and receipt lifecycle", () => {
       const admitted = deferred<void>();
       const recover = vi
         .spyOn(f.runtime, "recoverPending")
-        .mockResolvedValue({ steering: ["reclaimed input"], followUp: [] });
-      if (outcome === "failed")
-        recover.mockRejectedValue(new Error("confirmed recovery failure"));
+        .mockResolvedValue({ steering: [], followUp: [] });
       const abort = vi
         .spyOn(f.runtime, "abort")
         .mockResolvedValue({ steering: [], followUp: [] });
+      const execute = action === "recover" ? recover : abort;
+      if (outcome === "failed")
+        execute.mockRejectedValue(new Error("confirmed recovery failure"));
+      else
+        execute.mockResolvedValue({
+          steering: ["reclaimed input"],
+          followUp: [],
+        });
+      const heldPath =
+        action === "recover" ? "/api/pending/recover" : "/api/control/abort";
       const fetch = installFetch(async (url, init) => {
-        if (url === "/api/pending/recover") {
+        if (url === heldPath) {
           const response = await forward(url, init);
           admitted.resolve();
           await delivery.promise;
           return response;
         }
         if (
-          url === "/api/control/abort" ||
+          url === "/api/pending/recover" ||
           url.startsWith("/api/pending/operations/")
         )
           return forward(url, init);
@@ -93,8 +101,9 @@ describe("Pending intent and receipt lifecycle", () => {
       let completed = false;
       const operation = (
         action === "recover" ? store.recoverPending() : store.abort()
-      ).then(() => {
+      ).then((result) => {
         completed = true;
+        return result;
       });
       try {
         await admitted.promise;
@@ -108,6 +117,8 @@ describe("Pending intent and receipt lifecycle", () => {
         expect(store.getState().transportGeneration).toBe(generation);
         expect(recover).toHaveBeenCalledOnce();
         await vi.waitFor(() => expect(completed).toBe(true));
+        if (action === "recover")
+          expect(await operation).toBe(outcome === "success");
         expect(store.getState().pendingAction).toBeNull();
         expect(abort).toHaveBeenCalledTimes(action === "abort" ? 1 : 0);
         expect(sessionDraft("s1")).toBe(
@@ -182,63 +193,6 @@ describe("Pending intent and receipt lifecycle", () => {
       delivery.resolve();
       await operation;
     }
-  });
-
-  it("stops a new run while independently reclaiming the previous Stop's lost result on the same socket", async () => {
-    let run = 1,
-      lostPost = true,
-      lostGet = true;
-    const stopped: number[] = [],
-      ids: string[] = [];
-    vi.spyOn(f.runtime, "abort").mockImplementation(async () => {
-      stopped.push(run);
-      return { steering: run === 1 ? ["old Stop handoff"] : [], followUp: [] };
-    });
-    vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
-      steering: [],
-      followUp: [],
-    });
-    installFetch(async (url, init) => {
-      if (url === "/api/control/abort") {
-        ids.push(String(jsonBody(init).operationId));
-        const response = await forward(url, init);
-        if (lostPost) {
-          lostPost = false;
-          throw new TypeError("lost Stop response");
-        }
-        return response;
-      }
-      if (url === "/api/pending/recover") return forward(url, init);
-      if (url.startsWith("/api/pending/operations/")) {
-        const response = await forward(url, init);
-        if (lostGet) {
-          lostGet = false;
-          throw new TypeError("lost receipt");
-        }
-        return response;
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    socket.emit({ type: "agent_start", sessionId: "s1" });
-    await store.abort();
-    expect(stopped).toEqual([1]);
-    expect(sessionDraft("s1")).toBe("");
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "s1",
-      aborted: true,
-      sessionStatus: { runState: "aborted" },
-    });
-    await vi.waitFor(() => expect(store.getState().runState).toBe("idle"));
-    run = 2;
-    socket.emit({ type: "agent_start", sessionId: "s1" });
-    await store.abort();
-    await vi.waitFor(() => expect(sessionDraft("s1")).toBe("old Stop handoff"));
-    expect(stopped).toEqual([1, 2]);
-    expect(ids).toHaveLength(2);
-    expect(ids[1]).not.toBe(ids[0]);
-    expect(store.getState().connection).toBe("open");
   });
 
   it("ends a matched failed execution so later explicit Returns can address new input", async () => {

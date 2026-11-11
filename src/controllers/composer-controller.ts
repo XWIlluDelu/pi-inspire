@@ -17,8 +17,8 @@ import {
   composerHistoryScopeKey,
   discardComposerHistory,
 } from "../composer-history";
-import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
 
 interface RecalledHistoryArtifact {
   type: "image" | "file";
@@ -62,30 +62,40 @@ interface ComposerArtifactDraft {
   projectFiles: string[];
 }
 
-interface PendingPromptDelivery {
-  signature: string;
-  request: PromptDeliveryRequest;
-}
-
 interface DeliveryRecord {
-  delivery: PendingPromptDelivery;
+  request: PromptDeliveryRequest;
   message: string;
   attachments: PendingAttachment[];
   projectFiles: string[];
   historyDraft: ComposerArtifactDraft | null;
   /** Palette preparation owns its text; it never transfers the Composer draft. */
-  independent?: boolean;
+  independent: boolean;
 }
 
-export interface ComposerPartition {
+interface DeliveryObservation {
+  record: DeliveryRecord;
+  confirmation: AbortController;
+}
+
+interface ComposerPartition {
   attachments: PendingAttachment[];
   projectFiles: string[];
-  sending: boolean;
   historyDraft: ComposerArtifactDraft | null;
   /** Independently owned operations; only an exact retry may reuse an unknown ID. */
-  deliveries: Map<string, DeliveryRecord>;
-  unknownDeliveries: Map<string, PendingPromptDelivery>;
+  deliveries: Map<string, DeliveryObservation>;
+  unknownDeliveries: Map<string, PromptDeliveryRequest>;
   failedDeliveries: DeliveryRecord[];
+}
+
+function attachmentOwners(composer: ComposerPartition) {
+  const owners = [
+    composer,
+    ...Array.from(composer.deliveries.values(), ({ record }) => record),
+    ...composer.failedDeliveries,
+  ];
+  return owners.flatMap((owner) =>
+    owner.historyDraft ? [owner, owner.historyDraft] : [owner],
+  );
 }
 
 interface ComposerControllerState {
@@ -95,7 +105,7 @@ interface ComposerControllerState {
 
 export type ComposerSlice = Pick<
   ComposerPartition,
-  "attachments" | "projectFiles" | "sending"
+  "attachments" | "projectFiles"
 > & { failedDeliveryCount: number };
 
 interface ComposerControllerHost {
@@ -116,10 +126,6 @@ interface ComposerControllerHost {
  */
 export class ComposerController {
   private readonly composers = new Map<string, ComposerPartition>();
-  private readonly confirmations = new Map<
-    string,
-    Map<string, AbortController>
-  >();
   private readonly uploads = new Map<string, AbortController>();
   private readonly stagedFiles = new Map<string, StagedFile>();
   private requestEpoch = 0;
@@ -134,37 +140,29 @@ export class ComposerController {
       ? {
           attachments: composer.attachments,
           projectFiles: composer.projectFiles,
-          sending: composer.sending,
           failedDeliveryCount: composer.failedDeliveries.length,
         }
       : {
           attachments: [],
           projectFiles: [],
-          sending: false,
           failedDeliveryCount: 0,
         };
   }
 
   invalidateForTransportReplacement(): void {
     this.requestEpoch += 1;
-    for (const confirmations of this.confirmations.values())
-      for (const confirmation of confirmations.values()) confirmation.abort();
-    this.confirmations.clear();
     for (const upload of new Set(this.uploads.values())) upload.abort();
     this.uploads.clear();
     for (const staged of this.stagedFiles.values()) staged.recovery.reset();
     let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
       deliveryOutcomeUnknown ||= composer.deliveries.size > 0;
-      for (const record of composer.deliveries.values()) {
-        composer.unknownDeliveries.set(
-          record.delivery.signature,
-          record.delivery,
-        );
+      for (const [signature, { record, confirmation }] of composer.deliveries) {
+        confirmation.abort();
+        composer.unknownDeliveries.set(signature, record.request);
         if (!record.independent) composer.failedDeliveries.push(record);
       }
       composer.deliveries.clear();
-      composer.sending = false;
       this.restoreFailedIfEmpty(sessionId, composer);
       const invalidateUploads = (items: PendingAttachment[]) =>
         items.map((item) =>
@@ -232,23 +230,9 @@ export class ComposerController {
           error: "This attachment is no longer available. Add it again.",
         };
       });
-    for (const composer of this.composers.values()) {
-      composer.attachments = reconcile(composer.attachments);
-      if (composer.historyDraft)
-        composer.historyDraft.attachments = reconcile(
-          composer.historyDraft.attachments,
-        );
-      for (const record of [
-        ...composer.deliveries.values(),
-        ...composer.failedDeliveries,
-      ]) {
-        record.attachments = reconcile(record.attachments);
-        if (record.historyDraft)
-          record.historyDraft.attachments = reconcile(
-            record.historyDraft.attachments,
-          );
-      }
-    }
+    for (const composer of this.composers.values())
+      for (const owner of attachmentOwners(composer))
+        owner.attachments = reconcile(owner.attachments);
     const sessionId = this.host.state().sessionId;
     if (changed && sessionId) this.publish(sessionId);
   }
@@ -324,33 +308,15 @@ export class ComposerController {
               this.host.authorityId() !== authorityId
             )
               return;
-            const lists = [
-              composer.attachments,
-              ...(composer.historyDraft
-                ? [composer.historyDraft.attachments]
-                : []),
-              ...[
-                ...composer.deliveries.values(),
-                ...composer.failedDeliveries,
-              ].flatMap((record) => [
-                record.attachments,
-                ...(record.historyDraft
-                  ? [record.historyDraft.attachments]
-                  : []),
-              ]),
-            ];
-            if (
-              !lists.some((items) =>
-                items.some((value) => value.localId === item.localId),
-              )
-            )
-              return;
             const previewUrl = URL.createObjectURL(blob);
-            this.patchRecoveredPreview(composer, item.localId, {
-              previewUrl,
-              previewLoading: false,
-            });
-            this.publish(sessionId);
+            if (
+              this.patchAttachment(composer, item.localId, {
+                previewUrl,
+                previewLoading: false,
+              })
+            )
+              this.publish(sessionId);
+            else URL.revokeObjectURL(previewUrl);
           })
           .catch((error) => {
             if (
@@ -359,7 +325,7 @@ export class ComposerController {
             )
               return;
             if (
-              this.patchRecoveredPreview(composer, item.localId, {
+              this.patchAttachment(composer, item.localId, {
                 previewLoading: false,
                 error:
                   error instanceof Error
@@ -372,62 +338,35 @@ export class ComposerController {
       }
   }
 
-  private patchRecoveredPreview(
+  private patchAttachment(
     composer: ComposerPartition,
     localId: string,
     patch: Partial<PendingAttachment>,
   ): boolean {
     let found = false;
-    const apply = (items: PendingAttachment[]) => {
-      if (!items.some((item) => item.localId === localId)) return items;
+    for (const owner of attachmentOwners(composer)) {
+      if (!owner.attachments.some((item) => item.localId === localId)) continue;
       found = true;
-      return items.map((item) =>
+      owner.attachments = owner.attachments.map((item) =>
         item.localId === localId ? { ...item, ...patch } : item,
       );
-    };
-    composer.attachments = apply(composer.attachments);
-    if (composer.historyDraft)
-      composer.historyDraft.attachments = apply(
-        composer.historyDraft.attachments,
-      );
-    for (const record of [
-      ...composer.deliveries.values(),
-      ...composer.failedDeliveries,
-    ]) {
-      record.attachments = apply(record.attachments);
-      if (record.historyDraft)
-        record.historyDraft.attachments = apply(
-          record.historyDraft.attachments,
-        );
     }
     return found;
   }
 
   discard(sessionId: string): void {
-    for (const confirmation of this.confirmations.get(sessionId)?.values() ??
-      [])
-      confirmation.abort();
-    this.confirmations.delete(sessionId);
     const composer = this.composers.get(sessionId);
     if (composer) {
-      this.releaseAttachments(composer.attachments);
-      if (composer.historyDraft)
-        this.releaseAttachments(composer.historyDraft.attachments);
+      for (const { confirmation } of composer.deliveries.values())
+        confirmation.abort();
+      for (const owner of attachmentOwners(composer))
+        this.releaseAttachments(owner.attachments);
       // Uploads still in flight retain this object. Emptying it makes their
       // completion path reclaim any host copy rather than resurrecting the
       // deleted partition.
       composer.attachments = [];
       composer.projectFiles = [];
-      composer.sending = false;
       composer.historyDraft = null;
-      for (const record of [
-        ...composer.deliveries.values(),
-        ...composer.failedDeliveries,
-      ]) {
-        this.releaseAttachments(record.attachments);
-        if (record.historyDraft)
-          this.releaseAttachments(record.historyDraft.attachments);
-      }
       composer.deliveries.clear();
       composer.failedDeliveries = [];
       composer.unknownDeliveries.clear();
@@ -448,11 +387,6 @@ export class ComposerController {
     const authorityId = this.host.authorityId();
     if (!api || !sessionId || !authorityId) return false;
     this.reconcileAuthority(authorityId);
-    const requestEpoch = this.requestEpoch;
-    const ownsTransport = (): boolean =>
-      this.host.api() === api &&
-      this.requestEpoch === requestEpoch &&
-      this.composers.get(sessionId) === composer;
     const composer = this.forSession(sessionId);
     // A matching in-flight request is a duplicate click, not a new message.
     // Different input may proceed while a previous Pi receipt is pending.
@@ -572,14 +506,9 @@ export class ComposerController {
       expectedViewId: undefined,
       behavior: undefined,
     });
-    if (
-      [...composer.deliveries.values()].some(
-        (record) => record.delivery.signature === signature,
-      )
-    )
-      return false;
+    if (composer.deliveries.has(signature)) return false;
     const retained = composer.unknownDeliveries.get(signature);
-    if (retained && retained.request.authorityId !== authorityId) {
+    if (retained && retained.authorityId !== authorityId) {
       composer.unknownDeliveries.delete(signature);
       this.host.notifyVisible(
         sessionId,
@@ -587,16 +516,13 @@ export class ComposerController {
       );
       return false;
     }
-    const delivery: PendingPromptDelivery = retained ?? {
-      signature,
-      request: {
-        operationId: globalThis.crypto.randomUUID(),
-        authorityId,
-        ...deliveryContent,
-      },
+    const request = retained ?? {
+      operationId: globalThis.crypto.randomUUID(),
+      authorityId,
+      ...deliveryContent,
     };
     const record: DeliveryRecord = {
-      delivery,
+      request,
       message,
       attachments: included,
       projectFiles,
@@ -604,9 +530,14 @@ export class ComposerController {
       independent,
     };
     composer.failedDeliveries = composer.failedDeliveries.filter(
-      (item) => item.delivery !== retained,
+      (item) => item.request !== retained,
     );
-    composer.deliveries.set(delivery.request.operationId, record);
+    const confirmation = new AbortController();
+    const observation = { record, confirmation };
+    composer.deliveries.set(signature, observation);
+    const ownsTransport = () =>
+      this.host.api() === api &&
+      composer.deliveries.get(signature) === observation;
     for (const item of included) {
       const staged = this.stagedFiles.get(item.localId);
       if (staged) {
@@ -619,15 +550,10 @@ export class ComposerController {
       composer.projectFiles = [];
       composer.historyDraft = null;
     }
-    composer.sending = true;
     onHandoff?.();
     this.publish(sessionId);
-    const confirmation = new AbortController();
-    const confirmations = this.confirmations.get(sessionId) ?? new Map();
-    confirmations.set(delivery.request.operationId, confirmation);
-    this.confirmations.set(sessionId, confirmations);
     try {
-      const response = await api.prompt(delivery.request, confirmation.signal);
+      const response = await api.prompt(request, confirmation.signal);
       if (!ownsTransport()) return false;
       for (const item of record.attachments) {
         this.forgetStagedFile(item.localId);
@@ -639,19 +565,9 @@ export class ComposerController {
       return { accepted: true, historyEntry: response.historyEntry };
     } catch (error) {
       if (!ownsTransport()) return false;
-      const acceptanceUnknown =
-        !(error instanceof ApiError) ||
-        error.edge === "ssh-reverse" ||
-        error.outcomeUnknown ||
-        error.code === "PI_RPC_OUTCOME_UNKNOWN" ||
-        error.code === "PROMPT_OPERATION_RESULT_RETIRED" ||
-        error.code === "PROMPT_OPERATION_NOT_FOUND" ||
-        error.code === "HOST_AUTHORITY_CHANGED" ||
-        ((error.status === 408 || error.status >= 500) &&
-          error.authorityId !== authorityId);
-      if (acceptanceUnknown)
-        composer.unknownDeliveries.set(signature, delivery);
-      else {
+      const rejection =
+        error instanceof ApiError && !error.outcomeUnknown ? error : null;
+      if (rejection) {
         composer.unknownDeliveries.delete(signature);
         for (const item of record.attachments) {
           const staged = this.stagedFiles.get(item.localId);
@@ -659,19 +575,19 @@ export class ComposerController {
             staged.submitted = [...composer.unknownDeliveries.values()].some(
               (unknown) =>
                 item.uploadedId &&
-                unknown.request.attachmentIds?.includes(item.uploadedId),
+                unknown.attachmentIds?.includes(item.uploadedId),
             );
         }
-      }
-      if (error instanceof ApiError && error.code === "PROMPT_RECOVERED") {
+      } else composer.unknownDeliveries.set(signature, request);
+      if (rejection?.code === "PROMPT_RECOVERED") {
         // Both observers share a handoff. A late observer cannot undo a later
         // removal or send, even after the draft no longer contains the handle.
-        if (error.recoveredAttachments) {
+        if (rejection.recoveredAttachments) {
           this.restoreStagedAttachments(
             sessionId,
-            error.recoveredAttachments,
+            rejection.recoveredAttachments,
             authorityId,
-            error.recoveryId,
+            rejection.recoveryId,
           );
           for (const item of record.attachments)
             if (item.kind === "image") {
@@ -682,7 +598,8 @@ export class ComposerController {
         composer.attachments = [
           ...record.attachments
             .filter(
-              (item) => !error.recoveredAttachments || item.kind !== "image",
+              (item) =>
+                !rejection.recoveredAttachments || item.kind !== "image",
             )
             .map((item) =>
               item.recalledArtifact?.preview
@@ -704,19 +621,15 @@ export class ComposerController {
           this.releaseAttachments(record.historyDraft.attachments);
         return false;
       }
-      if (error instanceof ApiError && error.code === "PROMPT_CLEARED") {
+      if (rejection?.code === "PROMPT_CLEARED") {
         this.releaseAttachments(record.attachments);
         if (record.historyDraft)
           this.releaseAttachments(record.historyDraft.attachments);
         return false;
       }
-      if (
-        error instanceof ApiError &&
-        error.code === "ATTACHMENTS_EXPIRED" &&
-        !acceptanceUnknown
-      ) {
+      if (rejection?.code === "ATTACHMENTS_EXPIRED") {
         record.attachments = record.attachments.map((item) =>
-          item.uploadedId && error.matches?.includes(item.uploadedId)
+          item.uploadedId && rejection.matches?.includes(item.uploadedId)
             ? {
                 ...item,
                 status: this.stagedFiles.has(item.localId)
@@ -732,14 +645,11 @@ export class ComposerController {
       if (!independent) {
         composer.failedDeliveries.push(record);
         this.restoreFailedIfEmpty(sessionId, composer);
-        if (error instanceof ApiError && error.code === "ATTACHMENTS_EXPIRED")
-          this.resumeUploads();
+        if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
       }
-      if (error instanceof ApiError && error.code === "PROMPT_ABORTED")
-        return false;
+      if (rejection?.code === "PROMPT_ABORTED") return false;
       if (error instanceof ApiError && error.status === 401) {
-        composer.deliveries.delete(delivery.request.operationId);
-        composer.sending = composer.deliveries.size > 0;
+        composer.deliveries.delete(signature);
         this.publish(sessionId);
         this.host.handleAuthFailure();
       } else
@@ -748,31 +658,17 @@ export class ComposerController {
               this.host.notify("warning", text)
           : this.host.notifyVisible)(
           sessionId,
-          acceptanceUnknown
-            ? "Message delivery is unconfirmed. You can retry while this Host is still running."
-            : error instanceof Error
-              ? error.message
-              : "Failed to send",
+          rejection?.message ??
+            "Message delivery is unconfirmed. You can retry while this Host is still running.",
         );
       return false;
     } finally {
-      const confirmations = this.confirmations.get(sessionId);
-      confirmations?.delete(delivery.request.operationId);
-      if (confirmations?.size === 0) this.confirmations.delete(sessionId);
       if (ownsTransport()) {
-        composer.deliveries.delete(delivery.request.operationId);
-        composer.sending = composer.deliveries.size > 0;
+        composer.deliveries.delete(signature);
         this.prune(sessionId, composer);
         this.publish(sessionId);
       }
     }
-  }
-
-  failedPrompt(sessionId: string | null): { message: string } | null {
-    const record = sessionId
-      ? this.composers.get(sessionId)?.failedDeliveries[0]
-      : undefined;
-    return record ? { message: record.message } : null;
   }
 
   restoreFailedPrompt(sessionId: string): boolean {
@@ -987,7 +883,7 @@ export class ComposerController {
     for (const { item, staged } of pending) {
       staged.recovery.cancel();
       this.uploads.set(item.localId, upload);
-      this.patchRecoveredPreview(composer, item.localId, {
+      this.patchAttachment(composer, item.localId, {
         status: "uploading",
         error: undefined,
         retryable: false,
@@ -1024,7 +920,7 @@ export class ComposerController {
           return;
         }
         staged.recovery.reset();
-        this.patchRecoveredPreview(composer, item.localId, {
+        this.patchAttachment(composer, item.localId, {
           status: "ready",
           error: undefined,
           retryable: false,
@@ -1060,7 +956,7 @@ export class ComposerController {
             )
               void this.uploadStaged(sessionId, [item.localId]);
           });
-        this.patchRecoveredPreview(
+        this.patchAttachment(
           composer,
           item.localId,
           recovering
@@ -1246,7 +1142,6 @@ export class ComposerController {
       composer = {
         attachments: [],
         projectFiles: [],
-        sending: false,
         historyDraft: null,
         deliveries: new Map(),
         unknownDeliveries: new Map(),
@@ -1259,7 +1154,6 @@ export class ComposerController {
 
   private prune(sessionId: string, composer: ComposerPartition): void {
     if (
-      !composer.sending &&
       !composer.historyDraft &&
       composer.deliveries.size === 0 &&
       composer.unknownDeliveries.size === 0 &&

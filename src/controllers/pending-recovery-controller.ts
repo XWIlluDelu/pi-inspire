@@ -5,6 +5,7 @@ import type {
 import { type Api, ApiError, ApiTransportError } from "../api";
 
 interface Handoff {
+  intent: string;
   request: PendingOperationRequest;
   result?: PendingRecovery;
   completion: Promise<PendingRecovery>;
@@ -14,7 +15,7 @@ interface Handoff {
     api: Api;
     promise: Promise<PendingRecovery>;
   };
-  applied: boolean;
+  restored?: boolean;
 }
 interface PendingRecoveryHost {
   api(): Api | null;
@@ -26,7 +27,6 @@ interface PendingRecoveryHost {
 /** Retains unclaimed handoff identities, not Pending input or execution order. */
 export class PendingRecoveryController {
   private readonly handoffs = new Map<string, Handoff>();
-  private readonly intents = new Map<string, Handoff>();
   private readonly runs = new Map<string, number>();
   private readonly queues = new Map<string, number>();
   constructor(private readonly host: PendingRecoveryHost) {}
@@ -46,7 +46,7 @@ export class PendingRecoveryController {
       this.runs.get(sessionId) ?? 0,
       action === "recover" ? (this.queues.get(sessionId) ?? 0) : null,
     ]);
-    let handoff = this.intents.get(intent);
+    let handoff = this.handoffs.get(intent);
     if (!handoff) {
       let complete!: Handoff["complete"];
       let fail!: Handoff["fail"];
@@ -55,6 +55,7 @@ export class PendingRecoveryController {
         fail = reject;
       });
       handoff = {
+        intent,
         request: {
           sessionId,
           action,
@@ -65,13 +66,11 @@ export class PendingRecoveryController {
         completion,
         complete,
         fail,
-        applied: false,
       };
-      this.intents.set(intent, handoff);
-      this.handoffs.set(handoff.request.operationId, handoff);
+      this.handoffs.set(intent, handoff);
     }
     this.resume(handoff);
-    return this.observe(handoff.request.operationId, handoff, false);
+    return this.observe(handoff, false);
   }
 
   private terminal(error: ApiError, request: PendingOperationRequest): boolean {
@@ -83,17 +82,11 @@ export class PendingRecoveryController {
     );
   }
 
-  private forget(key: string, handoff: Handoff): void {
-    this.handoffs.delete(key);
-    for (const [intent, current] of this.intents)
-      if (current === handoff) this.intents.delete(intent);
+  private owns(handoff: Handoff): boolean {
+    return this.handoffs.get(handoff.intent) === handoff;
   }
 
-  private async observe(
-    key: string,
-    handoff: Handoff,
-    readOnly: boolean,
-  ): Promise<boolean> {
+  private async observe(handoff: Handoff, readOnly: boolean): Promise<boolean> {
     const api = this.host.api();
     if (!api || handoff.request.authorityId !== this.host.authorityId())
       return false;
@@ -115,7 +108,7 @@ export class PendingRecoveryController {
             } catch (error) {
               if (
                 readOnly ||
-                this.handoffs.get(key) !== handoff ||
+                !this.owns(handoff) ||
                 !(
                   error instanceof ApiTransportError ||
                   (error instanceof ApiError &&
@@ -130,7 +123,7 @@ export class PendingRecoveryController {
             // A receipt observer can finish before the original POST. The
             // first confirmed result owns restoration; retired handoffs must
             // not be revived by late transport completions.
-            if (this.handoffs.get(key) === handoff && !handoff.result) {
+            if (this.owns(handoff) && !handoff.result) {
               handoff.result = result;
               handoff.complete(result);
             }
@@ -153,11 +146,15 @@ export class PendingRecoveryController {
         request.authorityId !== this.host.authorityId()
       )
         return false;
-      if (handoff.applied) return !handoff.result!.error;
-      const restored = this.host.restore(request.sessionId, handoff.result!);
-      handoff.applied = true;
-      this.forget(key, handoff);
-      return restored;
+      if (handoff.restored === undefined) {
+        if (!this.owns(handoff)) return false;
+        handoff.restored = this.host.restore(
+          request.sessionId,
+          handoff.result!,
+        );
+        this.handoffs.delete(handoff.intent);
+      }
+      return handoff.restored;
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -166,9 +163,9 @@ export class PendingRecoveryController {
           (!error.outcomeUnknown &&
             error.status !== 401 &&
             error.status < 500)) &&
-        this.handoffs.get(key) === handoff
+        this.owns(handoff)
       ) {
-        this.forget(key, handoff);
+        this.handoffs.delete(handoff.intent);
         handoff.fail(error);
       }
       throw error;
@@ -186,14 +183,14 @@ export class PendingRecoveryController {
 
   /** Reconnect and later intent only observe older receipts; never redispatch them. */
   resume(except?: Handoff): void {
-    for (const [key, handoff] of this.handoffs) {
+    for (const handoff of this.handoffs.values()) {
       if (handoff === except) continue;
       if (handoff.request.authorityId !== this.host.authorityId()) {
-        this.forget(key, handoff);
+        this.handoffs.delete(handoff.intent);
         continue;
       }
       const api = this.host.api();
-      void this.observe(key, handoff, true).catch((error) => {
+      void this.observe(handoff, true).catch((error) => {
         if (
           api === this.host.api() &&
           error instanceof ApiError &&

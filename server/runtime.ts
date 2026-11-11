@@ -117,9 +117,8 @@ import { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
 import { RuntimeExternalSessions } from "./runtime-external-sessions.js";
 import {
   exactPendingInput,
-  mergePendingQueues,
-  pendingContentFromTexts,
-  pendingQueuesFromContent,
+  pendingContentFromInput,
+  projectPendingQueues,
 } from "./runtime-pending.js";
 import { readPendingImageEvidence } from "./runtime-pending-image-evidence.js";
 import {
@@ -1423,20 +1422,16 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private piPendingContent(slot: RuntimeSlot) {
     const input = slot.piPendingInput;
     return input
-      ? (slot.pendingImages?.project() ??
-          pendingContentFromTexts(input.steering, input.followUp))
+      ? (slot.pendingImages?.project() ?? pendingContentFromInput(input))
       : null;
   }
 
   private refreshPendingQueues(slot: RuntimeSlot, publish = false): void {
     const content = this.piPendingContent(slot);
-    if (content)
-      slot.piPendingQueues = pendingQueuesFromContent(
-        content,
-        slot.piPendingQueues.revision,
-      );
-    slot.pendingQueues = mergePendingQueues(
-      slot.piPendingQueues,
+    // Keep the last complete projection if Pi sends an incomplete observation.
+    if (!content) return;
+    slot.pendingQueues = projectPendingQueues(
+      content,
       slot.deferredPrompts.map(({ request }) => {
         let imageCount: number | null;
         try {
@@ -1444,11 +1439,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             this.attachments.pendingCopyImageIds(request.attachmentIds ?? [])
               .length + (request.historyArtifacts?.imageReferences.length ?? 0);
         } catch {
-          // A missing upload must not throw out a deferred prompt while
-          // projecting metadata. The exact copy/read reports its own failure.
           imageCount = null;
         }
-        return { ...request, imageCount };
+        return {
+          message: request.message,
+          behavior: request.behavior,
+          imageCount,
+        };
       }),
       slot.pendingQueues.revision,
     );
@@ -3565,7 +3562,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           // Pi owns preflight, including hooks/compaction/dialogs, before its
           // prompt receipt. Publish admission so a silent hook is stoppable.
           if (!isBusyRunState(previousRunState)) slot.runState = "queued";
-          slot.pendingPrompt = readyProcess;
           slot.pendingPromptCount += 1;
           this.emitSlotEvent(slot, { type: "prompt_pending" });
           try {
@@ -3703,16 +3699,13 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               }
             }
           } catch (error) {
-            if (slot.runState === "queued") {
+            if (slot.process === readyProcess && slot.runState === "queued") {
               slot.runState = previousRunState;
               this.emitSlotEvent(slot, { type: "prompt_finished" });
             }
             throw error;
           } finally {
-            if (slot.pendingPrompt === readyProcess) {
-              slot.pendingPromptCount -= 1;
-              if (slot.pendingPromptCount === 0) slot.pendingPrompt = null;
-            }
+            if (slot.process === readyProcess) slot.pendingPromptCount -= 1;
           }
         } catch (error) {
           const outcomeUnknown =
@@ -4596,7 +4589,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         error: "The session view changed while recovering Pending input.",
       };
     if (!rpc || !slot.ready) {
-      return slot.piPendingQueues.totalCount > 0
+      return slot.piPendingInput === null || slot.pendingQueues.totalCount > 0
         ? {
             ...host,
             error: "There is no live Pi runtime to recover Pending input",
@@ -4898,7 +4891,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           } finally {
             clearTimeout(timer);
           }
-        } else if (slot.pendingPrompt === rpc || slot.pendingBranchBridge) {
+        } else if (slot.pendingPromptCount > 0 || slot.pendingBranchBridge) {
           // Pi abort need not interrupt a pre-prompt hook. Explicit Stop retires
           // its owner outside the persistence FIFO waiting on that same hook.
           await this.stopWriter(slot, "prompt");

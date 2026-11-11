@@ -464,37 +464,12 @@ function post<T>(
   );
 }
 
-async function observePrompt(
-  path: string,
-  body: PromptDeliveryRequest | undefined,
-  signal?: AbortSignal,
-): Promise<PromptDeliveryResponse> {
-  if (signal?.aborted) throw new ApiTransportError("request");
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  signal?.addEventListener("abort", cancel, { once: true });
-  const timer = window.setTimeout(cancel, PROMPT_CONFIRMATION_TIMEOUT_MS);
-  try {
-    const init = { signal: controller.signal };
-    return await (body
-      ? post<PromptDeliveryResponse>(path, body, init)
-      : request<PromptDeliveryResponse>(path, init));
-  } catch (error) {
-    // This ends only one browser observation, not the Host/Pi operation.
-    if (aborted(error)) throw new ApiTransportError("request");
-    throw error;
-  } finally {
-    window.clearTimeout(timer);
-    signal?.removeEventListener("abort", cancel);
-  }
-}
-
 function waitForPromptPoll(signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const finish = () => {
       window.clearTimeout(timer);
       signal?.removeEventListener("abort", finish);
-      if (signal?.aborted) reject(new ApiTransportError("request"));
+      if (signal?.aborted) reject(new ApiRequestCancelledError(true));
       else resolve();
     };
     const timer = window.setTimeout(finish, 250);
@@ -507,17 +482,20 @@ async function deliverPrompt(
   body: PromptDeliveryRequest,
   signal?: AbortSignal,
 ): Promise<PromptAcceptedResponse> {
+  const init = { signal };
+  // Losing even a read-only observation leaves the submitted write uncertain.
+  const observation = {
+    timeoutMs: PROMPT_CONFIRMATION_TIMEOUT_MS,
+    mutation: true,
+  };
+  const receiptPath = `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`;
   let first = true;
   for (;;) {
     let response: PromptDeliveryResponse;
     try {
-      response = await observePrompt(
-        first
-          ? "/api/prompt"
-          : `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`,
-        first ? body : undefined,
-        signal,
-      );
+      response = await (first
+        ? post<PromptDeliveryResponse>("/api/prompt", body, init, observation)
+        : request<PromptDeliveryResponse>(receiptPath, init, observation));
     } catch (error) {
       // Even an authenticated 401/404/500 can refuse the observation without
       // saying anything about an earlier dispatch. Only the retained operation
@@ -525,6 +503,7 @@ async function deliverPrompt(
       if (
         error instanceof ApiError &&
         !(
+          error.edge !== "ssh-reverse" &&
           error.authorityId === body.authorityId &&
           error.promptReceipt?.operationId === body.operationId &&
           error.promptReceipt.outcome === "rejected"
@@ -540,7 +519,7 @@ async function deliverPrompt(
       response.operationId !== body.operationId ||
       response.authorityId !== body.authorityId
     )
-      throw new ApiTransportError("response");
+      throw new ApiTransportError("response", true);
     // Poll the receipt, not another delivery of potentially large attachments.
     // Pi may still be compacting, running an input hook, or awaiting a dialog.
     first = false;
