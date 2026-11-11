@@ -3683,14 +3683,14 @@ export class AppStore {
     return this.api.attachmentPreview(id, signal);
   };
 
-  loadEmbeddedImage = (
+  loadTranscriptImage = (
     sessionId: string,
     viewId: string,
     projectionKey: string,
     reference: string,
     signal: AbortSignal,
   ): Promise<Blob> =>
-    this.resources.loadEmbeddedImage(
+    this.resources.loadTranscriptImage(
       sessionId,
       viewId,
       projectionKey,

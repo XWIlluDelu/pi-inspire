@@ -45,7 +45,7 @@ import { useImageUrl } from "../use-image-url";
 import { hasActiveModal } from "../use-modal-focus";
 import { CopyAction } from "./CopyAction";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { ImagePreview, TranscriptImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { useDynamicActivityGroup } from "./transcript-activity";
@@ -183,7 +183,7 @@ export const UserBubble = memo(function UserBubble({
             >
               {images.map((image) =>
                 "reference" in image ? (
-                  <PersistedImage
+                  <TranscriptImage
                     key={image.key}
                     sessionId={sessionId}
                     viewId={viewId}

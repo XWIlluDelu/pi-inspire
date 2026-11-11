@@ -301,6 +301,10 @@ replacement cancels observation even if the transport ignores abort.
 
 ### Documents and local images
 
+Standalone local Markdown images in the transcript use the session-bound resource resolver and
+the 32 MiB image preview limit. A mounted thumbnail owns its read and blob URL for its session,
+branch view, and projection. The image inspector displays the same original bytes.
+
 Notebook Preview statically renders Markdown cells, highlighted code, execution counts, text/error
 output, and images. Notebook code is not executed. Markdown raw HTML is disabled. Execution prompts
 share the first code/text-output baseline at every reading size; image and rich-document output

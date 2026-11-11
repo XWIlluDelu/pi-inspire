@@ -1,6 +1,7 @@
 import type { ResourceProbeResult } from "../../shared/contracts";
 import {
   isEmbeddedImageReference,
+  isLocalResourceReference,
   MAX_RESOURCE_PROBE_REFERENCES,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
@@ -405,10 +406,8 @@ export class ResourceController {
     });
   }
 
-  /** Load one Pi-persisted embedded image without selecting the Files pane.
-   * Session, branch view, and projection incarnation are rechecked across both
-   * authenticated requests so a late thumbnail cannot cross a rewrite. */
-  async loadEmbeddedImage(
+  /** Read an image for the owning transcript without selecting the Files pane. */
+  async loadTranscriptImage(
     sessionId: string,
     viewId: string,
     projectionKey: string,
@@ -416,8 +415,13 @@ export class ResourceController {
     signal: AbortSignal,
   ): Promise<Blob> {
     const api = this.host.api();
-    if (!api || !isEmbeddedImageReference(reference)) {
-      throw new Error("The embedded image reference is invalid");
+    const embedded = isEmbeddedImageReference(reference);
+    if (
+      !api ||
+      !isLocalResourceReference(reference) ||
+      /^[\\/]{2}/.test(reference)
+    ) {
+      throw new Error("The transcript image reference is unavailable");
     }
     const stale = () => {
       const current = this.host.state();
@@ -437,6 +441,7 @@ export class ResourceController {
         name: "AbortError",
       });
     try {
+      if (stale()) throw staleError();
       const descriptor = await api.resolveResource(
         sessionId,
         reference,
@@ -445,13 +450,11 @@ export class ResourceController {
       if (stale()) throw staleError();
       if (
         descriptor.sessionId !== sessionId ||
-        descriptor.reference !== reference ||
+        (embedded && descriptor.reference !== reference) ||
         descriptor.kind !== "image" ||
         descriptor.viewId !== viewId
       ) {
-        throw new Error(
-          "The embedded image is unavailable in this conversation view",
-        );
+        throw new Error("The image is unavailable in this conversation view");
       }
       if (descriptor.size > MAX_MEDIA_PREVIEW_BYTES)
         throw new Error("The image is too large to preview");
@@ -465,6 +468,13 @@ export class ResourceController {
         content.blob.size > MAX_MEDIA_PREVIEW_BYTES
       ) {
         throw new Error("The image is too large to preview");
+      }
+      if (
+        !embedded &&
+        (content.blob.size !== content.totalSize ||
+          content.blob.type !== descriptor.mimeType)
+      ) {
+        throw new Error("The image content is unavailable");
       }
       return content.blob;
     } catch (error) {

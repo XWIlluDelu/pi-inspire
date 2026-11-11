@@ -33,7 +33,11 @@ import { queueTerminalInsertion } from "../terminal-actions";
 import { useCopied } from "../use-copied";
 import { CopyFeedback } from "./CopyFeedback";
 import { DocumentImage, DocumentResourceContext } from "./DocumentPreview";
-import { ImageLinkContext } from "./ImagePreview";
+import {
+  ImageLinkContext,
+  TranscriptImage,
+  TranscriptImageOwnerContext,
+} from "./ImagePreview";
 import { RichTextMath } from "./RichTextMath";
 
 export type RichTextVariant = "assistant" | "user" | "thinking" | "extension";
@@ -234,6 +238,7 @@ const components: Components = {
   }) {
     const document = useContext(DocumentResourceContext);
     const linked = useContext(ImageLinkContext);
+    const owner = useContext(TranscriptImageOwnerContext);
     if (
       src &&
       ((document && isDocumentFileReference(src)) ||
@@ -259,8 +264,8 @@ const components: Components = {
           {alt || src}
         </span>
       );
-    if (src && !/^[\\/]{2}/.test(src) && isLocalResourceReference(src))
-      return (
+    if (src && !/^[\\/]{2}/.test(src) && isLocalResourceReference(src)) {
+      const referenceButton = (
         <button
           type="button"
           className="file-ref file-ref--image"
@@ -271,6 +276,18 @@ const components: Components = {
           <span>{alt || src}</span>
         </button>
       );
+      return owner?.sessionId && owner.viewId ? (
+        <TranscriptImage
+          {...owner}
+          reference={src}
+          alt={alt || src}
+          title={title}
+          unavailable={referenceButton}
+        />
+      ) : (
+        referenceButton
+      );
+    }
     if (src && /^(?:https?:|\/\/)/i.test(src))
       return (
         <a href={src} target="_blank" rel="noreferrer noopener" title={src}>

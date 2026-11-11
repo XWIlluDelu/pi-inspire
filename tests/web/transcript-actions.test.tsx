@@ -113,7 +113,7 @@ describe("message actions", () => {
         "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",
       ].join("\n\n");
       const { written } = captureClipboardSource();
-      vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(
+      vi.spyOn(store, "loadTranscriptImage").mockResolvedValue(
         new Blob(["png"], { type: "image/png" }),
       );
       render(

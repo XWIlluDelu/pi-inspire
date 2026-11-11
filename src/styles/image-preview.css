@@ -60,6 +60,15 @@
   height: clamp(78px, 15vw, 120px);
 }
 
+.rich-text .image-preview--message {
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.rich-text .image-preview--message img {
+  object-fit: contain;
+}
+
 .image-preview--inline {
   max-width: 100%;
   border: 0;

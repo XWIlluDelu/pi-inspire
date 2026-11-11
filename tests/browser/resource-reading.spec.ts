@@ -296,7 +296,48 @@ for (const mode of ["Files", "Changes"] as const) {
   });
 }
 
-test("conversation image-reference marks follow the first caption line across reading surfaces", async ({
+test("an authorized local Markdown image shows a thumbnail and opens the original", async ({
+  page,
+}) => {
+  const send = await openEventSession(
+    page,
+    "Local image thumbnail",
+    customMessageConfiguration,
+    {},
+  );
+  send({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: "![Training curve](tests/browser/fixtures/file-previews/training%20curve.png)",
+        },
+      ],
+      __inspireMessageId: "local-image-thumbnail",
+    },
+  });
+  const thumbnail = page.getByRole("button", {
+    name: "Preview Training curve",
+  });
+  const image = thumbnail.getByRole("img", { name: "Training curve" });
+  await expect(image).toHaveCSS("object-fit", "contain");
+  await expect
+    .poll(() =>
+      image.evaluate((element) => (element as HTMLImageElement).naturalWidth),
+    )
+    .toBeGreaterThan(160);
+  const source = await image.getAttribute("src");
+  expect(source).toMatch(/^blob:/);
+  await thumbnail.click();
+  const inspector = page.getByRole("dialog", { name: "Image preview" });
+  await expect(
+    inspector.getByRole("img", { name: "Training curve" }),
+  ).toHaveAttribute("src", source!);
+});
+
+test("unavailable conversation image references keep their captions aligned", async ({
   page,
 }) => {
   const send = await openEventSession(

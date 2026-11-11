@@ -4,7 +4,7 @@ import { fileIconForPath } from "../file-icons";
 import { formatBytes } from "../format";
 import { transcriptProjectionKey } from "../transcript-projection-key";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview, PersistedImage } from "./ImagePreview";
+import { ImagePreview, TranscriptImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 
 export function AttachmentList({
@@ -47,7 +47,7 @@ export function AttachmentList({
             >
               {image ? (
                 item.recalledArtifact?.type === "image" && sessionId ? (
-                  <PersistedImage
+                  <TranscriptImage
                     sessionId={sessionId}
                     viewId={item.recalledArtifact.viewId}
                     projectionKey={transcriptProjectionKey(

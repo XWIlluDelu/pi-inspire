@@ -66,10 +66,11 @@ thinking, documents, and extension Markdown share one rendering authority with d
   URLs and active inline content. Untrusted Markdown is sanitized before trust-disabled KaTeX
   (`trust:false`) generates its complete HTML, MathML and SVG output; extensible glyph geometry and
   accessibility metadata are preserved, and trust-only commands stay disabled.
-- External links open safely in a new tab. Explicit local conversation links and images open the
-  session-bound resource preview. Conversation image-reference marks share the caption's first-line
-  baseline when alternative text wraps. Caption lines keep a common leading edge inside the button;
-  the complete text and preview target stay intact.
+- External links open safely in a new tab. Explicit local conversation links open the session-bound
+  resource preview. Standalone local Markdown images in the transcript display authorized thumbnails
+  and open the original in the image inspector. The thumbnail fits the entire image. Unavailable
+  thumbnails keep a file preview button with the complete caption and target. Its mark shares the
+  caption's first-line baseline, and wrapped caption lines keep a common leading edge.
   Document readers resolve file targets from the document directory,
   render independently authorized local images, and keep heading fragments within the reader under
   [[resource-preview]]. External image URLs appear as links; unrecognized conversation image paths

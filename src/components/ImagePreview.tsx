@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import {
   createContext,
+  type ReactNode,
   useCallback,
   useContext,
   useId,
@@ -15,7 +16,7 @@ import { ImageGalleryContext } from "./ImageGallery";
 import { ImageLightbox } from "./ImageLightbox";
 import { PiLoader } from "./PiLoader";
 
-export const EmbeddedImageOwnerContext = createContext<{
+export const TranscriptImageOwnerContext = createContext<{
   sessionId: string;
   viewId: string;
   projectionKey: string;
@@ -146,14 +147,16 @@ export function ImagePreview({
   );
 }
 
-export function PersistedImage({
+export function TranscriptImage({
   sessionId,
   viewId,
   projectionKey,
   reference,
   alt = "Attached image",
   name,
+  title,
   className = "image-preview--message",
+  unavailable,
 }: {
   sessionId: string;
   viewId: string;
@@ -161,11 +164,13 @@ export function PersistedImage({
   reference: string;
   alt?: string;
   name?: string;
+  title?: string;
   className?: string;
+  unavailable?: ReactNode;
 }) {
   const loadImage = useCallback(
     (signal: AbortSignal) =>
-      store.loadEmbeddedImage(
+      store.loadTranscriptImage(
         sessionId,
         viewId,
         projectionKey,
@@ -176,11 +181,13 @@ export function PersistedImage({
   );
   const { src, error } = useImageUrl(loadImage);
 
+  if (error && unavailable) return unavailable;
   return (
     <ImagePreview
       src={src}
       alt={alt}
       name={name}
+      title={title}
       className={className}
       loading={!src && !error}
       error={error}

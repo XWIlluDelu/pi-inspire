@@ -167,7 +167,7 @@ describe("saved tool resources", () => {
         messages.splice(1, 1);
       }
       const load = vi
-        .spyOn(store, "loadEmbeddedImage")
+        .spyOn(store, "loadTranscriptImage")
         .mockResolvedValue(new Blob(["image"], { type: "image/png" }));
       const revoke = vi.spyOn(URL, "revokeObjectURL");
       const create = vi
@@ -236,7 +236,9 @@ describe("saved tool resources", () => {
     "copies the same saved image and source from %s tool details",
     async (visibility) => {
       const png = new Blob(["saved image"], { type: "image/png" });
-      const load = vi.spyOn(store, "loadEmbeddedImage").mockResolvedValue(png);
+      const load = vi
+        .spyOn(store, "loadTranscriptImage")
+        .mockResolvedValue(png);
       const { written: write } = captureClipboardSource();
       vi.spyOn(store, "copyOwnership").mockReturnValue(() => true);
       render(
