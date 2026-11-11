@@ -384,53 +384,31 @@ describe("branch request view ownership", () => {
     expect(store.getState().branchActionId).toBeNull();
   });
 
-  it.each(["tree", "navigate", "fork"] as const)(
-    "suppresses a delayed branch %s 401 only after the auth transport is genuinely replaced",
-    async (kind) => {
+  it.each([
+    ["tree", "view"],
+    ["tree", "transport"],
+    ["fork", "view"],
+    ["fork", "transport"],
+  ] as const)(
+    "scopes a delayed branch %s 401 after replacing its %s",
+    async (kind, changed) => {
       const pending = deferred<RouteResponse | undefined>();
       const store = await setup((url) =>
         url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
       );
       const request =
-        kind === "tree"
-          ? store.loadBranchTree()
-          : kind === "navigate"
-            ? store.navigateBranch("a1", "switch")
-            : store.forkBranch("u1");
-      await store.init();
-      pending.resolve({
-        status: 401,
-        body: { error: "expired old transport" },
-      });
+        kind === "tree" ? store.loadBranchTree() : store.forkBranch("u1");
+      if (changed === "view") moveView(store);
+      else await store.init();
+      pending.resolve({ status: 401, body: { error: "Unauthorized" } });
       await request;
-      expect(store.getState().needsToken).toBe(false);
-    },
-  );
-
-  it.each(["tree", "navigate", "fork"] as const)(
-    "honors a delayed branch %s 401 after a view transition on the current transport",
-    async (kind) => {
-      const pending = deferred<RouteResponse | undefined>();
-      const store = await setup((url) =>
-        url.startsWith(`/api/branches/${kind}`) ? pending.promise : undefined,
-      );
-      const request =
-        kind === "tree"
-          ? store.loadBranchTree()
-          : kind === "navigate"
-            ? store.navigateBranch("a1", "switch")
-            : store.forkBranch("u1");
-      moveView(store);
-      pending.resolve({
-        status: 401,
-        body: { error: "current transport unauthorized" },
-      });
-      await request;
-      expect(store.getState()).toMatchObject({
-        needsToken: true,
-        connection: "offline",
-        error: null,
-      });
+      if (changed === "view")
+        expect(store.getState()).toMatchObject({
+          needsToken: true,
+          connection: "offline",
+          error: null,
+        });
+      else expect(store.getState().needsToken).toBe(false);
     },
   );
 

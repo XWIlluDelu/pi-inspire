@@ -1,4 +1,3 @@
-import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import {
@@ -70,9 +69,8 @@ describe("WebSocket observation and transport limits", () => {
     const observed = await connect("detail=fixture-history");
     try {
       observed.frames.length = 0;
-      const opened = await request(application.server)
+      const opened = await fixture.localRequest
         .post("/api/sessions/open")
-        .set("Authorization", `Bearer ${token}`)
         .send({ id: "fixture-active" })
         .expect(200);
       expect(JSON.stringify(opened.body).length).toBeGreaterThan(500_000);
@@ -251,13 +249,9 @@ describe("WebSocket observation and transport limits", () => {
   });
 
   it("broadcasts one update acknowledgement to every connected view", async () => {
-    await request(application.server)
-      .get("/api/update")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    const observed = await request(application.server)
+    await fixture.localRequest.get("/api/update").expect(200);
+    const observed = await fixture.localRequest
       .get("/api/pi-update")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     const identity = observed.body.updateStatus
       .availableUpdateIdentity as string;
@@ -265,9 +259,8 @@ describe("WebSocket observation and transport limits", () => {
 
     const [localView, remoteView] = await Promise.all([connect(), connect()]);
     try {
-      const dismissed = await request(application.server)
+      const dismissed = await fixture.localRequest
         .post("/api/update/snooze")
-        .set("Authorization", `Bearer ${token}`)
         .send({ identity })
         .expect(200);
       await vi.waitFor(() => {
@@ -539,9 +532,8 @@ describe("WebSocket observation and transport limits", () => {
   });
 
   it("confirms an unchanged bootstrap snapshot without retransmitting it", async () => {
-    const bootstrap = await request(application.server)
+    const bootstrap = await fixture.localRequest
       .get("/api/bootstrap")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     const socket = eventSocket(
       `${baseUrl.replace("http", "ws")}/events?snapshot=${bootstrap.body.snapshotDigest}`,

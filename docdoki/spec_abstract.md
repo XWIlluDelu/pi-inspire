@@ -34,45 +34,6 @@ locally and are not tracked.
 | Terminals, Files and Changes | [terminal](specs/terminal.md), [resource-preview](specs/resource-preview.md) |
 | Remote connections | [connection-modules](specs/connection-modules.md) |
 
-## Implemented capabilities
-
-- **Native Pi workflow:** conversations, rich input, model/thinking selection, native
-  configuration and authentication, compaction, History, Fork/Clone and exports. Saved history
-  stays readable when execution is unavailable, including saved-only JSONL export
-  ([pi-integration](specs/pi-integration.md), [model-settings](specs/model-settings.md),
-  [mcp](specs/mcp.md), [session-branches](specs/session-branches.md)).
-- **Session continuity:** background work, draft-preserving Pending recovery and independent
-  copies. With [attach-control](../extensions/attach-control.ts) installed, a session a terminal
-  Pi is running opens read-only with its progress; **Take over** continues that Pi from the
-  browser while the terminal keeps working, and without a live Pi on the viewed branch Inspire
-  continues directly. Deletion closes every discovered instance of the session before Trash
-  ([session-persistence](specs/session-persistence.md),
-  [session-continuity](specs/session-continuity.md), [composer](specs/composer.md);
-  activation: [extension guide](../docs/extensions.md#share-sessions-with-terminal-pi)).
-- **Quiet feedback and recovery:** routine feedback stays in the control that caused it. Catalog,
-  snapshot, History, file and update reads recover automatically and keep confirmed content;
-  unsent uploads keep their bytes, and recovery never replays a prompt or branch command whose
-  acceptance is unknown ([workbench](specs/workbench.md),
-  [session-transport](specs/session-transport.md), [composer](specs/composer.md)).
-- **Reading and workspace tools:** rich conversation and activity readers, source-backed Copy,
-  Files and Changes with in-place refresh, previews and persistent project terminals. Inspection
-  preserves the reading position, and session and file context survive page reloads
-  ([conversation](specs/conversation.md), [workspace-layout](specs/workspace-layout.md),
-  [resource-preview](specs/resource-preview.md), [terminal](specs/terminal.md),
-  [interface-preferences](specs/interface-preferences.md)).
-- **Visual system:** botanical, classic and Carbon & Silicon palettes, each in light and dark, on
-  one component architecture ([visual-language](specs/visual-language.md),
-  [design-system](specs/design-system.md)).
-- **Extension adaptation:** standard RPC dialogs, status and text widgets, composable external GUI
-  adapters, status-bound Composer choices and declarative presentations, plus a source-level
-  task-board example. Pi keeps extension behavior and commands
-  ([pi-integration](specs/pi-integration.md),
-  [extension guide](../docs/extensions.md#choose-the-smallest-integration)).
-- **Host operation:** authenticated local and remote browser access, per-instance lifecycle
-  controls, isolated development pairing, and Host-only restarts with worker detachment and
-  dialog recovery on attachment ([host-lifecycle](specs/host-lifecycle.md); platform
-  evidence and limits: [platform-compatibility](notes/platform-compatibility.md)).
-
 ## Work state
 
 | State | Work |

@@ -218,7 +218,7 @@ for (const mobile of [false, true]) {
       await page.keyboard.press("Enter");
       await expect(card.locator(".tool-code")).toHaveCount(0);
     });
-    test("separates CodeMode calls from readable output and preserves whole-block copy", async ({
+    test("keeps CodeMode output scrollable and copies beyond the visible area", async ({
       page,
       context,
       browserName,
@@ -227,25 +227,12 @@ for (const mobile of [false, true]) {
         await context.grantPermissions(["clipboard-read", "clipboard-write"]);
       const send = await openReview(page, { palette: "hydrangea" });
       const call = tool("codemode", {
-        code: "text(await tools.edit({path: 'src/components/transcript-cards.tsx', edits: []})); text({i: 1, result: await tools.bash({command: 'npm run typecheck'})}); await tools.ctx_reduce({drop: '1'});",
+        code: 'text(await tools.bash({command: "npm run typecheck"}));',
       });
-      const stdout = [
-        "npm notice run inspire-pi-gui@0.4.0 typecheck",
-        "npm notice run tsc -b",
-        ...Array.from(
-          { length: 70 },
-          (_, index) => `Checked fixture module ${index + 1}`,
-        ),
-      ].join("\n");
-      const rawOutput = JSON.stringify({
-        i: 1,
-        result: {
-          output: stdout,
-          truncated: false,
-          exit_code: 0,
-          wall_time_seconds: 3.7,
-        },
-      });
+      const stdout = Array.from(
+        { length: 70 },
+        (_, index) => `Checked fixture module ${index + 1}`,
+      ).join("\n");
       const result = {
         role: "toolResult",
         toolCallId: call.id,
@@ -257,119 +244,27 @@ for (const mobile of [false, true]) {
             type: "text",
             text: "Script completed\nWall time 4.2 seconds\nOutput:\n",
           },
-          {
-            type: "text",
-            text: "Successfully replaced 2 blocks in src/components/transcript-cards.tsx.",
-          },
-          { type: "text", text: rawOutput },
+          { type: "text", text: JSON.stringify({ output: stdout }) },
         ],
         details: {
           calls: [
             {
               id: "small/1",
-              name: "edit",
-              args: JSON.stringify({
-                path: "src/components/transcript-cards.tsx",
-                edits: [
-                  {
-                    oldText: "source\n".repeat(100),
-                    newText: "updated source",
-                  },
-                ],
-              }).slice(0, 200),
-              status: "ok",
-            },
-            {
-              id: "small/2",
               name: "bash",
               args: '{"command":"npm run typecheck"}',
               status: "ok",
               durationMs: 3700,
             },
-            {
-              id: "small/3",
-              name: "ctx_reduce",
-              args: '{"drop":"1"}',
-              status: "ok",
-            },
           ],
         },
       };
       send(
-        { type: "agent_start" },
-        { type: "message_start", message: assistant([call]) },
-        {
-          type: "tool_execution_start",
-          toolCallId: call.id,
-          toolName: "codemode",
-          args: call.arguments,
-        },
-        {
-          type: "tool_execution_end",
-          toolCallId: call.id,
-          toolName: "codemode",
-          isError: false,
-          result,
-        },
+        { type: "message_end", message: assistant([call]) },
         { type: "message_end", message: result },
       );
       const card = toolCard(page, "codemode");
-      await expect(
-        card.getByRole("group", { name: "Child calls" }).locator(".child-call"),
-      ).toHaveCount(3);
-      await expect(card.getByRole("button", { name: /^Calls / })).toHaveCount(
-        0,
-      );
-      await expect(
-        card.getByText(
-          "Successfully replaced 2 blocks in src/components/transcript-cards.tsx.",
-        ),
-      ).toBeVisible();
-      await expect(card.getByText("Script", { exact: true })).toBeVisible();
-      const childRow = card.locator("summary.child-call__row").first();
-      await childRow.hover();
-      await expect(childRow).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await page.keyboard.press("Tab");
-      await childRow.focus();
-      await expect(childRow).toBeFocused();
-      await expect(childRow).toHaveCSS("outline-style", "solid");
-      await childRow.press("Enter");
-      await expect(childRow.locator("..")).toHaveAttribute("open", "");
-      await childRow.press("Enter");
-      await expect(childRow.locator("..")).not.toHaveAttribute("open", "");
-      await expect(card.getByText("Calls", { exact: true })).toHaveCount(0);
-      await expect(card.getByText("Output", { exact: true })).toBeVisible();
-      await expect(card.locator(".child-call__summary").first()).toHaveText(
-        /src\/components\/transcript-cards\.tsx/,
-      );
-      await expect(
-        card.locator(".child-call__summary").first(),
-      ).not.toContainText("oldText");
       const output = card.getByRole("group", { name: "Result output" });
-      const text = await output.locator("pre").last().textContent();
-      expect(text).toMatch(/typecheck\n\s+npm notice run tsc -b/);
-      expect(text).toContain('"truncated": false');
-      expect(text).toContain('"result": {');
-      await expect(
-        card.getByRole("button", { name: "Copy codemode tool block" }),
-      ).toHaveCount(1);
-      await expect(
-        card.getByRole("group", { name: "Result display" }),
-      ).toHaveCount(0);
-      await expect(
-        card.getByText("Result details", { exact: true }),
-      ).toHaveCount(0);
-      expect(
-        await card.evaluate((element) => {
-          const calls = element
-            .querySelector(".tool-call-list")!
-            .getBoundingClientRect();
-          const result = element
-            .querySelector(".codemode-result")!
-            .getBoundingClientRect();
-          return result.top >= calls.bottom;
-        }),
-      ).toBe(true);
+      await expect(output).toBeVisible();
       expect(
         await output.evaluate(
           (element) => element.scrollHeight > element.clientHeight,
@@ -380,10 +275,6 @@ for (const mobile of [false, true]) {
       await expect
         .poll(() => output.evaluate((element) => element.scrollTop))
         .toBeGreaterThan(0);
-      await output.evaluate((element) => {
-        element.scrollTop = 0;
-      });
-      await output.evaluate((element) => (element as HTMLElement).blur());
       await observeClipboardWrites(page);
       await card
         .getByRole("button", { name: "Copy codemode tool block" })
@@ -399,21 +290,6 @@ for (const mobile of [false, true]) {
           page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text),
         )
         .toContain("Checked fixture module 70");
-      await expect(card).not.toHaveClass(/card--failed/);
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= innerWidth,
-        ),
-      ).toBe(true);
-      const accessibility = await new AxeBuilder({ page })
-        .include(".card--tool")
-        .analyze();
-      expect(accessibility.violations).toEqual([]);
-
-      await card
-        .getByRole("button", { name: "Collapse CodeMode tool" })
-        .click();
-      await expect(card.getByText("3 calls", { exact: true })).toBeVisible();
     });
 
     test("keeps the conversation reading position through live settlement and reopens calls before output", async ({

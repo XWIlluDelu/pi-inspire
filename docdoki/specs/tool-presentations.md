@@ -95,26 +95,19 @@ the workspace or calculate an applied diff.
 
 ## Codemode and nested calls
 
-Codemode and ordinary nested tools share a compact child-call view inside the parent card. Existing
-card/activity preferences still choose initial disclosure; no separate density setting is added.
+CodeMode and ordinary nested tools show child-call rows when the parent card opens.
 
 - The display title is `CodeMode`; the native tool name remains `codemode`. Its compact header
   keeps recorded call/failure counts and available runner duration visible while open or collapsed,
   without inferring script intent or changing the parent outcome. User-selected presentation rules
   keep their own summaries.
-- Calls lists appear directly whenever the parent card is open, with no second list-level
-  disclosure or call-count threshold. CodeMode lists grow with their content inside the
-  conversation scroller, not a height-limited inner viewport; individual argument/output viewports
-  stay bounded. Ordinary nested calls keep their bounded list viewport and their heading. Individual
-  rows still disclose parameters, errors and duration. Their full-row disclosure target stays
-  unboxed during hover and press, with local text feedback and a keyboard focus outline; code and
-  output keep their own local reading surfaces.
-- Open CodeMode cards keep Calls → Output → Script throughout execution and saved-history reading.
-  Calls are an unboxed list with no visible Calls heading (the counts are in the card header);
-  Output uses the same section heading and inset surface as native tool output; Script stays
-  collapsed below, without a repeated language heading. Focus and reading position survive
-  settlement; finishing does not reorder the areas. Ordinary nested tools keep their result-first
-  settled presentation unless their calls are being read.
+- Open CodeMode cards keep Calls → Output → Script through execution and history. The calls list
+  opens with its parent and grows in the conversation scroller. Counts live in the header. Output
+  uses the native tool output inset, and Script starts collapsed with a single heading.
+  Focus and reading position survive settlement. Ordinary nested tools use a bounded calls list
+  with its own heading and show settled results first unless the calls are being read.
+- Full-row disclosures expose parameters, errors and duration. Hover and press use local text
+  feedback without a box. Keyboard focus uses an outline. Argument and output readers stay bounded.
 - CodeMode renders output blocks in their original order in one reading view, separated by whitespace,
   without mode tabs, interactive JSON trees, collection paging or a panel and heading per block.
   JSON keeps every key, scalar type, numeric literal and object/array hierarchy; multiline strings
@@ -138,11 +131,8 @@ card/activity preferences still choose initial disclosure; no separate density s
   `nestedCalls` for generic history. A parent has one displayed call list.
 - Keep parent and child outcomes distinct. Do not infer that a failed child was intentionally handled
   merely because the parent completed successfully. Missing child results do not hide parent output.
-- Keep output in its tool presentation, reusing existing text, image, authorized file and full-output
-  readers. Classification-specific presentation requires an actual structured data contract.
-- No dedicated cost display, completion percentage, local stop/retry control or arbitrary-JSON-to-table
-  conversion is added. Script and recorded call details remain available on demand; generic fallback
-  tools keep their raw inspection.
+- Use the shared text, image and authorized file readers. Classification-specific displays require
+  a structured data contract. Script and call details remain available on demand.
 
 ## Generic results
 
@@ -212,10 +202,8 @@ Runtime state and credentials stay outside presentation configuration.
   metric wording do not change the original summary, source identity or complete Copy.
 - Cards, messages, controls and checkpoint rules use the same composition and enablement mechanism.
   Disabling restores native/generic display, not extension execution control.
-- The reference and data format are documented in [Custom presentations](../../docs/tool-presentations.md).
-
 ## Checks
 
-Schema and resolver tests cover invalid configuration, mapping precedence, shape failures,
-Thinking fallback, exact custom-message bodies, and provenance guards. Card tests cover native
-content, progressive edit shapes, generic results, copy/resource ownership, and display bounds.
+Resolver tests exercise rule selection, shape checks, and fallback. Component tests exercise
+disclosure, retained content, and copy ownership. Browser tests exercise reading position,
+scrolling, and clipboard behavior.

@@ -33,14 +33,12 @@ describe("HTTP prompt operation ownership", () => {
       sessionId: "fixture-active",
       message: "deliver once",
     });
-    const first = await request(application.server)
+    const first = await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(delivery)
       .expect(202);
-    const duplicate = await request(application.server)
+    const duplicate = await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(delivery)
       .expect(202);
     expect(first.body).toEqual({
@@ -53,17 +51,15 @@ describe("HTTP prompt operation ownership", () => {
       message: "deliver once",
     });
 
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send({ ...delivery, message: "changed payload" })
       .expect(409)
       .expect((response) =>
         expect(response.body.code).toBe("PROMPT_OPERATION_MISMATCH"),
       );
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         ...delivery,
         operationId: randomUUID(),
@@ -192,10 +188,9 @@ describe("HTTP prompt operation ownership", () => {
     expect(abort).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
     finish();
-    const recovered = await request(application.server)
+    const recovered = await fixture.localRequest
       .get(`/api/prompt/${delivery.operationId}`)
       .query({ authorityId: application.authorityId })
-      .set("Authorization", `Bearer ${token}`)
       .expect(202);
     expect(recovered.body).toEqual({ accepted: true, historyEntry: null });
     expect(prompt).toHaveBeenCalledTimes(1);
@@ -212,19 +207,17 @@ describe("HTTP prompt operation ownership", () => {
       message: "Synthetic refused prompt",
     });
     for (let attempt = 0; attempt < 2; attempt += 1)
-      await request(application.server)
+      await fixture.localRequest
         .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
         .send(delivery)
         .expect(409)
         .expect("X-Inspire-Authority", application.authorityId)
         .expect("X-Inspire-Prompt-Operation", delivery.operationId)
         .expect("X-Inspire-Prompt-Outcome", "rejected")
         .expect(({ body }) => expect(body.error).toBe("Synthetic rejection"));
-    await request(application.server)
+    await fixture.localRequest
       .get(`/api/prompt/${delivery.operationId}`)
       .query({ authorityId: application.authorityId })
-      .set("Authorization", `Bearer ${token}`)
       .expect(409)
       .expect("X-Inspire-Prompt-Operation", delivery.operationId)
       .expect("X-Inspire-Prompt-Outcome", "rejected");
@@ -251,9 +244,8 @@ describe("HTTP prompt operation ownership", () => {
       message: "unknown synthetic outcome",
     });
     for (let attempt = 0; attempt < 2; attempt += 1)
-      await request(application.server)
+      await fixture.localRequest
         .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
         .send(delivery)
         .expect(504)
         .expect(({ body }) =>
@@ -262,10 +254,9 @@ describe("HTTP prompt operation ownership", () => {
             outcomeUnknown: true,
           }),
         );
-    await request(application.server)
+    await fixture.localRequest
       .get(`/api/prompt/${delivery.operationId}`)
       .query({ authorityId: application.authorityId })
-      .set("Authorization", `Bearer ${token}`)
       .expect(504)
       .expect("X-Inspire-Prompt-Operation", delivery.operationId)
       .expect("X-Inspire-Prompt-Outcome", "unknown")
@@ -279,19 +270,14 @@ describe("HTTP prompt operation ownership", () => {
       sessionId: "fixture-active",
       message: "retain the identity",
     });
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(delivery)
-      .expect(202);
+    await fixture.localRequest.post("/api/prompt").send(delivery).expect(202);
 
     const clock = vi
       .spyOn(Date, "now")
       .mockReturnValue(Date.now() + 15 * 60 * 1_000 + 1);
     try {
-      await request(application.server)
+      await fixture.localRequest
         .post("/api/prompt")
-        .set("Authorization", `Bearer ${token}`)
         .send(delivery)
         .expect(409)
         .expect(({ body, headers }) => {
@@ -301,10 +287,9 @@ describe("HTTP prompt operation ownership", () => {
           });
           expect(headers["x-inspire-prompt-outcome"]).toBeUndefined();
         });
-      await request(application.server)
+      await fixture.localRequest
         .get(`/api/prompt/${delivery.operationId}`)
         .query({ authorityId: application.authorityId })
-        .set("Authorization", `Bearer ${token}`)
         .expect(409)
         .expect(({ body }) =>
           expect(body).toMatchObject({

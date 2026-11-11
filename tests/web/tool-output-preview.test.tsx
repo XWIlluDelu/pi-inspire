@@ -272,7 +272,6 @@ describe("execution output previews", () => {
         live
         activities={[
           {
-            kind: "tool",
             key: call.id,
             call,
             result,

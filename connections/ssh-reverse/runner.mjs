@@ -17,12 +17,16 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { systemdEscape } from "../../deploy/systemd/install.mjs";
 // Source checkouts and installed packages keep runtime support in different roots.
-const sourceLockModule = new URL("../../server/file-lock.mjs", import.meta.url);
-const { acquireFileLock } = await import(
-  existsSync(sourceLockModule)
-    ? sourceLockModule.href
-    : new URL("../../build/server/file-lock.mjs", import.meta.url).href
-);
+const sourceSupport = new URL("../../server/", import.meta.url);
+const support = existsSync(new URL("file-lock.mjs", sourceSupport))
+  ? sourceSupport
+  : new URL("../../build/server/", import.meta.url);
+const [{ acquireFileLock }, { processStartIdentity }, { runChild }] =
+  await Promise.all(
+    ["file-lock", "instance-state", "process-tree"].map((module) =>
+      import(new URL(`${module}.mjs`, support).href),
+    ),
+  );
 
 const MODULE_ID = "ssh-reverse";
 const STATE_VERSION = 1;
@@ -219,17 +223,6 @@ async function readState(path) {
   }
 }
 
-async function processStartIdentity(pid) {
-  if (process.platform !== "linux") return `pid:${pid}`;
-  const processStat = await readFile(`/proc/${pid}/stat`, "utf8");
-  const closing = processStat.lastIndexOf(")");
-  if (closing < 0) throw new Error("Unable to read process identity");
-  const fields = processStat.slice(closing + 2).trim().split(/\s+/u);
-  const startTime = fields[19];
-  if (!startTime) throw new Error("Unable to read process identity");
-  return startTime;
-}
-
 async function verifyOwnedTunnel(state) {
   if (process.platform !== "linux") return false;
   try {
@@ -252,27 +245,8 @@ async function verifyOwnedTunnel(state) {
   }
 }
 
-function run(command, arguments_, options = {}) {
-  return new Promise((resolveRun) => {
-    const child = spawn(command, arguments_, {
-      stdio: ["ignore", "pipe", "pipe"],
-      ...options,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    child.once("error", (error) =>
-      resolveRun({ code: 1, stdout, stderr: `${stderr}${error.message}` }),
-    );
-    child.once("exit", (code) =>
-      resolveRun({ code: code ?? 1, stdout, stderr }),
-    );
-  });
-}
-
 async function controlCheck(state) {
-  const result = await run("ssh", [
+  const result = await runChild("ssh", [
     "-S",
     state.controlPath,
     "-O",
@@ -362,7 +336,7 @@ async function initialize(root) {
 
 async function serviceActive() {
   return (
-    (await run("systemctl", [
+    (await runChild("systemctl", [
       "--user",
       "is-active",
       "--quiet",
@@ -427,7 +401,7 @@ async function start(root) {
   }
   if (installed.kind === "mismatch") throw mismatchedServiceError(paths);
   if (installed.kind === "managed") {
-    const result = await run("systemctl", [
+    const result = await runChild("systemctl", [
       "--user",
       "start",
       "inspire-connection-ssh-reverse.service",
@@ -457,7 +431,7 @@ async function start(root) {
   await rm(paths.state, { force: true });
   await ensurePrivateDirectory(paths.stateDirectory);
   await rm(paths.control, { force: true });
-  const result = await run(
+  const result = await runChild(
     "ssh",
     sshCommandArguments(config, {
       controlPath: paths.control,
@@ -520,7 +494,7 @@ async function stopOwnedTunnel(state) {
   // A missing/replaced socket does not grant control over its new listener.
   const exited =
     (await controlCheck(state)) === state.pid
-      ? await run("ssh", [
+      ? await runChild("ssh", [
           "-S",
           state.controlPath,
           "-O",
@@ -558,7 +532,7 @@ async function stop(root) {
   if (await serviceActive()) {
     if ((await installedService(paths, root)).kind !== "managed")
       throw mismatchedServiceError(paths);
-    const result = await run("systemctl", [
+    const result = await runChild("systemctl", [
       "--user",
       "stop",
       "inspire-connection-ssh-reverse.service",
@@ -623,7 +597,7 @@ async function restart(root) {
     throw mismatchedServiceError(paths);
   if (installed.kind === "mismatch") throw mismatchedServiceError(paths);
   if (active || installed.kind === "managed") {
-    const result = await run("systemctl", [
+    const result = await runChild("systemctl", [
       "--user",
       "restart",
       "inspire-connection-ssh-reverse.service",
@@ -689,11 +663,11 @@ async function installService(root) {
     }
   }
   await writePrivateFile(paths.service, await renderedService(root), 0o644);
-  const reloaded = await run("systemctl", ["--user", "daemon-reload"]);
+  const reloaded = await runChild("systemctl", ["--user", "daemon-reload"]);
   if (reloaded.code !== 0)
     throw new Error(`Installed ${paths.service}, but systemd could not reload${commandDetail(reloaded)}`);
   if (active) {
-    const restarted = await run("systemctl", [
+    const restarted = await runChild("systemctl", [
       "--user",
       "restart",
       "inspire-connection-ssh-reverse.service",

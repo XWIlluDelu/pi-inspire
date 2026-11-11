@@ -2251,10 +2251,6 @@ export class SessionProjection
           };
           continue;
         }
-        if (entryId) {
-          combined.push(item);
-          continue;
-        }
       }
       // Correlation and even equal content cannot establish durable identity.
       combined.push(item);
@@ -2549,33 +2545,13 @@ export class SessionProjection
       break;
     }
     let pendingStart: number | null = null;
+    const page = this.transcriptPageShell(effectiveLeafId, viewId);
     const shell = (
       nextMessages: unknown[],
       nextRanges: TranscriptActivityRange[],
       rangeEnd: number,
     ): UserTurnTranscriptPage => ({
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      appendFromRevision: this.appendFromRevision,
-      effectiveLeafId,
-      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-      messages: nextMessages,
-      ...(nextRanges.length > 0 ? { activityRanges: nextRanges } : {}),
-      hasOlder: target > 0,
-      olderCursor:
-        target > 0
-          ? cursorFor(
-              this.sessionId,
-              this.incarnation,
-              this.currentFingerprint,
-              this.revision,
-              target,
-              effectiveLeafId,
-              viewId,
-            )
-          : null,
+      ...page(target, nextMessages, nextRanges),
       targetMessageId,
       rangeStart: target,
       rangeEnd,
@@ -2661,70 +2637,84 @@ export class SessionProjection
     );
   }
 
+  private transcriptPageShell(effectiveLeafId: string | null, viewId: string) {
+    const identity = {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+    };
+    return (
+      start: number,
+      messages: unknown[],
+      activityRanges: TranscriptActivityRange[] = [],
+    ): TranscriptPage => ({
+      ...identity,
+      messages,
+      ...(activityRanges.length ? { activityRanges } : {}),
+      hasOlder: start > 0,
+      olderCursor:
+        start > 0
+          ? cursorFor(
+              identity.sessionId,
+              identity.incarnation,
+              this.currentFingerprint,
+              identity.revision,
+              start,
+              effectiveLeafId,
+              viewId,
+            )
+          : null,
+    });
+  }
+
   private buildPage(
     source: readonly unknown[],
     persistedLength: number,
     effectiveLeafId: string | null,
     viewId: string,
   ): TranscriptPage {
-    let start = source.length;
+    const shell = this.transcriptPageShell(effectiveLeafId, viewId);
+    return this.buildBackwardPage(
+      source,
+      0,
+      source.length,
+      persistedLength,
+      (start, messages) => shell(Math.min(start, persistedLength), messages),
+    );
+  }
+
+  private buildBackwardPage<Page>(
+    source: readonly unknown[],
+    floor: number,
+    before: number,
+    persistedLength: number,
+    shell: (start: number, messages: unknown[]) => Page,
+  ): Page {
+    let start = before;
     const reversed: unknown[] = [];
-    let messagesBytes = 2; // JSON array brackets; commas are added per accepted item.
-    const shell = (
-      candidateStart: number,
-      messages: unknown[],
-    ): TranscriptPage => {
-      const persistedStart = Math.min(candidateStart, persistedLength);
-      return {
-        sessionId: this.sessionId,
-        revision: this.revision,
-        viewId,
-        incarnation: this.incarnation,
-        appendFromRevision: this.appendFromRevision,
-        effectiveLeafId,
-        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-        messages,
-        hasOlder: persistedStart > 0,
-        olderCursor:
-          persistedStart > 0
-            ? cursorFor(
-                this.sessionId,
-                this.incarnation,
-                this.currentFingerprint,
-                this.revision,
-                persistedStart,
-                effectiveLeafId,
-                viewId,
-              )
-            : null,
-      };
-    };
-    while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+    let messagesBytes = 2; // JSON array brackets.
+    while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
       const item = boundedTranscriptItem(
         source[index],
         index < persistedLength ? index : undefined,
         this.fileNameForPath,
       );
-      const projected = item.value;
-      const serialized = item.serialized;
-      const candidateMessagesBytes =
+      const nextBytes =
         messagesBytes +
-        Buffer.byteLength(serialized) +
-        (reversed.length > 0 ? 1 : 0);
-      const emptyShellBytes = Buffer.byteLength(
-        JSON.stringify(shell(index, [])),
-      );
-      if (
-        emptyShellBytes - 2 + candidateMessagesBytes >
-        TRANSCRIPT_PAGE_MAX_BYTES
-      )
-        break;
-      reversed.push(projected);
-      messagesBytes = candidateMessagesBytes;
+        Buffer.byteLength(item.serialized) +
+        (reversed.length ? 1 : 0);
+      const shellBytes = Buffer.byteLength(JSON.stringify(shell(index, [])));
+      if (shellBytes - 2 + nextBytes > TRANSCRIPT_PAGE_MAX_BYTES) break;
+      reversed.push(item.value);
+      messagesBytes = nextBytes;
       start = index;
     }
-    if (reversed.length === 0 && source.length > 0) oversizedTranscriptItem();
+    if (reversed.length === 0 && before > floor) oversizedTranscriptItem();
     return withinTranscriptPageBudget(shell(start, reversed.reverse()));
   }
 
@@ -2738,34 +2728,7 @@ export class SessionProjection
     let pendingActivityEnd: number | null = null;
     const reversed: unknown[] = [];
     const ranges: TranscriptActivityRange[] = [];
-    const shell = (
-      candidateStart: number,
-      messages: unknown[],
-      activityRanges: TranscriptActivityRange[],
-    ): TranscriptPage => ({
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      appendFromRevision: this.appendFromRevision,
-      effectiveLeafId,
-      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-      messages,
-      ...(activityRanges.length > 0 ? { activityRanges } : {}),
-      hasOlder: candidateStart > 0,
-      olderCursor:
-        candidateStart > 0
-          ? cursorFor(
-              this.sessionId,
-              this.incarnation,
-              this.currentFingerprint,
-              this.revision,
-              candidateStart,
-              effectiveLeafId,
-              viewId,
-            )
-          : null,
-    });
+    const shell = this.transcriptPageShell(effectiveLeafId, viewId);
     while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
       const sourceItem = source[index];
@@ -2849,8 +2812,6 @@ export class SessionProjection
     effectiveLeafId: string | null,
     viewId: string,
   ): TranscriptActivityPage {
-    let start = before;
-    const reversed: unknown[] = [];
     const shell = (
       candidateStart: number,
       messages: unknown[],
@@ -2876,24 +2837,7 @@ export class SessionProjection
             )
           : null,
     });
-    while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
-      const index = start - 1;
-      const item = boundedTranscriptItem(
-        source[index],
-        index,
-        this.fileNameForPath,
-      );
-      const candidate = [...reversed, item.value].reverse();
-      if (
-        Buffer.byteLength(JSON.stringify(shell(index, candidate))) >
-        TRANSCRIPT_PAGE_MAX_BYTES
-      )
-        break;
-      reversed.push(item.value);
-      start = index;
-    }
-    if (reversed.length === 0 && before > floor) oversizedTranscriptItem();
-    return withinTranscriptPageBudget(shell(start, reversed.reverse()));
+    return this.buildBackwardPage(source, floor, before, source.length, shell);
   }
 
   async close(): Promise<void> {

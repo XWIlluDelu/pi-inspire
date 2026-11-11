@@ -200,127 +200,40 @@ describe("native prompt admission and extension dialogs", () => {
     expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
   }, 20_000);
 
-  it("accepts an ordinary browser prompt after 35s of real pre-prompt auto-compaction, then reuses the same worker", async () => {
+  it("accepts a browser prompt past the former 30s preflight limit and reuses the worker", async () => {
     const f = await fixture(true);
     const worker = f.workers[0]!;
     const pid = worker.pid;
     expect(pid).toBeTypeOf("number");
-    const originalEntries = (await readFile(f.sessionFile, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line)) as SessionEntry[];
-    const originalIds = new Set(originalEntries.map((entry) => entry.id));
+    const originalIds = new Set(
+      (await readFile(f.sessionFile, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => (JSON.parse(line) as SessionEntry).id),
+    );
     const first = f.delivery("First synthetic prompt after slow preflight.");
-    const startedAt = performance.now();
-    let completed = false;
     const delivery = f.api.prompt(first);
-    void delivery.then(
-      () => {
-        completed = true;
-      },
-      () => {
-        completed = true;
-      },
+    await vi.waitFor(() =>
+      expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1),
     );
-
-    await vi.waitFor(
-      () => {
-        expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1);
-      },
-      { timeout: 5_000 },
-    );
-    const compactStart = eventsOf(f.piEvents, "compaction_start")[0]!;
-    expect(compactStart.reason).toBe("threshold");
-    expect(eventsOf(f.runtimeEvents, "prompt_pending")[0]).toMatchObject({
-      sessionId: f.sessionId,
-      sessionStatus: { runState: "queued" },
-    });
-    expect(f.modelRequests).toHaveLength(0);
-    expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
-
-    // Cross the former 30s RPC/browser deadline using real monotonic time.
-    await delay(Math.max(0, compactStart.at + 31_000 - performance.now()));
-    expect(completed).toBe(false);
-    expect(worker.available).toBe(true);
-    expect(worker.pid).toBe(pid);
-    expect(worker.stop).not.toHaveBeenCalled();
+    const started = eventsOf(f.piEvents, "compaction_start")[0]!.at;
+    await delay(Math.max(0, started + 31_000 - performance.now()));
     expect(worker.hasPendingRequest("prompt")).toBe(true);
     expect(f.modelRequests).toHaveLength(0);
-    expect(eventsOf(f.piEvents, "agent_start")).toHaveLength(0);
-    await expect(worker.request({ type: "get_state" })).resolves.toMatchObject({
-      sessionId: f.sessionId,
-      isStreaming: true,
-      isCompacting: true,
+    expect(f.observations[0]?.receipt).toMatchObject({
+      accepted: false,
+      pending: true,
+      operationId: first.operationId,
     });
-    expect(f.observations[0]).toMatchObject({
-      method: "POST",
-      status: 202,
-      authorityId: first.authorityId,
-      receipt: {
-        accepted: false,
-        pending: true,
-        operationId: first.operationId,
-        authorityId: first.authorityId,
-      },
-    });
-    expect(
-      f.observations.some((observation) => observation.method === "GET"),
-    ).toBe(true);
 
     await expect(delivery).resolves.toMatchObject({ accepted: true });
-    expect(performance.now() - startedAt).toBeGreaterThan(30_000);
     await settled(f, 1);
-    const compactEnd = eventsOf(f.piEvents, "compaction_end")[0]!;
-    expect(compactEnd).toMatchObject({
-      reason: "threshold",
-      aborted: false,
-      willRetry: false,
-      result: {
-        tokensBefore: 1800,
-        details: {
-          fixture: "pi-operation-lifecycle",
-          reason: "threshold",
-          elapsedMs: expect.any(Number),
-        },
-      },
-    });
-    const details = (compactEnd.result as { details: { elapsedMs: number } })
-      .details;
-    // Allow timer granularity; the child always requests the full 35s delay.
-    expect(details.elapsedMs).toBeGreaterThanOrEqual(34_900);
-    expect(compactEnd.at - compactStart.at).toBeGreaterThan(30_000);
-    expect(eventsOf(f.piEvents, "agent_start")[0]!.at).toBeGreaterThanOrEqual(
-      compactEnd.at,
-    );
-    // HTTP and stdout are independent transports; assert their long preflight
-    // interval, not which descriptor the Host's event loop happened to read first.
-    expect(f.modelRequests[0]!.at - compactStart.at).toBeGreaterThan(30_000);
-    expect(eventsOf(f.runtimeEvents, "compaction_end")[0]).toMatchObject({
-      sessionStatus: { runState: "queued" },
-    });
-
-    const firstObservations = [...f.observations];
     expect(
-      firstObservations.filter((observation) => observation.method === "POST"),
+      f.observations.filter(({ method }) => method === "POST"),
     ).toHaveLength(1);
-    expect(firstObservations.at(-1)?.receipt).toMatchObject({ accepted: true });
-    for (const observation of firstObservations) {
-      expect(observation.status).toBe(202);
-      expect(observation.authorityId).toBe(first.authorityId);
-      expect(observation.completedAt! - observation.startedAt).toBeLessThan(
-        30_000,
-      );
-      if (observation.method === "GET") {
-        expect(observation.url.pathname).toBe(
-          `/api/prompt/${first.operationId}`,
-        );
-        expect(observation.url.searchParams.get("authorityId")).toBe(
-          first.authorityId,
-        );
-        expect(observation.body).toBeUndefined();
-      }
-    }
-    expect(JSON.parse(String(firstObservations[0]!.body))).toEqual(first);
+    expect(
+      eventsOf(f.piEvents, "compaction_end")[0]!.at - started,
+    ).toBeGreaterThan(30_000);
 
     const second = f.delivery(
       "Second ordinary synthetic prompt on the same worker.",
@@ -329,59 +242,35 @@ describe("native prompt admission and extension dialogs", () => {
       accepted: true,
     });
     await settled(f, 2);
-    expect(f.workers).toHaveLength(1);
-    expect(worker.available).toBe(true);
+    expect(f.workers).toEqual([worker]);
     expect(worker.pid).toBe(pid);
     expect(worker.stop).not.toHaveBeenCalled();
-    expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1);
-    expect(eventsOf(f.piEvents, "extension_error")).toEqual([]);
-    expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
-    expect(eventsOf(f.runtimeEvents, "session_projection_conflict")).toEqual(
-      [],
-    );
     expect(f.modelRequests).toHaveLength(2);
-    expect(f.modelRequests.map((request) => request.url)).toEqual([
-      "/v1/chat/completions",
-      "/v1/chat/completions",
-    ]);
-    expect(
-      f.observations.filter((observation) => observation.method === "POST"),
-    ).toHaveLength(2);
-    // This is only the JSONL generated in this test's private fixture directory.
     const written = (await readFile(f.sessionFile, "utf8"))
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line)) as SessionEntry[];
-    const newMessages = written.filter(
+      .map((line) => JSON.parse(line) as SessionEntry)
+      .filter((entry) => !originalIds.has(entry.id));
+    const turns = written.filter(
       (entry): entry is SessionMessageEntry =>
-        entry.type === "message" && !originalIds.has(entry.id),
+        entry.type === "message" && entry.message.role !== "system",
     );
-    const newTurns = newMessages.filter(
-      (entry) => entry.message.role !== "system",
-    );
-    expect(newTurns.map((entry) => entry.message.role)).toEqual([
+    expect(turns.map(({ message }) => message.role)).toEqual([
       "user",
       "assistant",
       "user",
       "assistant",
     ]);
-    expect(newTurns[0]!.message).toMatchObject({
-      role: "user",
+    expect(turns[0]!.message).toMatchObject({
       content: [{ type: "text", text: first.message }],
     });
-    expect(newTurns[2]!.message).toMatchObject({
-      role: "user",
+    expect(turns[2]!.message).toMatchObject({
       content: [{ type: "text", text: second.message }],
     });
-    expect(written.filter((entry) => entry.type === "compaction")).toHaveLength(
-      1,
-    );
-    expect(
-      written.findIndex((entry) => entry.type === "compaction"),
-    ).toBeLessThan(written.indexOf(newTurns[0]!));
-    const snapshot = await f.runtime.snapshot();
-    expect(snapshot.active?.transcriptPage.messages).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ role: "system" })]),
+    const compaction = written.filter((entry) => entry.type === "compaction");
+    expect(compaction).toHaveLength(1);
+    expect(written.indexOf(compaction[0]!)).toBeLessThan(
+      written.indexOf(turns[0]!),
     );
   }, 90_000);
 

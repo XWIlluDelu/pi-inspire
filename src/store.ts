@@ -338,7 +338,7 @@ export class AppStore {
     state: () => this.state,
     api: () => this.api,
     beginOpening: (sessionId) => {
-      this.branches.invalidateForSelectionIntent();
+      this.branches.invalidate();
       this.set({ sessionActionError: null });
       this.selectionIntentGeneration += 1;
       const ticket = ++this.selectionRequest;
@@ -535,7 +535,7 @@ export class AppStore {
       // The reconnect snapshot may remove stale state but must not recreate
       // ownership from historical active status.
       this.runtimeEvents.invalidateTransport();
-      this.branches.markConnectionInterrupted();
+      this.branches.invalidate();
       this.set({
         connection: "reconnecting",
         connectionProblem: { kind: "stream-interrupted" },
@@ -695,7 +695,7 @@ export class AppStore {
     this.git.invalidateForTransportReplacement();
     this.workspace.invalidateForTransportReplacement();
     this.selection.invalidateForReplacement();
-    this.branches.invalidateForTransportReplacement();
+    this.branches.invalidate();
     this.sessionManagement.invalidateForTransportReplacement();
   }
 
@@ -990,7 +990,7 @@ export class AppStore {
     if (projectionOwnerChanged) {
       this.selectionGeneration += 1;
       if (sessionChanged) this.pendingActionRequest += 1;
-      this.branches.invalidateForViewChange();
+      this.branches.invalidate({ preserveError: true });
       // Retire old content authority even when the same session survives.
       // The lifecycle patch separately retains named-file selection intent
       // so compaction/rewrite can reauthorize it instead of returning to Browse.

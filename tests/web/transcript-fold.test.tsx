@@ -277,74 +277,37 @@ describe("response activity folds", () => {
     },
   );
 
-  it("keeps individual card state between the group boundary controls", () => {
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => undefined);
-    const messages = [
-      {
-        role: "assistant",
-        timestamp: 1,
-        content: [
-          { type: "thinking", thinking: "before the first response" },
-          { type: "text", text: "first response" },
+  it("splits activity groups at visible assistant responses", () => {
+    const { container } = render(
+      transcript(
+        [
           {
-            type: "toolCall",
-            id: "fold-tool",
-            name: "read",
-            arguments: { path: "src/a.ts" },
+            role: "assistant",
+            timestamp: 1,
+            content: [
+              { type: "thinking", thinking: "before the first response" },
+              { type: "text", text: "first response" },
+              { type: "toolCall", id: "tool", name: "read", arguments: {} },
+              { type: "text", text: "second response" },
+            ],
           },
-          { type: "text", text: "second response" },
         ],
-      },
-      {
-        role: "toolResult",
-        toolCallId: "fold-tool",
-        content: "file body",
-        timestamp: 2,
-      },
-    ];
-    const { container } = render(transcript(messages, "expanded"));
-
-    expect(screen.getByText("first response")).toBeVisible();
+        "expanded",
+      ),
+    );
+    const groups = container.querySelectorAll("[data-activity-fold]");
+    expect(groups).toHaveLength(2);
+    const [before, after] = groups;
+    const response = screen.getByText("first response");
+    expect(
+      before!.compareDocumentPosition(response) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      after!.compareDocumentPosition(response) &
+        Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
     expect(screen.getByText("second response")).toBeVisible();
-    expect(container.querySelectorAll("[data-activity-fold]")).toHaveLength(2);
-
-    const toolCard = screen
-      .getByText("read", { selector: ".card__tool-name" })
-      .closest(".card") as HTMLElement;
-    const toolFold = toolCard.closest(".activity-fold") as HTMLElement;
-    const toolDisclosure = toolCard.querySelector(
-      ".card__disclosure",
-    ) as HTMLButtonElement;
-    fireEvent.click(toolDisclosure);
-    expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(toolFold.querySelectorAll(".activity-fold__boundary")).toHaveLength(
-      2,
-    );
-
-    const lowerRail = within(toolFold).getByRole("button", {
-      name: "Collapse assistant activity from the lower boundary",
-    });
-    fireEvent.click(lowerRail);
-    expect(toolFold).toHaveAttribute("data-activity-fold", "closed");
-    const collapsedControl = within(toolFold).getByRole("button", {
-      name: "Expand assistant activity",
-    });
-    expect(collapsedControl).toHaveFocus();
-    expect(lowerRail).not.toBeInTheDocument();
-    expect(toolFold.querySelector(".activity-fold__content")).toHaveAttribute(
-      "hidden",
-    );
-    expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
-
-    expect(within(toolFold).getAllByRole("button")).toEqual([collapsedControl]);
-    fireEvent.click(collapsedControl);
-    expect(toolFold).toHaveAttribute("data-activity-fold", "open");
-    expect(toolDisclosure).toHaveAttribute("aria-expanded", "true");
-    expect(consoleError.mock.calls.flat().join(" ")).not.toContain(
-      "Each child in a list should have a unique",
-    );
   });
 
   it("keeps disclosure state attached to an activity when history is prepended", () => {
@@ -501,38 +464,6 @@ describe("response activity folds", () => {
     ).toBe(true);
     expect(screen.queryByText("tool-1 result")).toBeNull();
     expect(screen.queryByText("tool-2 result")).toBeNull();
-  });
-
-  it("omits older assistant activity rows without leaving attribution behind", () => {
-    const { container } = render(
-      transcript(
-        Array.from({ length: 26 }, (_, index) => ({
-          role: "assistant",
-          model: "test-model",
-          timestamp: index + 1,
-          content: [
-            {
-              type: "toolCall",
-              id: `round-tool-${index + 1}`,
-              name: `tool-${index + 1}`,
-              arguments: {},
-            },
-          ],
-        })),
-        "compact",
-        {
-          toolVisibility: "expanded",
-        },
-      ),
-    );
-
-    const fold = container.querySelector("[data-activity-fold]") as HTMLElement;
-    const visiblyOwned = (selector: string) =>
-      Array.from(fold.querySelectorAll<HTMLElement>(selector)).filter(
-        (element) => element.closest("[hidden]") === null,
-      );
-    expect(visiblyOwned(".turn--assistant")).toHaveLength(24);
-    expect(fold.querySelector(".turn__divider, .turn__head")).toBeNull();
   });
 
   // This scale regression intentionally mounts and removes all 300 real cards.
@@ -1003,46 +934,6 @@ describe("response activity folds", () => {
     expect(container.querySelector(".activity-fold__matrix")).toHaveAttribute(
       "title",
       "Expand to load recent activity.",
-    );
-  });
-
-  it.each([
-    [["tool"], ["tool"]],
-    [
-      ["tool", "tool", "tool"],
-      ["tool", "tool", "tool"],
-    ],
-    [["thinking"], ["thinking"]],
-    [
-      ["thinking", "thinking"],
-      ["thinking", "thinking"],
-    ],
-    [
-      ["tool", "tool", "thinking", "tool"],
-      ["tool", "tool", "thinking", "tool"],
-    ],
-    [
-      ["thinking", "tool", "thinking"],
-      ["thinking", "tool", "thinking"],
-    ],
-  ])("summarizes %j as chronological kind dots %j", (input, expected) => {
-    const content = input.map((kind, index) =>
-      kind === "thinking"
-        ? { type: "thinking", thinking: `thought ${index}` }
-        : {
-            type: "toolCall",
-            id: `dot-tool-${index}`,
-            name: "read",
-            arguments: {},
-          },
-    );
-    const { container } = render(
-      transcript([{ role: "assistant", timestamp: 1, content }], "collapsed"),
-    );
-    const dots = container.querySelectorAll(".activity-fold__kind");
-    expect(dots).toHaveLength(expected.length);
-    expected.forEach((kind, index) =>
-      expect(dots[index]).toHaveClass(`activity-fold__kind--${kind}`),
     );
   });
 

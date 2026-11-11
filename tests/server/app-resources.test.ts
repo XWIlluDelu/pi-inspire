@@ -138,9 +138,8 @@ describe("HTTP resource and upload authority", () => {
 
   it("allows URI escaping overhead without enlarging the literal workspace-path budget", async () => {
     await writeFile(join(temporary, "long-url.md"), "LONG_LINK_BYTES");
-    const opened = await request(application.server)
+    const opened = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: temporary })
       .expect(200);
     const sessionId = opened.body.active.sessionId as string;
@@ -148,34 +147,29 @@ describe("HTTP resource and upload authority", () => {
     // No platform-dependent deep directory or overlong component is needed.
     const reference = "%2E/".repeat(2_100) + "long-url.md";
     expect(reference.length).toBeGreaterThan(8_192);
-    const resolved = await request(application.server)
+    const resolved = await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference })
       .expect(200);
     expect(resolved.body.name).toBe("long-url.md");
-    const content = await request(application.server)
+    const content = await fixture.localRequest
       .get(`/api/resources/${resolved.body.id}/content`)
       .query({ sessionId })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(content.text).toBe("LONG_LINK_BYTES");
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId,
         reference: "a".repeat(MAX_RESOURCE_REFERENCE_LENGTH + 1),
       })
       .expect(400);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "a".repeat(8_193) })
       .expect(400);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId,
         reference: "long-url.md",
@@ -296,16 +290,14 @@ describe("HTTP resource and upload authority", () => {
     await writeFile(join(temporary, ".gitignore"), "dist/\n");
     await writeFile(join(temporary, "dist", "report.md"), "# Ignored output\n");
     await writeFile(join(temporary, ".env"), "SYNTHETIC_CONFIG=true\n");
-    const opened = await request(application.server)
+    const opened = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: temporary })
       .expect(200);
     const sessionId = opened.body.active.sessionId as string;
-    const listing = await request(application.server)
+    const listing = await fixture.localRequest
       .get("/api/files/list")
       .query({ sessionId })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(listing.body).toMatchObject({
       entries: [
@@ -314,51 +306,44 @@ describe("HTTP resource and upload authority", () => {
       ],
       truncated: false,
     });
-    const hidden = await request(application.server)
+    const hidden = await fixture.localRequest
       .get("/api/files/list")
       .query({ sessionId, showHidden: "1" })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(hidden.body.entries).toContainEqual({ name: ".env", type: "file" });
     for (const endpoint of ["/api/files", "/api/new-session/files"]) {
       const query =
         endpoint === "/api/files" ? { sessionId } : { cwd: temporary };
-      const visible = await request(application.server)
+      const visible = await fixture.localRequest
         .get(endpoint)
         .query({ ...query, q: "report" })
-        .set("Authorization", `Bearer ${token}`)
         .expect(200);
       expect(visible.body.files).toEqual([
         { name: "report.md", path: "dist/report.md" },
       ]);
-      const excluded = await request(application.server)
+      const excluded = await fixture.localRequest
         .get(endpoint)
         .query({ ...query, q: ".env" })
-        .set("Authorization", `Bearer ${token}`)
         .expect(200);
       expect(excluded.body.files).toEqual([]);
-      const included = await request(application.server)
+      const included = await fixture.localRequest
         .get(endpoint)
         .query({ ...query, q: ".env", showHidden: "1" })
-        .set("Authorization", `Bearer ${token}`)
         .expect(200);
       expect(included.body.files).toEqual([{ name: ".env", path: ".env" }]);
-      await request(application.server)
+      await fixture.localRequest
         .get(endpoint)
         .query({ ...query, showHidden: "yes" })
-        .set("Authorization", `Bearer ${token}`)
         .expect(400);
     }
     // Visibility is not access control, including when the file was never searched.
-    const resolved = await request(application.server)
+    const resolved = await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: ".env", workspacePath: ".env" })
       .expect(200);
-    const downloaded = await request(application.server)
+    const downloaded = await fixture.localRequest
       .get(`/api/resources/${resolved.body.id}/content`)
       .query({ sessionId, download: "1" })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(downloaded.text).toBe("SYNTHETIC_CONFIG=true\n");
   }, 30_000);
@@ -367,18 +352,15 @@ describe("HTTP resource and upload authority", () => {
     await request(application.server)
       .get("/api/git/status?sessionId=fixture-active")
       .expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/git/status?sessionId=not-open")
-      .set("Authorization", `Bearer ${token}`)
       .expect(409);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
       .send({ id: "fixture-active" })
       .expect(200);
-    const status = await request(application.server)
+    const status = await fixture.localRequest
       .get("/api/git/status?sessionId=fixture-active")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(status.body).toEqual({ kind: "not-repository" });
     expect(git.status).toHaveBeenCalledWith(
@@ -386,17 +368,15 @@ describe("HTTP resource and upload authority", () => {
       expect.any(AbortSignal),
     );
 
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/git/diff")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         pathId: "not base64!",
       })
       .expect(400);
-    const diff = await request(application.server)
+    const diff = await fixture.localRequest
       .post("/api/git/diff")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         pathId: "ZmlsZS50eHQ",
@@ -418,229 +398,89 @@ describe("HTTP resource and upload authority", () => {
       "blame",
       "push",
     ]) {
-      await request(application.server)
+      await fixture.localRequest
         .post(`/api/git/${route}`)
-        .set("Authorization", `Bearer ${token}`)
         .send({ sessionId: "fixture-active" })
         .expect(404);
     }
   });
 
-  it("serves workspace files independently of discovery while keeping session and outside-path boundaries", async () => {
-    const quotedName =
+  it("keeps addressed resource access after another session opens", async () => {
+    const name =
       process.platform === "win32" ? "quoted'(x).md" : "quoted'(*).md";
-    await writeFile(join(temporary, "preview.md"), "# Host preview\n");
-    await writeFile(join(temporary, "notes.txt"), "workspace note\n");
-    await writeFile(join(temporary, quotedName), "quoted\n");
-    await mkdir(join(temporary, "node_modules"));
-    await writeFile(
-      join(temporary, "node_modules", "mentioned.txt"),
-      "vendored but cited\n",
-    );
-    await writeFile(
-      join(temporary, "node_modules", "hidden.txt"),
-      "vendored\n",
-    );
-    const opened = await request(application.server)
+    await writeFile(join(temporary, name), "# Host preview\n");
+    const opened = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: temporary })
       .expect(200);
     const sessionId = opened.body.active.sessionId as string;
-    await request(application.server)
-      .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
-      .send(
-        promptDelivery({
-          sessionId,
-          message:
-            "Open [the preview](preview.md), [the vendored note](node_modules/mentioned.txt), and `missing.md`.",
-        }),
-      )
-      .expect(202);
+    const resolve = (reference: string) =>
+      fixture.localRequest
+        .post("/api/resources/resolve")
+        .send({ sessionId, reference });
+    const resolved = await resolve(name).expect(200);
+    expect(resolved.body).toMatchObject({ name, kind: "markdown" });
+    const resourcePath = `/api/resources/${resolved.body.id}/content`;
+    await resolve("../outside.txt").expect(403);
 
-    const listed = await request(application.server)
-      .post("/api/resources/list")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId })
+    await fixture.localRequest
+      .post("/api/sessions/open")
+      .send({ id: "fixture-active" })
       .expect(200);
-    expect(listed.body).toMatchObject({ sessionId });
-    expect(listed.body.resources).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ reference: "preview.md" }),
-        expect.objectContaining({ reference: "node_modules/mentioned.txt" }),
-        expect.objectContaining({ reference: "missing.md" }),
-      ]),
-    );
-
-    const probed = await request(application.server)
-      .post("/api/resources/probe")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        references: ["preview.md", "missing.md", "node_modules/hidden.txt"],
-      })
-      .expect(200);
-    expect(probed.body).toMatchObject({
-      sessionId,
-      revision: expect.any(Number),
-      results: [
-        { reference: "preview.md", availability: "available" },
-        { reference: "missing.md", availability: "missing" },
-        { reference: "node_modules/hidden.txt", availability: "available" },
-      ],
-    });
-
-    const resolved = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "preview.md" })
-      .expect(200);
-    expect(resolved.body).toMatchObject({
-      name: "preview.md",
-      kind: "markdown",
-    });
-
-    const content = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
+    const content = await fixture.localRequest
+      .get(resourcePath)
+      .query({ sessionId })
       .expect(200);
     expect(content.text).toBe("# Host preview\n");
-    expect(content.headers["accept-ranges"]).toBe("bytes");
     expect(content.headers["content-disposition"]).toBe(
-      "inline; filename*=UTF-8''preview.md",
-    );
-
-    const download = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}&download=1`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(download.text).toBe("# Host preview\n");
-    expect(download.headers["content-disposition"]).toBe(
-      "attachment; filename*=UTF-8''preview.md",
-    );
-
-    // A head-slice Range (how the client caps text previews) yields 206.
-    const ranged = await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .set("Range", "bytes=0-5")
-      .expect(206);
-    expect(ranged.headers["content-range"]).toBe("bytes 0-5/15");
-    expect(ranged.text).toBe("# Host");
-    // Invalid ranges must not fall back to serving the complete file.
-    await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .set("Range", "bytes=999-1000")
-      .expect(416);
-
-    // Indexed workspace files preview without a transcript mention — the
-    // explorer's click path.
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        reference: "notes.txt",
-        workspacePath: "notes.txt",
-      })
-      .expect(200);
-    const quoted = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        sessionId,
-        reference: quotedName,
-        workspacePath: quotedName,
-      })
-      .expect(200);
-    const quotedContent = await request(application.server)
-      .get(
-        `/api/resources/${quoted.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(quotedContent.headers["content-disposition"]).toBe(
       process.platform === "win32"
         ? "inline; filename*=UTF-8''quoted%27%28x%29.md"
         : "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
     );
-    // A transcript mention still reaches files the index ignores.
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "node_modules/mentioned.txt" })
-      .expect(200);
-    // Workspace containment, not Git/search membership, authorizes this file.
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "node_modules/hidden.txt" })
-      .expect(200);
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "unmentioned.txt" })
-      .expect(404);
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ sessionId, reference: "../outside.txt" })
-      .expect(403);
+    await fixture.localRequest
+      .get(resourcePath)
+      .query({ sessionId, download: "1" })
+      .expect("Content-Disposition", /^attachment;/)
+      .expect(200, "# Host preview\n");
 
-    // A second browser selecting another session does not revoke this
-    // browser's addressed resource operations or existing handles.
-    await request(application.server)
-      .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ id: "fixture-active" })
-      .expect(200);
-    await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
+    await fixture.localRequest
+      .get(resourcePath)
+      .query({ sessionId })
+      .set("Range", "bytes=0-5")
+      .expect("Content-Range", "bytes 0-5/15")
+      .expect(206, "# Host");
+    await fixture.localRequest
+      .get(resourcePath)
+      .query({ sessionId })
+      .set("Range", "bytes=999-1000")
+      .expect(416);
+
     for (const [operation, body] of [
       ["list", { sessionId }],
-      ["probe", { sessionId, references: ["preview.md"] }],
-      ["resolve", { sessionId, reference: "preview.md" }],
+      ["probe", { sessionId, references: [name] }],
+      ["resolve", { sessionId, reference: name }],
     ] as const) {
-      await request(application.server)
+      await fixture.localRequest
         .post(`/api/resources/${operation}`)
-        .set("Authorization", `Bearer ${token}`)
         .send(body)
         .expect(200);
     }
-    await request(application.server)
-      .get(
-        `/api/resources/${resolved.body.id}/content?sessionId=fixture-active`,
-      )
-      .set("Authorization", `Bearer ${token}`)
+    await fixture.localRequest
+      .get(resourcePath)
+      .query({ sessionId: "fixture-active" })
       .expect(404);
   });
 
   it("uses the current resource size after resolve when a file grows or shrinks", async () => {
     const resourcePath = join(temporary, "changing.md");
     await writeFile(resourcePath, "old\n");
-    const opened = await request(application.server)
+    const opened = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: temporary })
       .expect(200);
     const sessionId = opened.body.active.sessionId as string;
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(
         promptDelivery({
           sessionId,
@@ -648,20 +488,18 @@ describe("HTTP resource and upload authority", () => {
         }),
       )
       .expect(202);
-    const resolved = await request(application.server)
+    const resolved = await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "changing.md" })
       .expect(200);
     expect(resolved.body.size).toBe(4);
 
     const grown = "grown-content\n";
     await writeFile(resourcePath, grown);
-    const grownResponse = await request(application.server)
+    const grownResponse = await fixture.localRequest
       .get(
         `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
       )
-      .set("Authorization", `Bearer ${token}`)
       .set("Range", "bytes=0-262143")
       .expect(206);
     expect(grownResponse.headers["content-range"]).toBe(
@@ -671,11 +509,10 @@ describe("HTTP resource and upload authority", () => {
 
     const shrunk = "new\n";
     await writeFile(resourcePath, shrunk);
-    const shrunkResponse = await request(application.server)
+    const shrunkResponse = await fixture.localRequest
       .get(
         `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
       )
-      .set("Authorization", `Bearer ${token}`)
       .set("Range", "bytes=0-262143")
       .expect(206);
     expect(shrunkResponse.headers["content-range"]).toBe(
@@ -686,20 +523,17 @@ describe("HTTP resource and upload authority", () => {
 
   it("closes an opened file when the client aborts during authorization", async () => {
     await writeFile(join(temporary, "slow.md"), "slow preview\n");
-    const openedSession = await request(application.server)
+    const openedSession = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: temporary })
       .expect(200);
     const sessionId = openedSession.body.active.sessionId as string;
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(promptDelivery({ sessionId, message: "Open [slow](slow.md)." }))
       .expect(202);
-    const resolved = await request(application.server)
+    const resolved = await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "slow.md" })
       .expect(200);
 
@@ -769,14 +603,12 @@ describe("HTTP resource and upload authority", () => {
         };
       },
     );
-    const resolved = await request(application.server)
+    const resolved = await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, reference: "pi-embedded://0/0" })
       .expect(200);
-    const ranged = await request(application.server)
+    const ranged = await fixture.localRequest
       .get(`/api/resources/${resolved.body.id}/content?sessionId=${sessionId}`)
-      .set("Authorization", `Bearer ${token}`)
       .set("Range", "bytes=0-4")
       .expect(206);
     expect(ranged.headers["content-range"]).toBe("bytes 0-4/11");
@@ -784,36 +616,31 @@ describe("HTTP resource and upload authority", () => {
   });
 
   it("deletes withdrawn attachments from the host cache", async () => {
-    const uploaded = await request(application.server)
+    const uploaded = await fixture.localRequest
       .post("/api/attachments")
-      .set("Authorization", `Bearer ${token}`)
       .attach("files", Buffer.from("draft"), {
         filename: "draft.txt",
         contentType: "text/plain",
       })
       .expect(200);
     const id = uploaded.body.attachments[0].id as string;
-    await request(application.server)
+    await fixture.localRequest
       .delete(`/api/attachments/${id}`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200, { ok: true });
     // Idempotent: a second delete of the same id still succeeds.
-    await request(application.server)
+    await fixture.localRequest
       .delete(`/api/attachments/${id}`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200, { ok: true });
-    await request(application.server)
+    await fixture.localRequest
       .delete("/api/attachments/not-a-uuid")
-      .set("Authorization", `Bearer ${token}`)
       .expect(400);
   });
 
   it("rejects multipart batches at the aggregate streaming budget and removes partial files", async () => {
     const uploadDirectory = await fixture.attachments.uploadDirectory();
     const metadataBefore = await readdir(uploadDirectory);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/attachments")
-      .set("Authorization", `Bearer ${token}`)
       .attach("files", Buffer.alloc(MAX_ATTACHMENT_FILE_BYTES), {
         filename: "one.bin",
       })
@@ -826,18 +653,16 @@ describe("HTTP resource and upload authority", () => {
   }, 15_000);
 
   it("accepts a bounded private upload and delivers its handle through the prompt API", async () => {
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
       .send({ id: "fixture-active" })
       .expect(200);
 
     const metadataBefore = await readdir(
       await fixture.attachments.uploadDirectory(),
     );
-    const uploaded = await request(application.server)
+    const uploaded = await fixture.localRequest
       .post("/api/attachments")
-      .set("Authorization", `Bearer ${token}`)
       .attach("files", Buffer.from("research notes"), {
         filename: "notes.txt",
         contentType: "text/plain",
@@ -871,9 +696,8 @@ describe("HTTP resource and upload authority", () => {
     }
 
     const prompt = vi.spyOn(runtime, "prompt");
-    const delivered = await request(application.server)
+    const delivered = await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(
         promptDelivery({
           sessionId: "fixture-active",

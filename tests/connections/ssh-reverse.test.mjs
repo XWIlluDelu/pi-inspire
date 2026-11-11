@@ -177,11 +177,13 @@ describe("ssh-reverse connection module", () => {
           "connections/ssh-reverse/runner.mjs",
         ],
         ["deploy/systemd/install.mjs", "deploy/systemd/install.mjs"],
+        ["deploy/systemd/control.mjs", "deploy/systemd/control.mjs"],
         ...[
           "file-lock",
           "instance-state",
           "instance-control",
           "platform-environment",
+          "process-tree",
         ].map((name) => [`server/${name}.mjs`, `build/server/${name}.mjs`]),
       ];
       await Promise.all(

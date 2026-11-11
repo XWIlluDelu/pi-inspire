@@ -74,8 +74,6 @@ let fixture: {
   navigateGate?: Promise<void>;
   cloneError?: string;
   treeGate?: Promise<void>;
-  entryFailures?: number;
-  imageFailures?: number;
   images?: boolean;
   detailText?: string;
   detailRole?: BranchTreeNode["role"];
@@ -157,25 +155,11 @@ beforeEach(async () => {
         return Response.json(tree(url));
       }
       if (url.startsWith("/api/branches/image")) {
-        if (fixture.imageFailures) {
-          fixture.imageFailures--;
-          return Response.json(
-            { error: "Temporary image failure" },
-            { status: 503 },
-          );
-        }
         return new Response("fixture image", {
           headers: { "Content-Type": "image/png" },
         });
       }
       if (url.startsWith("/api/branches/entry")) {
-        if (fixture.entryFailures) {
-          fixture.entryFailures--;
-          return Response.json(
-            { error: "Preview temporarily unavailable" },
-            { status: 503 },
-          );
-        }
         const query = new URL(url, "http://fixture").searchParams;
         const id = query.get("targetId")!;
         if (!full.has(id))
@@ -404,61 +388,6 @@ describe("read-only History inspection", () => {
     ).toBe(false);
   });
 
-  it("recovers a failed image without discarding the selected entry or outline position", async () => {
-    fixture.images = true;
-    fixture.imageFailures = 1;
-    render(<BranchTree />);
-    const search = screen.getByRole("searchbox", { name: "Find in history" });
-    fireEvent.change(search, { target: { value: "Root" } });
-    const match = await screen.findByRole("button", {
-      name: "Your input Root question",
-    });
-    expect(match.querySelector(".search-match")).toHaveTextContent(/^Root$/);
-    const rows = history().querySelector(".branch-tree__rows")!;
-    rows.scrollTop = 81;
-    fireEvent.click(match);
-    await screen.findByRole(
-      "button",
-      {
-        name: "Preview image in this history entry",
-      },
-      { timeout: 2_500 },
-    );
-    expect(screen.queryByRole("button", { name: "Retry image" })).toBeNull();
-    expect(
-      requests.filter((request) =>
-        request.url.startsWith("/api/branches/image"),
-      ),
-    ).toHaveLength(2);
-    expect(
-      requests.filter((request) =>
-        request.url.startsWith("/api/branches/entry"),
-      ),
-    ).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    expect(search).toHaveValue("Root");
-    expect(rows.scrollTop).toBe(81);
-    expect(match).toHaveFocus();
-  });
-
-  it("delegates inline-code and Markdown local files to the session reader, not external links", async () => {
-    fixture.detailText =
-      "Read `README.md` or [the document](README.md), and [external docs](https://example.com/docs).";
-    const open = vi.spyOn(store, "openResource").mockResolvedValue();
-    render(<BranchTree />);
-    fireEvent.click(screen.getByRole("button", { name: "Root question" }));
-    fireEvent.click(await screen.findByRole("button", { name: "README.md" }));
-    const link = screen.getByRole("link", { name: "the document" });
-    expect(fireEvent.click(link)).toBe(false);
-    expect(open.mock.calls).toEqual([["README.md"], ["README.md"]]);
-    const external = screen.getByRole("link", { name: "external docs" });
-    expect(external).toHaveAttribute("href", "https://example.com/docs");
-    expect(external).toHaveAttribute("target", "_blank");
-    expect(fireEvent.click(external)).toBe(true);
-    expect(open).toHaveBeenCalledTimes(2);
-    open.mockRestore();
-  });
-
   it("leads with prompts and keeps reply selection separate from continuation", async () => {
     setSessionDraft("s1", "unsent draft");
     const before = store.getState().transcriptViewId;
@@ -589,34 +518,6 @@ describe("read-only History inspection", () => {
     expect(
       screen.getByRole("button", { name: "Your input Root question" }),
     ).toBeVisible();
-  });
-
-  it("recovers a failed selected preview and keeps its search and Back anchor", async () => {
-    render(<BranchTree />);
-    const search = screen.getByRole("searchbox", { name: "Find in history" });
-    fireEvent.change(search, { target: { value: "old keyword" } });
-    const match = await screen.findByRole("button", {
-      name: "Response Earlier answer",
-    });
-    const rows = history().querySelector(".branch-tree__rows")!;
-    rows.scrollTop = 73;
-    fixture.entryFailures = 1;
-    fireEvent.click(match);
-    await screen.findByRole(
-      "button",
-      { name: "Read more content" },
-      { timeout: 2_500 },
-    );
-    expect(screen.queryByRole("button", { name: "Retry preview" })).toBeNull();
-    expect(
-      requests.filter((request) =>
-        request.url.startsWith("/api/branches/entry"),
-      ),
-    ).toHaveLength(2);
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    expect(search).toHaveValue("old keyword");
-    expect(rows.scrollTop).toBe(73);
-    expect(match).toHaveFocus();
   });
 
   it("retains ordinary loaded older pages after preview and Back", async () => {

@@ -71,7 +71,7 @@ const {
 const { inspireRuntimeDirectory, resolveUserPath } = await import(
   pathToFileURL(join(supportRoot, "platform-paths.mjs")).href
 );
-const { signalProcessTree } = await import(
+const { runChild, signalProcessTree } = await import(
   pathToFileURL(join(supportRoot, "process-tree.mjs")).href
 );
 const { createLauncherRestartSupervisor } = await import(
@@ -98,28 +98,11 @@ function localBin(name) {
 }
 
 function childResult(command, args, options = {}) {
-  return new Promise((resolveResult) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd ?? root,
-      env: options.env ?? process.env,
-      windowsHide: true,
-      stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    let settled = false;
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      resolveResult({ code: 1, stdout, stderr: `${stderr}${error.message}` });
-    });
-    child.once("exit", (code, signal) => {
-      if (settled) return;
-      settled = true;
-      resolveResult({ code: code ?? (signal ? 1 : 0), stdout, stderr });
-    });
+  return runChild(command, args, {
+    cwd: options.cwd ?? root,
+    env: options.env ?? process.env,
+    windowsHide: true,
+    stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
   });
 }
 

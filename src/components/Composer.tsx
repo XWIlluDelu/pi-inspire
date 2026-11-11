@@ -1,4 +1,4 @@
-import { FolderSearch, Paperclip, Send, Square } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -10,7 +10,6 @@ import {
   useState,
 } from "react";
 import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
-import { clipboardFiles } from "../clipboard-files";
 import {
   type ComposerHistoryScope,
   composerHistory,
@@ -35,7 +34,8 @@ import { AttachmentList } from "./AttachmentList";
 import { ComposerInput } from "./ComposerInput";
 import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { ModelSelector } from "./ModelSelector";
-import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
+import { ProjectFileChips, ProjectFileControl } from "./ProjectFiles";
+import { useComposerAttachmentInput } from "./use-composer-attachment-input";
 
 const RING_RADIUS = 5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
@@ -246,7 +246,6 @@ export const Composer = memo(function Composer() {
     sessionId ? sessionDraft(sessionId) : "",
   );
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [dropActive, setDropActive] = useState(false);
   const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
     null,
   );
@@ -263,10 +262,13 @@ export const Composer = memo(function Composer() {
     [draft, state.attachments, state.projectFiles],
   );
   const handedOffRef = useRef<typeof inputSnapshot | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const busy = isBusyRunState(state.runState);
   const sessionOpening = state.sessionSelectionPending;
+  const attachmentInput = useComposerAttachmentInput(
+    store.addFiles,
+    sessionOpening,
+    sessionId,
+  );
 
   const abortable = isAbortableRunState(state.runState) || state.bashRunning;
   const isRunning = state.runState === "running";
@@ -349,7 +351,6 @@ export const Composer = memo(function Composer() {
     // Reset before paint so it cannot silently retarget the newly visible one.
     setDraft(sessionId ? sessionDraft(sessionId) : "");
     setPickerOpen(false);
-    setDropActive(false);
     setDeliveryBehavior("steer");
   }, [sessionId]);
 
@@ -430,13 +431,6 @@ export const Composer = memo(function Composer() {
     void submit(activeBehavior);
   };
 
-  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const files = clipboardFiles(event.clipboardData);
-    if (files.length === 0) return;
-    event.preventDefault();
-    void store.addFiles(files);
-  };
-
   const activeModel = resolveModelMetadata(state.model, state.availableModels);
   // Owned workers and attached terminal Pi both take model and thinking changes.
   const modelControls = Boolean(state.sessionId);
@@ -445,39 +439,16 @@ export const Composer = memo(function Composer() {
 
   return (
     <form
-      className={`composer ${dropActive ? "composer--drop" : ""} ${runStateClass}`}
+      className={`composer ${attachmentInput.dragging ? "composer--drop" : ""} ${runStateClass}`}
       aria-label="Message composer"
       aria-busy={busy || sessionOpening || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         void submit(activeBehavior);
       }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setDropActive(true);
-      }}
-      onDragLeave={() => setDropActive(false)}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDropActive(false);
-        if (!sessionOpening)
-          void store.addFiles(Array.from(event.dataTransfer.files));
-      }}
+      {...attachmentInput.dropHandlers}
     >
-      <input
-        key={`file-input-${sessionId ?? "none"}`}
-        ref={fileInputRef}
-        type="file"
-        multiple
-        className="composer__file-input"
-        aria-label="Attach files"
-        tabIndex={-1}
-        disabled={sessionOpening}
-        onChange={(event) => {
-          void store.addFiles(Array.from(event.target.files ?? []));
-          event.target.value = "";
-        }}
-      />
+      {attachmentInput.input}
       <AttachmentList
         sessionId={sessionId}
         items={state.attachments}
@@ -534,7 +505,7 @@ export const Composer = memo(function Composer() {
         }
         label="Message"
         onKeyDown={onKeyDown}
-        onPaste={onPaste}
+        onPaste={attachmentInput.onPaste}
         sizeActionSlot={sizeActionSlot}
       />
       {deliveryBusy ? (
@@ -609,29 +580,18 @@ export const Composer = memo(function Composer() {
             onChange={(value) => void store.setThinkingLevel(value)}
           />
         </div>
-        <button
-          ref={projectPickerButtonRef}
-          type="button"
-          className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
+        <ProjectFileControl
+          scope={sessionId}
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          showHidden={state.workspaceShowHidden}
+          onShowHiddenChange={store.setWorkspaceShowHidden}
+          selected={state.projectFiles}
           disabled={sessionOpening}
-          onClick={() => setPickerOpen((value) => !value)}
-          aria-label="Add project files"
-          aria-haspopup="dialog"
-          aria-expanded={pickerOpen}
-          title="Reference project files"
-        >
-          <FolderSearch size={14} aria-hidden />
-        </button>
-        <button
-          type="button"
-          className="icon-button"
-          disabled={sessionOpening}
-          onClick={() => fileInputRef.current?.click()}
-          aria-label="Attach files"
-          title="Attach, paste, or drop files"
-        >
-          <Paperclip size={14} aria-hidden />
-        </button>
+          search={store.searchProjectFiles}
+          onAdd={(file) => store.addProjectFile(file.path)}
+        />
+        {attachmentInput.button}
         <span className="composer__action-slot" ref={setSizeActionSlot} />
         <span className="composer__spacer" />
         <ContextMeter />
@@ -687,19 +647,6 @@ export const Composer = memo(function Composer() {
           </button>
         ) : null}
       </div>
-      {pickerOpen && sessionId ? (
-        <ProjectFilePicker
-          anchorRef={projectPickerButtonRef}
-          scope={sessionId}
-          showHidden={state.workspaceShowHidden}
-          onShowHiddenChange={store.setWorkspaceShowHidden}
-          selected={state.projectFiles}
-          disabled={sessionOpening}
-          search={store.searchProjectFiles}
-          onAdd={(file) => store.addProjectFile(file.path)}
-          onClose={() => setPickerOpen(false)}
-        />
-      ) : null}
     </form>
   );
 });

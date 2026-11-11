@@ -340,7 +340,6 @@ export const AssistantTurn = memo(function AssistantTurn({
         for (let cursor = start; cursor < end; cursor += 1) {
           const call = items[cursor] as ToolCallContent;
           activities.push({
-            kind: "tool",
             key: activityItemIds[cursor] ?? call.id ?? `tool:${cursor}`,
             call,
             result: toolResults.get(call.id),

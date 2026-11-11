@@ -1486,12 +1486,34 @@ function ToolDetails({
     ? (result.__inspireCalls ?? resultChildCalls(result))
     : activity?.calls;
   const codemode = presentation?.ruleId === "inspire.pi.codemode";
-  if (codemode || calls)
-    return (
-      <>
-        {call.__inspireToolCall?.truncated ? (
-          <div className="card__pending">Argument preview truncated</div>
-        ) : null}
+  const phaseDetails = codemode || calls;
+  const content =
+    presentation || !phaseDetails ? (
+      <ToolDetailsContent
+        call={call}
+        result={result}
+        status={status}
+        presentation={presentation}
+        showPending={!calls?.calls.length}
+      />
+    ) : result ? (
+      <RawToolResult result={result} />
+    ) : !calls?.calls.length ? (
+      <PendingToolResult status={status} />
+    ) : null;
+  const body = (
+    <>
+      {content}
+      {preview ? <LiveToolOutput preview={preview} /> : null}
+      {phaseDetails && !presentation ? <ToolArguments call={call} /> : null}
+    </>
+  );
+  return (
+    <>
+      {call.__inspireToolCall?.truncated ? (
+        <div className="card__pending">Argument preview truncated</div>
+      ) : null}
+      {phaseDetails ? (
         <PhaseToolDetails
           calls={calls}
           running={status === "running"}
@@ -1499,36 +1521,11 @@ function ToolDetails({
           script={codemode ? <ToolScript call={call} /> : undefined}
           codemode={codemode}
         >
-          {presentation ? (
-            <ToolDetailsContent
-              call={call}
-              result={result}
-              status={status}
-              presentation={presentation}
-              showPending={!calls?.calls.length}
-            />
-          ) : result ? (
-            <RawToolResult result={result} />
-          ) : !calls?.calls.length ? (
-            <PendingToolResult status={status} />
-          ) : null}
-          {preview ? <LiveToolOutput preview={preview} /> : null}
-          {!presentation ? <ToolArguments call={call} /> : null}
+          {body}
         </PhaseToolDetails>
-      </>
-    );
-  return (
-    <>
-      {call.__inspireToolCall?.truncated ? (
-        <div className="card__pending">Argument preview truncated</div>
-      ) : null}
-      <ToolDetailsContent
-        call={call}
-        result={result}
-        status={status}
-        presentation={presentation}
-      />
-      {preview ? <LiveToolOutput preview={preview} /> : null}
+      ) : (
+        body
+      )}
     </>
   );
 }
@@ -1538,13 +1535,13 @@ function ToolDetailsContent({
   result,
   status,
   presentation,
-  showPending = true,
+  showPending,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
   status: ToolStatus;
   presentation: ResolvedToolPresentation | null;
-  showPending?: boolean;
+  showPending: boolean;
 }) {
   const blocks = presentation ? presentationBlocks(presentation) : null;
   return (
@@ -1738,15 +1735,12 @@ export function ToolCard({
   );
 }
 
-interface CollapsedToolActivity {
-  kind: "tool";
+export interface CollapsedActivity {
   key: string;
   call: ToolCallContent;
   result: ChatMessage | undefined;
   activity?: ActivityTool;
 }
-
-export type CollapsedActivity = CollapsedToolActivity;
 
 const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
   generating: "generating arguments",
@@ -1785,7 +1779,10 @@ function collapsedActivityPresentation(
         : toolSummary(activity.call).slice(0, 90);
   const name = toolDisplayName(activity.call.name);
   return {
-    failed: status === "failure",
+    ...activity,
+    status,
+    resolved,
+    name,
     label: `${name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
     title: `${name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`,
     content: (
@@ -1810,47 +1807,34 @@ export function CollapsedActivityStrip({
   const owner = useContext(EmbeddedImageOwnerContext);
   const { configuration } = usePresentationAdapters();
   const visibleActivityIds = useVisibleActivityItemIds();
-  const visibleActivityCount =
-    visibleActivityIds === null
-      ? activities.length
-      : activities.filter((activity) => visibleActivityIds.has(activity.key))
-          .length;
   const [selectedKey, setSelectedKey] = useActivityStripSelection(
     activities[0]?.key ?? "empty-strip",
-  );
-  const selectedIndex = activities.findIndex(
-    (activity) => activity.key === selectedKey,
   );
   const [renderedKey, setRenderedKey] = useState(selectedKey);
   const [origin, setOrigin] = useState(22);
   const panelId = useId();
   const itemsRef = useRef<HTMLDivElement>(null);
-  const rendered =
-    activities.find((activity) => activity.key === renderedKey) ?? null;
-  const selectionVisible =
-    selectedIndex >= 0 &&
-    (visibleActivityIds === null ||
-      visibleActivityIds.has(activities[selectedIndex]?.key ?? ""));
-  const activityPresentations = useMemo(
+  const visibleActivities = useMemo(
     () =>
-      activities.map((activity) =>
-        visibleActivityIds === null || visibleActivityIds.has(activity.key)
-          ? collapsedActivityPresentation(activity, live)
-          : null,
-      ),
+      activities
+        .filter(
+          (activity) =>
+            !visibleActivityIds || visibleActivityIds.has(activity.key),
+        )
+        .map((activity) => collapsedActivityPresentation(activity, live)),
     [activities, live, configuration, visibleActivityIds],
   );
-  const renderedPresentation = useMemo(
-    () =>
-      rendered?.kind === "tool" &&
-      (visibleActivityIds === null || visibleActivityIds.has(rendered.key))
-        ? toolPresentationRegistry.resolve({
-            call: rendered.call,
-            result: rendered.result,
-          })
-        : null,
-    [rendered, configuration, visibleActivityIds],
+  const rendered = visibleActivities.find(
+    (activity) => activity.key === renderedKey,
   );
+  const selectionVisible = visibleActivities.some(
+    (activity) => activity.key === selectedKey,
+  );
+  const detail = rendered && {
+    ...rendered,
+    copyText: () =>
+      toolClipboardText(rendered.call, rendered.result, rendered.activity),
+  };
 
   // Keep the last detail mounted for the brief grid-collapse transition; it is
   // inert throughout closing and is removed once no pixels remain visible.
@@ -1863,7 +1847,7 @@ export function CollapsedActivityStrip({
     return () => window.clearTimeout(timer);
   }, [selectedKey, renderedKey]);
 
-  if (visibleActivityCount === 0) return null;
+  if (visibleActivities.length === 0) return null;
 
   return (
     <div
@@ -1878,24 +1862,18 @@ export function CollapsedActivityStrip({
         role="group"
         aria-label="Activity"
       >
-        {activities.map((activity, index) => {
-          if (
-            visibleActivityIds !== null &&
-            !visibleActivityIds.has(activity.key)
-          )
-            return null;
-          const active = selectedIndex === index;
-          const presentation = activityPresentations[index]!;
+        {visibleActivities.map((activity) => {
+          const active = activity.key === selectedKey;
           return (
             <button
               key={activity.key}
               ref={recoverOmittedActivityFocus}
               type="button"
-              className={`activity-strip__item ${active ? "activity-strip__item--active" : ""} ${presentation.failed ? "activity-strip__item--failed" : ""}`}
-              aria-label={presentation.label}
+              className={`activity-strip__item ${active ? "activity-strip__item--active" : ""} ${activity.status === "failure" ? "activity-strip__item--failed" : ""}`}
+              aria-label={activity.label}
               aria-expanded={active}
               aria-controls={active ? panelId : undefined}
-              title={presentation.title}
+              title={activity.title}
               onClick={(event) => {
                 const itemsBounds = itemsRef.current?.getBoundingClientRect();
                 const itemBounds = event.currentTarget.getBoundingClientRect();
@@ -1911,7 +1889,7 @@ export function CollapsedActivityStrip({
                 }
               }}
             >
-              {presentation.content}
+              {activity.content}
             </button>
           );
         })}
@@ -1922,82 +1900,53 @@ export function CollapsedActivityStrip({
         inert={!selectionVisible}
       >
         <div className="activity-strip__reveal-inner">
-          {rendered?.kind === "tool" &&
-          (visibleActivityIds === null ||
-            visibleActivityIds.has(rendered.key)) ? (
-            <ActivityReadingOwner id={rendered.key}>
-              <ToolArgumentPreviewContext
-                value={rendered.call.__inspireToolCall}
-              >
+          {detail ? (
+            <ActivityReadingOwner id={detail.key}>
+              <ToolArgumentPreviewContext value={detail.call.__inspireToolCall}>
                 <section
-                  key={rendered.key}
+                  key={detail.key}
                   ref={recoverOmittedActivityFocus}
                   id={panelId}
-                  className={`card card--tool ${rendered.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${toolStatus(rendered.result, rendered.activity, live, rendered.call) === "failure" ? "card--failed" : ""}`}
+                  className={`card card--tool ${detail.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${detail.status === "failure" ? "card--failed" : ""}`}
                 >
                   <CardHeader
                     expanded
-                    icon={toolIcon(rendered.call.name)}
+                    icon={toolIcon(detail.call.name)}
                     label={
-                      <code className="card__tool-name">
-                        {toolDisplayName(rendered.call.name)}
-                      </code>
+                      <code className="card__tool-name">{detail.name}</code>
                     }
-                    toggleLabel={`${toolDisplayName(rendered.call.name)} tool details`}
+                    toggleLabel={`${detail.name} tool details`}
                     onToggle={() => setSelectedKey(null)}
                     summary={
-                      renderedPresentation?.ruleId === "inspire.pi.codemode" ? (
+                      detail.resolved?.ruleId === "inspire.pi.codemode" ? (
                         <ToolCardSummary
-                          call={rendered.call}
-                          result={rendered.result}
-                          activity={rendered.activity}
-                          presentation={renderedPresentation}
+                          call={detail.call}
+                          result={detail.result}
+                          activity={detail.activity}
+                          presentation={detail.resolved}
                         />
                       ) : undefined
                     }
-                    status={statusIcon(
-                      toolStatus(
-                        rendered.result,
-                        rendered.activity,
-                        live,
-                        rendered.call,
-                      ),
-                    )}
-                    copyText={() =>
-                      toolClipboardText(
-                        rendered.call,
-                        rendered.result,
-                        rendered.activity,
-                      )
-                    }
+                    status={statusIcon(detail.status)}
+                    copyText={detail.copyText}
                     getCopyContent={messageCopyLoader(
-                      rendered.result,
-                      () =>
-                        toolClipboardText(
-                          rendered.call,
-                          rendered.result,
-                          rendered.activity,
-                        ),
+                      detail.result,
+                      detail.copyText,
                       owner,
                     )}
                     copyLabel={toolClipboardLabel(
-                      rendered.call,
-                      rendered.result,
-                      rendered.activity,
+                      detail.call,
+                      detail.result,
+                      detail.activity,
                     )}
                   />
                   <div className="card__body">
                     <ToolDetails
-                      call={rendered.call}
-                      result={rendered.result}
-                      status={toolStatus(
-                        rendered.result,
-                        rendered.activity,
-                        live,
-                        rendered.call,
-                      )}
-                      presentation={renderedPresentation}
-                      activity={rendered.activity}
+                      call={detail.call}
+                      result={detail.result}
+                      status={detail.status}
+                      presentation={detail.resolved}
+                      activity={detail.activity}
                     />
                   </div>
                 </section>

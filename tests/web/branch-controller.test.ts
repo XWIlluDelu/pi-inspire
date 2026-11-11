@@ -75,11 +75,11 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     invalidateSelection: () => {
       selectionGeneration += 1;
       selectionRequest += 1;
-      controller.invalidateForSelectionIntent();
+      controller.invalidate();
     },
     replaceTransport: () => {
       api = { ...api };
-      controller.invalidateForTransportReplacement();
+      controller.invalidate();
     },
     branchTree,
     navigateBranch,
@@ -101,7 +101,7 @@ describe("BranchController", () => {
   it("renews stale History after reconnecting without a manual refresh or replayed action", async () => {
     const harness = createHarness({ connection: "reconnecting" });
     harness.branchTree.mockResolvedValue({ ...tree(), effectiveLeafId: "a1" });
-    harness.controller.markConnectionInterrupted();
+    harness.controller.invalidate();
     expect(harness.state()).toMatchObject({
       branchTreeStale: true,
       branchTreeError: null,

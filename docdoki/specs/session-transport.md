@@ -4,7 +4,7 @@ covers:
   - server/app.ts
   - server/runtime-event-sockets.ts
   - server/runtime.ts
-  - server/pending-operation-receipts.ts
+  - server/{operation-receipts,pending-operation-receipts}.ts
   - src/controllers/pending-recovery-controller.ts
   - tests/server/app-pending-recovery.test.ts
   - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
@@ -176,8 +176,7 @@ no confirmation. Non-JSON error pages keep HTTP status and edge markers for conn
 
 Each prompt carries a random operation id and process-lifetime Host authority. Bounded Host
 fingerprints admit it once: concurrent/near-term duplicates await or return the same result, changed
-content under the same id is refused, and replaced-Host identities fail explicitly. Retiring a result
-leaves a tombstone that forbids redispatch.
+content under the same id is refused, and replaced-Host identities fail explicitly.
 
 POST observes delivery for at most 20 seconds, then returns a pending receipt. Authenticated GETs
 bound to the same identity/authority continue observation without resending payloads. Each browser
@@ -203,14 +202,12 @@ Reconnect may observe a receipt while its old mutation observer is still pending
 API/transport owner restores it once into the original draft partition. Recovered images keep
 ordinary staging ownership under [[composer]].
 
-A matched authority/operation terminal receipt establishes execution failure or result retirement
-and ends that intent; only a later explicit action admits a new id. Plain HTTP 500, mismatched proof
-and transport loss stay uncertain and never trigger another mutation. Tombstones forbid reexecution
-of failed or retired ids.
+A matched authority/operation receipt establishes execution failure or result retirement and ends
+that intent. A later explicit action admits a new id. Plain HTTP 500, mismatched proof and transport
+loss stay uncertain.
 
-Retain at most 2,048 settled results and 32 MiB for 15 minutes. Process-lifetime tombstones prevent
-redispatch after retirement; the 65,536-identity limit refuses further admission. Receipts observe
-execution rather than forming another queue.
+Prompt and Pending each retain at most 2,048 settled results and 32 MiB for 15 minutes.
+Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refuses further admission.
 
 ## Transcript views
 

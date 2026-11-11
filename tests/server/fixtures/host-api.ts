@@ -205,10 +205,10 @@ export async function hostApiFixture(
   );
   const address = application.server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}`;
-  const api = () =>
-    request(application.server)
-      .get("/api/bootstrap")
-      .set("Authorization", `Bearer ${options.token ?? token}`);
+  const localRequest = request
+    .agent(application.server)
+    .set("Authorization", `Bearer ${options.token ?? token}`);
+  const api = () => localRequest.get("/api/bootstrap");
   function promptDelivery<T extends Record<string, unknown>>(body: T) {
     return {
       ...body,
@@ -228,6 +228,7 @@ export async function hostApiFixture(
     shutdown,
     application,
     baseUrl,
+    localRequest,
     api,
     promptDelivery,
   };

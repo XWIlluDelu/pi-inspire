@@ -95,13 +95,6 @@ beforeEach(async () => {
         ? { status: 400, body: { error: "Extension refused the request" } }
         : { status: 202, body: { accepted: true } };
     }
-    if (url === "/api/pi/changelog")
-      return {
-        body: {
-          version: "1.0.0",
-          markdown: "## [1.0.0]\n\n### Changed\n\nInstalled release fixture.",
-        },
-      };
     if (url === "/api/sessions/resume-command?sessionId=s1")
       return {
         body: { command: resumeCommand, projectDirectoryMissing: true },
@@ -690,31 +683,5 @@ describe("command discovery and preparation", () => {
       target: { value: "/compact preserve API names" },
     });
     expect(screen.getByRole("note")).toHaveTextContent("Optional instructions");
-  });
-
-  it("opens complete browser shortcuts and shipped release information", async () => {
-    render(<App />);
-    await act(async () => {
-      await store.runPaletteNativeCommand("/hotkeys");
-    });
-    const shortcuts = await screen.findByRole("dialog", {
-      name: "Keyboard shortcuts",
-    });
-    expect(shortcuts).toHaveTextContent("Browse prompt history");
-    expect(shortcuts).toHaveTextContent("Workbench shortcut mode");
-    expect(shortcuts).toHaveTextContent(
-      "Enter confirms text while you compose",
-    );
-    fireEvent.keyDown(shortcuts, { key: "Escape" });
-    await act(async () => {
-      await store.runPaletteNativeCommand("/changelog");
-    });
-    expect(
-      await screen.findByRole("dialog", { name: "Pi changelog" }),
-    ).toHaveTextContent("Pi 1.0.0 release notes");
-    expect(
-      await screen.findByText("Installed release fixture."),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
   });
 });

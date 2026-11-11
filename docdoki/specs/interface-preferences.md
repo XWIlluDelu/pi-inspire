@@ -188,22 +188,13 @@ Selectors put Adaptive first, followed by fixed modes from most to least detail:
 | Tools | Expanded, Compact, Collapsed, Hidden |
 | Reasoning | Expanded, Collapsed, Hidden |
 
-Option help describes materialization: Expanded loads every card; Compact presents up to the latest
-24 behind the existing expansion entry; Collapsed shows only the group entry and releases child DOM.
-Projection-scoped state preserves deliberate reading choices for reopening. A per-card override leaves
-its saved default unchanged.
+Option help summarizes the loading and display behavior defined in [[activity-presentation]].
+A per-card override leaves its saved default unchanged.
 
 ## Task alerts
 
-[[notifications]] owns task outcomes, device-local intent, delivery, permission/status feedback,
-test notifications and click-through. Keep its Off / Mark tab / System notification control in
-Behavior, using the existing field-card layout with contextual status and actions below the choice.
-The neighboring Notification grouping field selects Session or Project independently, with its own
-save/error state and no permission prompt. [[notifications]] owns grouping and member-count semantics.
-
-Notification permission and enrollment are installation-local, unlike ordinary Host preferences.
-Reset preferences also resets alerts on this installation. Page refresh and reconnect preserve
-a Host-observed run's notification eligibility.
+Behavior places the Task alerts and Notification grouping fields together. Reset preferences also
+resets alerts on this installation. [[notifications]] owns the controls, delivery and device scope.
 
 ## Checks
 

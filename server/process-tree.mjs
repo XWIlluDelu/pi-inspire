@@ -2,6 +2,23 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { environmentValue } from "./platform-environment.mjs";
 
+export function runChild(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      ...options,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
+    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
+    child.once("error", (error) =>
+      resolve({ code: 1, issued: false, stdout, stderr: stderr + error.message }),
+    );
+    child.once("exit", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
+}
+
 function exited(child) {
   return child.exitCode !== null || child.signalCode !== null;
 }

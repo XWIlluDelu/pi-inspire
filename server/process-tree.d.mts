@@ -14,6 +14,12 @@ export interface ProcessTreeSignalOptions {
   isolated?: boolean;
 }
 
+export function runChild(
+  command: string,
+  args: readonly string[],
+  options?: SpawnOptions,
+): Promise<{ code: number; issued?: false; stdout: string; stderr: string }>;
+
 export function isolatedProcessOptions(
   platform?: NodeJS.Platform,
 ): Pick<SpawnOptions, "detached" | "windowsHide">;

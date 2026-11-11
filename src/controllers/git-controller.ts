@@ -390,31 +390,18 @@ export class GitController {
         const status = await api.gitStatus(sessionId, request.signal);
         if (!current()) continue;
         const currentState = this.host.state();
-        const workspaceChange =
-          status.kind === "repository" && this.selectedWorkspacePath
+        const workspacePath = this.selectedWorkspacePath;
+        const selectedChange =
+          status.kind === "repository"
             ? status.files.find(
                 (file) =>
-                  file.path.workspacePath === this.selectedWorkspacePath &&
-                  hasWorktreeChange(file),
+                  hasWorktreeChange(file) &&
+                  (workspacePath
+                    ? file.path.workspacePath === workspacePath
+                    : file.path.id === currentState.selectedGitPathId),
               )
             : undefined;
-        let selectedPathId = currentState.selectedGitPathId;
-        if (this.selectedWorkspacePath) {
-          if (workspaceChange) {
-            selectedPathId = workspaceChange.path.id;
-          } else {
-            selectedPathId = null;
-          }
-        }
-        const selectedExists =
-          status.kind === "repository" &&
-          status.files.some(
-            (file) =>
-              file.path.id === selectedPathId && hasWorktreeChange(file),
-          );
-        if (!selectedExists) {
-          selectedPathId = null;
-        }
+        const selectedPathId = selectedChange?.path.id ?? null;
         const selectionChanged =
           selectedPathId !== currentState.selectedGitPathId;
         let unchanged =
@@ -433,31 +420,20 @@ export class GitController {
             : {}),
         });
         if (
-          selectedPathId &&
+          selectedChange?.path.id &&
           currentState.resourcesOpen &&
           currentState.fileChangesVisible
         ) {
           // Await the selected read so hints coalesce behind the complete
           // inspection, and slow diffs cannot create an overlapping poll loop.
-          const change =
-            status.kind === "repository"
-              ? status.files.find((file) => file.path.id === selectedPathId)
-              : undefined;
-          if (change)
-            await this.openResolvedDiff(
-              {
-                api,
-                sessionId,
-                selectionGeneration,
-                change,
-              },
-              false,
-            );
+          await this.openResolvedDiff(
+            { api, sessionId, selectionGeneration, change: selectedChange },
+            false,
+          );
           const nextDiff = this.host.state().gitDiff;
           // Status may remain M while the file changes. Only a completed,
           // successful diff can reuse its previous result and count as stable.
           unchanged &&=
-            Boolean(change) &&
             state.gitDiff?.status === "ready" &&
             !state.gitDiff.refreshError &&
             nextDiff?.status === "ready" &&
