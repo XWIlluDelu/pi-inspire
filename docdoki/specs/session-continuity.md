@@ -263,9 +263,11 @@ External activity does not block deletion; [[session-deletion]] owns its confirm
 
 Terminal Pi and Inspire may use one session at the same time; there is no handoff, release step or
 terminal mode. Search the command palette for **Copy resume command** to copy a correctly quoted
-change-directory and `pi --session` command for POSIX shells or PowerShell. Copying remains
-available in read-only sessions. [[session-persistence]] owns read-only views, takeover, and how
-appends from several processes are reconciled.
+change-directory and `pi --session` command for POSIX shells or PowerShell. If the Host confirms
+that the original project directory is missing, copy the quoted `pi --session` command alone and
+tell the user to run it in the new project folder and choose **Fork** in Pi 1.5.2 or later.
+Copying remains available in read-only sessions. [[session-persistence]] owns read-only views,
+takeover, and how appends from several processes are reconciled.
 
 ## New project creation
 

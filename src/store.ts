@@ -2604,9 +2604,15 @@ export class AppStore {
     try {
       const api = this.api;
       if (!api) throw new Error("The Host is not connected");
-      const { command } = await api.resumeCommand(sessionId);
+      const { command, projectDirectoryMissing } =
+        await api.resumeCommand(sessionId);
       await navigator.clipboard.writeText(command);
-      this.notify("info", "Resume command copied");
+      this.notify(
+        "info",
+        projectDirectoryMissing
+          ? "Resume command copied. Run it in the new project folder and choose Fork in Pi 1.5.2 or later."
+          : "Resume command copied",
+      );
       return true;
     } catch {
       this.reportCopyError("Could not copy the resume command");

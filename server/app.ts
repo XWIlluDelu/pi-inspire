@@ -1514,10 +1514,22 @@ export function createInspireServer(deps: AppDependencies): {
       "'" +
       value.replaceAll("'", process.platform === "win32" ? "''" : "'\\''") +
       "'";
+    const command = `pi --session ${quote(session.path)}`;
+    const projectDirectoryMissing = await resolveProjectDirectory(
+      session.cwd,
+    ).then(
+      () => false,
+      (error: NodeJS.ErrnoException) =>
+        error?.code === "PROJECT_DIRECTORY_MISSING",
+    );
+    const changeDirectory =
+      process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --";
     response.setHeader("Cache-Control", "no-store");
-    response.json({
-      command: `${process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --"} ${quote(session.cwd)} && pi --session ${quote(session.path)}`,
-    });
+    response.json(
+      projectDirectoryMissing
+        ? { command, projectDirectoryMissing }
+        : { command: `${changeDirectory} ${quote(session.cwd)} && ${command}` },
+    );
   });
   app.post("/api/sessions/export", async (request, response) => {
     const { sessionId, format } = z

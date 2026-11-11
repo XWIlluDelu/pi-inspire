@@ -840,7 +840,7 @@ export function createApi(token: string | null = null) {
     takeOverSession: (sessionId: string) =>
       post<ActiveSnapshot>(token, "/api/sessions/takeover", { sessionId }),
     resumeCommand: (sessionId: string) =>
-      request<{ command: string }>(
+      request<{ command: string; projectDirectoryMissing?: boolean }>(
         token,
         `/api/sessions/resume-command?sessionId=${encodeURIComponent(sessionId)}`,
       ),
