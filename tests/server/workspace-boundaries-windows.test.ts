@@ -84,7 +84,6 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
       resources.resolve(
         context,
         "../project/private.txt",
-        true,
         "../project/private.txt",
       ),
     ).rejects.toMatchObject({ status: 400 });

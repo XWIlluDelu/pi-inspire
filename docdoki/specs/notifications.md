@@ -133,20 +133,16 @@ tests Host-to-push delivery.
 
 ### Installation state
 
-Persist the choice per Host and origin/browser installation; all its windows share current intent
-and delivery health. The initial event connection supplies device settings before notification
-offers. Apply that intent synchronously; subscription recovery and worker synchronization run
-independently of the core connection and session catalog. Recheck on opening Settings and app resume. Reconcile an
-existing subscription whose Host registration failed without requesting permission again; healthy
-refreshes need not rewrite enrollment. An endpoint rejected as expired stays retired until explicit
-Enable replaces the browser subscription.
+Persist intent and delivery health per Host and browser installation. Apply device settings before
+notification offers on the initial event connection. Subscription recovery and worker sync run
+independently of session loading. Recheck on Settings open and app resume. Repair an existing
+browser subscription whose Host registration failed without prompting again. A Host-expired
+endpoint needs an explicit Enable gesture to replace the browser subscription.
 
-Async permission, subscription and display results belong to the current choice and API owner.
-Save the gesture's mode choice without waiting for browser permission. Later permission and
-subscription results fill in delivery capability without rewriting that choice. Late completion
-cannot re-enable alerts, overwrite another window's choice or restore stale errors.
-Disabling alerts cancels pending sends; re-enabling does not revive them. Reset affects this device
-only. New installations default to Off.
+Save mode intent immediately. Permission, enrollment and display results apply only to the
+current choice and API owner. Enrollment updates delivery health without changing intent.
+Disabling alerts cancels pending sends; re-enabling starts with new outcomes. Reset is local to
+the installation, which defaults to Off.
 
 ## Host and native-session integration
 

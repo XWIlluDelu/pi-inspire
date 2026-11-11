@@ -371,28 +371,21 @@ export const TerminalPane = memo(function TerminalPane({
   );
 
   useEffect(() => {
-    if (!active || !cwd || !catalog) return;
-    storeActiveTerminal(cwd, activeId);
-    if (!activeId) return;
+    if (active && cwd && catalog) storeActiveTerminal(cwd, activeId);
+    const ids = new Set(terminals.map((terminal) => terminal.id));
+    const selected = active ? activeId : null;
     setOpenedIds((current) => {
-      if (current.has(activeId)) return current;
-      const next = new Set(current);
-      next.add(activeId);
+      const next = new Set([...current].filter((id) => ids.has(id)));
+      if (selected && ids.has(selected)) next.add(selected);
       return next;
     });
-    setUnreadIds((current) => {
-      if (!current.has(activeId)) return current;
-      const next = new Set(current);
-      next.delete(activeId);
-      return next;
-    });
-    setBellIds((current) => {
-      if (!current.has(activeId)) return current;
-      const next = new Set(current);
-      next.delete(activeId);
-      return next;
-    });
-  }, [active, activeId, catalog, cwd]);
+    const keepBackground = (current: Set<string>) =>
+      new Set([...current].filter((id) => ids.has(id) && id !== selected));
+    setUnreadIds(keepBackground);
+    setBellIds(keepBackground);
+    if (catalog && activeId && !ids.has(activeId))
+      setActiveId(terminals[0]?.id ?? null);
+  }, [active, activeId, catalog, cwd, terminals]);
 
   useEffect(() => {
     const knownOffsets = knownOutputOffsetsRef.current;
@@ -414,21 +407,6 @@ export const TerminalPane = memo(function TerminalPane({
     if (newlyUnread.length > 0)
       setUnreadIds((current) => new Set([...current, ...newlyUnread]));
   }, [active, activeId, terminals]);
-
-  useEffect(() => {
-    const ids = new Set(terminals.map((terminal) => terminal.id));
-    setOpenedIds((current) => {
-      const next = new Set([...current].filter((id) => ids.has(id)));
-      if (active && activeId && ids.has(activeId)) next.add(activeId);
-      return next;
-    });
-    setUnreadIds(
-      (current) => new Set([...current].filter((id) => ids.has(id))),
-    );
-    setBellIds((current) => new Set([...current].filter((id) => ids.has(id))));
-    if (catalog && activeId && !ids.has(activeId))
-      setActiveId(terminals[0]?.id ?? null);
-  }, [active, activeId, catalog, terminals]);
 
   useEffect(() => {
     const pane = paneRef.current;
@@ -700,18 +678,7 @@ export const TerminalPane = memo(function TerminalPane({
     )
       return;
     try {
-      const restarted = await api.restartTerminal(terminal.id);
-      await commitDescriptor(restarted);
-      if (!catalogController.active) return;
-      setOpenedIds((current) => {
-        const next = new Set(current);
-        next.delete(terminal.id);
-        return next;
-      });
-      requestAnimationFrame(() => {
-        if (!catalogController.active) return;
-        setOpenedIds((current) => new Set(current).add(terminal.id));
-      });
+      await commitDescriptor(await api.restartTerminal(terminal.id));
     } catch (restartError) {
       if (!catalogController.active) return;
       setError(

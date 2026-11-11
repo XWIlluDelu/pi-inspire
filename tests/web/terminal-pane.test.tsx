@@ -317,6 +317,21 @@ describe("terminal shortcut input ownership", () => {
     },
   );
 
+  it("replaces the terminal view when its accepted output epoch changes", async () => {
+    render(<TerminalPane cwd="/A" />);
+    const input = await screen.findByLabelText("Fixture terminal input");
+    api.restartTerminal.mockResolvedValueOnce(terminal("A shell", "/A", 0));
+    await act(async () => queueTerminalAction("restart", "/A"));
+    expect(screen.getByLabelText("Fixture terminal input")).toBe(input);
+
+    api.restartTerminal.mockResolvedValueOnce({
+      ...terminal("A shell", "/A", 2),
+      outputEpoch: "output-2",
+    });
+    await act(async () => queueTerminalAction("restart", "/A"));
+    expect(screen.getByLabelText("Fixture terminal input")).not.toBe(input);
+  });
+
   it.each([
     {
       name: "AltGraph digits",

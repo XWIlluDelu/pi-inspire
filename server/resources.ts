@@ -114,8 +114,8 @@ export function openCanonicalResourceFile(
   return openAuthorizedResourceFile(canonicalPath, canonicalPath);
 }
 
-interface ResolvedResource {
-  descriptor: ResourceDescriptor;
+interface ResourceCandidate {
+  descriptor: Omit<ResourceDescriptor, "id">;
   /** Absolute path selected by the reference before symlink resolution. */
   selectedPath?: string;
   /** Canonical target pinned by this opaque handle. */
@@ -132,6 +132,8 @@ interface ResolvedResource {
   anchor?: FileHandle;
   authority: "embedded" | "workspace" | "filesystem" | "citation";
 }
+
+type ResolvedResource = ResourceCandidate & { descriptor: ResourceDescriptor };
 
 const MAX_HANDLES = 256;
 const MAX_CITATION_INDEXES = 32;
@@ -624,17 +626,18 @@ export class ResourceStore {
     return Promise.all(
       references.map(async (reference) => {
         try {
-          const descriptor = await this.resolveUsingIndex(
+          const resource = await this.resolveCandidate(
             context,
             reference,
-            false,
+            undefined,
             getIndex,
           );
+          await resource.anchor?.close();
           return {
             reference,
             availability: "available" as const,
-            ...(descriptor.workspacePath
-              ? { workspacePath: descriptor.workspacePath }
+            ...(resource.descriptor.workspacePath
+              ? { workspacePath: resource.descriptor.workspacePath }
               : {}),
           };
         } catch (error) {
@@ -649,17 +652,16 @@ export class ResourceStore {
   async resolve(
     context: ResourceContext,
     reference: string,
-    retainHandle = true,
     workspacePath?: string,
   ): Promise<ResourceDescriptor> {
-    let index: Promise<ResourceCitationIndex> | null = null;
-    return this.resolveUsingIndex(
+    const resource = await this.resolveCandidate(
       context,
       reference,
-      retainHandle,
-      () => (index ??= this.citationIndex(context)),
       workspacePath,
     );
+    const descriptor = { id: randomUUID(), ...resource.descriptor };
+    this.remember({ ...resource, descriptor });
+    return descriptor;
   }
 
   async fileManagerPath(
@@ -681,49 +683,43 @@ export class ResourceStore {
         throw requestError("The reference is not a directory", 400);
       return path;
     }
-    const descriptor = await this.resolve(
+    const resource = await this.resolveCandidate(
       context,
       reference,
-      true,
       workspacePath,
     );
-    const resource = this.get(descriptor.id, context.sessionId, context.viewId);
     try {
       if (!resource.path)
         throw requestError("This resource has no file on disk", 400);
       return resource.path;
     } finally {
-      this.handles.delete(descriptor.id);
       this.release(resource);
     }
   }
 
-  private async resolveUsingIndex(
+  private async resolveCandidate(
     context: ResourceContext,
     reference: string,
-    retainHandle: boolean,
-    getIndex: () => Promise<ResourceCitationIndex>,
     workspacePath?: string,
-  ): Promise<ResourceDescriptor> {
+    getIndex = () => this.citationIndex(context),
+  ): Promise<ResourceCandidate> {
     if (isEmbeddedImageReference(reference)) {
       const embedded = (await getIndex()).embedded.get(reference);
       if (!embedded) {
         throw requestError("The embedded image is no longer available", 404);
       }
-      const descriptor: ResourceDescriptor = {
-        id: randomUUID(),
-        sessionId: context.sessionId,
-        viewId: context.viewId,
-        reference,
-        name: `embedded-image-${embedded.messageIndex + 1}`,
-        mimeType: embedded.mimeType,
-        size: embedded.size,
-        kind: "image",
+      return {
+        descriptor: {
+          sessionId: context.sessionId,
+          viewId: context.viewId,
+          reference,
+          name: `embedded-image-${embedded.messageIndex + 1}`,
+          mimeType: embedded.mimeType,
+          size: embedded.size,
+          kind: "image",
+        },
+        authority: "embedded",
       };
-      if (retainHandle) {
-        this.remember({ descriptor, authority: "embedded" });
-      }
-      return descriptor;
     }
 
     const exactWorkspaceSelection = workspacePath !== undefined;
@@ -810,16 +806,13 @@ export class ResourceStore {
       );
     }
 
-    let anchor: FileHandle | undefined;
+    // Bind the authorized inode to an open descriptor. Only browser preview
+    // resolution retains it; availability and file-manager calls release it.
+    const { handle: anchor, details } = await openAuthorizedResourceFile(
+      selectedPath,
+      path,
+    );
     try {
-      // The descriptor-path witness proves the opened object is still the
-      // canonical object authorized above. Retaining that descriptor then pins
-      // its inode until the opaque handle expires; probes close it immediately.
-      const opened = await openAuthorizedResourceFile(selectedPath, path);
-      anchor = opened.handle;
-      const details = opened.details;
-      if (!details.isFile())
-        throw requestError("The reference is not a file", 400);
       if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw requestError("The referenced file is too large to preview", 413);
       }
@@ -829,8 +822,7 @@ export class ResourceStore {
           ? within.split(sep).join("/")
           : within
         : undefined;
-      const descriptor: ResourceDescriptor = {
-        id: randomUUID(),
+      const descriptor: ResourceCandidate["descriptor"] = {
         sessionId: context.sessionId,
         viewId: context.viewId,
         // A recovery answers with the location it actually opened, so the
@@ -844,29 +836,22 @@ export class ResourceStore {
         size: Number(details.size),
         kind: kindFor(mimeType),
       };
-      const authority: ResolvedResource["authority"] = insideWorkspace
+      const authority: ResourceCandidate["authority"] = insideWorkspace
         ? exactWorkspaceSelection
           ? "workspace"
           : "filesystem"
         : "citation";
-      if (retainHandle) {
-        this.remember({
-          descriptor,
-          selectedPath,
-          path,
-          ...(insideWorkspace && workspaceRoot ? { workspaceRoot } : {}),
-          fileId: fileIdentity(details),
-          anchor,
-          authority,
-        });
-        anchor = undefined;
-      } else {
-        await anchor.close();
-        anchor = undefined;
-      }
-      return descriptor;
+      return {
+        descriptor,
+        selectedPath,
+        path,
+        ...(insideWorkspace && workspaceRoot ? { workspaceRoot } : {}),
+        fileId: fileIdentity(details),
+        anchor,
+        authority,
+      };
     } catch (error) {
-      await anchor?.close().catch(() => undefined);
+      await anchor.close().catch(() => undefined);
       throw error;
     }
   }
@@ -942,7 +927,7 @@ export class ResourceStore {
     }
   }
 
-  private release(resource: ResolvedResource): void {
+  private release(resource: ResourceCandidate): void {
     void resource.anchor?.close().catch(() => undefined);
   }
 

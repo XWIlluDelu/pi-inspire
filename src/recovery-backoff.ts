@@ -83,3 +83,15 @@ export class RecoveryBackoff {
     this.attempt = 0;
   }
 }
+
+/** One cancellable owner. Each read starts a fresh retry budget. */
+export function recoverableRead(owns: () => boolean) {
+  const controller = new AbortController();
+  const { signal } = controller;
+  return {
+    current: () => !signal.aborted && owns(),
+    abort: () => controller.abort(),
+    read: <T>(perform: (signal: AbortSignal) => Promise<T>) =>
+      new RecoveryBackoff().read(() => perform(signal), signal, owns),
+  };
+}

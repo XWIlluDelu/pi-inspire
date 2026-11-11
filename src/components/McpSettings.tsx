@@ -132,6 +132,11 @@ function McpConfiguration({
     setRemoving(null);
     setError(null);
   }
+  function beginEdit(trigger: HTMLElement) {
+    opener.current = trigger;
+    setError(null);
+    setConfirmReload(false);
+  }
   async function save(edit: McpConfigEdit) {
     setBusy(true);
     setError(null);
@@ -245,9 +250,7 @@ function McpConfiguration({
                 ref={addButton}
                 disabled={busy || !snapshot}
                 onClick={(event) => {
-                  opener.current = event.currentTarget;
-                  setError(null);
-                  setConfirmReload(false);
+                  beginEdit(event.currentTarget);
                   setEditor({ scope: "user", entry: null });
                 }}
               >
@@ -394,9 +397,9 @@ function McpConfiguration({
                               ? " · disabled in file"
                               : ""}
                             {file.scope === "user" &&
-                            snapshot.files
-                              .find((item) => item.scope === "project")
-                              ?.entries.some((item) => item.name === entry.name)
+                            projectFile?.entries.some(
+                              (item) => item.name === entry.name,
+                            )
                               ? " · project override exists"
                               : ""}
                           </span>
@@ -413,9 +416,7 @@ function McpConfiguration({
                               aria-label={`Customize for this project: ${entry.name}`}
                               disabled={busy}
                               onClick={(event) => {
-                                opener.current = event.currentTarget;
-                                setError(null);
-                                setConfirmReload(false);
+                                beginEdit(event.currentTarget);
                                 setEditor({
                                   scope: "project",
                                   entry: null,
@@ -437,9 +438,7 @@ function McpConfiguration({
                               busy || (!entry.transport && !entry.policyOnly)
                             }
                             onClick={(event) => {
-                              opener.current = event.currentTarget;
-                              setError(null);
-                              setConfirmReload(false);
+                              beginEdit(event.currentTarget);
                               setEditor({ scope: file.scope, entry });
                             }}
                           >
@@ -452,9 +451,7 @@ function McpConfiguration({
                             aria-label={`Remove ${file.scope} server ${entry.name}`}
                             disabled={busy}
                             onClick={(event) => {
-                              opener.current = event.currentTarget;
-                              setError(null);
-                              setConfirmReload(false);
+                              beginEdit(event.currentTarget);
                               setRemoving({ scope: file.scope, entry });
                             }}
                           >
@@ -483,18 +480,14 @@ function McpConfiguration({
                               type="button"
                               className="button button--danger"
                               disabled={busy}
-                              onClick={() => {
-                                const file = snapshot?.files.find(
-                                  (file) => file.scope === removing.scope,
-                                );
-                                if (file)
-                                  void save({
-                                    scope: file.scope,
-                                    name: removing.entry!.name,
-                                    operation: "remove",
-                                    revision: file.revision,
-                                  });
-                              }}
+                              onClick={() =>
+                                void save({
+                                  scope: file.scope,
+                                  name: entry.name,
+                                  operation: "remove",
+                                  revision: file.revision,
+                                })
+                              }
                             >
                               Remove configuration
                             </button>

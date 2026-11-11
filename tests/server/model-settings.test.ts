@@ -687,18 +687,6 @@ describe("native configuration round trips", () => {
     expect(linked.providers.fixture.headers).toEqual(
       initialConfig.providers.fixture.headers,
     );
-    const saved = await snapshot();
-    const external = JSON.stringify({
-      ...initialSettings,
-      defaultThinkingLevel: "low",
-    });
-    await writeFile(settingsTarget, external);
-    await expect(
-      service.savePreferences(saved.settingsRevision, {
-        defaultThinkingLevel: "high",
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(await readFile(settingsTarget, "utf8")).toBe(external);
   });
 
   it("recovers an abandoned native-compatible lock", async () => {

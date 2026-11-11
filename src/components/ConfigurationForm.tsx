@@ -1,4 +1,5 @@
 import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { ButtonLabel } from "./ButtonLabel";
 
 function revealField(body: HTMLDivElement, input: Element | null) {
   if (!(input instanceof HTMLElement)) return;
@@ -30,7 +31,21 @@ function revealField(body: HTMLDivElement, input: Element | null) {
   });
 }
 
-export function ConfigurationFormBody({ children }: { children: ReactNode }) {
+export function ConfigurationForm({
+  children,
+  busy,
+  saveDisabled,
+  pendingLabel,
+  onSave,
+  onCancel,
+}: {
+  children: ReactNode;
+  busy: boolean;
+  saveDisabled: boolean;
+  pendingLabel?: string;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
   const body = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const element = body.current!;
@@ -43,12 +58,45 @@ export function ConfigurationFormBody({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, []);
   return (
-    <div
-      ref={body}
-      className="models-form__body"
-      onFocusCapture={(event) => revealField(event.currentTarget, event.target)}
+    <form
+      className="models-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSave();
+      }}
     >
-      {children}
-    </div>
+      <div
+        ref={body}
+        className="models-form__body"
+        onFocusCapture={(event) =>
+          revealField(event.currentTarget, event.target)
+        }
+      >
+        {children}
+      </div>
+      <div className="models-actions models-form__actions">
+        <button
+          type="submit"
+          className="button button--primary"
+          disabled={busy || saveDisabled}
+        >
+          {pendingLabel ? (
+            <ButtonLabel reserve={pendingLabel}>
+              {busy ? pendingLabel : "Save"}
+            </ButtonLabel>
+          ) : (
+            "Save"
+          )}
+        </button>
+        <button
+          type="button"
+          className="button button--quiet"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

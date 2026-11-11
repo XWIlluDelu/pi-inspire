@@ -63,56 +63,44 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     invalidateModels: () => catalog.invalidate(),
   });
   try {
-    const [trusted, untrusted] = await Promise.all([
-      catalog.read(f.trusted),
-      catalog.read(f.untrusted),
+    const endpoint = request.agent(app.app).auth("fixture", { type: "bearer" });
+    const modelsAt = (cwd: string) =>
+      endpoint.get("/api/models").query({ cwd }).expect(200);
+    const settingsAt = (cwd: string) =>
+      endpoint.get("/api/model-settings").query({ cwd }).expect(200);
+
+    const bootstrap = await endpoint.get("/api/bootstrap").expect(200);
+    expect(bootstrap.body).toMatchObject({
+      availableModels: [],
+      snapshot: { runState: "idle" },
+    });
+    expect(readMetadata).not.toHaveBeenCalled();
+
+    const [{ body: trusted }, { body: untrusted }] = await Promise.all([
+      modelsAt(f.trusted),
+      modelsAt(f.untrusted),
     ]);
-    const identities = (value: typeof trusted) =>
-      value.models.map((model) => `${model.provider}/${model.id}`);
-    for (const value of [trusted, untrusted])
-      expect(identities(value)).toEqual(
-        expect.arrayContaining([
-          "global-native/a",
-          "global-legacy/legacy",
-          "global-router/auto",
-        ]),
-      );
-    expect(identities(trusted)).toEqual(
+    const identities = (models: { provider: string; id: string }[]) =>
+      models.map(({ provider, id }) => `${provider}/${id}`);
+    const globalIds = [
+      "global-native/a",
+      "global-legacy/legacy",
+      "global-router/auto",
+    ];
+    expect(identities(trusted.models)).toEqual(
       expect.arrayContaining([
+        ...globalIds,
         "project-native/a",
         "project-legacy/legacy",
         "project-router/auto",
       ]),
     );
-    expect(
-      untrusted.models.some((model) => model.provider.startsWith("project-")),
-    ).toBe(false);
-    expect(trusted.commands?.map((command) => command.name)).toEqual(
-      expect.arrayContaining([
-        "global-mode",
-        "project-mode",
-        "shared-mode:1",
-        "shared-mode:2",
-      ]),
+    expect(identities(untrusted.models)).toEqual(
+      expect.arrayContaining(globalIds),
     );
-    expect(untrusted.commands?.map((command) => command.name)).toContain(
-      "global-mode",
-    );
-    for (const scope of ["global", "project"]) {
-      expect(trusted.commands).toContainEqual({
-        name: `${scope}-review`,
-        description: `${scope} review prompt`,
-        source: "prompt",
-      });
-      expect(trusted.commands).toContainEqual({
-        name: `skill:${scope}-review`,
-        description: `${scope} review skill`,
-        source: "skill",
-      });
-    }
     expect(
-      untrusted.commands?.some((command) => command.name === "project-mode"),
-    ).toBe(false);
+      identities(untrusted.models).filter((id) => id.startsWith("project-")),
+    ).toEqual([]);
     expect(trusted.defaults).toMatchObject({
       cwd: f.trusted,
       model: { provider: "project-router", id: "auto", virtual: true },
@@ -123,59 +111,45 @@ it("discovers native global/trusted-project registrations and resolves defaults 
       thinkingLevel: "high",
     });
     expect(untrusted.warning).toContain("not trusted");
-    const router = trusted.models.find(
-      (model) => model.provider === "project-router",
-    )!;
-    expect(router.thinkingLevelMap).toMatchObject({
-      off: null,
-      low: "low",
-      medium: null,
-      high: "high",
-      max: null,
+    expect(
+      trusted.models.find(
+        ({ provider }: { provider: string }) => provider === "project-router",
+      ),
+    ).toMatchObject({
+      thinkingLevelMap: { off: null, low: "low", high: "high", max: null },
     });
-    expect(Object.keys(router).sort()).toEqual([
-      "id",
-      "name",
-      "provider",
-      "reasoning",
-      "thinkingLevelMap",
-      "virtual",
-    ]);
-    const endpoint = request(app.app);
-    const models = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(models.body.defaults.model.provider).toBe("project-router");
-    expect(models.body.commands).toContainEqual({
-      name: "project-mode",
-      description: "project response mode",
-      source: "extension",
+    expect(trusted.virtualModels).toBeUndefined();
+    expect(trusted.commands.map(({ name }: { name: string }) => name)).toEqual(
+      expect.arrayContaining([
+        "global-mode",
+        "project-mode",
+        "shared-mode:1",
+        "shared-mode:2",
+      ]),
+    );
+    expect(untrusted.commands).not.toContainEqual(
+      expect.objectContaining({ name: "project-mode" }),
+    );
+    for (const scope of ["global", "project"]) {
+      expect(trusted.commands).toContainEqual(
+        expect.objectContaining({
+          name: `${scope}-review`,
+          source: "prompt",
+        }),
+      );
+      expect(trusted.commands).toContainEqual(
+        expect.objectContaining({
+          name: `skill:${scope}-review`,
+          source: "skill",
+        }),
+      );
+    }
+    expect((await settingsAt(f.trusted)).body.models).toEqual(trusted.models);
+    expect((await settingsAt(f.untrusted)).body).toMatchObject({
+      effective: { defaultModel: { provider: "global-router" } },
+      projectOverrides: [],
     });
-    expect(models.body.virtualModels).toBeUndefined();
-    const settings = await endpoint
-      .get("/api/model-settings")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(settings.body.models).toEqual(models.body.models);
-    const untrustedSettings = await endpoint
-      .get("/api/model-settings")
-      .query({ cwd: f.untrusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(untrustedSettings.body.effective.defaultModel.provider).toBe(
-      "global-router",
-    );
-    expect(untrustedSettings.body.projectOverrides).toEqual([]);
-    expect(await readdir(f.sessions)).toEqual([]);
-    expect(await readFile(f.events, "utf8")).not.toMatch(
-      /session_start|agent_start|request|route/,
-    );
 
-    // External global and project changes refresh all cwd-scoped results, not
-    // only the available list while leaving startup defaults on an old snapshot.
     await writeFile(
       join(f.trusted, ".pi/settings.json"),
       JSON.stringify({
@@ -184,23 +158,10 @@ it("discovers native global/trusted-project registrations and resolves defaults 
         defaultThinkingLevel: "high",
       }),
     );
-    const refreshed = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(refreshed.body.defaults).toMatchObject({
+    expect((await modelsAt(f.trusted)).body.defaults).toMatchObject({
       model: { provider: "project-native", id: "b" },
       thinkingLevel: "high",
     });
-    const nativeDefault = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.untrusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(nativeDefault.body.warning).toContain("not trusted");
-
-    // Parent saved trust applies to a nested prospective cwd.
     const nested = join(f.trusted, "nested");
     await mkdir(join(nested, ".pi"), { recursive: true });
     await writeFile(
@@ -209,7 +170,6 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     );
     expect((await catalog.read(nested)).defaults.model?.id).toBe("b");
 
-    // A broken unrelated factory does not hide the models Pi can still load.
     const broken = join(f.agent, "broken.ts");
     await writeFile(
       broken,
@@ -224,42 +184,16 @@ it("discovers native global/trusted-project registrations and resolves defaults 
         extensions: [...settingsState.extensions, broken],
       }),
     );
-    catalog.invalidate();
-    readMetadata.mockClear();
-    const bootstrap = await endpoint
-      .get("/api/bootstrap")
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(bootstrap.body).toMatchObject({
-      availableModels: [],
-      snapshot: { runState: "idle" },
-    });
-    expect(readMetadata).not.toHaveBeenCalled();
-    const partial = await endpoint
-      .get("/api/models")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
-    expect(partial.body.models).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ provider: "global-native", id: "a" }),
-        expect.objectContaining({ provider: "project-native", id: "a" }),
-      ]),
+    const { body: partial } = await modelsAt(f.trusted);
+    expect(identities(partial.models)).toEqual(
+      expect.arrayContaining(["global-native/a", "project-native/a"]),
     );
-    expect(partial.body.defaults.model.provider).toBe("project-native");
-    expect(partial.body.warning).toContain("Some Pi extensions could not load");
-    expect(JSON.stringify(partial.body)).not.toContain(
-      "PRIVATE EXTENSION DETAIL",
-    );
-    const current = await endpoint
-      .get("/api/model-settings")
-      .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
-      .expect(200);
+    expect(partial.warning).toContain("Some Pi extensions could not load");
+    expect(JSON.stringify(partial)).not.toContain("PRIVATE EXTENSION DETAIL");
+    const current = await settingsAt(f.trusted);
     const saved = await endpoint
       .patch("/api/model-settings/config")
       .query({ cwd: f.trusted })
-      .auth("fixture", { type: "bearer" })
       .send({
         revision: current.body.configRevision,
         edit: {
@@ -269,13 +203,19 @@ it("discovers native global/trusted-project registrations and resolves defaults 
         },
       })
       .expect(200);
-    expect(saved.body.saved).toBe(true);
-    expect(saved.body.snapshot.providers).toContainEqual(
-      expect.objectContaining({
-        id: "global-native",
-        models: [expect.objectContaining({ id: "a", name: "Still editable" })],
-      }),
-    );
+    expect(saved.body).toMatchObject({
+      saved: true,
+      snapshot: {
+        providers: expect.arrayContaining([
+          expect.objectContaining({
+            id: "global-native",
+            models: [
+              expect.objectContaining({ id: "a", name: "Still editable" }),
+            ],
+          }),
+        ]),
+      },
+    });
     expect(await readdir(f.sessions)).toEqual([]);
     expect(await readFile(f.events, "utf8")).not.toMatch(
       /session_start|agent_start|request|route/,
@@ -284,8 +224,6 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     await app.close();
     await attachments.close();
   }
-  // This scenario performs several independently bounded (15s) native queries,
-  // including invalidation and cold startup in multiple project directories.
 }, 120_000);
 
 it("validates model edits over extension providers in the selected trusted workspace and explicit agent directory", async () => {

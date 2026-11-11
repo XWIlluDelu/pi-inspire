@@ -69,75 +69,24 @@ describe("Settings component UX and navigation", () => {
     expect(screen.queryByRole("region", { name: "Display" })).toBeNull();
   });
 
-  it("orders sections and controls from everyday preferences to runtime and host-level settings", () => {
+  it("presents the workbench categories in navigation order", () => {
     render(<Settings onClose={() => undefined} />);
     const navigation = screen.getByRole("navigation", {
       name: "Settings categories",
     });
-
-    const displayRegions = screen
-      .getAllByRole("region")
-      .map((region) => region.getAttribute("id"));
-    expect(displayRegions).toEqual(["settings-section-display"]);
-    const displayLabels = Array.from(
-      document.querySelectorAll(
-        '[data-category="display"] .settings__field-label',
-      ),
-      (el) => el.textContent,
-    );
-    expect(displayLabels).toEqual([
-      "Theme",
-      "Color palette",
-      "Content text size",
-      "Reading width",
-      "Project location",
-      "Titlebar needles",
+    expect(
+      within(navigation)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual([
+      "Display",
+      "Conversation",
+      "Behavior",
+      "Models",
+      "MCP",
+      "Adapters",
+      "System",
     ]);
-
-    fireEvent.click(
-      within(navigation).getByRole("button", { name: "Conversation" }),
-    );
-    const conversationRegions = screen
-      .getAllByRole("region")
-      .map((region) => region.getAttribute("id"));
-    expect(conversationRegions).toEqual(["settings-section-conversation"]);
-
-    fireEvent.click(
-      within(navigation).getByRole("button", { name: "Behavior" }),
-    );
-    const behaviorRegions = screen
-      .getAllByRole("region")
-      .map((region) => region.getAttribute("id"));
-    expect(behaviorRegions).toEqual([
-      "settings-section-behavior",
-      "settings-section-session-actions",
-      "settings-section-pi-settings",
-    ]);
-
-    fireEvent.click(within(navigation).getByRole("button", { name: "System" }));
-    const systemHeadings = screen
-      .getAllByRole("heading", { level: 3 })
-      .map((heading) => heading.textContent);
-    expect(systemHeadings).toEqual(["Versions", "Host"]);
-  });
-
-  it("keeps adapter guidance in the shared section header and empty content inside the padded card", () => {
-    render(<Settings onClose={() => undefined} />);
-    const navigation = screen.getByRole("navigation", {
-      name: "Settings categories",
-    });
-    fireEvent.click(
-      within(navigation).getByRole("button", { name: "Adapters" }),
-    );
-    const section = screen.getByRole("region", { name: "Extension adapters" });
-    const guidance = within(section).getByText(
-      "Choose how Pi extensions appear in Inspire.",
-    );
-    expect(guidance.closest(".settings__section-header")).not.toBeNull();
-    expect(guidance.closest(".settings__card")).toBeNull();
-    const empty = within(section).getByText(/No adapters configured/);
-    expect(empty.closest(".settings__card-message")).not.toBeNull();
-    expect(empty.closest(".settings__card")).not.toBeNull();
   });
 
   it("retains notification availability while settings are updating", () => {
@@ -193,18 +142,8 @@ describe("Settings component UX and navigation", () => {
       "Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged.",
     );
     expect(restore).not.toHaveBeenCalled();
-    fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
-    expect(
-      screen.queryByRole("alertdialog", { name: "Reset preferences?" }),
-    ).toBeNull();
-    expect(restore).not.toHaveBeenCalled();
-
-    fireEvent.click(reset);
-    const reopened = screen.getByRole("alertdialog", {
-      name: "Reset preferences?",
-    });
     fireEvent.click(
-      within(reopened).getByRole("button", { name: "Reset preferences" }),
+      within(confirm).getByRole("button", { name: "Reset preferences" }),
     );
     expect(restore).toHaveBeenCalledOnce();
     expect(

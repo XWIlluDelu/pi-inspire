@@ -1688,7 +1688,7 @@ export function createInspireServer(deps: AppDependencies): {
     );
     const context = await deps.runtime.resourceContext(sessionId);
     response.json(
-      await deps.resources.resolve(context, reference, true, workspacePath),
+      await deps.resources.resolve(context, reference, workspacePath),
     );
   });
   app.post("/api/resources/show-in-file-manager", async (request, response) => {

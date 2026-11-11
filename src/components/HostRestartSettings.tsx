@@ -1,10 +1,9 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
 import type { HostRestartScope } from "../../shared/host-restart";
 import { hostRestartClient } from "../controllers/host-restart-controller";
-import { useModalFocus } from "../use-modal-focus";
 import { SettingField } from "./SettingsControls";
+import { SettingsConfirmation } from "./SettingsDialog";
 
 type SettingsRestartScope = Exclude<HostRestartScope, "host-only">;
 
@@ -12,60 +11,6 @@ const RESTART_NAMES: Record<SettingsRestartScope, string> = {
   host: "Restart Host",
   all: "Restart all",
 };
-
-function RestartConfirmation({
-  scope,
-  onClose,
-  onConfirm,
-}: {
-  scope: SettingsRestartScope;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  const ref = useModalFocus<HTMLDivElement>(true, "host-restart", onClose);
-  const name = RESTART_NAMES[scope];
-  return createPortal(
-    <div className="overlay" role="presentation" onClick={onClose}>
-      <div
-        ref={ref}
-        className="dialog host-restart-confirm"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="host-restart-title"
-        aria-describedby="host-restart-description"
-        tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 className="dialog__title" id="host-restart-title">
-          {name}?
-        </h2>
-        <p className="dialog__message" id="host-restart-description">
-          {scope === "all"
-            ? "This Host's project terminals will close."
-            : "Inspire's Pi workers will restart. Project terminals keep running."}{" "}
-          The page will briefly disconnect.
-        </p>
-        <div className="host-restart__actions">
-          <button
-            type="button"
-            className="button button--quiet"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="button button--danger"
-            onClick={onConfirm}
-          >
-            {name}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 export function HostRestartSettings({
   suspended = false,
@@ -102,8 +47,6 @@ export function HostRestartSettings({
     !!state.pending ||
     !!active ||
     !!state.error;
-  const hostDisabled = disabled || !state.status?.available;
-  const allDisabled = disabled || !state.status?.allAvailable;
   const busyScope =
     operation?.phase === "rejected" &&
     (operation.busyReason === "active-work" ||
@@ -158,68 +101,54 @@ export function HostRestartSettings({
     state.status?.available === false ? state.status.reason : null;
   return (
     <div id="settings-host-restart" className="host-restart">
-      <SettingField
-        label="Restart Host"
-        description="Restart Inspire and its Pi workers. Project terminals keep running."
-      >
-        <button
-          type="button"
-          className="button button--danger-outline"
-          aria-label={
-            unconfirmedScope === "host"
-              ? "Restart Host anyway"
-              : busyScope === "host"
-                ? "Stop work and restart Host"
-                : "Restart Host"
-          }
-          disabled={hostDisabled}
-          onClick={() => requestRestart("host")}
-        >
-          {unconfirmedScope === "host" ? (
-            "Restart anyway"
-          ) : busyScope === "host" ? (
-            "Stop work and restart"
-          ) : (
-            <>
-              <RefreshCw size={13} aria-hidden />
-              Restart
-            </>
-          )}
-        </button>
-      </SettingField>
-      <SettingField
-        label="Restart all"
-        description={
-          state.status && !state.status.allAvailable
-            ? state.status.allReason
-            : "Also close this Host's project terminals."
-        }
-      >
-        <button
-          type="button"
-          className="button button--danger-outline"
-          aria-label={
-            unconfirmedScope === "all"
-              ? "Restart all anyway"
-              : busyScope === "all"
-                ? "Stop work and restart all"
-                : "Restart all"
-          }
-          disabled={allDisabled}
-          onClick={() => requestRestart("all")}
-        >
-          {unconfirmedScope === "all" ? (
-            "Restart all anyway"
-          ) : busyScope === "all" ? (
-            "Stop work and restart all"
-          ) : (
-            <>
-              <RefreshCw size={13} aria-hidden />
-              Restart all
-            </>
-          )}
-        </button>
-      </SettingField>
+      {(["host", "all"] as const).map((scope) => {
+        const host = scope === "host";
+        const name = RESTART_NAMES[scope];
+        const caption = host ? "Restart" : name;
+        const unconfirmed = unconfirmedScope === scope;
+        const busy = busyScope === scope;
+        const available = host
+          ? state.status?.available
+          : state.status?.allAvailable;
+        return (
+          <SettingField
+            key={scope}
+            label={name}
+            description={
+              host
+                ? "Restart Inspire and its Pi workers. Project terminals keep running."
+                : state.status && !available
+                  ? state.status.allReason
+                  : "Also close this Host's project terminals."
+            }
+          >
+            <button
+              type="button"
+              className="button button--danger-outline"
+              aria-label={
+                unconfirmed
+                  ? `${name} anyway`
+                  : busy
+                    ? `Stop work and restart ${host ? "Host" : "all"}`
+                    : name
+              }
+              disabled={disabled || !available}
+              onClick={() => requestRestart(scope)}
+            >
+              {unconfirmed ? (
+                `${caption} anyway`
+              ) : busy ? (
+                `Stop work and ${caption.toLowerCase()}`
+              ) : (
+                <>
+                  <RefreshCw size={13} aria-hidden />
+                  {caption}
+                </>
+              )}
+            </button>
+          </SettingField>
+        );
+      })}
       <div className="host-restart__status-row">
         <div className="host-restart__status-copy">
           {unavailable ? (
@@ -274,8 +203,15 @@ export function HostRestartSettings({
         ) : null}
       </div>
       {confirmation && !suspended ? (
-        <RestartConfirmation
-          scope={confirmation.scope}
+        <SettingsConfirmation
+          id="host-restart"
+          title={`${RESTART_NAMES[confirmation.scope]}?`}
+          description={
+            confirmation.scope === "all"
+              ? "This Host's project terminals will close. The page will briefly disconnect."
+              : "Inspire's Pi workers will restart. Project terminals keep running. The page will briefly disconnect."
+          }
+          confirmLabel={RESTART_NAMES[confirmation.scope]}
           onClose={() => setConfirmation(null)}
           onConfirm={() => {
             void hostRestartClient.start(

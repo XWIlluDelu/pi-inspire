@@ -1030,7 +1030,7 @@ describe("ResourceStore", () => {
     const context = { ...resourceIdentity(), cwd: project, messages: [] };
 
     for (const name of names) {
-      const descriptor = await resources.resolve(context, name, true, name);
+      const descriptor = await resources.resolve(context, name, name);
       expect(descriptor).toMatchObject({
         reference: name,
         workspacePath: name,
@@ -1059,7 +1059,6 @@ describe("ResourceStore", () => {
     const descriptor = await resources.resolve(
       context,
       "secret#L12",
-      true,
       "secret#L12",
     );
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
@@ -1087,7 +1086,6 @@ describe("ResourceStore", () => {
       resources.resolve(
         { ...resourceIdentity(), cwd: project, messages: [] },
         "kernel.py",
-        true,
         "kernel.py",
       ),
     ).rejects.toMatchObject({ status: 404 });

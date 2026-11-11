@@ -145,10 +145,10 @@ session slot, never the Host's last global selection, so one browser cannot reta
 
 ### File handles and content
 
-Validation returns an opaque authenticated handle bound to the branch view and an open descriptor
-for the resolved device/inode. The descriptor anchors the object for the handle's bounded lifetime.
-The Host opens the reference's lexical path and checks its resolved path and opened-file identity
-against the canonical target. It also uses `O_NOFOLLOW` for an already-canonical final component.
+Opening a preview issues an opaque handle bound to the branch view and an open descriptor for the
+resolved device/inode. The Host checks the opened lexical path and file identity against the
+canonical target and uses `O_NOFOLLOW` for an already-canonical final component. Probes and file
+manager requests release their validation descriptors immediately.
 
 Before sending content headers or bytes, every request revalidates session/view, citation or current
 workspace containment, regular-file status, and opened-object identity. A path or ancestor exchange

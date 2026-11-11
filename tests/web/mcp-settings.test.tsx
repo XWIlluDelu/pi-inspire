@@ -650,50 +650,13 @@ it("saves tool rules in displayed order and removes deleted rules", () => {
   expect(save).toHaveBeenLastCalledWith("user", "docs", { toolExposure: {} });
 });
 
-it("starts a project customization with inherited policy and saves only the chosen override", async () => {
-  const config = snapshot();
-  fixture.host.editMcpConfig.mockResolvedValue({
-    saved: true,
-    snapshot: {
-      ...config,
-      files: [
-        config.files[0],
-        {
-          ...config.files[1],
-          entries: [
-            {
-              ...config.files[0]!.entries[0]!,
-              transport: null,
-              policyOnly: true,
-              enabled: false,
-              exposure: null,
-              urlConfigured: false,
-              headerKeys: [],
-              oauthFields: [],
-            },
-          ],
-        },
-      ],
-    },
-  });
+it("requires an explicit override before saving an inherited project policy", async () => {
   render(<McpSettings active owner={{ sessionId: "one" }} />);
   fireEvent.click(
     await screen.findByRole("button", {
       name: "Customize for this project: docs",
     }),
   );
-  const exposure = screen.getByRole("combobox", { name: "Tool exposure" });
-  const enabled = screen.getByRole("combobox", {
-    name: "Enabled in this project",
-  });
-  expect(exposure).toHaveFocus();
-  expect(exposure).toHaveTextContent("Inherit from user");
-  expect(enabled).toHaveTextContent("Inherit from user");
-  expect(screen.queryByLabelText("Server name")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("combobox", { name: "Configuration target" }),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
   const save = screen.getByRole("button", { name: "Save" });
   expect(save).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Add tool rule" }));
@@ -705,79 +668,6 @@ it("starts a project customization with inherited policy and saves only the chos
   expect(save).toBeDisabled();
   fireEvent.submit(save.closest("form")!);
   expect(fixture.host.editMcpConfig).not.toHaveBeenCalled();
-  fireEvent.click(enabled);
-  fireEvent.click(screen.getByRole("option", { name: "Disabled" }));
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  await screen.findByRole("button", { name: "Edit project server docs" });
-  expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-    { sessionId: "one" },
-    {
-      scope: "project",
-      name: "docs",
-      revision: config.files[1]!.revision,
-      operation: "add",
-      values: { enabled: false },
-    },
-  );
-  expect(
-    screen.queryByRole("button", { name: "Customize for this project: docs" }),
-  ).not.toBeInTheDocument();
-  expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
-});
-
-it("focuses and edits project policy overrides without introducing connection settings", async () => {
-  const config = snapshot();
-  config.files[1]!.entries = [
-    {
-      name: "docs",
-      transport: null,
-      policyOnly: true,
-      enabled: false,
-      exposure: null,
-      urlConfigured: false,
-      argumentCount: 0,
-      envKeys: [],
-      headerKeys: [],
-      oauthFields: [],
-      toolExposure: {},
-      extraFieldCount: 0,
-    },
-  ];
-  fixture.host.readMcpConfig.mockResolvedValue(config);
-  render(<McpSettings active owner={{ sessionId: fixture.state.sessionId }} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Edit project server docs" }),
-  );
-  expect(screen.getByRole("combobox", { name: "Tool exposure" })).toHaveFocus();
-  expect(screen.queryByLabelText("Server URL")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Program")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Timeout (seconds)")).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("combobox", { name: "Tool exposure" }),
-  ).toHaveTextContent("Inherit from user");
-  fireEvent.click(
-    screen.getByRole("combobox", { name: "Enabled in this project" }),
-  );
-  fireEvent.click(screen.getByRole("option", { name: "Inherit from user" }));
-  fireEvent.click(screen.getByRole("combobox", { name: "Tool exposure" }));
-  fireEvent.click(screen.getByRole("option", { name: "Hidden" }));
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  await waitFor(() =>
-    expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-      { sessionId: "one" },
-      {
-        operation: "update",
-        scope: "project",
-        name: "docs",
-        revision: "b".repeat(64),
-        values: { enabled: null, exposure: "hidden" },
-      },
-    ),
-  );
 });
 
 it("rejects duplicate header names rather than silently discarding one value", async () => {

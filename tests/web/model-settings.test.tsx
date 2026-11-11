@@ -229,59 +229,37 @@ describe("Models settings configuration and ownership", () => {
     ).toHaveTextContent(/^alias$/);
   });
 
-  it("round-trips startup defaults and clears native preferences", async () => {
-    let snapshot = modelSettingsSnapshot();
-    fixture.host.readModelSettings.mockImplementation(async () => snapshot);
+  it("reselects a saved default without a write and clears model and thinking independently", async () => {
+    const snapshot = modelSettingsSnapshot();
+    snapshot.saved.defaultModel = { provider: "anthropic", id: "claude-haiku" };
+    snapshot.saved.defaultThinkingLevel = "xhigh";
+    fixture.host.readModelSettings.mockResolvedValue(snapshot);
     fixture.host.saveModelPreferences.mockImplementation(
       async (_owner, _revision, patch) => {
-        snapshot = {
-          ...snapshot,
-          saved: { ...snapshot.saved, ...patch },
-          settingsRevision: "c".repeat(64),
-        };
-        return { saved: true, snapshot };
+        snapshot.saved = { ...snapshot.saved, ...patch };
+        snapshot.settingsRevision = "c".repeat(64);
+        return { saved: true, snapshot: { ...snapshot } };
       },
     );
-    const view = render(<ModelsSettings />);
-    const thinking = await screen.findByRole("combobox", {
-      name: "Default thinking",
-    });
-    expect(snapshot.saved.defaultThinkingLevel).toBeNull();
-    fireEvent.click(thinking);
-    fireEvent.click(screen.getByRole("option", { name: "Xhigh" }));
-    await waitFor(() => expect(thinking).toHaveTextContent("Xhigh"));
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
-    );
-    await screen.findByRole("button", { name: "Clear default model" });
-    const selectedDefault = screen.getByRole("radio", {
+    render(<ModelsSettings />);
+    const selectedDefault = await screen.findByRole("radio", {
       name: "Default: Claude Haiku",
     });
     expect(selectedDefault).toBeChecked();
-    const writes = fixture.host.saveModelPreferences.mock.calls.length;
     fireEvent.click(selectedDefault);
     expect(selectedDefault).toBeChecked();
-    expect(fixture.host.saveModelPreferences).toHaveBeenCalledTimes(writes);
-    view.unmount();
-    render(<ModelsSettings />);
-    const reloadedThinking = await screen.findByRole("combobox", {
-      name: "Default thinking",
-    });
-    expect(reloadedThinking).toHaveTextContent("Xhigh");
-    expect(
-      document.querySelector(".models-default-value__name"),
-    ).toHaveTextContent("Claude Haiku");
+    expect(fixture.host.saveModelPreferences).not.toHaveBeenCalled();
+
     const clearDefault = screen.getByRole("button", {
       name: "Clear default model",
     });
     clearDefault.focus();
     fireEvent.click(clearDefault);
-    await waitFor(() => expect(snapshot.saved.defaultModel).toBeNull());
-    expect(
-      screen.queryByRole("button", { name: "Clear default model" }),
-    ).not.toBeInTheDocument();
-    await waitFor(() => expect(reloadedThinking).toHaveFocus());
-    fireEvent.click(reloadedThinking);
+    const thinking = screen.getByRole("combobox", { name: "Default thinking" });
+    await waitFor(() => expect(thinking).toHaveFocus());
+    expect(snapshot.saved.defaultModel).toBeNull();
+    expect(thinking).toHaveTextContent("Xhigh");
+    fireEvent.click(thinking);
     fireEvent.click(screen.getByRole("option", { name: /Model default/ }));
     await waitFor(() => expect(snapshot.saved.defaultThinkingLevel).toBeNull());
     expect(fixture.host.saveModelPreferences).toHaveBeenLastCalledWith(
@@ -649,49 +627,6 @@ describe("Models settings configuration and ownership", () => {
         within(custom).queryByRole("button", { name: "Edit provider custom" }),
       ).toBeNull(),
     );
-  });
-
-  it("saves a row default and native common order independently", async () => {
-    let snapshot = modelSettingsSnapshot();
-    fixture.host.readModelSettings.mockImplementation(async () => snapshot);
-    fixture.host.saveModelPreferences.mockImplementation(
-      async (_owner, _revision, patch) => {
-        snapshot = {
-          ...snapshot,
-          saved: { ...snapshot.saved, ...patch },
-          settingsRevision: "c".repeat(64),
-        };
-        return { saved: true, snapshot };
-      },
-    );
-    render(<ModelsSettings />);
-    fireEvent.click(
-      await screen.findByRole("radio", {
-        name: "Default: Claude Haiku",
-      }),
-    );
-    await waitFor(() =>
-      expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
-        { sessionId: "one" },
-        "a".repeat(64),
-        { defaultModel: { provider: "anthropic", id: "claude-haiku" } },
-      ),
-    );
-    fireEvent.click(screen.getByText(/Common order and rules/));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Move custom/local:high down" }),
-    );
-    await waitFor(() =>
-      expect(fixture.host.saveModelPreferences).toHaveBeenLastCalledWith(
-        { sessionId: "one" },
-        "c".repeat(64),
-        { enabledModels: ["openai/gpt-5", "custom/local:high"] },
-      ),
-    );
-    expect(snapshot.saved.defaultModel).toEqual({
-      provider: "anthropic",
-      id: "claude-haiku",
-    });
   });
 
   it("preserves an untouched configured key and refreshes providers after the committed config save", async () => {

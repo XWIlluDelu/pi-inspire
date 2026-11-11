@@ -35,10 +35,10 @@ import { createPortal } from "react-dom";
 import {
   INSPIRE_SHELL_OSC,
   MAX_TERMINAL_COLS,
-  MAX_TERMINAL_COMMAND_CHARS,
   MAX_TERMINAL_ROWS,
   MIN_TERMINAL_COLS,
   MIN_TERMINAL_ROWS,
+  parseTerminalShellMarker,
   type TerminalDescriptor,
   type TerminalServerControlMessage,
   type TerminalServerDataFrame,
@@ -180,25 +180,6 @@ function safeDimensions(
       Math.min(MAX_TERMINAL_ROWS, dimensions?.rows ?? fallback.rows),
     ),
   };
-}
-
-function shellMarkerCommand(phase: string, payload: string): string {
-  let command = payload;
-  if (phase === "C1") {
-    try {
-      command = decodeURIComponent(payload);
-    } catch {
-      return "";
-    }
-  }
-  if (
-    command.length < 1 ||
-    command.length > MAX_TERMINAL_COMMAND_CHARS ||
-    /[\u0000\u0007\u001b]/u.test(command) ||
-    !/\S/u.test(command)
-  )
-    return "";
-  return command;
 }
 
 function hasUnsafePasteControl(value: string): boolean {
@@ -485,17 +466,14 @@ export const TerminalView = memo(function TerminalView({
     const shellMarkerDisposable = xterm.parser.registerOscHandler(
       INSPIRE_SHELL_OSC,
       (value) => {
-        const separator = value.indexOf(";");
-        const phase = separator < 0 ? value : value.slice(0, separator);
-        const payload = separator < 0 ? "" : value.slice(separator + 1);
-        if (phase === "C" || phase === "C1") {
-          if (!shellMarkerCommand(phase, payload)) return true;
+        const shellMarker = parseTerminalShellMarker(value);
+        if (shellMarker?.type === "command") {
           commandStartRef.current?.marker.dispose();
           const marker = xterm.registerMarker(0);
           commandStartRef.current = marker
             ? { marker, column: xterm.buffer.active.cursorX }
             : null;
-        } else if (phase === "D") {
+        } else if (shellMarker?.type === "complete") {
           const start = commandStartRef.current;
           commandStartRef.current = null;
           if (!start || start.marker.isDisposed) return true;

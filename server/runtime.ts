@@ -426,9 +426,6 @@ export interface RuntimeLike extends RestartLeaseOwner {
 }
 
 interface ForkReservation {
-  token: symbol;
-  id: string;
-  path: string;
   completion: Promise<void>;
   release(): void;
 }
@@ -675,11 +672,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       hasSelectionReservation: (sessionId) =>
         this.selectionReservations.has(sessionId),
       opening: (sessionId) => this.opening.get(sessionId),
-      hasOpening: (sessionId) => this.opening.has(sessionId),
       loadingSlot: (sessionId) => this.loadingSlots.get(sessionId),
-      hasLoadingSlot: (sessionId) => this.loadingSlots.has(sessionId),
       loadingPath: (path) => this.loadingPaths.get(path),
-      hasLoadingPath: (path) => this.loadingPaths.has(path),
       hasProvisionalReservation: (sessionId, path) =>
         Boolean(this.provisionalReservation(sessionId, path)),
       hasForkReservation: (sessionId, path) =>
@@ -1313,9 +1307,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     let settle!: () => void;
     let released = false;
     const reservation: ForkReservation = {
-      token: Symbol("fork-reservation"),
-      id,
-      path,
       completion: new Promise<void>((resolveCompletion) => {
         settle = resolveCompletion;
       }),
@@ -4350,6 +4341,12 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       });
       const destinationId = staged.destinationId;
       const destinationPath = resolve(staged.destinationPath);
+      const matchesFork = (candidate: SessionProjectionView, path: string) =>
+        candidate.sessionId === destinationId &&
+        resolve(candidate.path) === resolve(path) &&
+        candidate.health.status !== "error" &&
+        candidate.leafId === staged.destinationLeafId &&
+        (mode !== "fork" || targetId === null || !candidate.entry(targetId));
       let reservation: ForkReservation | null = null;
       let stagedProjection: SessionProjectionView | null = null;
       let destinationProjection: SessionProjectionView | null = null;
@@ -4400,15 +4397,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           source: null,
         };
         stagedProjection = await this.openForkProjection(stagedRecord);
-        if (
-          stagedProjection.sessionId !== destinationId ||
-          resolve(stagedProjection.path) !== resolve(staged.stagedPath) ||
-          stagedProjection.health.status === "error" ||
-          stagedProjection.leafId !== staged.destinationLeafId ||
-          (mode === "fork" &&
-            targetId !== null &&
-            Boolean(stagedProjection.entry(targetId)))
-        ) {
+        if (!matchesFork(stagedProjection, staged.stagedPath)) {
           throw requestError("Pi produced an invalid fork destination", 409);
         }
         await stagedProjection.close();
@@ -4447,15 +4436,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         };
         destinationProjection =
           await this.openForkProjection(destinationRecord);
-        if (
-          destinationProjection.sessionId !== destinationId ||
-          resolve(destinationProjection.path) !== destinationPath ||
-          destinationProjection.health.status === "error" ||
-          destinationProjection.leafId !== staged.destinationLeafId ||
-          (mode === "fork" &&
-            targetId !== null &&
-            Boolean(destinationProjection.entry(targetId)))
-        ) {
+        if (!matchesFork(destinationProjection, destinationPath)) {
           throw new Error("Published fork destination failed revalidation");
         }
         if (

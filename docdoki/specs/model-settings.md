@@ -6,7 +6,7 @@ covers:
   - server/configuration-file.ts
   - shared/{contracts,commands,model-settings,provider-auth-bridge}.ts
   - src/{App,api,app-state,store,model-options,use-modal-focus}.ts*
-  - src/components/{Settings,SettingsControls,SettingsSection,ModelsSettings,ModelDeclarationForms,ConfigurationFormBody,ProviderAuthentication,ModelSelector,ModelList,Composer,Welcome,CommandPalette,CommandHelp}.tsx
+  - src/components/{Settings,SettingsControls,SettingsSection,ModelsSettings,ModelDeclarationForms,ConfigurationForm,ProviderAuthentication,ModelSelector,ModelList,Composer,Welcome,CommandPalette,CommandHelp}.tsx
   - src/styles/model-settings.css
   - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-file.test.ts
@@ -166,21 +166,16 @@ Removing a declaration affects `models.json`, independently of built-in catalog 
 login credentials. Configured declarations and saved preferences remain editable when model discovery
 is unavailable; Settings reports the availability failure separately from file errors.
 
-Provider/model creation and editing open a focused subview inside the Models category, replacing
-the browsing sections without unmounting their state. The header identifies the edit target and
-offers Back to models; normally the form body scrolls separately from the always-reachable Save/Cancel
-actions. Short windows use the pinned-action editor scrolling defined in [[design-system]]. Existing
-field contents, advanced disclosures and declaration semantics remain unchanged.
-Back and Cancel discard that editor's draft and restore the originating list context, including
-search, disclosure state, scroll and focus. Saving an existing model preserves the search; if its
-new identity no longer matches, focus returns to search. A newly created model still receives focus
-in the ordinary available list. Virtualized return targets receive focus after their row mounts.
+Provider and model forms open inside Models with the browsing view still mounted. The header
+identifies the edit target. The shared model/MCP form keeps Save and Cancel reachable while the body
+scrolls. [[design-system]] defines scrolling in short windows. Errors stay in the form.
 
-Drafts belong to their provider/model and creation mode and survive Settings category switches.
-Model search and loaded data keep the same Settings owner while its category is hidden; hidden
-content does not take focus or apply destination scrolling. Errors remain in the form. Creating a
-provider continues at Add model; a newly available model appears in the ordinary model list. Cancel
-returns to the entry point, and Common/Default saves keep row focus unless the user has moved it.
+Drafts belong to the provider/model and creation mode. Switching categories retains drafts,
+search and loaded data. Hidden forms wait to take focus or scroll. Back and Cancel discard the form
+draft and restore the originating search, disclosure state, scroll and focus. Creating a provider
+focuses Add model. Creating a model focuses its row. Editing a model preserves the query and
+returns focus to search if the new identity falls outside it. Virtualized rows receive focus after
+mounting. Common and Default saves restore row focus unless the user has moved it.
 
 Candidate declarations are validated in the existing isolated metadata worker against the same
 agent directory, selected working directory and project-trust policy as Pi. Extension provider

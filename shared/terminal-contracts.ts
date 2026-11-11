@@ -3,7 +3,7 @@ export const MAX_TERMINALS_TOTAL = 128;
 export const MIN_TERMINAL_HISTORY_DAYS = 1;
 export const MAX_TERMINAL_HISTORY_DAYS = 365;
 export const MAX_TERMINAL_TITLE_CHARS = 120;
-export const MAX_TERMINAL_COMMAND_CHARS = 16_384;
+const MAX_TERMINAL_COMMAND_CHARS = 16_384;
 export const MAX_TERMINAL_CWD_CHARS = 4_096;
 export const MAX_TERMINAL_PROFILE_ID_CHARS = 80;
 export const MAX_TERMINAL_INPUT_BYTES = 256 * 1024;
@@ -13,6 +13,38 @@ export const MAX_TERMINAL_COLS = 500;
 export const MIN_TERMINAL_ROWS = 2;
 export const MAX_TERMINAL_ROWS = 300;
 export const INSPIRE_SHELL_OSC = 6973;
+
+export function parseTerminalShellMarker(
+  value: string,
+):
+  | { type: "cwd"; cwd: string }
+  | { type: "command"; command: string }
+  | { type: "complete"; exitCode: number | null }
+  | null {
+  const separator = value.indexOf(";");
+  const phase = separator < 0 ? value : value.slice(0, separator);
+  let payload = separator < 0 ? "" : value.slice(separator + 1);
+  if (phase === "D") {
+    const code = Number(payload);
+    return { type: "complete", exitCode: Number.isInteger(code) ? code : null };
+  }
+  if (phase === "C1" || phase === "P1") {
+    try {
+      payload = decodeURIComponent(payload);
+    } catch {
+      return null;
+    }
+  }
+  if (phase === "P" || phase === "P1") return { type: "cwd", cwd: payload };
+  if (
+    (phase === "C" || phase === "C1") &&
+    payload.length <= MAX_TERMINAL_COMMAND_CHARS &&
+    !/[\u0000\u0007\u001b]/u.test(payload) &&
+    /\S/u.test(payload)
+  )
+    return { type: "command", command: payload };
+  return null;
+}
 
 const TERMINAL_INPUT_FRAME = 1;
 const TERMINAL_OUTPUT_FRAME = 2;

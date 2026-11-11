@@ -14,7 +14,7 @@ import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import { rankProjectFiles } from "../composer-completion";
 import { fileIconForPath } from "../file-icons";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { RecoveryBackoff } from "../recovery-backoff";
+import { recoverableRead } from "../recovery-backoff";
 import { store, useAppState } from "../store";
 import {
   type FloatingMenuConstraints,
@@ -190,37 +190,28 @@ function ProjectFilePicker({
   };
 
   useEffect(() => {
-    const request = new AbortController();
-    const recovery = new RecoveryBackoff();
-    const owns = () =>
-      !request.signal.aborted &&
-      store.getState().transportGeneration === transportGeneration;
+    const request = recoverableRead(
+      () => store.getState().transportGeneration === transportGeneration,
+    );
     setResults([]);
     setTruncated(false);
     setActiveIndex(0);
     setStatus("loading");
     const read = async () => {
       try {
-        const result = await recovery.read(
-          () => search(query),
-          request.signal,
-          owns,
-        );
-        if (!owns()) return;
+        const result = await request.read(() => search(query));
+        if (!request.current()) return;
         setResults(rankProjectFiles(result.files, query));
         setTruncated(Boolean(result.truncated));
         setActiveIndex(0);
         setStatus("ready");
       } catch {
-        if (owns()) setStatus("error");
-      } finally {
-        recovery.reset();
+        if (request.current()) setStatus("error");
       }
     };
     const timer = setTimeout(() => void read(), 200);
     return () => {
       request.abort();
-      recovery.reset();
       clearTimeout(timer);
     };
   }, [query, scope, search, showHidden, transportGeneration]);

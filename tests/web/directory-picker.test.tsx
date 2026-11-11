@@ -109,7 +109,7 @@ describe("read recovery", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it("recovers advisory drive discovery without blocking directory selection", async () => {
+  it("lets directory navigation continue while advisory drive discovery retries", async () => {
     vi.useFakeTimers();
     const roots = vi
       .mocked(store.browseHostRoots)
@@ -120,13 +120,21 @@ describe("read recovery", () => {
           { name: "Z:", path: "Z:\\" },
         ],
       });
+    vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
+      path === project.path ? project : home,
+    );
     render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(screen.getByRole("button", { name: "project" }));
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(confirm()).toBeEnabled();
     expect(screen.queryByText(/Drive list unavailable/)).toBeNull();
     await act(() => vi.advanceTimersByTimeAsync(1_000));
     expect(roots).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Z:" })).toBeEnabled();
+    expect(
+      screen.getByRole("textbox", { name: "Project directory" }),
+    ).toHaveValue(project.path);
   });
 
   it.each(["navigation", "visibility", "dismissal"] as const)(
@@ -169,29 +177,6 @@ describe("read recovery", () => {
 });
 
 describe("independent drive discovery", () => {
-  it("lets Home load and navigate before a delayed drive list arrives", async () => {
-    const pending = deferred<{ roots: { name: string; path: string }[] }>();
-    vi.mocked(store.browseHostRoots).mockReturnValue(pending.promise);
-    vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
-      path === project.path ? project : home,
-    );
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "project" }));
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    await act(async () =>
-      pending.resolve({
-        roots: [
-          { name: "C:", path: "C:\\" },
-          { name: "Z:", path: "Z:\\" },
-        ],
-      }),
-    );
-    expect(
-      screen.getByRole("textbox", { name: "Project directory" }),
-    ).toHaveValue(project.path);
-    expect(screen.getByRole("button", { name: "Z:" })).toBeEnabled();
-  });
-
   it("keeps listing and typed selection usable when drive discovery fails", async () => {
     vi.mocked(store.browseHostRoots).mockRejectedValue(
       new ApiError(403, "Native probe unavailable"),
@@ -205,18 +190,6 @@ describe("independent drive discovery", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(confirm());
     expect(onPick).toHaveBeenCalledWith(home.path);
-  });
-
-  it("ignores a drive-discovery failure after the dialog unmounts", async () => {
-    const pending = deferred<{ roots: { name: string; path: string }[] }>();
-    vi.mocked(store.browseHostRoots).mockReturnValue(pending.promise);
-    const { unmount } = render(
-      <DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />,
-    );
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    unmount();
-    await act(async () => pending.reject(new Error("late failure")));
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
 
@@ -549,7 +522,7 @@ describe("hidden project directories", () => {
       <DirectoryPicker initial="missing" onCancel={vi.fn()} onPick={vi.fn()} />,
     );
     unmount();
-    await act(async () => pending.reject(new Error("missing")));
+    await act(async () => pending.reject(new ApiError(404, "missing")));
     expect(browse).toHaveBeenCalledTimes(1);
   });
 });

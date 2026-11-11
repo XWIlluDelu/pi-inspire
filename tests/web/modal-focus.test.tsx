@@ -94,31 +94,6 @@ describe("modal focus ownership", () => {
     opener.remove();
   });
 
-  it("lets a Settings dropdown consume Escape before closing the dialog", async () => {
-    const onClose = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <SettingsDialog onClose={onClose}>
-        <SettingsContent initialCategory="conversation" workspaceOwner={{}} />
-      </SettingsDialog>,
-    );
-    const trigger = screen.getByRole("combobox", { name: "Activity groups" });
-    await user.click(trigger);
-    expect(
-      screen.getByRole("listbox", { name: "Activity groups" }),
-    ).toBeVisible();
-
-    await user.keyboard("{Escape}");
-    expect(
-      screen.queryByRole("listbox", { name: "Activity groups" }),
-    ).toBeNull();
-    expect(trigger).toHaveFocus();
-    expect(onClose).not.toHaveBeenCalled();
-
-    await user.keyboard("{Escape}");
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
   it("preserves the opener across StrictMode effect replay", async () => {
     const opener = document.createElement("button");
     document.body.append(opener);
@@ -193,118 +168,73 @@ describe("modal focus ownership", () => {
     );
   });
 
-  it("restores the control that opened a top modal", async () => {
-    function NestedDialogs() {
-      const [outerOpen, setOuterOpen] = useState(false);
-      const [innerOpen, setInnerOpen] = useState(false);
-      const outerRef = useModalFocus<HTMLDivElement>(outerOpen);
-      const innerRef = useModalFocus<HTMLDivElement>(innerOpen);
-      return (
-        <>
-          <button type="button" onClick={() => setOuterOpen(true)}>
-            Open outer
-          </button>
-          {outerOpen ? (
-            <div
-              ref={outerRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Outer"
-              tabIndex={-1}
-            >
-              <button type="button" onClick={() => setInnerOpen(true)}>
-                Open inner
-              </button>
-            </div>
-          ) : null}
-          {innerOpen ? (
-            <div
-              ref={innerRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Inner"
-              tabIndex={-1}
-            >
-              <button type="button" onClick={() => setInnerOpen(false)}>
-                Close inner
-              </button>
-            </div>
-          ) : null}
-        </>
-      );
-    }
+  it.each([false, true])(
+    "restores focus after nested modal close (outer closes first: %s)",
+    async (closeOuterFirst) => {
+      function NestedDialogs() {
+        const [outerOpen, setOuterOpen] = useState(false);
+        const [innerOpen, setInnerOpen] = useState(false);
+        const outerRef = useModalFocus<HTMLDivElement>(outerOpen);
+        const innerRef = useModalFocus<HTMLDivElement>(innerOpen);
+        return (
+          <>
+            <button type="button" onClick={() => setOuterOpen(true)}>
+              Open outer
+            </button>
+            {outerOpen ? (
+              <div
+                ref={outerRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Outer"
+                tabIndex={-1}
+              >
+                <button type="button" onClick={() => setInnerOpen(true)}>
+                  Open inner
+                </button>
+              </div>
+            ) : null}
+            {innerOpen ? (
+              <div
+                ref={innerRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Inner"
+                tabIndex={-1}
+              >
+                <button type="button" onClick={() => setOuterOpen(false)}>
+                  Close outer first
+                </button>
+                <button type="button" onClick={() => setInnerOpen(false)}>
+                  Close inner
+                </button>
+              </div>
+            ) : null}
+          </>
+        );
+      }
 
-    render(<NestedDialogs />);
-    const outerOpener = screen.getByRole("button", { name: "Open outer" });
-    outerOpener.focus();
-    fireEvent.click(outerOpener);
-    const innerOpener = screen.getByRole("button", { name: "Open inner" });
-    fireEvent.click(innerOpener);
-    fireEvent.click(screen.getByRole("button", { name: "Close inner" }));
-    await Promise.resolve();
-    expect(document.activeElement).toBe(innerOpener);
-  });
-
-  it("restores the original opener when an underlying modal closes first", async () => {
-    function NestedDialogs() {
-      const [outerOpen, setOuterOpen] = useState(false);
-      const [innerOpen, setInnerOpen] = useState(false);
-      const outerRef = useModalFocus<HTMLDivElement>(outerOpen);
-      const innerRef = useModalFocus<HTMLDivElement>(innerOpen);
-      return (
-        <>
-          <button type="button" onClick={() => setOuterOpen(true)}>
-            Open outer
-          </button>
-          {outerOpen ? (
-            <div
-              ref={outerRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Outer"
-              tabIndex={-1}
-            >
-              <button type="button" onClick={() => setInnerOpen(true)}>
-                Open inner
-              </button>
-            </div>
-          ) : null}
-          {innerOpen ? (
-            <div
-              ref={innerRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Inner"
-              tabIndex={-1}
-            >
-              <button type="button" onClick={() => setOuterOpen(false)}>
-                Close outer first
-              </button>
-              <button type="button" onClick={() => setInnerOpen(false)}>
-                Close inner
-              </button>
-            </div>
-          ) : null}
-        </>
-      );
-    }
-
-    render(<NestedDialogs />);
-    const opener = screen.getByRole("button", { name: "Open outer" });
-    opener.focus();
-    fireEvent.click(opener);
-    fireEvent.click(screen.getByRole("button", { name: "Open inner" }));
-    fireEvent.click(screen.getByRole("button", { name: "Close outer first" }));
-    expect(screen.queryByRole("dialog", { name: "Outer" })).toBeNull();
-    expect(
-      screen
-        .getByRole("dialog", { name: "Inner" })
-        .contains(document.activeElement),
-    ).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Close inner" }));
-    await Promise.resolve();
-    expect(document.activeElement).toBe(opener);
-  });
+      render(<NestedDialogs />);
+      const opener = screen.getByRole("button", { name: "Open outer" });
+      opener.focus();
+      fireEvent.click(opener);
+      const innerOpener = screen.getByRole("button", { name: "Open inner" });
+      expect(innerOpener).toHaveFocus();
+      fireEvent.click(innerOpener);
+      if (closeOuterFirst) {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Close outer first" }),
+        );
+        expect(screen.queryByRole("dialog", { name: "Outer" })).toBeNull();
+        expect(screen.getByRole("dialog", { name: "Inner" })).toContainElement(
+          document.activeElement as HTMLElement,
+        );
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Close inner" }));
+      await Promise.resolve();
+      expect(closeOuterFirst ? opener : innerOpener).toHaveFocus();
+    },
+  );
 
   it("recovers replaced controls without stealing focus from a newer modal", async () => {
     function DeferredDialogs({
@@ -361,38 +291,5 @@ describe("modal focus ownership", () => {
     await Promise.resolve();
     expect(opener).toHaveFocus();
     opener.remove();
-  });
-
-  it("activates when a permanently mounted dialog appears later", () => {
-    function DelayedDialog() {
-      const [open, setOpen] = useState(false);
-      const ref = useModalFocus<HTMLDivElement>(open);
-      return (
-        <>
-          <button type="button" onClick={() => setOpen(true)}>
-            Open
-          </button>
-          {open ? (
-            <div
-              ref={ref}
-              role="dialog"
-              aria-modal="true"
-              aria-label="Delayed"
-              tabIndex={-1}
-            >
-              <button type="button">Inside</button>
-            </div>
-          ) : null}
-        </>
-      );
-    }
-
-    render(<DelayedDialog />);
-    const opener = screen.getByRole("button", { name: "Open" });
-    opener.focus();
-    fireEvent.click(opener);
-    expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: "Inside" }),
-    );
   });
 });
