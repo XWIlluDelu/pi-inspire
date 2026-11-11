@@ -13,10 +13,10 @@ type HiddenDeletionState = Pick<
   | "sessionListLoadingOlder"
   | "sessionListHydrating"
   | "sessionListError"
+  | "sessionListIssues"
   | "clearingHidden"
   | "deletingSessionId"
-> &
-  Partial<Pick<AppState, "sessionListIssues">>;
+>;
 
 /** The drawer and each complete folder require a complete, settled selection.
  * Confirmed deletion ends active Pi instances; work does not disable it. */
@@ -38,7 +38,7 @@ export function hiddenDeletionBlockReason(
   ) {
     return "Wait for Hidden sessions to finish loading";
   }
-  if (state.sessionListIssues?.length)
+  if (state.sessionListIssues.length)
     return "Restore unavailable session sources and refresh before clearing Hidden";
   if (sessions.some((session) => session.id === state.openingSessionId))
     return "Wait for these sessions to finish opening";
@@ -50,6 +50,10 @@ export interface SessionGroup {
   /** Concise folder name (basename of cwd). */
   name: string;
   sessions: SessionSummary[];
+}
+
+function byRecency(left: SessionSummary, right: SessionSummary): number {
+  return Date.parse(right.modified) - Date.parse(left.modified);
 }
 
 /** Group sessions by exact cwd identity. Groups sort by their newest session
@@ -66,14 +70,11 @@ export function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
     groups.push({
       cwd,
       name: projectNameFromCwd(cwd),
-      sessions: [...list].sort(
-        (a, b) => Date.parse(b.modified) - Date.parse(a.modified),
-      ),
+      sessions: list.sort(byRecency),
     });
   }
-  groups.sort(
-    (a, b) =>
-      Date.parse(b.sessions[0]!.modified) - Date.parse(a.sessions[0]!.modified),
+  groups.sort((left, right) =>
+    byRecency(left.sessions[0]!, right.sessions[0]!),
   );
   return groups;
 }
@@ -88,6 +89,8 @@ export type NavCuration = Pick<
 >;
 
 interface NavSections {
+  /** Browsable sessions before the All view groups them. */
+  visible: SessionSummary[];
   /** Individually pinned sessions across projects, newest activity first. */
   pinned: SessionSummary[];
   /** Groups whose folder is pinned, ordered like ordinary groups. */
@@ -123,13 +126,12 @@ export function splitNavSections(
   const hiddenIds = new Set(curation.hiddenSessionIds);
   const pinnedCwds = new Set(curation.pinnedProjectCwds);
   const hiddenCwds = new Set(curation.hiddenProjectCwds);
-  const byRecency = (a: SessionSummary, b: SessionSummary) =>
-    Date.parse(b.modified) - Date.parse(a.modified);
   const visible = visibleSessions(sessions, curation);
   const groups = groupSessionsByCwd(
     visible.filter((session) => !pinnedIds.has(session.id)),
   );
   return {
+    visible,
     pinned: visible
       .filter((session) => pinnedIds.has(session.id))
       .sort(byRecency),
@@ -145,7 +147,3 @@ export function splitNavSections(
       .sort(byRecency),
   };
 }
-
-export { parentSegment } from "../../shared/contracts";
-
-export { compactAge } from "../format";

@@ -155,7 +155,8 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 - The header bell switches All to Needs you, a flat cross-project list. Its pressed state uses
   accent ink and tint. The count is green, or red when any session is waiting or failed.
   Needs you lists sessions waiting for input or recovery, then unseen failures, then unseen
-  completions, each in catalog recency. It includes blocked terminal Pi sessions and excludes
+  completions, newest activity first within each priority. Pinning changes the order in All.
+  Needs you includes blocked terminal Pi sessions and excludes
   Hidden and sessions still working. Viewing clears an unseen outcome, while a row opened from
   Needs you stays in place for the selected session. Search uses the current mode. Folders, Pinned,
   pagination and Hidden belong to All. The browser remembers the mode with its other navigation

@@ -9,16 +9,18 @@ import {
 } from "lucide-react";
 import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import {
+  parentSegment,
   projectNameFromCwd,
   type SessionSummary,
 } from "../../shared/contracts";
+import { compactAge } from "../format";
 import { presentSessionActivity } from "../session-activity-presentation";
 import {
   sessionSearchMatchRanges,
   sessionSnippetMatchRanges,
 } from "../session-search-presentation";
 import { shallowEqual, store, useAppState } from "../store";
-import { compactAge, parentSegment, type SessionGroup } from "./nav-model";
+import type { SessionGroup } from "./nav-model";
 import { PiLoader } from "./PiLoader";
 import { PiStatus } from "./PiStatus";
 import { SearchMatchText } from "./SearchMatchText";
@@ -62,10 +64,7 @@ function searchParentContext(cwd: string, query: string): string {
     : "";
 }
 
-/** Identity/status sits above age/project metadata at every width. Touch drawers
- * give persistent actions a separate column. The message count remains a tooltip
- * fact. Cross-project path searches replace age with directory
- * context so the title keeps its space. */
+/** Cross-project path searches show directory context in place of the age. */
 export const SessionRow = memo(function SessionRow({
   session,
   selectedSessionId,

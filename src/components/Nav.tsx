@@ -170,22 +170,17 @@ export const Nav = memo(function Nav({
   );
   const searching = sessionQuery.trim() !== "";
   const hiddenExpanded = searching || hiddenOpen;
-  // Hidden stays curated away; Needs you reads the browsable sessions only.
   const needsYou = useMemo(
     () =>
       needsYouRows(
-        [
-          ...sections.pinned,
-          ...sections.pinnedGroups.flatMap((group) => group.sessions),
-          ...sections.groups.flatMap((group) => group.sessions),
-        ],
+        sections.visible,
         sessionStatuses,
         externalSessionActivities,
         visibleSessionId ?? null,
         retainedNeed,
       ),
     [
-      sections,
+      sections.visible,
       sessionStatuses,
       externalSessionActivities,
       visibleSessionId,
