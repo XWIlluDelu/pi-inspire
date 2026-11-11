@@ -102,13 +102,11 @@ describe("tool disclosure consistency", () => {
   it("does not repeat ordinary summaries in a strip detail and retains CodeMode identity", () => {
     const activities = [
       {
-        kind: "tool" as const,
         key: "read",
         call: call("read", { path: "src/example.ts" }),
         result: result("output"),
       },
       {
-        kind: "tool" as const,
         key: "codemode",
         call: call("codemode", { code: "return 1" }),
         result: result(

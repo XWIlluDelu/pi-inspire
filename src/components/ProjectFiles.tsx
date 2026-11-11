@@ -67,7 +67,59 @@ const PICKER_CONSTRAINTS: FloatingMenuConstraints = {
   maxHeight: 320,
 };
 
-export function ProjectFilePicker({
+interface ProjectFilePickerProps {
+  scope: string;
+  showHidden: boolean;
+  onShowHiddenChange: (value: boolean) => void;
+  selected: readonly string[];
+  disabled?: boolean;
+  search: (query: string) => Promise<ProjectFileSearchResult>;
+  onAdd: (file: ProjectFileResult) => void;
+}
+
+export function ProjectFileControl({
+  scope,
+  open,
+  onOpenChange,
+  disabled = false,
+  buttonDisabled = disabled,
+  ...picker
+}: Omit<ProjectFilePickerProps, "scope"> & {
+  scope: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  buttonDisabled?: boolean;
+}) {
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        className={`icon-button ${open ? "icon-button--active" : ""}`}
+        disabled={buttonDisabled}
+        onClick={() => onOpenChange(!open)}
+        aria-label="Add project files"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="Reference project files"
+      >
+        <FolderSearch size={14} aria-hidden />
+      </button>
+      {open && scope ? (
+        <ProjectFilePicker
+          {...picker}
+          anchorRef={anchorRef}
+          scope={scope}
+          disabled={disabled}
+          onClose={() => onOpenChange(false)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function ProjectFilePicker({
   anchorRef,
   scope,
   showHidden,
@@ -77,15 +129,8 @@ export function ProjectFilePicker({
   search,
   onAdd,
   onClose,
-}: {
+}: ProjectFilePickerProps & {
   anchorRef: RefObject<HTMLButtonElement | null>;
-  scope: string;
-  showHidden: boolean;
-  onShowHiddenChange: (value: boolean) => void;
-  selected: readonly string[];
-  disabled?: boolean;
-  search: (query: string) => Promise<ProjectFileSearchResult>;
-  onAdd: (file: ProjectFileResult) => void;
   onClose: () => void;
 }) {
   const transportGeneration = useAppState((state) => state.transportGeneration);

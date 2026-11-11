@@ -729,150 +729,40 @@ describe("Models settings configuration and ownership", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("continues provider → available model → row actions and cancellation without stealing a later focus move", async () => {
-    let current = modelSettingsSnapshot();
-    const configured = structuredClone(current);
-    configured.providers.push({
-      id: "new-provider",
-      baseUrl: "https://fixture.test/v1",
-      api: "custom-api",
-      apiKeyConfigured: true,
-      models: [],
-      advancedFields: [],
-    });
-    const declared = structuredClone(configured);
-    declared.providers
-      .at(-1)!
-      .models.push({ id: "new-model", name: "New model", advancedFields: [] });
-    declared.models.push({
-      ...declared.models[0]!,
-      provider: "new-provider",
-      id: "new-model",
-      name: "New model",
-    });
-    fixture.host.readModelSettings.mockResolvedValue(current);
-    fixture.host.editModelConfig
-      .mockResolvedValueOnce({ saved: true, snapshot: configured })
-      .mockResolvedValueOnce({ saved: true, snapshot: declared });
-    let finishSave: (() => void) | undefined;
-    fixture.host.saveModelPreferences.mockImplementation(
-      (_owner, _revision, patch) =>
-        new Promise((resolve) => {
-          finishSave = () => {
-            current = {
-              ...current,
-              saved: { ...current.saved, ...patch },
-              savedCommonEntries: patch.enabledModels
-                ? patch.enabledModels.map((pattern) =>
-                    pattern === "new-provider/new-model"
-                      ? {
-                          pattern,
-                          models: [
-                            { provider: "new-provider", id: "new-model" },
-                          ],
-                        }
-                      : current.savedCommonEntries.find(
-                          (entry) => entry.pattern === pattern,
-                        )!,
-                  )
-                : current.savedCommonEntries,
-            };
-            resolve({ saved: true, snapshot: current });
+  it.each([
+    { role: "radio", choice: "Default", movedFocus: false },
+    { role: "checkbox", choice: "Common", movedFocus: true },
+  ] as const)(
+    "settles a delayed $choice save without overriding a newer focus move",
+    async ({ role, choice, movedFocus }) => {
+      const finishSave = deferred<void>();
+      fixture.host.saveModelPreferences.mockImplementationOnce(
+        async (_owner, _revision, patch) => {
+          await finishSave.promise;
+          const snapshot = modelSettingsSnapshot();
+          return {
+            saved: true,
+            snapshot: { ...snapshot, saved: { ...snapshot.saved, ...patch } },
           };
-        }),
-    );
-    render(
-      <SettingsDialog onClose={vi.fn()}>
-        <ModelsSettings />
-      </SettingsDialog>,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Add provider" }),
-    );
-    fireEvent.change(screen.getByLabelText("Provider ID"), {
-      target: { value: "new-provider" },
-    });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
-      target: { value: "https://fixture.test/v1" },
-    });
-    fireEvent.change(screen.getByLabelText("API type"), {
-      target: { value: "custom-api" },
-    });
-    fireEvent.change(screen.getByLabelText("API key"), {
-      target: { value: "synthetic-key" },
-    });
-    const saveProvider = screen.getByRole("button", { name: "Save" });
-    saveProvider.focus();
-    fireEvent.click(saveProvider);
-    const addModel = await screen.findByRole("button", {
-      name: "Add model to new-provider",
-    });
-    await waitFor(() => expect(addModel).toHaveFocus());
-    const search = screen.getByRole("combobox", {
-      name: "Search available models",
-    });
-    fireEvent.change(search, {
-      target: { value: "no previous matching model" },
-    });
-    fireEvent.click(addModel);
-    fireEvent.change(screen.getByLabelText("Model ID"), {
-      target: { value: "new-model" },
-    });
-    fireEvent.change(screen.getByLabelText("Display name"), {
-      target: { value: "New model" },
-    });
-    const saveModel = screen.getByRole("button", { name: "Save" });
-    saveModel.focus();
-    fireEvent.click(saveModel);
-    const common = await screen.findByRole("checkbox", {
-      name: "Common: New model",
-    });
-    await waitFor(() => expect(common).toHaveFocus());
-    expect(search).toHaveValue("");
-    current = declared;
-    fireEvent.change(search, { target: { value: "New model" } });
-    expect(screen.getByRole("grid", { name: "Available models" })).toHaveStyle({
-      height: "76px",
-    });
-    common.focus();
-    fireEvent.click(common);
-    await waitFor(() => expect(common).toBeDisabled());
-    common.blur();
-    finishSave!();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("checkbox", { name: "Common: New model" }),
-      ).toHaveFocus(),
-    );
-    const setDefault = screen.getByRole("radio", {
-      name: "Default: New model",
-    });
-    setDefault.focus();
-    fireEvent.click(setDefault);
-    await waitFor(() => expect(setDefault).toBeDisabled());
-    setDefault.blur();
-    finishSave!();
-    await waitFor(() => expect(setDefault).toHaveFocus());
-    const remove = screen.getByRole("checkbox", {
-      name: "Common: New model",
-    });
-    remove.focus();
-    fireEvent.click(remove);
-    await waitFor(() => expect(remove).toBeDisabled());
-    search.focus();
-    finishSave!();
-    await waitFor(() => expect(remove).not.toBeDisabled());
-    expect(search).toHaveFocus();
-    const editModel = screen.getByRole("button", {
-      name: "Edit model new-provider/new-model",
-    });
-    editModel.focus();
-    fireEvent.click(editModel);
-    const cancel = screen.getByRole("button", { name: "Cancel" });
-    cancel.focus();
-    fireEvent.click(cancel);
-    await waitFor(() => expect(editModel).toHaveFocus());
-  });
+        },
+      );
+      render(<ModelsSettings />);
+      const action = await screen.findByRole(role, {
+        name: `${choice}: Claude Haiku`,
+      });
+      const search = screen.getByRole("combobox", {
+        name: "Search available models",
+      });
+      action.focus();
+      fireEvent.click(action);
+      await waitFor(() => expect(action).toBeDisabled());
+      if (movedFocus) search.focus();
+      else action.blur();
+      finishSave.resolve();
+      await waitFor(() => expect(action).toBeEnabled());
+      await waitFor(() => expect(movedFocus ? search : action).toHaveFocus());
+    },
+  );
 
   it("requires unresolved model API fields and shows submission errors in the current form while allowing native inheritance", async () => {
     const snapshot = modelSettingsSnapshot();

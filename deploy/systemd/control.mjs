@@ -1,9 +1,16 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const sourceProcessTree = new URL("../../server/process-tree.mjs", import.meta.url);
+const { runChild } = await import(
+  existsSync(sourceProcessTree)
+    ? sourceProcessTree.href
+    : new URL("../../build/server/process-tree.mjs", import.meta.url).href
+);
 
 const HOST_SERVICE_NAME = "inspire-host.service";
 const TERMINAL_SERVICE_NAME = "inspire-terminal.service";
@@ -41,28 +48,8 @@ export function terminalServicePath(environment = process.env) {
   );
 }
 
-function runSystemctl(arguments_, environment = process.env) {
-  return new Promise((resolveRun) => {
-    const child = spawn("systemctl", arguments_, {
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    child.once("error", (error) =>
-      resolveRun({
-        code: 1,
-        issued: false,
-        stdout,
-        stderr: `${stderr}${error.message}`,
-      }),
-    );
-    child.once("exit", (code) =>
-      resolveRun({ code: code ?? 1, stdout, stderr }),
-    );
-  });
+export function runSystemctl(arguments_, environment = process.env) {
+  return runChild("systemctl", arguments_, { env: environment });
 }
 
 function properties(text) {

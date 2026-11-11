@@ -489,48 +489,27 @@ bounded successful-only provider-local MRU; unavailable MRU entries stay saved b
 - Changes commit selection/recency only on success; failed thinking rolls back, and both failures
   warn.
 
-New uses the same editor/artifacts, with a full-width editable directory address/browser below the
-toolbar. Its filled bordered input signals path editability and stays separate from the message.
-The first-message editor receives initial autofocus. Directory Enter does not submit creation; IME
-confirmation stays native. The directory browser recovers temporary level/drive reads without
-switching the requested target to Home; only a confirmed invalid or inaccessible initial path
-permits that fallback. Same-scope reloads keep a successful listing, and drive discovery never blocks
-selection. Changing hidden-folder visibility refreshes the listing and preserves unsubmitted address
-edits. Navigation, visibility, transport changes and dismissal retire obsolete reads.
+New shares the editor, attachment controls and project-file picker with the session composer. The
+first-message editor receives autofocus. The editable project path and its browse control sit above
+it. Enter in the path field does not submit a session, and IME confirmation stays native.
+[[workbench]] owns directory browsing and [[session-continuity]] owns explicit folder creation.
+**Create folder and start** needs no second confirmation. Changing the path retires the action for
+the old path. Creation preserves the staged input and explicit or inherited model and thinking
+choices. Pi resolves any untouched defaults in the created directory.
 
-A missing typed directory offers one contextual **Create folder and start** action, with no further
-confirmation. Only that action authorizes recursive directory creation; Send, Enter, browsing and
-model/file observations never create directories. A file or inaccessible path is not offered as
-creatable. The action preserves the exact first message, local artifacts and explicit/inherited
-model and thinking choices. When a missing directory prevents a default preview, Pi resolves its
-normal defaults after creation in that directory, with no substitute execution cwd. Changing the
-path immediately retires the old action, and late observations cannot restore it. Failure preserves
-staged work. Opening retained history never creates its missing directory.
+[[model-settings]] owns readiness, inherited selection and workspace defaults. Prospective metadata
+uses Pi's public resource registries and trust settings. Its commands, prompt templates and skills
+feed both completion and extension controls. A fresh directory-scoped read replaces inherited
+commands, including removals. A read-only source keeps known choices. If the source changes owner
+or becomes unavailable, New resolves remaining choices from the prospective directory. The
+missing-folder action keeps its loading feedback while these choices are unresolved and offers
+Retry after persistent failure. Existing session commands appear after creation; Host Compact
+is also available before the first message. Automatic discovery waits for a pause in typing;
+opening the model picker refreshes after Host directory validation.
 
-Readiness distinguishes unresolved model/directory checks from in-flight creation. Transient
-read-only prechecks recover automatically without creating a directory/session or delivering input;
-persistent failures and configuration problems keep local recovery. Pi's `unknown/unknown` means no
-model. While cwd matches and the source workspace is available, the inherited worker supplies model
-and resource completion.
-
-Prospective-directory metadata discovery returns extension commands, prompt templates and skill
-commands from Pi's public registries, respecting its resource and trust settings without
-session-start hooks. Controls and first-message completion use that shared target-owned inventory;
-directory/transport changes immediately retire stale observations. Fresh discovery replaces the
-inherited inventory, including resources removed from that directory. Read-only sources keep known
-choices. If a source becomes read-only, changes owner, or disappears during discovery, New checks
-the prospective directory and uses its defaults for any unresolved selection. Unresolved
-source selection keeps its loading feedback alongside the missing-folder action while recovering,
-and offers Retry only after persistent failure. Existing-session built-ins appear after creation;
-Host Compact also works before the first message.
-
-Files stay browser-local until Pi supplies a session identity, then follow the ordinary upload
-lifecycle. Completion sends the first prompt only while that session remains selected; otherwise
-the work stays in its partition. The editor grows to a bounded viewport height. New model/thinking
-inheritance and workspace-default resolution follow [[model-settings]]: late source selection is
-inherited, later manual effort wins, and catalog refresh alone does not reapply defaults.
-Non-reasoning models disable thinking. Automatic discovery waits for a pause in directory typing;
-opening the picker refreshes immediately after Host directory validation.
+Local files stay in the browser until Pi assigns a session identity. They then use normal uploads.
+The first prompt sends only while the created session remains selected; otherwise its draft and
+attachments stay with that session.
 
 ## Checks
 

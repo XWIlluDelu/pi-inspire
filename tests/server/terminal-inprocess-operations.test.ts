@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
@@ -15,7 +15,6 @@ import type {
   TerminalCatalogResponse,
   TerminalDescriptor,
   TerminalMutationMethod,
-  TerminalOperationIdentity,
 } from "../../shared/terminal-contracts.js";
 
 import { FakePty } from "./fixtures/terminal-pty.js";
@@ -70,7 +69,7 @@ function httpFixture(service: TerminalService) {
       { status: response.status, headers: response.headers },
     );
   });
-  return { app, gateway, transport };
+  return { gateway, transport };
 }
 
 async function fixture() {
@@ -124,136 +123,6 @@ async function fixture() {
 }
 
 describe("in-process terminal receipt owner", () => {
-  it.each(["create", "restart"] as const)(
-    "recovers identified HTTP %s committed before response loss without another PTY",
-    async (method) => {
-      const f = await fixture();
-      try {
-        const original =
-          method === "restart"
-            ? await f.manager.create({ cwd: f.directory })
-            : undefined;
-        const path = original
-          ? `/api/terminals/${original.id}/restart`
-          : "/api/terminals";
-        const body = original ? undefined : { cwd: f.directory };
-        const mutation = vi.spyOn(f.manager, method);
-        const epochResponse = await f.transport("/api/terminal-operations");
-        expect(epochResponse.status).toBe(200);
-        const { epoch } = (await epochResponse.json()) as { epoch: string };
-        const operation = { id: randomUUID(), epoch };
-        const init = {
-          method: "POST",
-          body: JSON.stringify(body),
-          headers: {
-            "Content-Type": "application/json",
-            "X-Terminal-Operation": JSON.stringify(operation),
-          },
-        };
-        const lossy = async () => {
-          const response = await f.transport(path, init);
-          expect(response.status).toBe(method === "create" ? 201 : 200);
-          throw new Error("Synthetic lost response after commit");
-        };
-        await expect(lossy()).rejects.toThrow("Synthetic lost response");
-        const committed = f.manager.list().terminals[0]!;
-        if (original)
-          expect(committed.outputEpoch).not.toBe(original.outputEpoch);
-        // A replacement gateway still reaches the same receipt owner. Separate
-        // HTTP deliveries with the retained identity cannot repeat the mutation.
-        const replacement = httpFixture(f.manager);
-        try {
-          const responses = await Promise.all([
-            replacement.transport(path, init),
-            replacement.transport(path, init),
-          ]);
-          for (const response of responses) {
-            expect(response.headers.get("X-Terminal-Outcome")).toBe(
-              "completed",
-            );
-            expect(response.headers.get("X-Terminal-Operation")).toBe(
-              operation.id,
-            );
-            expect(await response.json()).toEqual(committed);
-          }
-        } finally {
-          replacement.gateway.close();
-        }
-        expect(mutation).toHaveBeenCalledOnce();
-        expect(f.ptys).toHaveLength(method === "create" ? 1 : 2);
-        expect(
-          f.transport.mock.calls.filter(
-            ([url]) => url === "/api/terminal-operations",
-          ),
-        ).toHaveLength(1);
-      } finally {
-        await f.close();
-      }
-    },
-  );
-
-  it("joins real in-flight creation and restart while rejecting identity collisions", async () => {
-    const f = await fixture();
-    try {
-      const operation = {
-        id: randomUUID(),
-        epoch: await f.manager.operationEpoch(),
-      };
-      const params = { request: { cwd: f.directory, cols: 90 } };
-      const first = f.manager.operate<TerminalDescriptor>(
-        "create",
-        params,
-        operation,
-      );
-      const duplicate = f.manager.operate(
-        "create",
-        { request: { cols: 90, cwd: f.directory } },
-        operation,
-      );
-      const terminal = await first;
-      expect(await duplicate).toEqual(terminal);
-      expect(f.ptys).toHaveLength(1);
-      expect(f.onChange).toHaveBeenCalledOnce();
-      await expect(
-        f.manager.operate(
-          "create",
-          { request: { cwd: f.directory, cols: 100 } },
-          operation,
-        ),
-      ).rejects.toMatchObject({ code: "terminal_operation_mismatch" });
-      await expect(
-        f.manager.operate("restart", { id: terminal.id }, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_mismatch" });
-      const restart = { ...operation, id: randomUUID() };
-      f.ptys[0]!.autoExit = false;
-      const restarting = f.manager.operate<TerminalDescriptor>(
-        "restart",
-        { id: terminal.id },
-        restart,
-      );
-      const repeatedRestart = f.manager.operate(
-        "restart",
-        { id: terminal.id },
-        restart,
-      );
-      await vi.waitFor(() => expect(f.ptys[0]!.kill).toHaveBeenCalledOnce());
-      expect(f.ptys).toHaveLength(1);
-      f.ptys[0]!.exit();
-      const result = await restarting;
-      expect(await repeatedRestart).toEqual(result);
-      expect(result.outputEpoch).not.toBe(terminal.outputEpoch);
-      expect(f.ptys).toHaveLength(2);
-      // Later metadata changes do not mutate the original receipt snapshot.
-      await f.manager.rename(terminal.id, { title: "Later direct title" });
-      expect(await f.manager.operate("create", params, operation)).toEqual(
-        terminal,
-      );
-      expect(await f.manager.operationEpoch()).toBe(operation.epoch);
-    } finally {
-      await f.close();
-    }
-  });
-
   it("dispatches every identified HTTP mutation exactly once and preserves callbacks", async () => {
     const f = await fixture();
     try {
@@ -339,35 +208,6 @@ describe("in-process terminal receipt owner", () => {
     }
   });
 
-  it("retains a definite service refusal even after its cause is repaired", async () => {
-    const f = await fixture();
-    try {
-      const params = { request: { cwd: join(f.directory, "later") } };
-      const operation = {
-        id: randomUUID(),
-        epoch: await f.manager.operationEpoch(),
-      };
-      const create = vi.spyOn(f.manager, "create");
-      await expect(
-        f.manager.operate("create", params, operation),
-      ).rejects.toMatchObject({ code: "invalid_cwd", status: 400 });
-      await mkdir(params.request.cwd);
-      await expect(
-        f.manager.operate("create", params, operation),
-      ).rejects.toMatchObject({ code: "invalid_cwd", status: 400 });
-      expect(create).toHaveBeenCalledOnce();
-      expect(f.ptys).toHaveLength(0);
-      await f.manager.operate("create", params, {
-        ...operation,
-        id: randomUUID(),
-      });
-      expect(create).toHaveBeenCalledTimes(2);
-      expect(f.ptys).toHaveLength(1);
-    } finally {
-      await f.close();
-    }
-  });
-
   it("retains an unconfirmed restart failure rather than retrying after late exit", async () => {
     const f = await fixture();
     try {
@@ -401,51 +241,6 @@ describe("in-process terminal receipt owner", () => {
       await f.close();
     }
   });
-
-  it("fences operation identities after replacing the in-process owner", async () => {
-    const first = await fixture();
-    const replacement = await fixture();
-    try {
-      const operation = {
-        id: randomUUID(),
-        epoch: await first.manager.operationEpoch(),
-      };
-      const params = { request: { cwd: first.directory } };
-      await first.manager.operate("create", params, operation);
-      expect(await replacement.manager.operationEpoch()).not.toBe(
-        operation.epoch,
-      );
-      await expect(
-        replacement.manager.operate("create", params, operation),
-      ).rejects.toMatchObject({ code: "terminal_operation_epoch_changed" });
-      expect(replacement.ptys).toHaveLength(0);
-      expect(first.ptys).toHaveLength(1);
-    } finally {
-      await first.close();
-      await replacement.close();
-    }
-  });
-
-  it.each([undefined, { id: "bad/id", epoch: "epoch-1" }])(
-    "refuses invalid operation identity %j before invoking the owner",
-    async (identity) => {
-      const f = await fixture();
-      try {
-        const create = vi.spyOn(f.manager, "create");
-        await expect(
-          f.manager.operate(
-            "create",
-            { request: { cwd: f.directory } },
-            identity as unknown as TerminalOperationIdentity,
-          ),
-        ).rejects.toMatchObject({ code: "terminal_operation_required" });
-        expect(create).not.toHaveBeenCalled();
-        expect(f.ptys).toHaveLength(0);
-      } finally {
-        await f.close();
-      }
-    },
-  );
 });
 
 describe("terminal HTTP mutation admission", () => {

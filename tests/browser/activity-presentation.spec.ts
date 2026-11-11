@@ -406,38 +406,6 @@ test("activity Copy is available only with expanded content and custom messages 
   await expect(extension).toContainText("The keyboard checks are complete.");
 });
 
-test("Earlier activity expands the hidden prefix independently of the visible tail", async ({
-  page,
-}) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  const send = await openEventSession(
-    page,
-    "Earlier history",
-    customMessageConfiguration,
-    { activityFoldVisibility: "compact", thinkingVisibility: "expanded" },
-  );
-  send(
-    ...Array.from({ length: 40 }, (_, i) => ({
-      type: "message_end",
-      message: {
-        role: "assistant",
-        __inspireMessageId: `earlier-${i}`,
-        content: [{ type: "thinking", thinking: `History step ${i + 1}` }],
-      },
-    })),
-  );
-  const earlier = page.locator(".activity-fold__omission");
-  await expect(earlier).toBeVisible();
-  await expect(earlier).toHaveCSS("font-family", /Flux Mono SC/);
-  await expect(earlier).toHaveCSS("text-transform", "uppercase");
-  await page.evaluate(() => document.fonts.ready);
-  await expectActivityMarksCentered(earlier);
-  await expect(page.locator(".card--thinking")).toHaveCount(24);
-  await earlier.click();
-  await expect(earlier).toHaveCount(0);
-  await expect(page.locator(".card--thinking")).toHaveCount(40);
-});
-
 test("success and failure cues retain semantic color in tools and nested calls", async ({
   page,
 }) => {

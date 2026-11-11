@@ -66,6 +66,7 @@ import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
 import { resolveProjectDirectory } from "./paths.js";
+import { OperationReceipts } from "./operation-receipts.js";
 import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
@@ -414,10 +415,6 @@ const gitDiffSchema = z.object({
     .max(16_384)
     .regex(/^[A-Za-z0-9_-]+$/),
 });
-const MAX_PROMPT_OPERATION_RECEIPTS = 65_536;
-const MAX_PROMPT_OPERATION_RESULTS = 2_048;
-const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
-const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
 const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 
@@ -628,44 +625,17 @@ export function createInspireServer(deps: AppDependencies): {
     accepted: true;
     historyEntry: Awaited<ReturnType<RuntimeLike["prompt"]>>;
   };
-  interface PromptOperationReceipt {
-    fingerprint: string;
-    promise: Promise<PromptOperationResponse> | null;
-    settledAt: number | null;
-    resultBytes: number;
-  }
-  // A process authority must never forget an operation and later accept the
-  // same ID again. Settled response bodies retire to small fingerprint
-  // tombstones; the bounded process-lifetime map fails closed at its generous
-  // limit instead of silently evicting identities.
   const pendingOperations = new PendingOperationReceipts();
-  const promptOperations = new Map<string, PromptOperationReceipt>();
-  const retainedPromptOperationResults: PromptOperationReceipt[] = [];
-  let retainedPromptOperationResultBytes = 0;
-  const retirePromptOperationResults = (now = Date.now()): void => {
-    while (retainedPromptOperationResults.length > 0) {
-      const operation = retainedPromptOperationResults[0]!;
-      if (
-        retainedPromptOperationResults.length <= MAX_PROMPT_OPERATION_RESULTS &&
-        retainedPromptOperationResultBytes <=
-          MAX_PROMPT_OPERATION_RESULT_BYTES &&
-        operation.settledAt !== null &&
-        now - operation.settledAt <= PROMPT_OPERATION_RESULT_TTL_MS
-      )
-        break;
-      retainedPromptOperationResults.shift();
-      operation.promise = null;
-      retainedPromptOperationResultBytes -= operation.resultBytes;
-      operation.resultBytes = 0;
-    }
-  };
+  const promptOperations = new OperationReceipts<PromptOperationResponse>({
+    message: "This Host has reached its process-lifetime prompt receipt limit",
+    code: "PROMPT_OPERATION_CAPACITY",
+  });
 
   const observePrompt = async (
     operationId: string,
-    operation: PromptOperationReceipt,
+    completion: Promise<PromptOperationResponse> | null,
     response: Response,
   ) => {
-    const completion = operation.promise;
     if (!completion)
       throw requestError(
         "This Host resolved that prompt operation, but its receipt retired; inspect the conversation before resending",
@@ -1372,68 +1342,31 @@ export function createInspireServer(deps: AppDependencies): {
         { code: "HOST_AUTHORITY_CHANGED" },
       );
 
-    retirePromptOperationResults();
     const fingerprint = createHash("sha256")
       .update(JSON.stringify(prompt))
       .digest("hex");
-    let operation = promptOperations.get(prompt.operationId);
+    const operation = promptOperations.get(prompt.operationId);
     if (operation && operation.fingerprint !== fingerprint)
       throw requestError(
         "That prompt operation ID was reused with different content",
         409,
         { code: "PROMPT_OPERATION_MISMATCH" },
       );
-    if (operation && !operation.promise)
-      throw requestError(
-        "This Host already resolved that prompt operation, but its response receipt has retired; inspect the conversation before resending",
-        409,
-        { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
-      );
-    if (!operation) {
-      if (promptOperations.size >= MAX_PROMPT_OPERATION_RECEIPTS)
-        throw requestError(
-          "This Host has reached its process-lifetime prompt receipt limit",
-          503,
-          { code: "PROMPT_OPERATION_CAPACITY" },
-        );
-      const receipt: PromptOperationReceipt = {
-        fingerprint,
-        promise: null,
-        settledAt: null,
-        resultBytes: 0,
-      };
-      const {
-        operationId: _operationId,
-        authorityId: _authorityId,
-        ...request
-      } = prompt;
-      const promise = deps.runtime.prompt(request).then((historyEntry) => {
-        // This runs only for the first successful acceptance of an operation;
-        // response retries reuse the same receipt without retriggering checks.
-        void updateCoordinator.promptAccepted();
-        return { accepted: true as const, historyEntry };
-      });
-      receipt.promise = promise;
-      void promise.then(
-        (result) => {
-          receipt.settledAt = Date.now();
-          receipt.resultBytes = Buffer.byteLength(JSON.stringify(result));
-          retainedPromptOperationResultBytes += receipt.resultBytes;
-          retainedPromptOperationResults.push(receipt);
-          retirePromptOperationResults(receipt.settledAt);
-        },
-        () => {
-          receipt.settledAt = Date.now();
-          retainedPromptOperationResults.push(receipt);
-          retirePromptOperationResults(receipt.settledAt);
-        },
-      );
-      promptOperations.set(prompt.operationId, receipt);
-      operation = receipt;
-    }
+    const completion = operation
+      ? operation.result
+      : promptOperations.start(prompt.operationId, fingerprint, async () => {
+          const {
+            operationId: _operationId,
+            authorityId: _authorityId,
+            ...input
+          } = prompt;
+          const historyEntry = await deps.runtime.prompt(input);
+          void updateCoordinator.promptAccepted();
+          return { accepted: true, historyEntry };
+        });
     response
       .status(202)
-      .json(await observePrompt(prompt.operationId, operation, response));
+      .json(await observePrompt(prompt.operationId, completion, response));
   });
   app.get("/api/prompt/:operationId", async (request, response) => {
     response.set("X-Inspire-Authority", authorityId);
@@ -1443,7 +1376,6 @@ export function createInspireServer(deps: AppDependencies): {
         code: "HOST_AUTHORITY_CHANGED",
         outcomeUnknown: true,
       });
-    retirePromptOperationResults();
     const operation = promptOperations.get(operationId);
     if (!operation)
       throw requestError("This Host cannot identify that prompt receipt", 409, {
@@ -1452,7 +1384,7 @@ export function createInspireServer(deps: AppDependencies): {
       });
     response
       .status(202)
-      .json(await observePrompt(operationId, operation, response));
+      .json(await observePrompt(operationId, operation.result, response));
   });
   app.get("/api/pi/changelog", async (_request, response) => {
     response.json(await installedPiChangelog());
@@ -1566,6 +1498,12 @@ export function createInspireServer(deps: AppDependencies): {
         outcomeUnknown: true,
       });
   };
+  const pendingResponse = (
+    recovered: Awaited<ReturnType<RuntimeLike["recoverPending"]>>,
+  ) => ({
+    ...recovered,
+    ...(recovered.attachments?.length ? { authorityId } : {}),
+  });
   app.get("/api/pending/operations/:operationId", async (request, response) => {
     response.set("X-Inspire-Authority", authorityId);
     const operation = pendingOperationSchema
@@ -1575,46 +1513,33 @@ export function createInspireServer(deps: AppDependencies): {
         operationId: request.params.operationId,
       });
     assertPendingAuthority(operation.authorityId);
-    const recovered = await pendingOperations.observe(operation);
-    response.json({
-      ...recovered,
-      ...(recovered.attachments?.length ? { authorityId } : {}),
-    });
+    response.json(pendingResponse(await pendingOperations.observe(operation)));
   });
-  app.post("/api/control/abort", async (request, response) => {
-    response.set("X-Inspire-Authority", authorityId);
-    const operation = pendingOperationSchema.parse(request.body);
-    assertPendingAuthority(operation.authorityId);
-    const recovered = await pendingOperations.run(
-      { ...operation, action: "abort" },
-      () => deps.runtime.abort(operation.sessionId, operation.expectedViewId),
-    );
-    response.json({
-      ...recovered,
-      ...(recovered.attachments?.length ? { authorityId } : {}),
+  for (const [path, action] of [
+    ["/api/control/abort", "abort"],
+    ["/api/pending/recover", "recover"],
+  ] as const) {
+    app.post(path, async (request, response) => {
+      response.set("X-Inspire-Authority", authorityId);
+      const operation = pendingOperationSchema.parse(request.body);
+      assertPendingAuthority(operation.authorityId);
+      const recovered = await pendingOperations.run(
+        { ...operation, action },
+        () =>
+          action === "abort"
+            ? deps.runtime.abort(operation.sessionId, operation.expectedViewId)
+            : deps.runtime.recoverPending(
+                operation.sessionId,
+                operation.expectedViewId,
+              ),
+      );
+      response.json(pendingResponse(recovered));
     });
-  });
+  }
   app.post("/api/pending/text", async (request, response) => {
     response.json(
       await deps.runtime.pendingText(pendingReadSchema.parse(request.body)),
     );
-  });
-  app.post("/api/pending/recover", async (request, response) => {
-    response.set("X-Inspire-Authority", authorityId);
-    const operation = pendingOperationSchema.parse(request.body);
-    assertPendingAuthority(operation.authorityId);
-    const recovered = await pendingOperations.run(
-      { ...operation, action: "recover" },
-      () =>
-        deps.runtime.recoverPending(
-          operation.sessionId,
-          operation.expectedViewId,
-        ),
-    );
-    response.json({
-      ...recovered,
-      ...(recovered.attachments?.length ? { authorityId } : {}),
-    });
   });
   app.post("/api/pending/clear", async (request, response) => {
     const { sessionId } = clearPendingSchema.parse(request.body);

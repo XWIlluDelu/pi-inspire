@@ -336,15 +336,17 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   without turning a successful directory load into an error; late discovery belongs to the dialog
   lifetime, not a superseded directory request.
 
-  A missing or relative starting point falls back to the host home. The picker path is editable,
-  wraps long text and grows/shrinks with content and available width. Typed project paths expand
+  An empty or relative starting point uses the Host home. Transient failures retry the requested
+  starting path. A confirmed invalid or inaccessible starting path falls back to the Host home.
+  The editable picker path wraps and grows with content and available width. Typed project paths expand
   Host-native `~`/`~/` (also `~\` on Windows) before browsing, model/file observations, explicit
   creation and session start. The browser machine's home, environment variables, globs and other
   users' homes are never expanded. Enter browses the typed path without selecting it. Use this
   directory validates an edited path against the Host before selection instead of choosing the old
   listing. Errors keep the draft; editing clears the error for retry. While browsing, the path is
   temporarily read-only but keeps keyboard focus, and stale or dismissed requests cannot select a
-  directory. Navigation withdraws the old listing immediately. If loading displaced list focus,
+  directory. Navigation withdraws the old listing, while a reload of the same path and filter
+  retains it during the read. If loading displaced list focus,
   completion focuses the first available folder (or list container) only while no newer control
   owns focus.
 

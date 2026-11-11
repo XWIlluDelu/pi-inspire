@@ -2,11 +2,7 @@ import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requestError } from "../../server/request-error.js";
-import {
-  closeHostApiFixture,
-  hostApiFixture,
-  token,
-} from "./fixtures/host-api.js";
+import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 
 describe("Pending handoff receipts", () => {
   let f: Awaited<ReturnType<typeof hostApiFixture>>;
@@ -38,11 +34,7 @@ describe("Pending handoff receipts", () => {
       };
       const path =
         action === "recover" ? "/api/pending/recover" : "/api/control/abort";
-      const post = () =>
-        request(f.application.server)
-          .post(path)
-          .set("Authorization", `Bearer ${token}`)
-          .send(body);
+      const post = () => f.localRequest.post(path).send(body);
       const first = post().then((response) => response);
       await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
       expect(operation).toHaveBeenCalledWith(
@@ -58,9 +50,8 @@ describe("Pending handoff receipts", () => {
         steering: ["new queue must remain"],
         followUp: [],
       });
-      const reclaimed = await request(f.application.server)
+      const reclaimed = await f.localRequest
         .get(`/api/pending/operations/${body.operationId}`)
-        .set("Authorization", `Bearer ${token}`)
         .query({
           authorityId: body.authorityId,
           sessionId: body.sessionId,
@@ -76,17 +67,15 @@ describe("Pending handoff receipts", () => {
         { authorityId: randomUUID() },
         { expectedViewId: "another-view" },
       ]) {
-        await request(f.application.server)
+        await f.localRequest
           .post(path)
-          .set("Authorization", `Bearer ${token}`)
           .send({ ...body, ...changed })
           .expect(409);
       }
-      await request(f.application.server)
+      await f.localRequest
         .post(
           action === "recover" ? "/api/control/abort" : "/api/pending/recover",
         )
-        .set("Authorization", `Bearer ${token}`)
         .send(body)
         .expect(409);
       expect(operation).toHaveBeenCalledOnce();
@@ -107,11 +96,7 @@ describe("Pending handoff receipts", () => {
       authorityId: f.application.authorityId,
       operationId: randomUUID(),
     };
-    const post = () =>
-      request(f.application.server)
-        .post("/api/pending/recover")
-        .set("Authorization", `Bearer ${token}`)
-        .send(body);
+    const post = () => f.localRequest.post("/api/pending/recover").send(body);
     const failed = await post().expect(500);
     expect(failed.headers["x-inspire-pending-operation"]).toBe(
       body.operationId,
@@ -119,9 +104,8 @@ describe("Pending handoff receipts", () => {
     expect(failed.headers["x-inspire-pending-outcome"]).toBe("failed");
     recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
     const again = await post().expect(500);
-    const observed = await request(f.application.server)
+    const observed = await f.localRequest
       .get(`/api/pending/operations/${body.operationId}`)
-      .set("Authorization", `Bearer ${token}`)
       .query({
         authorityId: body.authorityId,
         sessionId: body.sessionId,
@@ -152,9 +136,8 @@ describe("Pending handoff receipts", () => {
         recoveredAttachments: attachments,
       }),
     );
-    const response = await request(f.application.server)
+    const response = await f.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         message: "caption",
@@ -179,9 +162,8 @@ describe("Pending handoff receipts", () => {
       .post("/api/pending/recover")
       .send(body)
       .expect(401);
-    await request(f.application.server)
+    await f.localRequest
       .get(`/api/pending/operations/${body.operationId}`)
-      .set("Authorization", `Bearer ${token}`)
       .query({
         authorityId: body.authorityId,
         sessionId: body.sessionId,

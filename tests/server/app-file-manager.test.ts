@@ -4,11 +4,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { showInFileManager } from "../../server/file-manager.js";
 import { fileResourceReference } from "../../shared/resource-references.js";
-import {
-  closeHostApiFixture,
-  hostApiFixture,
-  token,
-} from "./fixtures/host-api.js";
+import { closeHostApiFixture, hostApiFixture } from "./fixtures/host-api.js";
 
 vi.mock("../../server/file-manager.js", () => ({
   showInFileManager: vi.fn().mockResolvedValue(undefined),
@@ -26,18 +22,16 @@ describe("show in file manager authority", () => {
     await mkdir(join(project, "nested"));
     await writeFile(join(project, "literal%20name.md"), "content");
     await writeFile(join(fixture.temporary, "outside.md"), "outside");
-    const opened = await request(fixture.application.server)
+    const opened = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: project })
       .expect(200);
     sessionId = opened.body.active.sessionId;
   });
   afterEach(async () => closeHostApiFixture(fixture));
   const reveal = (body: Record<string, unknown>) =>
-    request(fixture.application.server)
+    fixture.localRequest
       .post("/api/resources/show-in-file-manager")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId, ...body });
 
   it("requires authentication before native integration", async () => {
@@ -53,9 +47,8 @@ describe("show in file manager authority", () => {
   });
 
   it("shows exact workspace files and directories without interpreting filename escapes", async () => {
-    const preview = await request(fixture.application.server)
+    const preview = await fixture.localRequest
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId,
         reference: "literal%20name.md",
@@ -70,9 +63,8 @@ describe("show in file manager authority", () => {
       join(project, "literal%20name.md"),
       false,
     );
-    const content = await request(fixture.application.server)
+    const content = await fixture.localRequest
       .get(`/api/resources/${preview.body.id}/content`)
-      .set("Authorization", `Bearer ${token}`)
       .query({ sessionId })
       .expect(200);
     expect(content.text).toBe("content");

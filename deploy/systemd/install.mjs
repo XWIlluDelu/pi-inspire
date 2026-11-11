@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -10,6 +9,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runSystemctl } from "./control.mjs";
 
 export function systemdEscape(value) {
   return value.replace(/[^A-Za-z0-9_@%+=:,./-]/gu, (character) =>
@@ -29,20 +29,6 @@ async function writeUnit(path, content) {
   } finally {
     await rm(temporary, { force: true });
   }
-}
-
-function run(command, arguments_) {
-  return new Promise((resolveRun) => {
-    const child = spawn(command, arguments_, {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
-    child.once("error", (error) =>
-      resolveRun({ code: 1, stderr: error.message }),
-    );
-    child.once("exit", (code) => resolveRun({ code: code ?? 1, stderr }));
-  });
 }
 
 function usage() {
@@ -95,7 +81,7 @@ async function main() {
     writeUnit(paths.maintenance, replace(maintenanceTemplate)),
     writeUnit(paths.timer, replace(timerTemplate)),
   ]);
-  const reloaded = await run("systemctl", ["--user", "daemon-reload"]);
+  const reloaded = await runSystemctl(["--user", "daemon-reload"]);
   if (reloaded.code !== 0)
     throw new Error(
       `Installed user units, but systemd could not reload (${reloaded.stderr.trim()})`,

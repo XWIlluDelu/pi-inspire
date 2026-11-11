@@ -118,41 +118,15 @@ export class BranchController {
 
   constructor(private readonly host: BranchControllerHost) {}
 
-  invalidateForSelectionIntent(): void {
-    this.invalidateRequests();
-    const state = this.host.state();
-    this.host.patch({
-      branchTreeLoading: false,
-      branchActionId: null,
-      branchTreeStale: Boolean(state.branchTree),
-      branchTreeError: null,
-    });
-  }
-
-  invalidateForViewChange(): void {
+  /** Retire the previous owner while keeping the last tree visible until refreshed. */
+  invalidate({ preserveError = false } = {}): void {
     this.invalidateRequests();
     this.host.patch({
       branchTreeLoading: false,
       branchActionId: null,
       branchTreeStale: Boolean(this.host.state().branchTree),
+      ...(!preserveError ? { branchTreeError: null } : {}),
     });
-  }
-
-  /** A new bootstrap owns a different API client, so an old tree/action can
-   * neither commit nor leave the branch controls appearing actionable. */
-  invalidateForTransportReplacement(): void {
-    this.invalidateRequests();
-    const state = this.host.state();
-    this.host.patch({
-      branchTreeLoading: false,
-      branchActionId: null,
-      branchTreeStale: Boolean(state.branchTree),
-      branchTreeError: null,
-    });
-  }
-
-  markConnectionInterrupted(): void {
-    this.invalidateForTransportReplacement();
   }
 
   markProjectionStale(): void {

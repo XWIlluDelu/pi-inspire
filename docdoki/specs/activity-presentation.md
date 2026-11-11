@@ -9,7 +9,7 @@ covers:
   - tests/browser/activity-presentation.spec.ts
   - src/styles/{transcript,activity-cards}.css
   - server/session-projection.ts
-  - tests/web/transcript-{fold,paging}.test.tsx
+  - tests/web/transcript-{fold,viewport}.test.tsx
   - tests/web/activity-visibility.test.tsx
   - tests/web/events.test.ts
   - tests/server/runtime-transcript.test.ts
@@ -229,6 +229,5 @@ messages use the same interruption projection.
 
 ## Checks
 
-Activity/fold tests cover the single collapsed disclosure and focus return, independent group/item
-preferences, kind indicators, density, timing, identity, pagination, and scroll anchoring. Event
-tests cover generation, waiting, execution, settlement, and late updates.
+Component tests exercise fold state, bounded history, and lifecycle timing. Browser tests exercise
+disclosure focus and reading anchors. Event tests exercise tool phases and late updates.

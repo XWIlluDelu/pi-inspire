@@ -75,8 +75,9 @@ failure, with no legacy-engine fallback.
   - accepts the exact tarball through `npm publish --dry-run` without metadata correction;
   - excludes tests and TypeScript source;
   - proves Pi is absent after a production-only install;
-  - proves that installation can start, report status, serve authenticated health, stop, and
-    create a real session using one explicitly supplied external Pi package for both SDK and RPC.
+  - runs the installed CLI and compiled worker entry points against one external Pi package for
+    SDK and RPC. A real daemon-backed PTY delivers shell output and stays live across Host restart.
+    The installed Host and daemon then stop cleanly.
 
   The project is MIT-licensed. Every Vite build derives `dist/THIRD_PARTY_NOTICES.txt` from the
   actual bundled module graph; missing third-party license text fails the build. Locally bundled

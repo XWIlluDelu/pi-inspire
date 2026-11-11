@@ -362,43 +362,6 @@ describe("writer persistence ownership", () => {
     }
   });
 
-  it("conflicts rather than answering a stale extension-blocked writer", async () => {
-    const { runtime, workers, path } = await setup();
-    try {
-      await waitForReady(runtime, "session-a");
-      workers[0]!.emit("event", {
-        type: "extension_ui_request",
-        id: "question",
-        method: "confirm",
-        title: "Proceed?",
-      });
-      await replaceWith(
-        path,
-        `${JSON.stringify({
-          type: "message",
-          id: "external",
-          parentId: "u1",
-          timestamp: "2026-08-01T00:00:03.000Z",
-          message: { role: "assistant", content: "terminal", timestamp: 3 },
-        })}\n`,
-      );
-      await expect(
-        runtime.extensionUiResponse({
-          sessionId: "session-a",
-          id: "question",
-          confirmed: true,
-        }),
-      ).rejects.toThrow(/could not verify/);
-      expect(
-        workers[0]!.commands.some(
-          (command) => command.type === "extension_ui_response",
-        ),
-      ).toBe(false);
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("verifies an owned compaction revision before accepting another Pi's revision queued behind it", async () => {
     const { runtime, workers, path } = await setup();
     const gate = deferredSignal();
@@ -1076,6 +1039,9 @@ describe("writer persistence ownership", () => {
           confirmed: true,
         }),
       ).rejects.toThrow(/could not verify/);
+      expect(workers[0]!.commands).not.toContainEqual(
+        expect.objectContaining({ type: "extension_ui_response" }),
+      );
       expect((await runtime.snapshot()).pendingExtensionUiRequests).toEqual([]);
       await runtime.abort("session-a");
       const recovered = await runtime.snapshot();

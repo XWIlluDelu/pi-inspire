@@ -6,13 +6,13 @@ import {
   render,
   screen,
 } from "@testing-library/react";
-import { type ComponentProps, useRef } from "react";
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api";
-import { ProjectFilePicker } from "../../src/components/ProjectFiles";
+import { ProjectFileControl } from "../../src/components/ProjectFiles";
 
 type PickerProps = Pick<
-  ComponentProps<typeof ProjectFilePicker>,
+  ComponentProps<typeof ProjectFileControl>,
   "scope" | "search" | "showHidden" | "onAdd"
 >;
 
@@ -20,21 +20,14 @@ const file = { name: "ready.ts", path: "src/ready.ts" };
 const page = { files: [file], truncated: false };
 
 function Picker(props: PickerProps) {
-  const anchorRef = useRef<HTMLButtonElement>(null);
   return (
-    <>
-      <button type="button" ref={anchorRef}>
-        Add project files
-      </button>
-      <ProjectFilePicker
-        {...props}
-        anchorRef={anchorRef}
-        selected={[]}
-        disabled={false}
-        onShowHiddenChange={vi.fn()}
-        onClose={vi.fn()}
-      />
-    </>
+    <ProjectFileControl
+      {...props}
+      selected={[]}
+      open
+      onShowHiddenChange={vi.fn()}
+      onOpenChange={vi.fn()}
+    />
   );
 }
 

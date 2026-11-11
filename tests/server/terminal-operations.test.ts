@@ -66,7 +66,7 @@ describe("terminal control receipts over isolated IPC", () => {
       id: randomUUID(),
       epoch: await f.client.operationEpoch(),
     };
-    const params = { request: { cwd: f.directory } };
+    const params = { request: { cwd: f.directory, cols: 90 } };
     try {
       vi.useFakeTimers();
       const first = f.client
@@ -84,7 +84,11 @@ describe("terminal control receipts over isolated IPC", () => {
         "synthetic-secret",
       );
       const second = replacement.operate("create", params, operation);
-      const concurrent = replacement.operate("create", params, operation);
+      const concurrent = replacement.operate(
+        "create",
+        { request: { cols: 90, cwd: f.directory } },
+        operation,
+      );
       reply.resolve(result);
       expect(await second).toEqual(result);
       expect(await concurrent).toEqual(result);
@@ -195,15 +199,17 @@ describe("terminal HTTP operation forwarding", () => {
       create.mockRejectedValueOnce(
         new TerminalServiceError("terminal_limit", 409, "Synthetic refusal"),
       );
-      const refusal = await supertest(app)
-        .post("/api/terminals")
-        .set(
-          "X-Terminal-Operation",
-          JSON.stringify({ ...operation, id: randomUUID() }),
-        )
-        .send({ cwd: "/fixture" })
-        .expect(409);
+      const refusedOperation = { ...operation, id: randomUUID() };
+      const refusedRequest = () =>
+        supertest(app)
+          .post("/api/terminals")
+          .set("X-Terminal-Operation", JSON.stringify(refusedOperation))
+          .send({ cwd: "/fixture" })
+          .expect(409);
+      const refusal = await refusedRequest();
       expect(refusal.headers["x-terminal-outcome"]).toBe("rejected");
+      expect((await refusedRequest()).body).toEqual(refusal.body);
+      expect(create).toHaveBeenCalledTimes(2);
       create.mockRejectedValueOnce(
         new TerminalServiceError(
           "terminal_stop_timeout",

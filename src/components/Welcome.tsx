@@ -1,10 +1,4 @@
-import {
-  ChevronRight,
-  FolderOpen,
-  FolderSearch,
-  Paperclip,
-  Send,
-} from "lucide-react";
+import { ChevronRight, FolderOpen, Send } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_PROJECT_FILES,
@@ -22,7 +16,6 @@ import {
 } from "../../shared/image-types";
 import { ApiError, type ProjectFileResult } from "../api";
 import { selectAttachmentFiles } from "../attachment-selection";
-import { clipboardFiles } from "../clipboard-files";
 import type { PiCommand } from "../composer-completion";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
 import type { PendingAttachment } from "../controllers/composer-controller";
@@ -51,7 +44,8 @@ import { DirectoryPicker } from "./DirectoryPicker";
 import { ModelSelector } from "./ModelSelector";
 import { visibleSessions } from "./nav-model";
 import { PiLoader } from "./PiLoader";
-import { ProjectFileChips, ProjectFilePicker } from "./ProjectFiles";
+import { ProjectFileChips, ProjectFileControl } from "./ProjectFiles";
+import { useComposerAttachmentInput } from "./use-composer-attachment-input";
 import { relativeTime } from "../format";
 import { BrandLogo, Wordmark } from "./Wordmark";
 
@@ -161,7 +155,6 @@ export const Welcome = memo(function Welcome({
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
-  const [dropActive, setDropActive] = useState(false);
   const [recentOpen, setRecentOpen] = useState(() =>
     readNavigationDisclosure("recentSessions"),
   );
@@ -192,8 +185,6 @@ export const Welcome = memo(function Welcome({
       ? (inheritedThinkingLevel as ThinkingLevel)
       : "off",
   );
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const projectPickerButtonRef = useRef<HTMLButtonElement>(null);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
   const recent = useMemo(
@@ -594,6 +585,7 @@ export const Welcome = memo(function Welcome({
         ...accepted.map(localAttachment),
       ]);
   };
+  const attachmentInput = useComposerAttachmentInput(addFiles, starting);
 
   const removeAttachment = (localId: string) => {
     setAttachments((current) => {
@@ -810,35 +802,15 @@ export const Welcome = memo(function Welcome({
       </div>
 
       <form
-        className={`composer welcome__composer ${dropActive ? "composer--drop" : ""}`}
+        className={`composer welcome__composer ${attachmentInput.dragging ? "composer--drop" : ""}`}
         aria-label="Start a session"
         onSubmit={(event) => {
           event.preventDefault();
           void start();
         }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDropActive(true);
-        }}
-        onDragLeave={() => setDropActive(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDropActive(false);
-          addFiles(Array.from(event.dataTransfer.files));
-        }}
+        {...attachmentInput.dropHandlers}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="composer__file-input"
-          aria-label="Attach files"
-          tabIndex={-1}
-          onChange={(event) => {
-            addFiles(Array.from(event.target.files ?? []));
-            event.target.value = "";
-          }}
-        />
+        {attachmentInput.input}
         {/* The required project choice leads, before what will be sent there. */}
         <div className="welcome__directory">
           <button
@@ -923,12 +895,7 @@ export const Welcome = memo(function Welcome({
           label="First message"
           completionLabel="First message completion"
           autoFocus
-          onPaste={(event) => {
-            const files = clipboardFiles(event.clipboardData);
-            if (files.length === 0) return;
-            event.preventDefault();
-            addFiles(files);
-          }}
+          onPaste={attachmentInput.onPaste}
           onKeyDown={(event) => {
             if (
               !shouldSubmitComposerEnter(
@@ -1029,29 +996,19 @@ export const Welcome = memo(function Welcome({
               }}
             />
           </div>
-          <button
-            type="button"
-            className={`icon-button ${pickerOpen ? "icon-button--active" : ""}`}
-            onClick={() => setPickerOpen((value) => !value)}
-            disabled={starting || !effectiveDirectory || directoryMissing}
-            ref={projectPickerButtonRef}
-            aria-label="Add project files"
-            aria-haspopup="dialog"
-            aria-expanded={pickerOpen}
-            title="Reference project files"
-          >
-            <FolderSearch size={14} aria-hidden />
-          </button>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => fileInputRef.current?.click()}
+          <ProjectFileControl
+            scope={effectiveDirectory}
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            buttonDisabled={starting || !effectiveDirectory || directoryMissing}
+            showHidden={showHiddenFiles}
+            onShowHiddenChange={setShowHiddenFiles}
+            selected={projectFiles}
             disabled={starting}
-            aria-label="Attach files"
-            title="Attach, paste, or drop files"
-          >
-            <Paperclip size={14} aria-hidden />
-          </button>
+            search={searchProjectFiles}
+            onAdd={addProjectFile}
+          />
+          {attachmentInput.button}
           <span className="composer__action-slot" ref={setSizeActionSlot} />
           <span className="composer__spacer" />
           <button
@@ -1102,19 +1059,6 @@ export const Welcome = memo(function Welcome({
               </button>
             ) : null}
           </div>
-        ) : null}
-        {pickerOpen && effectiveDirectory ? (
-          <ProjectFilePicker
-            anchorRef={projectPickerButtonRef}
-            scope={effectiveDirectory}
-            showHidden={showHiddenFiles}
-            onShowHiddenChange={setShowHiddenFiles}
-            selected={projectFiles}
-            disabled={starting}
-            search={searchProjectFiles}
-            onAdd={addProjectFile}
-            onClose={() => setPickerOpen(false)}
-          />
         ) : null}
       </form>
       {attachmentError ? (

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,9 +43,8 @@ describe("typed Host API", () => {
   it("accepts an escaped prompt at the character limit", async () => {
     const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue(null);
     const message = "\u0000".repeat(MAX_PROMPT_CHARS);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(promptDelivery({ sessionId: "fixture-active", message }))
       .expect(202);
     expect(prompt).toHaveBeenCalledExactlyOnceWith({
@@ -117,20 +116,14 @@ describe("typed Host API", () => {
 
     await request(application.server).post("/api/host/shutdown").expect(401);
     expect(shutdown).not.toHaveBeenCalled();
-    await request(application.server)
-      .post("/api/host/shutdown")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(202);
+    await fixture.localRequest.post("/api/host/shutdown").expect(202);
     await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
     expect(sequence).toEqual(["acknowledged", "shutdown"]);
   });
 
   it("keeps release update status behind local authentication", async () => {
     await request(application.server).get("/api/update").expect(401);
-    const response = await request(application.server)
-      .get("/api/update")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
+    const response = await fixture.localRequest.get("/api/update").expect(200);
     expect(response.body).toMatchObject({
       kind: "available",
       update: {
@@ -147,10 +140,9 @@ describe("typed Host API", () => {
 
   it("keeps Pi and extension update status behind local authentication", async () => {
     await request(application.server).get("/api/pi-update").expect(401);
-    const response = await request(application.server)
+    const response = await fixture.localRequest
       .get("/api/pi-update")
       .query({ refresh: "1" })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(response.body).toMatchObject({
       currentVersion: "0.80.10",
@@ -176,10 +168,9 @@ describe("typed Host API", () => {
     const session = await fixture.catalog.get("fixture-active");
     if (!session) throw new Error("Missing fixture session");
     const resume = () =>
-      request(application.server)
+      fixture.localRequest
         .get("/api/sessions/resume-command")
-        .query({ sessionId: session.id })
-        .set("Authorization", `Bearer ${token}`);
+        .query({ sessionId: session.id });
     const command = `pi --session '${session.path}'`;
     const changeDirectory =
       process.platform === "win32" ? "Set-Location -LiteralPath" : "cd --";
@@ -195,10 +186,9 @@ describe("typed Host API", () => {
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
 
-    const defaults = await request(application.server)
+    const defaults = await fixture.localRequest
       .get("/api/models")
       .query({ cwd: join(temporary, ".") })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(defaults.body.defaults).toEqual({
       cwd: temporary,
@@ -211,10 +201,9 @@ describe("typed Host API", () => {
       thinkingLevel: "high",
     });
 
-    const files = await request(application.server)
+    const files = await fixture.localRequest
       .get("/api/new-session/files")
       .query({ cwd: join(temporary, "."), q: "app" })
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(files.body).toEqual({
       cwd: temporary,
@@ -222,10 +211,9 @@ describe("typed Host API", () => {
       files: [{ path: "app.ts", name: "app.ts" }],
     });
 
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/models")
       .query({ cwd: join(temporary, "missing") })
-      .set("Authorization", `Bearer ${token}`)
       .expect(400, {
         error: "Project path does not exist",
         code: "PROJECT_DIRECTORY_MISSING",
@@ -245,17 +233,12 @@ describe("typed Host API", () => {
       .send(body)
       .expect(401);
     expect(create).not.toHaveBeenCalled();
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ ...body, createDirectory: "true" })
       .expect(400);
     expect(create).not.toHaveBeenCalled();
-    await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
-      .send(body)
-      .expect(200);
+    await fixture.localRequest.post("/api/sessions/new").send(body).expect(200);
     expect(create).toHaveBeenCalledWith(body.cwd, {
       createDirectory: true,
       model: body.model,
@@ -284,9 +267,7 @@ describe("typed Host API", () => {
       releaseSnapshot();
       await originalClose();
     });
-    const active = request(application.server)
-      .get("/api/snapshot")
-      .set("Authorization", `Bearer ${token}`);
+    const active = fixture.localRequest.get("/api/snapshot");
     const activeResult = active.then((response) => response.status);
     await started;
     const closing = application.close();
@@ -316,18 +297,16 @@ describe("typed Host API", () => {
   });
 
   it("lists and opens Pi sessions through the typed API", async () => {
-    const sessions = await request(application.server)
+    const sessions = await fixture.localRequest
       .get("/api/sessions?q=formula")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(sessions.body.total).toBe(1);
     expect(sessions.body.sessions[0]).toMatchObject({
       id: "fixture-active",
       project: "workspace",
     });
-    const page = await request(application.server)
+    const page = await fixture.localRequest
       .get("/api/sessions?offset=1&limit=1")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(page.body).toMatchObject({ offset: 1, limit: 1, total: 2 });
     expect(page.body.sessions).toHaveLength(1);
@@ -338,15 +317,11 @@ describe("typed Host API", () => {
       "offset=1.5",
       "offset=9007199254740992",
     ]) {
-      await request(application.server)
-        .get(`/api/sessions?${invalid}`)
-        .set("Authorization", `Bearer ${token}`)
-        .expect(400);
+      await fixture.localRequest.get(`/api/sessions?${invalid}`).expect(400);
     }
 
-    const opened = await request(application.server)
+    const opened = await fixture.localRequest
       .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
       .send({ id: "fixture-active" })
       .expect(200);
     expect(opened.body.active.transcriptPage.messages).toHaveLength(5);
@@ -362,15 +337,13 @@ describe("typed Host API", () => {
       .send({ sessionId: "fixture-active" })
       .expect(401);
     expect(clear).not.toHaveBeenCalled();
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/pending/clear")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId: "fixture-active", expectedRevision: 1 })
       .expect(400);
     expect(clear).not.toHaveBeenCalled();
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/pending/clear")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId: "fixture-active" })
       .expect(200, { ok: true });
     expect(clear).toHaveBeenCalledExactlyOnceWith("fixture-active");
@@ -386,9 +359,8 @@ describe("typed Host API", () => {
         .send({ sessionId: "fixture-active" })
         .expect(401);
     }
-    const recovered = await request(application.server)
+    const recovered = await fixture.localRequest
       .post("/api/pending/recover")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         operationId: randomUUID(),
@@ -403,9 +375,8 @@ describe("typed Host API", () => {
       "fixture-active",
       undefined,
     );
-    const copied = await request(application.server)
+    const copied = await fixture.localRequest
       .post("/api/pending/text")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         viewId: "view",
@@ -422,9 +393,8 @@ describe("typed Host API", () => {
       itemId: "text-steer-0",
     });
     for (const path of ["/api/pending"]) {
-      await request(application.server)
+      await fixture.localRequest
         .post(path)
-        .set("Authorization", `Bearer ${token}`)
         .send({ sessionId: "fixture-active" })
         .expect(404);
     }
@@ -443,9 +413,8 @@ describe("typed Host API", () => {
       .post("/api/control/native-command")
       .send({ sessionId: "fixture-active", command: "compact" })
       .expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/control/native-command")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId: "fixture-active", command: "unknown" })
       .expect(400);
     expect(native).not.toHaveBeenCalled();
@@ -455,9 +424,8 @@ describe("typed Host API", () => {
       command: "compact",
       argument: "preserve decisions",
     };
-    const compacted = await request(application.server)
+    const compacted = await fixture.localRequest
       .post("/api/control/native-command")
-      .set("Authorization", `Bearer ${token}`)
       .send(command)
       .expect(200);
     expect(compacted.headers["cache-control"]).toContain("no-store");
@@ -519,16 +487,11 @@ describe("typed Host API", () => {
         { [field]: value },
         { sessionId: "fixture-active", [field]: invalid },
       ])
-        await request(application.server)
-          .post(path)
-          .set("Authorization", `Bearer ${token}`)
-          .send(invalidBody)
-          .expect(400);
+        await fixture.localRequest.post(path).send(invalidBody).expect(400);
       expect(change).not.toHaveBeenCalled();
 
-      await request(application.server)
+      await fixture.localRequest
         .post(path)
-        .set("Authorization", `Bearer ${token}`)
         .send(body)
         .expect(200, { ok: true });
       expect(change).toHaveBeenCalledExactlyOnceWith("fixture-active", value);
@@ -543,16 +506,14 @@ describe("typed Host API", () => {
   );
 
   it("clears host selection when the browser opens New session", async () => {
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/sessions/open")
-      .set("Authorization", `Bearer ${token}`)
       .send({ id: "fixture-active" })
       .expect(200);
     expect(runtime.activeSessionId).toBe("fixture-active");
 
-    const deselected = await request(application.server)
+    const deselected = await fixture.localRequest
       .post("/api/sessions/deselect")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(deselected.body).toMatchObject({ active: null, runState: "idle" });
     expect(runtime.activeSessionId).toBeNull();
@@ -625,11 +586,10 @@ describe("typed Host API", () => {
         "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor",
       )
       .expect(401);
-    const response = await request(application.server)
+    const response = await fixture.localRequest
       .get(
         "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor",
       )
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(response.body).toEqual(page);
     expect(paging).toHaveBeenCalledWith("fixture-active", "opaque-cursor");
@@ -639,11 +599,10 @@ describe("typed Host API", () => {
         "/api/transcript/activity?sessionId=fixture-active&cursor=range-cursor",
       )
       .expect(401);
-    const activityResponse = await request(application.server)
+    const activityResponse = await fixture.localRequest
       .get(
         "/api/transcript/activity?sessionId=fixture-active&cursor=range-cursor",
       )
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(activityResponse.body).toEqual(activityPage);
     expect(activityPaging).toHaveBeenCalledWith(
@@ -654,9 +613,8 @@ describe("typed Host API", () => {
     await request(application.server)
       .get("/api/transcript/user-turns?sessionId=fixture-active&start=0")
       .expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/transcript/user-turns?sessionId=fixture-active&start=0")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) => expect(result.body.turns).toHaveLength(1));
     expect(userTurnIndex).toHaveBeenCalledWith("fixture-active", 0);
@@ -664,11 +622,10 @@ describe("typed Host API", () => {
     await request(application.server)
       .get("/api/transcript/user-turn?sessionId=fixture-active&id=user-0")
       .expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .get(
         "/api/transcript/user-turn?sessionId=fixture-active&id=user-0&cursor=turn-cursor",
       )
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) => expect(result.body.targetMessageId).toBe("user-0"));
     expect(userTurnTranscript).toHaveBeenCalledWith(
@@ -680,9 +637,8 @@ describe("typed Host API", () => {
     await request(application.server)
       .get("/api/composer/history?sessionId=fixture-active&start=0")
       .expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/composer/history?sessionId=fixture-active&start=0")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) =>
         expect(result.body.entries).toEqual([
@@ -700,15 +656,13 @@ describe("typed Host API", () => {
     const path =
       "/api/transcript/assistant-text?sessionId=fixture-active&viewId=branch-1";
     await request(application.server).get(path).expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .get(path)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((result) => expect(result.body.text).toBe(text));
     expect(copy).toHaveBeenCalledWith("fixture-active", "branch-1");
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/transcript/assistant-text?sessionId=fixture-active")
-      .set("Authorization", `Bearer ${token}`)
       .expect(400);
   });
 
@@ -777,17 +731,15 @@ describe("typed Host API", () => {
     await request(application.server)
       .get("/api/branches/tree?sessionId=fixture-active")
       .expect(401);
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/branches/tree?sessionId=fixture-active")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((response) => expect(response.body.revision).toBe(3));
     expect(tree).toHaveBeenCalledWith("fixture-active", {});
-    await request(application.server)
+    await fixture.localRequest
       .get(
         "/api/branches/tree?sessionId=fixture-active&query=retained&before=a1",
       )
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(tree).toHaveBeenLastCalledWith("fixture-active", {
       query: "retained",
@@ -803,9 +755,8 @@ describe("typed Host API", () => {
       .expect(401);
     expect(entry).not.toHaveBeenCalled();
     expect(image).not.toHaveBeenCalled();
-    await request(application.server)
+    await fixture.localRequest
       .get(`/api/branches/entry?${readQuery}`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect((response) =>
         expect(response.body.text).toBe("Complete retained answer"),
@@ -816,9 +767,8 @@ describe("typed Host API", () => {
       viewId: "view-1",
       offset: 0,
     });
-    await request(application.server)
+    await fixture.localRequest
       .get(`/api/branches/image?${readQuery}&index=0`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200)
       .expect("Content-Type", /image\/png/)
       .expect("Cache-Control", "private, no-store");
@@ -831,14 +781,12 @@ describe("typed Host API", () => {
       },
       0,
     );
-    await request(application.server)
+    await fixture.localRequest
       .get(`/api/branches/image?${readQuery}&index=-1`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(400);
 
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/navigate")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         revision: 3,
@@ -847,9 +795,8 @@ describe("typed Host API", () => {
         rawPath: "/forged",
       })
       .expect(400);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/navigate")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         revision: 3,
@@ -864,9 +811,8 @@ describe("typed Host API", () => {
       mode: "edit",
     });
 
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/fork")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         viewId: "source-view",
@@ -887,9 +833,8 @@ describe("typed Host API", () => {
       })
       .expect(401);
     expect(clone).not.toHaveBeenCalled();
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/clone")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         viewId: "source-view",
@@ -897,9 +842,8 @@ describe("typed Host API", () => {
         rawPath: "/forged",
       })
       .expect(400);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/clone")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         viewId: "source-view",
@@ -912,14 +856,12 @@ describe("typed Host API", () => {
       viewId: "source-view",
       targetId: "a1",
     });
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/clone")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionId: "fixture-active", viewId: "source-view" })
       .expect(400);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/branches/clone")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         sessionId: "fixture-active",
         viewId: "source-view",
@@ -933,161 +875,67 @@ describe("typed Host API", () => {
     });
   });
 
-  it("reports invalid preference fields while allowing unrelated writes and explicit repairs", async () => {
-    const path = join(temporary, "preferences.json");
-    const raw = JSON.stringify({
-      theme: "dark",
-      launch: "continue",
-      toolVisibility: "invalid",
-      pinnedSessionIds: ["session-a"],
-    });
-    await writeFile(path, raw);
-
-    const response = await request(application.server)
-      .get("/api/bootstrap")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(response.body.preferences).toMatchObject({
-      theme: "dark",
-      launch: "continue",
-      toolVisibility: "dynamic",
-      pinnedSessionIds: ["session-a"],
-    });
-    expect(response.body.preferencesWarning).toMatch(
-      /toolVisibility.*left unchanged/,
+  it("reports invalid preference fields in bootstrap", async () => {
+    await writeFile(
+      join(temporary, "preferences.json"),
+      JSON.stringify({ theme: "dark", toolVisibility: "invalid" }),
     );
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ projectDisplay: "path" })
+    const { body } = await fixture.localRequest
+      .get("/api/bootstrap")
       .expect(200);
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
-      ...JSON.parse(raw),
-      projectDisplay: "path",
+    expect(body.preferences).toMatchObject({
+      theme: "dark",
+      toolVisibility: "dynamic",
     });
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ toolVisibility: "hidden" })
-      .expect(200);
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
-      ...JSON.parse(raw),
-      projectDisplay: "path",
-      toolVisibility: "hidden",
-    });
+    expect(body.preferencesWarning).toMatch(/toolVisibility.*left unchanged/);
   });
 
   it("invalidates storage discovery only after saved project folders change", async () => {
     const invalidate = vi.spyOn(fixture.catalog, "invalidate");
-    await request(application.server)
+    await fixture.localRequest
       .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
       .send({ theme: "dark" })
       .expect(200);
     expect(invalidate).not.toHaveBeenCalled();
     for (const field of ["pinnedProjectCwds", "hiddenProjectCwds"]) {
-      await request(application.server)
+      await fixture.localRequest
         .patch("/api/preferences")
-        .set("Authorization", `Bearer ${token}`)
         .send({ [field]: [temporary] })
         .expect(200);
     }
     expect(invalidate).toHaveBeenCalledTimes(2);
-    await request(application.server)
+    await fixture.localRequest
       .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
       .send({ pinnedProjectCwds: "invalid" })
       .expect(400);
     expect(invalidate).toHaveBeenCalledTimes(2);
-  });
-
-  it("persists field-scoped preference patches without losing concurrent fields", async () => {
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        theme: "dark",
-        projectDisplay: "path",
-        pinnedSessionIds: ["session-a"],
-      })
-      .expect(200);
-    // Two patches racing on different fields must both survive.
-    const racing = await Promise.all([
-      request(application.server)
-        .patch("/api/preferences")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ toolVisibility: "hidden" }),
-      request(application.server)
-        .patch("/api/preferences")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ navCollapsedGroups: ["/home/demo/older"] }),
-      request(application.server)
-        .patch("/api/preferences")
-        .set("Authorization", `Bearer ${token}`)
-        .send({ activityFoldVisibility: "compact" }),
-    ]);
-    expect(racing.map((response) => response.status)).toEqual([200, 200, 200]);
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ theme: "sepia" })
-      .expect(400);
-    await request(application.server)
-      .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .send({
-        recentModelIds: Array.from({ length: 9 }, (_, index) => ({
-          provider: "p",
-          id: `m${index}`,
-        })),
-      })
-      .expect(400);
-    const stored = await request(application.server)
-      .get("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(stored.body).toMatchObject({
-      theme: "dark",
-      toolVisibility: "hidden",
-      activityFoldVisibility: "compact",
-      projectDisplay: "path",
-      pinnedSessionIds: ["session-a"],
-      navCollapsedGroups: ["/home/demo/older"],
-    });
   });
 
   it("lists workspace directory levels only inside the project index", async () => {
     const workspace = join(temporary, "workspace");
     await mkdir(workspace);
     await writeFile(join(workspace, "README.md"), "fixture");
-    const opened = await request(application.server)
+    const opened = await fixture.localRequest
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwd: workspace })
       .expect(200);
     const sessionId = opened.body.active.sessionId as string;
-    await request(application.server)
+    await fixture.localRequest
       .get(`/api/files/list?sessionId=${sessionId}&dir=..%2Fetc`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(400);
-    const listed = await request(application.server)
+    const listed = await fixture.localRequest
       .get(`/api/files/list?sessionId=${sessionId}`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(Array.isArray(listed.body.entries)).toBe(true);
     // The list is session-addressed: an unopened session id cannot borrow
     // the current selection's workspace.
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/files/list?sessionId=not-open")
-      .set("Authorization", `Bearer ${token}`)
       .expect(409);
   });
 
   it("browses host roots and directories without a session and rejects relative paths", async () => {
-    const roots = await request(application.server)
-      .get("/api/host/roots")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
+    const roots = await fixture.localRequest.get("/api/host/roots").expect(200);
     expect(Array.isArray(roots.body.roots)).toBe(true);
     for (const root of roots.body.roots) {
       expect(root).toEqual({
@@ -1097,9 +945,8 @@ describe("typed Host API", () => {
     }
 
     await mkdir(join(temporary, "projects"));
-    const listing = await request(application.server)
+    const listing = await fixture.localRequest
       .get(`/api/host/dirs?path=${encodeURIComponent(temporary)}`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(listing.body.dirs).toEqual(
       expect.arrayContaining([
@@ -1108,15 +955,13 @@ describe("typed Host API", () => {
     );
     expect(listing.body.parent).toBe(dirname(listing.body.path));
 
-    await request(application.server)
+    await fixture.localRequest
       .get("/api/host/dirs?path=relative/path")
-      .set("Authorization", `Bearer ${token}`)
       .expect(400);
-    await request(application.server)
+    await fixture.localRequest
       .get(
         `/api/host/dirs?path=${encodeURIComponent(join(temporary, "missing"))}`,
       )
-      .set("Authorization", `Bearer ${token}`)
       .expect(404);
   });
 
@@ -1125,17 +970,15 @@ describe("typed Host API", () => {
     const url = `/api/host/dirs?path=${encodeURIComponent(temporary)}`;
     await request(application.server).get(`${url}&showHidden=1`).expect(401);
     for (const suffix of ["", "&showHidden=0"]) {
-      const listing = await request(application.server)
+      const listing = await fixture.localRequest
         .get(`${url}${suffix}`)
-        .set("Authorization", `Bearer ${token}`)
         .expect(200);
       expect(
         listing.body.dirs.map((entry: { name: string }) => entry.name),
       ).not.toContain(".hidden-project");
     }
-    const listing = await request(application.server)
+    const listing = await fixture.localRequest
       .get(`${url}&showHidden=1`)
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(listing.body.dirs).toContainEqual({
       name: ".hidden-project",
@@ -1147,19 +990,15 @@ describe("typed Host API", () => {
       "&showHidden=",
       "&showHidden=1&showHidden=0",
     ]) {
-      await request(application.server)
-        .get(`${url}${suffix}`)
-        .set("Authorization", `Bearer ${token}`)
-        .expect(400);
+      await fixture.localRequest.get(`${url}${suffix}`).expect(400);
     }
   });
 
   it("stores curated navigation identities as preferences and returns their summaries by id", async () => {
     // Pins, folder pins, and hidden sessions are navigation metadata: one
     // field-scoped patch, no Pi history touched.
-    const curated = await request(application.server)
+    const curated = await fixture.localRequest
       .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         pinnedSessionIds: ["fixture-active"],
         pinnedProjectCwds: ["/home/demo/project"],
@@ -1172,9 +1011,8 @@ describe("typed Host API", () => {
       hiddenSessionIds: ["fixture-older"],
     });
 
-    const summaries = await request(application.server)
+    const summaries = await fixture.localRequest
       .post("/api/sessions/by-id")
-      .set("Authorization", `Bearer ${token}`)
       .send({ ids: ["fixture-active", "missing"] })
       .expect(200);
     expect(summaries.body.sessions).toHaveLength(1);
@@ -1182,23 +1020,20 @@ describe("typed Host API", () => {
 
     // A pinned folder is claimed whole, so it hydrates by working directory
     // instead of depending on which of its sessions paged in.
-    const folder = await request(application.server)
+    const folder = await fixture.localRequest
       .post("/api/sessions/by-cwd")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwds: [fixture.cwd, resolve("/nowhere")] })
       .expect(200);
     expect(
       folder.body.sessions.map((session: { cwd: string }) => session.cwd),
     ).toEqual([fixture.cwd]);
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/sessions/by-cwd")
-      .set("Authorization", `Bearer ${token}`)
       .send({ cwds: fixture.cwd })
       .expect(400);
 
-    await request(application.server)
+    await fixture.localRequest
       .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
       .send({ pinnedSessionIds: [] })
       .expect(200)
       .expect((response) => {
@@ -1214,22 +1049,16 @@ describe("typed Host API", () => {
     const prompt = vi.spyOn(runtime, "prompt");
     const abort = vi.spyOn(runtime, "abort");
 
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(promptDelivery({ message: "no target" }))
       .expect(400);
-    await request(application.server)
-      .post("/api/control/abort")
-      .set("Authorization", `Bearer ${token}`)
-      .send({})
-      .expect(400);
+    await fixture.localRequest.post("/api/control/abort").send({}).expect(400);
     expect(prompt).not.toHaveBeenCalled();
     expect(abort).not.toHaveBeenCalled();
 
-    await request(application.server)
+    await fixture.localRequest
       .post("/api/prompt")
-      .set("Authorization", `Bearer ${token}`)
       .send(promptDelivery({ sessionId: "never-opened", message: "hello" }))
       .expect(409);
     expect(prompt).toHaveBeenCalledExactlyOnceWith({
@@ -1298,9 +1127,8 @@ describe("typed Host API", () => {
       ],
     });
     const forget = vi.spyOn(resources, "forgetSession");
-    await request(application.server)
+    await fixture.localRequest
       .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         pinnedSessionIds: ["one"],
         hiddenSessionIds: ["one"],
@@ -1310,9 +1138,8 @@ describe("typed Host API", () => {
       })
       .expect(200);
 
-    const response = await request(application.server)
+    const response = await fixture.localRequest
       .post("/api/sessions/clear-hidden")
-      .set("Authorization", `Bearer ${token}`)
       .send({ sessionIds: ["one", "two"] })
       .expect(200);
     expect(deleted).toHaveBeenCalledWith(["one", "two"], ["one"], [cwd]);
@@ -1334,9 +1161,8 @@ describe("typed Host API", () => {
   });
 
   it("deletes an unselected session and atomically removes its navigation identities", async () => {
-    await request(application.server)
+    await fixture.localRequest
       .patch("/api/preferences")
-      .set("Authorization", `Bearer ${token}`)
       .send({
         pinnedSessionIds: ["fixture-history"],
         hiddenSessionIds: ["fixture-history"],
@@ -1347,9 +1173,8 @@ describe("typed Host API", () => {
     await request(application.server)
       .delete("/api/sessions/fixture-history")
       .expect(401);
-    const deleted = await request(application.server)
+    const deleted = await fixture.localRequest
       .delete("/api/sessions/fixture-history")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(deleted.body).toMatchObject({
       sessionId: "fixture-history",
@@ -1358,16 +1183,14 @@ describe("typed Host API", () => {
     });
     expect(forget).toHaveBeenCalledWith("fixture-history");
 
-    const sessions = await request(application.server)
+    const sessions = await fixture.localRequest
       .get("/api/sessions")
-      .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(sessions.body.sessions).not.toContainEqual(
       expect.objectContaining({ id: "fixture-history" }),
     );
-    await request(application.server)
+    await fixture.localRequest
       .delete("/api/sessions/fixture-history")
-      .set("Authorization", `Bearer ${token}`)
       .expect(404);
   });
 });

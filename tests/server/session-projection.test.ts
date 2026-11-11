@@ -22,6 +22,7 @@ import {
   TRANSCRIPT_PAGE_MAX_MESSAGES,
 } from "../../server/session-projection.js";
 import { collectSessionResourceReferences } from "../../shared/resource-references.js";
+import { deferredSignal } from "./fixtures/runtime.js";
 
 const directories: string[] = [];
 const header = (id = "session-a") => ({
@@ -951,110 +952,51 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     }
   });
 
-  it("retries a same-size same-inode rewrite that races a streamed full read instead of publishing a hybrid", async () => {
-    let armed = false;
-    let release!: () => void;
-    let entered!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const reading = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const hooks: SessionProjectionReadHooks = {
-      async afterFullReadChunk() {
-        if (!armed) return;
-        armed = false;
-        entered();
-        await gate;
-      },
-    };
-    const size = 2 * 1024 * 1024;
-    const { path, projection } = await fixture(
-      [message("u1", null, "user", "A".repeat(size), 1)],
-      "session-a",
-      hooks,
-    );
-    await projection.suspendReconciliation();
-    try {
-      await writeFile(
-        path,
-        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "B".repeat(size), 1))}\n`,
+  it.each([0, 100])(
+    "publishes coherent file bytes when a streamed full read races a rewrite that adds %i bytes",
+    async (growth) => {
+      const entered = deferredSignal();
+      const release = deferredSignal();
+      let armed = false;
+      const size = 2 * 1024 * 1024;
+      const messages = (text: string) =>
+        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", text, 1))}\n`;
+      const { path, projection } = await fixture(
+        [message("u1", null, "user", "A".repeat(size), 1)],
+        "session-a",
+        {
+          async afterFullReadChunk() {
+            if (!armed) return;
+            armed = false;
+            entered.resolve();
+            await release.promise;
+          },
+        },
       );
-      armed = true;
-      const reconciling = projection.reconcileSuspended(true);
-      await reading;
-      await writeFile(
-        path,
-        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "C".repeat(size), 1))}\n`,
-      );
-      release();
-      await expect(reconciling).resolves.toMatchObject({
-        changed: true,
-        kind: "rewrite",
-      });
-      const content = (projection.messages[0] as { content: string }).content;
-      expect(content).toHaveLength(size);
-      expect(/^C+$/u.test(content)).toBe(true);
-      expect(projection.health.status).toBe("ok");
-    } finally {
-      release();
-      projection.resumeReconciliation();
-      await projection.close();
-    }
-  });
-
-  it("retries a concurrently growing rewrite and publishes only the final coherent file", async () => {
-    let armed = false;
-    let release!: () => void;
-    let entered!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const reading = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const hooks: SessionProjectionReadHooks = {
-      async afterFullReadChunk() {
-        if (!armed) return;
-        armed = false;
-        entered();
-        await gate;
-      },
-    };
-    const size = 1024 * 1024;
-    const { path, projection } = await fixture(
-      [message("u1", null, "user", "A".repeat(size), 1)],
-      "session-a",
-      hooks,
-    );
-    await projection.suspendReconciliation();
-    try {
-      await writeFile(
-        path,
-        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "B".repeat(size + 100), 1))}\n`,
-      );
-      armed = true;
-      const reconciling = projection.reconcileSuspended(true);
-      await reading;
-      await writeFile(
-        path,
-        `${JSON.stringify(header())}\n${JSON.stringify(message("u1", null, "user", "C".repeat(size + 200), 1))}\n`,
-      );
-      release();
-      await expect(reconciling).resolves.toMatchObject({
-        changed: true,
-        kind: "rewrite",
-      });
-      const content = (projection.messages[0] as { content: string }).content;
-      expect(content).toHaveLength(size + 200);
-      expect(/^C+$/u.test(content)).toBe(true);
-    } finally {
-      release();
-      projection.resumeReconciliation();
-      await projection.close();
-    }
-  });
+      await projection.suspendReconciliation();
+      try {
+        await writeFile(path, messages("B".repeat(size)));
+        armed = true;
+        const reconciling = projection.reconcileSuspended(true);
+        await entered.promise;
+        const content = "C".repeat(size + growth);
+        await writeFile(path, messages(content));
+        release.resolve();
+        await expect(reconciling).resolves.toMatchObject({
+          changed: true,
+          kind: "rewrite",
+        });
+        expect((projection.messages[0] as { content: string }).content).toBe(
+          content,
+        );
+        expect(projection.health.status).toBe("ok");
+      } finally {
+        release.resolve();
+        projection.resumeReconciliation();
+        await projection.close();
+      }
+    },
+  );
 
   it("follows an old-ancestor branch and applies compaction/tool-result semantics without modifying bytes", async () => {
     const lines = [

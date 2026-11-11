@@ -87,16 +87,14 @@ function VersionValue({
       </span>
       <span aria-hidden>·</span>
       {update ? (
-        <>
-          <a href={update.url} target="_blank" rel="noreferrer noopener">
-            v{update.version} available ↗
-          </a>
-          {command ? <UpdateCommand command={command} /> : null}
-          {restartRequired ? <span>Restart Host to apply</span> : null}
-        </>
-      ) : (
+        <a href={update.url} target="_blank" rel="noreferrer noopener">
+          v{update.version} available ↗
+        </a>
+      ) : null}
+      {update && command ? <UpdateCommand command={command} /> : null}
+      {restartRequired || !update ? (
         <span>{restartRequired ? "Restart Host to apply" : status}</span>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -131,9 +129,11 @@ export function SystemVersionsCard() {
   const pi = piCheck?.pi;
   const extensions = state.piUpdateCheck?.extensions;
   const inspire = state.inspireUpdateCheck;
-  const pending =
-    state.piUpdateRequestPending || state.inspireUpdateRequestPending;
-  const checking = state.piUpdateChecking || state.inspireUpdateChecking;
+  const checking =
+    state.piUpdateChecking ||
+    state.inspireUpdateChecking ||
+    state.piUpdateRequestPending ||
+    state.inspireUpdateRequestPending;
   const checkError =
     state.piUpdateRequestError && state.inspireUpdateRequestError
       ? "Couldn't check for updates."
@@ -143,8 +143,11 @@ export function SystemVersionsCard() {
       (state.inspireUpdateRequestError && inspire),
   );
   const bothChecked = state.piUpdateCheck !== null && inspire !== null;
-  const checkState =
-    pending || checking ? "checking" : bothChecked ? "checked" : "initial";
+  const checkState = checking
+    ? "checking"
+    : bothChecked
+      ? "checked"
+      : "initial";
 
   return (
     <SettingsSection
@@ -170,15 +173,15 @@ export function SystemVersionsCard() {
             className="button system-versions__check"
             aria-label="Check for updates"
             aria-describedby={checkError ? "update-check-error" : undefined}
-            disabled={pending || checking}
-            aria-busy={pending || checking}
+            disabled={checking}
+            aria-busy={checking}
             onClick={() => {
               void store.checkPiUpdate();
               void store.checkInspireUpdate();
             }}
           >
             <span className="system-versions__check-content">
-              {pending || checking ? (
+              {checking ? (
                 <PiLoader size={13} aria-hidden />
               ) : (
                 <RefreshCw size={13} aria-hidden />
