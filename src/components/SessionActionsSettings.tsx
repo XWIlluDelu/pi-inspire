@@ -2,7 +2,6 @@ import { ArrowDown, ArrowUp, GripVertical, ListOrdered } from "lucide-react";
 import {
   Fragment,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -17,6 +16,7 @@ import {
 } from "../session-actions";
 import {
   type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { useModalPortal } from "../use-modal-focus";
@@ -127,24 +127,12 @@ export function SessionActionsSettings({
     }
   }, [activeMenu, placement]);
 
-  useEffect(() => {
-    if (!activeMenu) return;
-    const dismiss = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !popoverRef.current?.contains(target) &&
-        !activeHandleRef.current?.contains(target)
-      ) {
-        closeMenu(false);
-      }
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("focusin", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("focusin", dismiss);
-    };
-  }, [activeMenu, closeMenu]);
+  useFloatingMenuDismissal(
+    Boolean(activeMenu),
+    activeHandleRef,
+    popoverRef,
+    () => closeMenu(false),
+  );
 
   const executeMove = (actionId: SessionActionId, offset: number) => {
     const currentIndex = order.indexOf(actionId);

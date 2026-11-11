@@ -688,19 +688,4 @@ process.stdin.on("data", chunk => {
       expect(alive).toBe(false);
     },
   );
-
-  it("starts the installed Pi RPC runtime without invoking a model", async () => {
-    const rpc = new PiRpcProcess({
-      cwd: process.cwd(),
-      args: ["--no-session"],
-    });
-    processes.push(rpc);
-    await rpc.start();
-    const state = await rpc.request<{
-      sessionId: string;
-      isStreaming: boolean;
-    }>({ type: "get_state" }, 60_000);
-    expect(state.sessionId).toMatch(/^[0-9a-f-]+$/);
-    expect(state.isStreaming).toBe(false);
-  }, 90_000);
 });

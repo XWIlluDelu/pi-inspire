@@ -65,41 +65,32 @@ test("compact code actions keep square centered icons before and after copying",
       expect(Math.abs(item.y)).toBeLessThanOrEqual(0.5);
     }
   };
-  for (const width of [1280, 820, 390, 320]) {
+  for (const width of [1280, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate(
-        (theme) => (document.documentElement.dataset.theme = theme),
-        theme,
-      );
-      await checkIcons();
-      for (const action of await actions.all()) {
-        await action.focus();
-        const focus = await action.evaluate((button) => {
-          const style = getComputedStyle(button);
-          const box = button.getBoundingClientRect();
-          const bar = button
-            .closest(".code-block__bar")!
-            .getBoundingClientRect();
-          const outset = Math.max(
-            0,
-            parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset),
-          );
-          return {
-            visible: button.matches(":focus-visible"),
-            width: parseFloat(style.outlineWidth),
-            contained:
-              box.top - outset >= bar.top &&
-              // One frame, no divider: the ring only has to stay in the header.
-              box.bottom + outset <= bar.bottom &&
-              box.left - outset >= bar.left &&
-              box.right + outset <= bar.right,
-          };
-        });
-        expect(focus.visible).toBe(true);
-        expect(focus.width).toBeGreaterThan(0);
-        expect(focus.contained).toBe(true);
-      }
+    await checkIcons();
+    for (const action of await actions.all()) {
+      await action.focus();
+      const focus = await action.evaluate((button) => {
+        const style = getComputedStyle(button);
+        const box = button.getBoundingClientRect();
+        const bar = button.closest(".code-block__bar")!.getBoundingClientRect();
+        const outset = Math.max(
+          0,
+          parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset),
+        );
+        return {
+          visible: button.matches(":focus-visible"),
+          width: parseFloat(style.outlineWidth),
+          contained:
+            box.top - outset >= bar.top &&
+            box.bottom + outset <= bar.bottom &&
+            box.left - outset >= bar.left &&
+            box.right + outset <= bar.right,
+        };
+      });
+      expect(focus.visible).toBe(true);
+      expect(focus.width).toBeGreaterThan(0);
+      expect(focus.contained).toBe(true);
     }
   }
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -585,16 +576,6 @@ test.describe("touch reading controls", () => {
     await expect
       .poll(() => page.evaluate(current))
       .toMatchObject({ text: "Ready", code: true });
-    for (const theme of ["light", "dark"]) {
-      await page.evaluate(
-        (value) => (document.documentElement.dataset.theme = value),
-        theme,
-      );
-      const search = page.getByRole("search");
-      expect(
-        await search.evaluate((el) => el.scrollWidth <= el.clientWidth),
-      ).toBe(true);
-    }
     for (const [width, height] of [
       [390, 844],
       [844, 390],

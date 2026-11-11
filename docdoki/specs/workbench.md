@@ -126,16 +126,12 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ## Canonical project and session navigation
 
-- Project and session navigation is visible at the left by default and gives every session one
-  canonical position, in this order: individually pinned sessions in one global top section; pinned
-  project folders, then remaining folders, grouped by working directory with newest activity first;
-  and last a Hidden group containing individually hidden sessions and complete hidden folders.
-  Each canonical row's dot carries runtime state: working is yellow, unseen completion green,
-  unseen failure red, and recovery warning-ringed; the age on the row's second line takes
-  the same state colour; no status word is added. Narrow layouts and the collapsed desktop rail
-  summarize other sessions' outcomes as a count on the navigation toggle, owned by [[workspace-layout]]. A session is never duplicated into a second
-  runtime-derived group, which preserves location memory; Hidden rows keep the same dots when
-  expanded.
+- Navigation opens at the left by default. In All, each session has one position: individually
+  pinned sessions first, then pinned and other folders grouped by working directory and ordered by
+  newest activity, then Hidden. The stable position makes sessions easier to find again. Every row,
+  including Hidden, shows runtime state through the mark and age color: working yellow, unseen
+  completion green, unseen failure red, and attention warning-ringed. [[workspace-layout]] owns
+  the aggregate count on the narrow and collapsed desktop navigation toggles.
 
   The conversation stays dominant in the center, and the right contextual region opens only when
   requested. Its Changes selector shows the same authoritative total as the topbar, capped visually
@@ -156,28 +152,22 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   disagree. Folder pins use the exact cwd identity that already defines groups and their collapse
   state.
 
-- The session column has two modes, switched by a bell in its header beside the collapse control
-  (beside Settings and Close in the drawer). With a mouse, the column header's buttons match the
-  conversation header's: 28px targets, 15px glyphs, 4px apart; touch keeps 36px targets. Unlit, the column shows All; lit (pressed, accent ink
-  on the accent tint), it shows Needs you. The bell carries the rail's attention badge: the count,
-  green, or red when anything is waiting or failed. Needs you counts and lists, as one flat cross-project
-  list, the browsable sessions that wait on the person: Pi waiting for input or recovery (including
-  a native Pi blocked on input), then failed runs, then finished runs not yet seen, each group in
-  catalog recency. Running work and Hidden sessions are not listed. Viewing a session clears its
-  unseen outcome as its status mark does, but a session opened from Needs you keeps its place
-  while it stays open. Search
-  filters within the current mode; folders, Pinned, pagination and Hidden belong to All. The mode
-  is remembered per browser with the other navigation disclosures. Logic lives in
-  `src/needs-you.ts`.
+- The header bell switches All to Needs you, a flat cross-project list. Its pressed state uses
+  accent ink and tint. The count is green, or red when any session is waiting or failed.
+  Needs you lists sessions waiting for input or recovery, then unseen failures, then unseen
+  completions, each in catalog recency. It includes blocked terminal Pi sessions and excludes
+  Hidden and sessions still working. Viewing clears an unseen outcome, while a row opened from
+  Needs you stays in place for the selected session. Search uses the current mode. Folders, Pinned,
+  pagination and Hidden belong to All. The browser remembers the mode with its other navigation
+  disclosures. Header actions use 15px glyphs, 4px gaps and 28px mouse or 36px touch targets.
 
-- With a fine pointer, an ordinary session row is one 32px line: the activity mark, the title, and
-  a quiet trailing age at the row's end. The activity mark sits right-aligned inside the same 16px
+- In hover-capable layouts wider than 600px, an ordinary session row is a 32px line with the
+  activity mark, title and trailing age. The activity mark sits right-aligned inside the same 16px
   icon slot and 8px label gap as folder rows. The status mark renders at 10px, scaled about its
   painted right edge and vertical centre without moving the slot, text axis or selection marker.
-  The text axis stays reserved when no status is present. Cross-project rows (Pinned) and rows
-  showing a search excerpt keep the two-line form: title above age, cross-project metadata or the
-  excerpt. Touch and phone-width rows always use two compact lines. Hidden keeps enough leading
-  gutter to separate status from its selection marker.
+  The text axis stays reserved when no status is present. Cross-project rows (Pinned and Needs
+  you), search excerpts, and narrow or non-hover layouts use two lines, with the title above
+  metadata. Hidden separates its status mark from the selection marker.
 
   Desktop Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus. On a
   one-line row they take the age's place and the title fades under them without changing width;
@@ -253,12 +243,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 ### Search and pagination
 
-- Sidebar search reaches session name, cwd, ID and complete retained user/assistant text through
-  the Host catalog, in the existing sidebar without another panel or filter toolbar.
-  [[session-continuity]] owns query syntax, matching and source authority; [[design-system]] owns
-  visible match emphasis. While a query is active and a row's title does not itself match, the
-  Host's bounded message excerpt takes the age line's place with literal match emphasis; ordinary
-  browsing and title matches keep the age.
+- Search stays in the sidebar. [[session-continuity]] owns catalog fields, query syntax and source
+  authority. When the title does not match, a returned message excerpt takes the place of the age.
+  [[design-system]] owns visible match emphasis.
 
   Search reveals the immediate parent beside a project group when that parent has a visible
   token/phrase match but the project basename does not. Existing context for colliding basenames

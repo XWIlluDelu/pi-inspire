@@ -31,6 +31,7 @@ import {
 import { useCopied } from "../use-copied";
 import {
   type FloatingMenuConstraints,
+  useFloatingMenuDismissal,
   useFloatingMenuPlacement,
 } from "../use-floating-menu";
 import { shallowEqual, store, useAppState } from "../store";
@@ -218,22 +219,7 @@ export function SessionActionsMenu({
       ?.focus({ preventScroll: true });
   }, []);
 
-  useEffect(() => {
-    const dismiss = (event: Event) => {
-      const target = event.target as Node;
-      if (
-        !menuRef.current?.contains(target) &&
-        !anchorRef.current?.contains(target)
-      )
-        onClose();
-    };
-    window.addEventListener("pointerdown", dismiss);
-    window.addEventListener("focusin", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss);
-      window.removeEventListener("focusin", dismiss);
-    };
-  }, [anchorRef, onClose]);
+  useFloatingMenuDismissal(true, anchorRef, menuRef, onClose);
 
   if (!placement) return null;
   return createPortal(

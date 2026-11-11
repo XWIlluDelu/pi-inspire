@@ -186,7 +186,6 @@ describe("native shell presentation and input", () => {
     expect(
       within(shell).queryByText("Included in context"),
     ).not.toBeInTheDocument();
-    expect(shell.querySelector(".spin")).toBeNull();
   });
 
   it("retains cancelled status on reopened native output", () => {

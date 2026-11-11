@@ -7,10 +7,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { loadSessionPreview } from "../../server/session-preview.js";
+import { sessionProjectionSnapshot } from "../../server/session-preview.js";
+import { SessionProjection } from "../../server/session-projection.js";
 
 const directories: string[] = [];
 const SOURCE_ID = "55555555-5555-4555-8555-555555555555";
@@ -103,9 +104,16 @@ async function fixture(usageKind = "cache_warm") {
       },
       ...entries,
       {
+        type: "thinking_level_change",
+        id: "thinking",
+        parentId: "a3",
+        timestamp: "2026-08-01T00:00:06.000Z",
+        thinkingLevel: "high",
+      },
+      {
         type: "usage",
         id: "usage-entry",
-        parentId: "a3",
+        parentId: "thinking",
         timestamp: "2026-08-01T00:00:07.000Z",
         kind: usageKind,
         provider: "compat",
@@ -215,23 +223,41 @@ export default function (pi) {
 
 describe("installed Pi compatibility boundary", () => {
   it("keeps existing-session preview byte-preserving and checks RPC state/cursor/tree/model/command/stats", async () => {
-    const { sessionFile, entries, create } = await fixture();
+    const { directory, sessionFile, entries, create } = await fixture();
     const before = await readFile(sessionFile);
-    const preview = await loadSessionPreview({
+    const record = {
       path: sessionFile,
       source: null,
       id: SOURCE_ID,
-      cwd: dirname(sessionFile),
+      cwd: directory,
+      name: "Preview session",
       created: new Date(0),
       modified: new Date(0),
       messageCount: entries.length,
       firstMessage: "first compatibility question",
-    });
-    expect(preview.sessionId).toBe(SOURCE_ID);
-    expect(preview.transcriptPage.messages).toHaveLength(entries.length);
-    expect(JSON.stringify(preview.transcriptPage)).not.toContain(
-      "compatibility system prompt",
-    );
+    };
+    const projection = await SessionProjection.open(record);
+    try {
+      const preview = sessionProjectionSnapshot(record, projection, directory);
+      expect(preview).toMatchObject({
+        sessionId: SOURCE_ID,
+        sessionName: "Preview session",
+        cwd: directory,
+        model: { provider: "compat", id: "offline" },
+        thinkingLevel: "high",
+        isStreaming: false,
+      });
+      expect(preview.transcriptPage.messages).toHaveLength(entries.length);
+      expect(preview.transcriptPage.messages.slice(0, 2)).toMatchObject([
+        { role: "user", content: "first compatibility question" },
+        { role: "assistant", provider: "compat", model: "offline" },
+      ]);
+      expect(JSON.stringify(preview.transcriptPage)).not.toContain(
+        "compatibility system prompt",
+      );
+    } finally {
+      await projection.close();
+    }
     expect(await readFile(sessionFile)).toEqual(before);
 
     const rpc = create();

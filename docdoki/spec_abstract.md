@@ -80,8 +80,8 @@ locally and are not tracked.
 | Device acceptance open | [Runtime quality](stages/follow-runtime-quality-2026-10-25.md) records native lifecycle evidence, the cross-platform baseline and remaining physical-device checks. |
 | Implemented | [Workbench interactions](stages/follow-workbench-interactions-2026-10-24.md) links the reading, input and inspection contracts and records pending platform checks and interaction proposals. |
 | Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push ([notifications](specs/notifications.md)). Verified: Linux Chrome delivery, installed-PWA refresh continuity, Android system display of a manual test. Open: Android background-task/click and iOS acceptance ([follow-notifications-2026-10-22](stages/follow-notifications-2026-10-22.md)). |
-| Release history | The [changelog](../CHANGELOG.md) records source releases. [Runtime quality](stages/follow-runtime-quality-2026-10-25.md) records the v0.6.5 production dependency audit and local Linux installed-package verification. The [native baseline](notes/platform-compatibility.md#verified-native-baseline) records the v0.6.0 platform evidence. |
-| Blocked on Pi | Backward model cycling, effort preservation during live model-only selection, native TUI shell interruption, worker-owned settings-save results, resource omission diagnostics, request-attributed dialog cancellation, complete loaded-extension inventory, generic argument completion and structured current-worker MCP management. Missing interfaces: [pi-capability-gaps](stages/pi-capability-gaps.md). |
+| Release history | [Changelog](../CHANGELOG.md) and [verified platform baseline](notes/platform-compatibility.md#verified-native-baseline). |
+| Blocked on Pi | [Pi capability gaps](stages/pi-capability-gaps.md) lists the GUI requirements and the public interfaces each needs. |
 | Deferred | Holistic Files layout work: [file-browsing](stages/file-browsing.md); the current layout remains the implemented contract. |
 | Undecided | Additional History, usage, configuration and palette enhancements in [pi-capability-gaps](stages/pi-capability-gaps.md). Source-level extension UI reuse follows [northstar](northstar.md); further framework-level expansion has no decided requirement. |
 
@@ -92,5 +92,5 @@ locally and are not tracked.
 - [platform-compatibility](notes/platform-compatibility.md) — shell capture, process identity and terminal backends.
 - [workbench-implementation](notes/workbench-implementation.md) — references, streaming projections and browser-owned chrome.
 - [performance](notes/performance.md) — reproducible workloads and measurement.
-- [native-command-compatibility](notes/native-command-compatibility.md) — native dispatch and operation boundaries.
+- [native-command-compatibility](notes/native-command-compatibility.md) — native test setup and evidence about automatic terminal Pi handoff.
 - [remote-relay-options](notes/remote-relay-options.md) — alternatives to reverse SSH.

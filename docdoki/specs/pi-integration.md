@@ -61,9 +61,8 @@ session/transport owner; stale failures cannot roll back newer requests, and cur
 reconcile with Pi. Retry reads use the owning worker's public `getSettings()` to retain its trust
 and override decisions.
 
-An effective-value read confirms runtime state, not persistence. Controls disclose their
-worker/global-save/project-override scope. Pi 1.3.0 lacks a reliable worker-owned persistence result;
-[[pi-capability-gaps]] records the missing interface and why SDK flush/error APIs are insufficient.
+Controls identify the effective worker setting and explain its relationship to global settings
+and project overrides. [[pi-capability-gaps]] tracks confirmation of worker-owned writes to disk.
 
 [[model-settings]] owns saved defaults, declarations, selection and authentication. Login/logout
 uses public `ModelRuntime` methods with the worker's provider definitions and native storage.
@@ -113,10 +112,9 @@ owns selection and discovery semantics; [[herdr-enhancement]] owns the TUI recei
 
 ### Installed resources and capability gaps
 
-`/changelog` reads the installed package's matching version section. Generic argument completion
-needs a public current-worker callback invocation: Pi 1.3.0 command inventories expose metadata,
-not callable completions, and RPC autocomplete registration is a no-op. Keep that requirement in
-[[pi-capability-gaps]]; [[composer]] owns supported argument assistance and resource preparation.
+`/changelog` reads the installed package's matching version section. [[composer]] owns argument
+assistance and resource preparation. [[pi-capability-gaps]] tracks generic argument completion and
+the public callback interface it needs.
 
 ## Extension UI reuse and source DIY
 
@@ -259,9 +257,8 @@ overlay height, editors and choice lists yield space before actions; editors kee
 minimum. Long bodies and diagnostics remain scrollable and keyboard-reachable, with input errors
 inside the owning form. Resizing preserves draft and focus.
 
-Show remaining deadline time and keep the original expiry across reopen/reconnect. Pi 1.3.0 lacks
-request-attributed extension dismissal; aggregate prompt callbacks cannot identify concurrent same-title questions.
-[[pi-capability-gaps]] retains the requirement for a request-ID-bearing cancellation event.
+Show remaining deadline time and preserve the expiry across reopen and reconnect.
+[[pi-capability-gaps]] tracks cancellation initiated by an extension for a particular request.
 
 Keyed status text is bounded at Host retention, restored on reconnect, ordered in a compact topbar
 trigger at every viewport width, and cleared with its worker. Click, tap or keyboard activation
@@ -297,4 +294,4 @@ terminal transport is a fixture, not a full Herdr installation check. The native
 checks that retained-worker Stop resolves the Pi dialog promise and preserves a new independent
 question.
 [[dependency-boundaries]] explains runtime and development ownership;
-[[native-command-compatibility]] describes dispatch and native regression setup.
+[[native-command-compatibility]] describes native regression setup and the handoff investigation.

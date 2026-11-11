@@ -1,4 +1,10 @@
-import { useLayoutEffect, useState } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useState,
+} from "react";
 
 interface FloatingMenuBounds {
   left: number;
@@ -237,4 +243,28 @@ export function useFloatingMenuPlacement(
   }, [constraints, open, resolveTarget]);
 
   return placement;
+}
+
+/** A portaled menu and its anchor share one outside-dismiss boundary. */
+export function useFloatingMenuDismissal(
+  open: boolean,
+  anchor: RefObject<HTMLElement | null>,
+  menu: RefObject<HTMLElement | null>,
+  onDismiss: () => void,
+): void {
+  const dismiss = useEffectEvent(onDismiss);
+  useEffect(() => {
+    if (!open) return;
+    const onOutside = (event: Event) => {
+      const target = event.target as Node;
+      if (!anchor.current?.contains(target) && !menu.current?.contains(target))
+        dismiss();
+    };
+    window.addEventListener("pointerdown", onOutside);
+    window.addEventListener("focusin", onOutside);
+    return () => {
+      window.removeEventListener("pointerdown", onOutside);
+      window.removeEventListener("focusin", onOutside);
+    };
+  }, [open, anchor, menu]);
 }

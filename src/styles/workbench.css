@@ -127,8 +127,6 @@
   width: var(--pane-gutter);
 }
 
-.pane-resize--ctx { --pane-gutter: var(--space-1); }
-
 .pane-resize__hit {
   position: absolute;
   touch-action: none;
@@ -597,20 +595,8 @@ body.pane-resizing--vertical .nav {
   background: transparent;
 }
 
-/* Preserve file-control spacing and centre the 28px visibility target on the
-   24px resource-action column when sharing the neutral index header. */
-.res__index > .file-search-controls {
-  gap: 4px;
-  padding-left: 0;
-  padding-right: var(--space-3);
-}
-
 .files-browser__search > .icon-button {
   margin-right: 0;
-}
-
-.res__index > .file-search-controls > .icon-button {
-  margin-right: calc((24px - 28px) / 2);
 }
 
 .files-browser__scroll {

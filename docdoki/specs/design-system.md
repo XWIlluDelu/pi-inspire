@@ -366,12 +366,10 @@ its separate plus starts New; both logo forms share size and icon axis.
 
 New, Search, folder and session titles share a text axis. Status marks use the existing 16px
 folder icon slot at every width; working, completion, error and attention states never shift or
-narrow the title. Folder counts keep the right column; age occupies the quieter second
-line at every width. Desktop curation actions sit at its trailing edge; phone-width or touch
-drawers give persistent actions a separate column beside both lines. Session titles keep their
-first-line width on hover and focus. Folder and session actions share trailing columns on fine and
-coarse pointers. Hidden keeps the compact project geometry and lists independent sessions before folders, without
-an additional folder indent or a separate text axis for independent rows. Narrow/coarse-pointer
+narrow the title. Folder counts stay at the trailing edge, and folder and session actions share
+trailing columns. [[workbench]]
+owns one- and two-line session row layouts and action visibility. In Hidden, individual sessions
+precede folders and keep the shared text axis. Narrow/coarse-pointer
 New/Search rows are 36px high with 14px labels; icon-only rail/close actions retain 44px targets.
 WebKit uses 16px editing text to avoid focus zoom, retaining compact resting labels.
 
