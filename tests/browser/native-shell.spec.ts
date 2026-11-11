@@ -1,6 +1,6 @@
-import { expect, test, type WebSocketRoute } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import { openEventSession } from "./support/host-events";
+import { openEventSession, routeSnapshots } from "./support/host-events";
 import { pairedPage } from "./support/navigation";
 
 for (const touch of [false, true]) {
@@ -75,8 +75,6 @@ for (const touch of [false, true]) {
 test("native shell cards stream, stop, recall and fit the narrow composer without an automatic model turn", async ({
   page,
 }) => {
-  let socket!: WebSocketRoute;
-  let authority = "";
   let sessionId = "";
   const submitted: Array<Record<string, unknown>> = [];
   let stopped = 0;
@@ -90,7 +88,6 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
         ...(stopped ? { cancelled: true, __inspireSettled: true } : {}),
       });
     }
-    return snapshot;
   };
   const shell = {
     role: "bashExecution",
@@ -101,73 +98,45 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     __inspireLiveId: "browser-native-shell",
     __inspireBashRunning: true,
   };
-  await page.routeWebSocket("**/events**", (ws) => {
-    socket = ws;
-    const upstream = ws.connectToServer();
-    upstream.onMessage((message) => {
-      const event = JSON.parse(String(message));
-      if (event.type === "snapshot" && event.data)
-        event.data = projectShell(event.data);
-      ws.send(JSON.stringify(event));
-    });
-    ws.onMessage((message) => upstream.send(message));
-  });
-  await page.route("**/api/bootstrap**", async (route) => {
-    const response = await route.fetch();
-    authority = response.headers()["x-inspire-authority"] ?? "";
-    await route.fulfill({ response });
-  });
+  const transport = await routeSnapshots(page, { snapshot: projectShell });
   await page.route("**/api/prompt", async (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     submitted.push(body);
     sessionId = String(body.sessionId);
     if (String(body.message).startsWith("!"))
-      socket.send(
-        JSON.stringify({
-          type: "message_start",
-          sessionId,
-          message: shell,
-          shellExecution: true,
-          bashRunning: true,
-        }),
-      );
+      transport.send({
+        type: "message_start",
+        sessionId,
+        message: shell,
+        shellExecution: true,
+        bashRunning: true,
+      });
     await route.fulfill({
       status: 202,
-      headers: { "X-Inspire-Authority": authority },
+      headers: { "X-Inspire-Authority": transport.authority() },
       json: {
         accepted: true,
         historyEntry: { text: body.message, images: [], files: [] },
       },
     });
   });
-  await page.route("**/api/snapshot**", async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({
-      response,
-      json: projectShell(await response.json()),
-    });
-  });
   await page.route("**/api/control/abort", async (route) => {
     stopped += 1;
-    socket.send(
-      JSON.stringify({
-        type: "message_end",
-        sessionId,
-        shellExecution: true,
-        bashRunning: false,
-        message: {
-          ...shell,
-          output: "STREAMED_BROWSER_OUTPUT\n",
-          cancelled: true,
-          __inspireBashRunning: false,
-        },
-      }),
-    );
-    socket.send(
-      JSON.stringify({ type: "bash_finished", sessionId, bashRunning: false }),
-    );
+    transport.send({
+      type: "message_end",
+      sessionId,
+      shellExecution: true,
+      bashRunning: false,
+      message: {
+        ...shell,
+        output: "STREAMED_BROWSER_OUTPUT\n",
+        cancelled: true,
+        __inspireBashRunning: false,
+      },
+    });
+    transport.send({ type: "bash_finished", sessionId, bashRunning: false });
     await route.fulfill({
-      headers: { "X-Inspire-Authority": authority },
+      headers: { "X-Inspire-Authority": transport.authority() },
       json: { steering: [], followUp: [] },
     });
   });
@@ -204,15 +173,13 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   expect(submitted).toHaveLength(1);
   expect(submitted[0]!.message).toBe("!!printf browser");
   expect(submitted[0]!.behavior).toBeUndefined();
-  socket.send(
-    JSON.stringify({
-      type: "message_update",
-      sessionId,
-      shellExecution: true,
-      bashRunning: true,
-      message: { ...shell, output: "STREAMED_BROWSER_OUTPUT\n" },
-    }),
-  );
+  transport.send({
+    type: "message_update",
+    sessionId,
+    shellExecution: true,
+    bashRunning: true,
+    message: { ...shell, output: "STREAMED_BROWSER_OUTPUT\n" },
+  });
   await expect(card.getByText("STREAMED_BROWSER_OUTPUT")).toBeVisible();
 
   await input.fill("Explicit model input during shell.");

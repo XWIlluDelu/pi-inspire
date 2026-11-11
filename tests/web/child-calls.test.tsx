@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { MAX_CHILD_CALLS, resultChildCalls } from "../../shared/tool-activity";
+import { codemodeCalls } from "../../shared/tool-activity";
 import { ChildCalls } from "../../src/components/ChildCalls";
 import {
   ToolCard,
@@ -56,6 +56,7 @@ const final: ChatMessage = {
   isError: false,
   content: [{ type: "text", text: "Script completed\nactual result" }],
   details: { calls: finishedCalls },
+  __inspireCalls: codemodeCalls({ calls: finishedCalls }),
 };
 afterEach(() => {
   vi.useRealTimers();
@@ -114,7 +115,6 @@ it("separates the failure-count text role from child status marks", () => {
       result={{
         ...final,
         toolName: "orchestrator",
-        __inspireCalls: resultChildCalls(final),
       }}
       visibility="expanded"
     />,
@@ -228,18 +228,14 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     type: "tool_execution_update",
     toolCallId: "script",
     toolName: "codemode",
-    partialResult: { details: { calls: records } },
-    childCalls: resultChildCalls({
-      toolName: "codemode",
-      details: { calls: records },
-    }),
+    childCalls: codemodeCalls({ calls: records }),
   });
   event({
     type: "tool_execution_start",
     toolCallId: "script/1",
     parentToolCallId: "script",
     toolName: "read",
-    args: { path: "do-not-join.txt" },
+    childCall: { key: "script/1", name: "read", status: "running" },
   });
   expect(Object.keys(slice.tools)).toEqual(["script"]);
   expect(slice.tools.script?.calls?.calls.map((call) => call.key)).toEqual([
@@ -251,7 +247,7 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     toolCallId: "script",
     toolName: "codemode",
     isError: false,
-    result: final,
+    childCalls: final.__inspireCalls,
   });
   expect(slice.tools.script).toMatchObject({
     phase: "done",
@@ -266,11 +262,7 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     type: "tool_execution_update",
     toolCallId: "script",
     toolName: "codemode",
-    partialResult: { details: { calls: records } },
-    childCalls: resultChildCalls({
-      toolName: "codemode",
-      details: { calls: records },
-    }),
+    childCalls: codemodeCalls({ calls: records }),
   });
   expect(slice.tools.script?.phase).toBe("done");
   expect(slice.tools.script?.calls?.calls[0]?.status).toBe("error");
@@ -279,7 +271,7 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
 it("keeps the collapsed summary useful and shows every call when the parent opens, without another list disclosure", async () => {
   const result: ChatMessage = {
     ...final,
-    details: {
+    __inspireCalls: codemodeCalls({
       calls: [
         ...finishedCalls,
         {
@@ -295,7 +287,7 @@ it("keeps the collapsed summary useful and shows every call when the parent open
           status: "ok",
         },
       ],
-    },
+    }),
   };
   const view = render(toolCard(result, undefined, "collapsed"));
   expect(screen.getByText("CodeMode")).toBeVisible();
@@ -340,29 +332,24 @@ it("holds an inspected Script open through Adaptive completion", async () => {
   expect(summary.parentElement).toHaveAttribute("open");
 });
 
-it("bounds long lists and distinguishes native previews, omitted arguments and unfinished summaries", async () => {
-  const list = resultChildCalls({
-    toolName: "orchestrator",
-    details: { nestedCalls: { calls: [] } },
-    nestedCalls: {
-      complete: false,
-      calls: Array.from({ length: MAX_CHILD_CALLS + 20 }, (_, index) => ({
-        id: `parent/${index}`,
-        name: "read",
-        status: index === 0 ? "unfinished" : "ok",
-        ...(index === 0
-          ? { argumentsBytes: 10000 }
-          : { arguments: { path: `file-${index}.txt` } }),
-      })),
-    },
-  })!;
-  expect(list.calls).toHaveLength(MAX_CHILD_CALLS);
+it("distinguishes omitted arguments from unfinished child calls", async () => {
   const result: ChatMessage = {
     role: "toolResult",
     toolName: "orchestrator",
     content: "Parent output",
     isError: false,
-    __inspireCalls: list,
+    __inspireCalls: {
+      source: "nested",
+      complete: false,
+      calls: [
+        {
+          key: "parent/1",
+          name: "read",
+          status: "unfinished",
+          argumentsOmitted: true,
+        },
+      ],
+    },
   };
   const parent: ToolCallContent = {
     type: "toolCall",
@@ -378,9 +365,6 @@ it("bounds long lists and distinguishes native previews, omitted arguments and u
       live={false}
       visibility="expanded"
     />,
-  );
-  expect(view.container.querySelectorAll(".child-call")).toHaveLength(
-    MAX_CHILD_CALLS,
   );
   expect(screen.getByText("Unfinished")).toBeInTheDocument();
   const row = view.container.querySelector(".child-call > summary")!;

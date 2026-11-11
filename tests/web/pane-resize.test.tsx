@@ -75,7 +75,6 @@ describe("Pane resize handles", () => {
           min={320}
           max={() => 920}
           label="Resize files panel"
-          variant="ctx"
         />
       </>,
     );
@@ -119,7 +118,6 @@ describe("Pane resize handles", () => {
           min={320}
           max={() => 920}
           label="Resize files panel"
-          variant="ctx"
           wheelTargetSelector=".wheel-target[data-pane-scroll-active='true']"
         />
         <div
@@ -193,7 +191,6 @@ describe("Pane resize handles", () => {
           min={320}
           max={(viewport) => Math.min(920, viewport - 640)}
           label="Resize files panel"
-          variant="ctx"
         />
       </>,
     );

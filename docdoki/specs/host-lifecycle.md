@@ -68,20 +68,18 @@ failure, with no legacy-engine fallback.
   zero `npm audit --omit=dev` advisories, without overrides or downgrades that conceal an affected
   dependency. [[dependency-boundaries]] owns runtime selection and licensing.
 
-- The npm release is a standalone cross-platform CLI/application package, not a Pi resource
-  package: it declares no `pi` manifest or `pi-package` keyword and has no Pi runtime dependency.
-  `prepack` produces the Vite client and compiled Node host. The release verifier:
-  - requires canonical npm bin metadata;
-  - accepts the exact tarball through `npm publish --dry-run` without metadata correction;
-  - excludes tests and TypeScript source;
-  - proves Pi is absent after a production-only install;
-  - runs the installed CLI and compiled worker entry points against one external Pi package for
-    SDK and RPC. A real daemon-backed PTY delivers shell output and stays live across Host restart.
-    The installed Host and daemon then stop cleanly.
+- The standalone npm CLI uses external Pi. `prepack` builds the Vite client and compiled Node Host.
+  Release verification checks npm metadata with `npm publish --dry-run`, checks archive contents for
+  optional service and extension files, and installs the exact tarball with production dependencies.
+  The archive includes the built app and public examples. Tests and internal TypeScript stay in the
+  source checkout.
+  The installed CLI exercises the external Pi SDK and RPC, session recovery and a real PTY across
+  Host restart. The Host and daemon must stop cleanly.
 
   The project is MIT-licensed. Every Vite build derives `dist/THIRD_PARTY_NOTICES.txt` from the
   actual bundled module graph; missing third-party license text fails the build. Locally bundled
-  fonts keep their separate SIL OFL texts.
+  fonts keep their SIL OFL texts, and release verification checks the installed font assets against
+  the reviewed checksums.
 
 - Pi’s saved project-trust policy remains authoritative; the host does not load project resources
   through a separate bypass path.

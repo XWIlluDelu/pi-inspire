@@ -221,14 +221,11 @@ boundaries in this contract.
 
 ## Response streaming and message-owned outcomes
 
-- Assistant text streams smoothly without visually rebuilding the entire transcript for every
-  fragment. Pi JSON/RPC `message_update` frames carry `assistantMessageEvent`; for both live events
-  and reconnect snapshots, the Host reconstructs the active assistant from typed thinking/text
-  deltas and identity-bearing tool starts. Tool argument JSON is incrementally parsed and redacted
-  into bounded display-only updates before it reaches the browser. Both projections use the same
-  pure reducer, with ordered batching governed by [[session-transport]], and resync instead of
-  guessing against settled history. Tool argument preview and execution states are specified in
-  [[activity-presentation]].
+- The Host applies Pi's thinking, text and tool updates to the active assistant. It sends the
+  browser a complete message or an ordered batch bound to that message and transcript revision.
+  The Host parses and redacts tool arguments before sending bounded previews. Both sides apply the
+  same reducer, and an inconsistent batch triggers resync. [[session-transport]] defines batch
+  ordering and [[activity-presentation]] defines tool states.
 
   Pi may emit an empty assistant `message_start` before the provider yields its first visible
   thinking, text, or tool delta; that waiting state renders a quiet `Working…` indicator, replaced

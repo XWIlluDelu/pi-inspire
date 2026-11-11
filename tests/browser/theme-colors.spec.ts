@@ -39,7 +39,6 @@ const surfaces = [
   "bg-inset",
   "bg-control",
   "bg-prompt",
-  "bg-code",
 ] as const;
 const statusInks = ["warning-ink", "error-ink", "info-ink", "success-ink"];
 const tint = (role: string, percent: number) =>

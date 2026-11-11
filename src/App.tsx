@@ -987,7 +987,6 @@ export function App() {
           min={220}
           max={() => 460}
           label="Resize navigation"
-          variant="nav"
           layoutKey={String(state.resourcesOpen)}
           peerPane={{ cssVar: "--ctx-w", paneSelector: ".ctx" }}
         />
@@ -1085,7 +1084,6 @@ export function App() {
               min={320}
               max={(viewportWidth) => viewportWidth}
               label="Resize files panel"
-              variant="ctx"
               layoutKey={String(navCollapsed)}
               peerPane={{
                 cssVar: "--nav-w",

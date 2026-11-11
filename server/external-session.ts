@@ -1,22 +1,16 @@
 import type {
+  AttachControlState,
   ImageReference as NativeImageReference,
   ModelCatalog as NativeModelCatalog,
   ModelSelection as NativeModelSelection,
-  TaskRuns as NativeTaskRuns,
 } from "../extensions/attach-control.js";
 
 export const PI_STATE_OBSERVATION_TIMEOUT_MS = 1_500;
 
-/** A connection to an externally owned Pi, not an Inspire-owned worker. */
-export interface ExternalSessionState {
-  status: "idle" | "working" | "blocked" | "unknown";
-  taskRuns?: NativeTaskRuns;
-  modelSelection?: NativeModelSelection;
-  outcome?: "failed";
-  /** The attached Pi's current branch leaf. */
-  leafId?: string | null;
-  uiRequests?: Record<string, unknown>[];
-}
+export type ExternalSessionState = Pick<
+  AttachControlState,
+  "activity" | "leafId" | "modelSelection" | "taskRuns" | "uiRequests"
+>;
 
 /** Why Inspire stopped following an attached Pi. Only "exited" is evidence
  * about the process; none establishes the outcome of a task it was running. */
@@ -26,14 +20,15 @@ export type AttachmentEnd =
   | "left-branch"
   | "unreachable";
 
+export type ExternalSessionRead =
+  | ExternalSessionState
+  | { ended: Exclude<AttachmentEnd, "left-branch"> };
+
+/** One Pi session binding. Each command opens and closes its own socket. */
 export interface ExternalSessionConnection {
   /** `ended` finishes the attachment; a rejection is transient (such as a
    * reload) until it outlasts the grace period and becomes "unreachable". */
-  read(
-    timeoutMs?: number,
-  ): Promise<
-    ExternalSessionState | { ended: Exclude<AttachmentEnd, "left-branch"> }
-  >;
+  read(timeoutMs?: number): Promise<ExternalSessionRead>;
   prompt(
     message: string,
     behavior?: "steer" | "followUp",
@@ -55,8 +50,6 @@ export interface ExternalSessionConnection {
     level: NativeModelCatalog["thinkingLevel"],
     beforeSend?: () => void,
   ): Promise<NativeModelSelection>;
-  /** Release Host resources only; never terminate Pi or close its terminal. */
-  close(): void;
 }
 
 export type MatchExternalLeaf = (

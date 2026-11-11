@@ -13,7 +13,7 @@ import {
 } from "../extensions/attach-control.js";
 import {
   type ExternalSessionConnection,
-  type ExternalSessionState,
+  type ExternalSessionRead,
   type MatchExternalLeaf,
   PI_STATE_OBSERVATION_TIMEOUT_MS,
 } from "./external-session.js";
@@ -199,11 +199,6 @@ export class AttachControlRegistry {
     ).filter((record): record is AttachControlRecord => record !== null);
   }
 
-  /** A fresh scan of every live record. */
-  list(): Promise<AttachControlRecord[]> {
-    return this.scan();
-  }
-
   /** Records for observers that tolerate a scan up to
    * `OBSERVATION_MAX_AGE_MS` old, far inside the records' own heartbeat
    * staleness. Concurrent observers share one directory scan. */
@@ -227,33 +222,21 @@ export class AttachControlRegistry {
     return next.records;
   }
 
-  /** Live records of one session; `observe` accepts a shared recent scan. */
-  async forSession(
+  /** Scan one session, optionally reusing recent process identities. */
+  forSession(
     sessionId: string,
     sessionFile: string,
     {
-      observe = false,
+      cachedIdentity = false,
       includeStale = false,
     }: {
-      observe?: boolean;
+      cachedIdentity?: boolean;
       includeStale?: boolean;
     } = {},
   ): Promise<AttachControlRecord[]> {
-    if (observe && !includeStale) {
-      try {
-        return await matchingSessionRecords(
-          await this.observe(),
-          sessionId,
-          sessionFile,
-        );
-      } catch {
-        // An unrelated process can fail activity discovery. Try the
-        // requested session alone before making an ownership decision.
-      }
-    }
     return this.scan({
       includeStale,
-      cachedIdentity: observe,
+      cachedIdentity,
       relevant: async (record) =>
         (await matchingSessionRecords([record], sessionId, sessionFile))
           .length > 0,
@@ -271,7 +254,7 @@ export class AttachControlRegistry {
     }: { observe: boolean; isAncestor: (leaf: string | null) => boolean },
   ): Promise<(string | null | undefined)[]> {
     const records = await this.forSession(sessionId, sessionFile, {
-      observe,
+      cachedIdentity: observe,
       includeStale: true,
     });
     const leaves = await Promise.all(
@@ -393,16 +376,6 @@ export function takeoverCandidate(
       { code: "EXTERNAL_PI_AMBIGUOUS" },
     );
   return candidate?.record;
-}
-
-function stateOf(state: AttachControlState): ExternalSessionState {
-  return {
-    status: state.activity,
-    taskRuns: state.taskRuns,
-    modelSelection: state.modelSelection,
-    leafId: state.leafId,
-    ...(state.uiRequests ? { uiRequests: state.uiRequests } : {}),
-  };
 }
 
 /** Bound to one process incarnation and session file. Every operation
@@ -528,6 +501,11 @@ export class AttachControlConnection implements ExternalSessionConnection {
       response?.ok !== true ||
       response.state?.sessionId !== record.sessionId ||
       response.state.sessionFile !== record.sessionFile ||
+      (response.state.leafId !== null &&
+        typeof response.state.leafId !== "string") ||
+      (response.state.activity !== "idle" &&
+        response.state.activity !== "working" &&
+        response.state.activity !== "blocked") ||
       !response.state.taskRuns ||
       !response.state.modelSelection ||
       ((operation.op === "prompt" || operation.op === "abort") &&
@@ -539,27 +517,21 @@ export class AttachControlConnection implements ExternalSessionConnection {
 
   /** Failures within the grace period (such as a reload) are transient; a
    * lasting one ends the binding as "unreachable". */
-  async read(
-    timeoutMs?: number,
-  ): Promise<
-    ExternalSessionState | { ended: "exited" | "left-session" | "unreachable" }
-  > {
+  async read(timeoutMs?: number): Promise<ExternalSessionRead> {
     try {
       const record = await this.current();
       const state =
         "ended" in record
           ? record
-          : stateOf(
-              (
-                await this.send(
-                  { op: "state" },
-                  undefined,
-                  undefined,
-                  record,
-                  timeoutMs,
-                )
-              ).state,
-            );
+          : (
+              await this.send(
+                { op: "state" },
+                undefined,
+                undefined,
+                record,
+                timeoutMs,
+              )
+            ).state;
       this.failingSince = null;
       return state;
     } catch (error) {
@@ -613,6 +585,4 @@ export class AttachControlConnection implements ExternalSessionConnection {
     return (await this.send({ op: "set_thinking", level }, beforeSend)).state
       .modelSelection;
   }
-
-  close(): void {}
 }

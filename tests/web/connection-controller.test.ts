@@ -492,6 +492,8 @@ describe("ConnectionController", () => {
       sessionId: "session-a",
       streamMessageKey: "live:assistant-a",
       streamTextLength: 1,
+      sourceEventCount: 1,
+      streamRevision: 1,
       assistantMessageEvents: [{ type: "text_delta", delta: "a" }],
     });
     socket.emit({
@@ -499,6 +501,8 @@ describe("ConnectionController", () => {
       sessionId: "session-a",
       streamMessageKey: "live:assistant-a",
       streamTextLength: 2,
+      sourceEventCount: 1,
+      streamRevision: 2,
       assistantMessageEvents: [{ type: "text_delta", delta: "b" }],
     });
     expect(host.applyEvent).toHaveBeenCalledTimes(1);
@@ -508,6 +512,8 @@ describe("ConnectionController", () => {
     expect(host.applyEvent.mock.calls[1]![0]).toMatchObject({
       type: "message_update_batch",
       streamTextLength: 2,
+      sourceEventCount: 2,
+      streamRevision: 2,
       assistantMessageEvents: [
         { type: "text_delta", delta: "a" },
         { type: "text_delta", delta: "b" },
@@ -531,6 +537,8 @@ describe("ConnectionController", () => {
       sessionId: "session-a",
       streamMessageKey: "live:assistant-a",
       streamTextLength: MAX_ASSISTANT_STREAM_BATCH_EVENTS,
+      sourceEventCount: MAX_ASSISTANT_STREAM_BATCH_EVENTS,
+      streamRevision: MAX_ASSISTANT_STREAM_BATCH_EVENTS,
       assistantMessageEvents: Array.from(
         { length: MAX_ASSISTANT_STREAM_BATCH_EVENTS },
         () => ({ type: "text_delta", delta: "a" }),
@@ -541,6 +549,8 @@ describe("ConnectionController", () => {
       sessionId: "session-a",
       streamMessageKey: "live:assistant-a",
       streamTextLength: MAX_ASSISTANT_STREAM_BATCH_EVENTS + 1,
+      sourceEventCount: 1,
+      streamRevision: MAX_ASSISTANT_STREAM_BATCH_EVENTS + 1,
       assistantMessageEvents: [{ type: "text_delta", delta: "b" }],
     });
 

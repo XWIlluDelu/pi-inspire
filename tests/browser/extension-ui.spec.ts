@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test, type WebSocketRoute } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import type {
   ActiveSnapshot,
   ExtensionDisplay,
@@ -8,9 +8,10 @@ import type {
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
+import { routeSnapshots } from "./support/host-events";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
-import { pairedPage, openSettings } from "./support/navigation";
+import { openSettings, pairedPage, reloadSession } from "./support/navigation";
 
 // Audit settled dialog colors, not intermediate entrance-animation opacity.
 test.use({
@@ -32,56 +33,29 @@ type DemoDisplay =
 // This fixture owns its matching browser questions while the isolated test Host
 // supplies pairing, navigation and snapshots; it never opens a user extension.
 async function openExample(page: Page, theme: "light" | "dark") {
-  let socket: WebSocketRoute | undefined;
-  let readySocket: WebSocketRoute | undefined;
   let sessionId: string | null = null;
   let pending: SupportedExtensionUiRequest | null = null;
   let displays: ExtensionDisplay[] = [];
   const statuses: Record<string, string> = {};
   const responses: Record<string, unknown>[] = [];
-  const decorate = (snapshot: ActiveSnapshot) => {
-    if (snapshot.active && snapshot.active.sessionId === sessionId) {
-      snapshot.pendingExtensionUiRequests = pending ? [pending] : [];
-      snapshot.extensionStatuses = { ...statuses };
-      snapshot.extensionDisplays = displays;
-    }
-    return snapshot;
-  };
-  await page.routeWebSocket(/\/events(?:\?|$)/, (client) => {
-    socket = client;
-    readySocket = undefined;
-    const upstream = client.connectToServer();
-    upstream.onMessage((data) => {
-      if (socket !== client) return;
-      const event = JSON.parse(String(data));
-      if (event.type === "snapshot") {
-        const owner = event.detailSessionId ?? event.data?.active?.sessionId;
-        if (sessionId && owner === sessionId) readySocket = client;
-        if (event.data) decorate(event.data);
+  const transport = await routeSnapshots(page, {
+    snapshot: (snapshot) => {
+      if (snapshot.active?.sessionId === sessionId) {
+        snapshot.pendingExtensionUiRequests = pending ? [pending] : [];
+        snapshot.extensionStatuses = { ...statuses };
+        snapshot.extensionDisplays = displays;
       }
-      client.send(JSON.stringify(event));
-    });
+    },
+    bootstrap: (data) => {
+      data.preferences.theme = theme;
+    },
   });
-  for (const pattern of [
-    "**/api/bootstrap**",
-    "**/api/snapshot**",
-    "**/api/sessions/open",
-  ]) {
-    await page.route(pattern, async (route) => {
-      const response = await route.fetch();
-      const data = await response.json();
-      if (data.snapshot) decorate(data.snapshot);
-      else if (data.active) decorate(data);
-      if (data.preferences) data.preferences = { ...data.preferences, theme };
-      await route.fulfill({ response, json: data });
-    });
-  }
   const emit = (event: Record<string, unknown>) => {
     expect(
-      socket,
+      transport.ready(sessionId!),
       "Fixture events require the current synchronized connection",
-    ).toBe(readySocket);
-    socket!.send(JSON.stringify({ ...event, sessionId }));
+    ).toBe(true);
+    transport.send({ ...event, sessionId });
   };
   await page.route("**/api/extension-ui", async (route) => {
     const response = route.request().postDataJSON();
@@ -98,31 +72,18 @@ async function openExample(page: Page, theme: "light" | "dark") {
   expect(created.ok()).toBe(true);
   const createdSnapshot: ActiveSnapshot = await created.json();
   expect(createdSnapshot.active?.sessionId).toBeTruthy();
-  sessionId = createdSnapshot.active!.sessionId;
-  // API creation does not change this browser's saved selection. Restore the
-  // fixture's own session, as openEventSession does for live-event readers.
-  await page.evaluate((sessionId) => {
-    sessionStorage.setItem(
-      "inspire:workbench:v1:last-session",
-      JSON.stringify({ sessionId }),
-    );
-  }, sessionId);
-  const reload = async () => {
-    const previousSocket = socket;
-    await page.reload();
+  const exampleSessionId = createdSnapshot.active!.sessionId;
+  sessionId = exampleSessionId;
+  const reload = async (load?: () => Promise<unknown>) => {
+    await transport.reload(exampleSessionId, load);
     await expect(
       page.getByRole("button", { name: /^Session actions:/ }),
     ).toHaveText("Native UI example");
-    // A matching snapshot must arrive on the replacement connection, then the
-    // app must acknowledge synchronization by removing its connection banner.
-    await expect
-      .poll(() => socket !== previousSocket && socket === readySocket)
-      .toBe(true);
     await expect(
       page.getByRole("main").locator(".banner--warning"),
     ).toHaveCount(0);
   };
-  await reload();
+  await reload(() => reloadSession(page, exampleSessionId));
   return {
     responses,
     reload,

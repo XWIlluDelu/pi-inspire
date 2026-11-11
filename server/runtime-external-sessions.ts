@@ -18,6 +18,7 @@ import {
   type AttachmentEnd,
   type ConnectExternalSession,
   type ExternalSessionConnection,
+  type ExternalSessionRead,
   type ExternalSessionState,
   PI_STATE_OBSERVATION_TIMEOUT_MS,
 } from "./external-session.js";
@@ -97,7 +98,7 @@ export class RuntimeExternalSessions {
     const c = this.modelConnection(slot);
     if (c.modelRefresh) return c.modelRefresh;
     const selectionRevision = c.selectionRevision;
-    const instanceId = c.state.taskRuns?.instanceId;
+    const instanceId = c.state.taskRuns.instanceId;
     const pending = c.native.models().then((result) => {
       if (c.modelRefresh !== pending)
         throw requestError("The native Pi model receiver changed.", 409);
@@ -132,11 +133,11 @@ export class RuntimeExternalSessions {
     slot: RuntimeSlot,
     c: Connection,
     state: NativeModelSelection | NativeModelCatalog,
-    instanceId: string | undefined,
+    instanceId: string,
   ): void {
     if (this.connections.get(slot) !== c || !this.host.current(slot))
       throw requestError("The external Pi connection has ended.", 409);
-    if (c.state.taskRuns?.instanceId !== instanceId)
+    if (c.state.taskRuns.instanceId !== instanceId)
       throw requestError("The native Pi model receiver changed.", 409);
     if ("models" in state) slot.availableModels = state.models;
     c.selectionRevision++;
@@ -177,11 +178,11 @@ export class RuntimeExternalSessions {
     ) => Promise<NativeModelSelection>,
   ): Promise<NativeModelSelection> {
     const c = this.modelConnection(slot);
-    const instanceId = c.state.taskRuns?.instanceId;
+    const instanceId = c.state.taskRuns.instanceId;
     const result = await change(c.native, () => {
       if (this.connections.get(slot) !== c)
         throw requestError("The external Pi connection has ended.", 409);
-      if (c.state.taskRuns?.instanceId !== instanceId)
+      if (c.state.taskRuns.instanceId !== instanceId)
         throw requestError("The native Pi model receiver changed.", 409);
       this.host.assertUsable(slot);
     });
@@ -191,7 +192,7 @@ export class RuntimeExternalSessions {
   }
 
   needsInput(slot: RuntimeSlot): boolean {
-    return this.connections.get(slot)?.state.status === "blocked";
+    return this.connections.get(slot)?.state.activity === "blocked";
   }
 
   async connect(slot: RuntimeSlot, idleOnly = false): Promise<boolean> {
@@ -231,33 +232,21 @@ export class RuntimeExternalSessions {
       },
       idleOnly,
     );
-    if (native === null) return false;
-    if (this.closed || !this.host.current(slot) || slot.process) {
-      native.close();
+    if (!native || this.closed || !this.host.current(slot) || slot.process)
       return false;
-    }
-    let state: Awaited<ReturnType<ExternalSessionConnection["read"]>>;
-    try {
-      state = await native.read(
-        idleOnly ? PI_STATE_OBSERVATION_TIMEOUT_MS : undefined,
-      );
-      await this.reconcileReportedLeaf(slot, state);
-    } catch (error) {
-      // Not attached: a retried takeover or the next open decides again.
-      native.close();
-      throw error;
-    }
+    const state = await native.read(
+      idleOnly ? PI_STATE_OBSERVATION_TIMEOUT_MS : undefined,
+    );
+    await this.reconcileReportedLeaf(slot, state);
     if (
       "ended" in state ||
-      (idleOnly && state.status !== "idle") ||
-      !this.host.continues(slot, state.leafId ?? null) ||
+      (idleOnly && state.activity !== "idle") ||
+      !this.host.continues(slot, state.leafId) ||
       this.closed ||
       !this.host.current(slot) ||
       slot.process
-    ) {
-      native.close();
+    )
       return false;
-    }
     const connection: Connection = {
       native,
       state,
@@ -278,7 +267,7 @@ export class RuntimeExternalSessions {
 
   private async reconcileReportedLeaf(
     slot: RuntimeSlot,
-    state: Awaited<ReturnType<ExternalSessionConnection["read"]>>,
+    state: ExternalSessionRead,
   ): Promise<void> {
     if (
       !("ended" in state) &&
@@ -299,9 +288,7 @@ export class RuntimeExternalSessions {
   ): Promise<boolean> {
     const read = ++this.readSequence;
     const selectionRevision = connection.selectionRevision;
-    let state:
-      | Awaited<ReturnType<ExternalSessionConnection["read"]>>
-      | undefined;
+    let state: ExternalSessionRead | undefined;
     try {
       state = await connection.native.read();
     } catch (error) {
@@ -320,10 +307,7 @@ export class RuntimeExternalSessions {
     if (requireObservation && "ended" in state && state.ended === "unreachable")
       throw requestError("The attached Pi could not confirm its state.", 409);
     connection.latestRead = read;
-    if (
-      "ended" in state ||
-      !this.host.corresponds(slot, state.leafId ?? null)
-    ) {
+    if ("ended" in state || !this.host.corresponds(slot, state.leafId)) {
       this.end(slot, "ended" in state ? state.ended : "left-branch", release);
       return false;
     }
@@ -359,14 +343,14 @@ export class RuntimeExternalSessions {
     if (selectionRevision !== connection.selectionRevision)
       state = { ...state, modelSelection: connection.state.modelSelection };
     const priorState = connection.state;
-    const changed = priorState.status !== state.status;
+    const changed = priorState.activity !== state.activity;
     const selectionChanged =
       JSON.stringify(priorState.modelSelection) !==
       JSON.stringify(state.modelSelection);
     const receiverChanged =
-      priorState.taskRuns?.instanceId !== state.taskRuns?.instanceId;
+      priorState.taskRuns.instanceId !== state.taskRuns.instanceId;
     connection.state = state;
-    if (state.leafId !== undefined) this.host.followLeaf(slot, state.leafId);
+    this.host.followLeaf(slot, state.leafId);
     this.host.syncUi(slot, state.uiRequests ?? [], connection.native);
     if (selectionChanged) connection.selectionRevision++;
     if (force || receiverChanged) {
@@ -378,15 +362,12 @@ export class RuntimeExternalSessions {
     if (selectionChanged || receiverChanged) {
       this.host.emit(slot, { type: "model_metadata_changed" });
     }
-    const sameReceiver =
-      !force &&
-      state.taskRuns &&
-      priorState.taskRuns?.instanceId === state.taskRuns.instanceId;
+    const sameReceiver = !force && !receiverChanged;
     const oldResults = new Set(
-      priorState.taskRuns?.settled.map((item) => item.id),
+      priorState.taskRuns.settled.map((item) => item.id),
     );
     const newResults = sameReceiver
-      ? state.taskRuns!.settled.filter(
+      ? state.taskRuns.settled.filter(
           (item) =>
             !oldResults.has(item.id) &&
             item.settledAt > Date.now() - 15 * 60_000,
@@ -395,41 +376,35 @@ export class RuntimeExternalSessions {
     for (const result of newResults) {
       this.host.emit(slot, {
         type: "native_task_outcome",
-        outcomeId: state.taskRuns!.instanceId + ":" + result.id,
+        outcomeId: state.taskRuns.instanceId + ":" + result.id,
         outcome: result.outcome,
       });
     }
-    if (connection.sending > 0 && state.status === "idle") return;
-    if (state.status === "unknown") return;
+    if (connection.sending > 0 && state.activity === "idle") return;
     const previous = slot.runState;
     if (slot.conflict) {
       slot.runState = "conflict";
-    } else if (state.status !== "idle") {
+    } else if (state.activity !== "idle") {
       slot.runState = "running";
-    } else if (
-      state.outcome === "failed" ||
-      state.taskRuns?.settled.at(-1)?.outcome === "failed"
-    ) {
-      slot.runState = "failed";
-    } else if (state.taskRuns?.settled.at(-1)?.outcome === "aborted") {
-      slot.runState = "aborted";
     } else {
-      slot.runState = "idle";
+      const outcome = state.taskRuns.settled.at(-1)?.outcome;
+      slot.runState =
+        outcome === "failed" || outcome === "aborted" ? outcome : "idle";
     }
     if (
       !force &&
       !changed &&
       previous === slot.runState &&
-      !(newResults.length && state.status !== "idle")
+      !(newResults.length && state.activity !== "idle")
     )
       return;
-    if (state.status === "idle") {
+    if (state.activity === "idle") {
       if (isBusyRunState(previous))
         slot.attention = slot.runState === "failed" ? "failed" : null;
       this.host.emit(slot, {
         type: "agent_settled",
-        taskOutcomeReported: Boolean(sameReceiver),
-        outcomeUnknown: !sameReceiver && state.outcome !== "failed",
+        taskOutcomeReported: sameReceiver,
+        outcomeUnknown: !sameReceiver,
       });
     } else {
       this.host.emit(slot, { type: "agent_start" });
@@ -469,7 +444,7 @@ export class RuntimeExternalSessions {
         this.end(slot, state.ended);
         return;
       }
-      if (!this.host.corresponds(slot, state.leafId ?? null)) {
+      if (!this.host.corresponds(slot, state.leafId)) {
         this.end(slot, "left-branch");
         return;
       }
@@ -677,10 +652,8 @@ export class RuntimeExternalSessions {
       const attached = await this.refreshConnection(slot, connection, {
         requireObservation: true,
       });
-      if (!attached || connection.state.status === "idle") return;
+      if (!attached || connection.state.activity === "idle") return;
       leafId ??= connection.state.leafId;
-      if (leafId === undefined)
-        throw requestError("Cannot verify the branch of the attached Pi.", 409);
     }
     if (slot.stoppingInput)
       throw requestError("Stop is already in progress", 409);
@@ -699,7 +672,6 @@ export class RuntimeExternalSessions {
     this.connections.delete(slot);
     this.host.syncUi(slot, [], connection.native);
     clearTimeout(connection.timer);
-    connection.native.close();
   }
 
   close(): void {

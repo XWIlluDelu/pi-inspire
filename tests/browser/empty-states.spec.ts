@@ -1,10 +1,8 @@
-import { hostRequest } from "./support/host-request";
 import { expect, test } from "@playwright/test";
-import {
-  type ActiveSnapshot,
-  emptyPendingQueues,
-} from "../../shared/contracts";
+import { emptyPendingQueues } from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
+import { routeSnapshots } from "./support/host-events";
+import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
   openProjectTerminal,
@@ -27,15 +25,30 @@ for (const viewport of [
       reducedMotion: "reduce",
     });
     let emptyCatalog = true;
-    const projectSnapshot = (snapshot: ActiveSnapshot): ActiveSnapshot =>
-      emptyCatalog
-        ? {
+    await routeSnapshots(page, {
+      snapshot: (snapshot) => {
+        if (emptyCatalog)
+          Object.assign(snapshot, {
             active: null,
             runState: "idle",
             sessionStatuses: {},
             pendingQueues: emptyPendingQueues(),
-          }
-        : snapshot;
+          });
+      },
+      bootstrap: ({ preferences }) => {
+        if (emptyCatalog)
+          Object.assign(preferences, {
+            pinnedSessionIds: [],
+            hiddenSessionIds: [],
+            pinnedProjectCwds: [],
+            hiddenProjectCwds: [],
+          });
+      },
+      event: (event) => {
+        if (emptyCatalog && event.type !== "snapshot" && event.sessionId)
+          return false;
+      },
+    });
     await page.route("**/api/sessions?**", (route) =>
       emptyCatalog
         ? route.fulfill({
@@ -43,31 +56,6 @@ for (const viewport of [
           })
         : route.continue(),
     );
-    await page.route("**/api/bootstrap**", async (route) => {
-      const response = await route.fetch();
-      if (!response.ok()) return route.fulfill({ response });
-      const body = await response.json();
-      body.snapshot = projectSnapshot(body.snapshot);
-      if (emptyCatalog)
-        body.preferences = {
-          ...body.preferences,
-          pinnedSessionIds: [],
-          hiddenSessionIds: [],
-          pinnedProjectCwds: [],
-          hiddenProjectCwds: [],
-        };
-      await route.fulfill({ response, json: body });
-    });
-    await page.routeWebSocket("**/events**", (client) => {
-      const upstream = client.connectToServer();
-      upstream.onMessage((message) => {
-        const event = JSON.parse(String(message));
-        if (event.type === "snapshot") event.data = projectSnapshot(event.data);
-        else if (emptyCatalog && typeof event.sessionId === "string") return;
-        client.send(JSON.stringify(event));
-      });
-      client.onMessage((message) => upstream.send(message));
-    });
     await pairedPage(page);
     const narrow = viewport.name === "narrow";
     const toggleNav = page.getByRole("button", { name: "Toggle navigation" });

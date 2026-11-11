@@ -83,11 +83,8 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
       await record({ processIdentity: "linux:another-birth" }),
     );
     const registry = new AttachControlRegistry(root);
-    expect((await registry.list()).map((item) => item.instanceId)).toEqual([
-      live.instanceId,
-    ]);
+    expect(await registry.forSession("one", "/work/one.jsonl")).toEqual([live]);
     expect(await readdir(root)).not.toContain(exited);
-    expect(await registry.forSession("one", "/work/one.jsonl")).toHaveLength(1);
     expect(
       await registry.branchLeaves("one", "/work/one.jsonl", {
         observe: false,
@@ -169,7 +166,7 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     expect(await registry.forSession("another", file)).toEqual([]);
   });
 
-  it("shares a recent scan among observers while list stays fresh", async () => {
+  it("shares a recent scan among observers while session lookup stays fresh", async () => {
     const root = await directory();
     const registry = new AttachControlRegistry(root);
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -177,14 +174,16 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     const live = await record();
     await save(root, live);
     expect(await registry.observe()).toEqual([]);
-    expect(await registry.list()).toEqual([live]);
+    expect(await registry.forSession(live.sessionId, live.sessionFile)).toEqual(
+      [live],
+    );
     vi.advanceTimersByTime(1_000);
     expect(await registry.observe()).toEqual([live]);
   });
 
   it("treats a missing directory as no instances", async () => {
     const registry = new AttachControlRegistry(join(await directory(), "none"));
-    expect(await registry.list()).toEqual([]);
+    expect(await registry.observe()).toEqual([]);
   });
 
   it("verifies reported ancestors while retaining uncertainty when Pi cannot answer", async () => {
@@ -234,7 +233,9 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     await writeFile(path, "");
     const registry = new AttachControlRegistry(path);
     await expect(registry.observe()).rejects.toMatchObject({ code: "ENOTDIR" });
-    await expect(registry.list()).rejects.toMatchObject({ code: "ENOTDIR" });
+    await expect(
+      registry.forSession("one", "/work/one.jsonl"),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
   });
 });
 
@@ -355,7 +356,14 @@ describe("AttachControlConnection", () => {
 
       const replies: Array<(socket: Socket) => void> = [
         (socket) => socket.destroy(),
-        (socket) => socket.end('{"ok":true}\n'),
+        (socket) =>
+          socket.end(
+            `${JSON.stringify({
+              ok: true,
+              state: { ...live, leafId: undefined },
+              witnessed: true,
+            })}\n`,
+          ),
         (socket) =>
           socket.end('{"ok":false,"code":"BLOCKED","error":"waiting"}\n'),
       ];

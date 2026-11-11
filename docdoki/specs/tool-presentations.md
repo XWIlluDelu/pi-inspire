@@ -126,9 +126,9 @@ CodeMode and ordinary nested tools show child-call rows when the parent card ope
   displaying broken JSON; keep the original preview in row details. Paths preserve their leaf name
   when shortened visually. Keep order and row identity stable; bounded call projections are distinct
   from the CodeMode viewport's unconstrained height.
-- Select native sources instead of merging unrelated schemas: Codemode `details.calls` for its tool
-  and model calls; parented execution events for generic live calls; top-level result-message
-  `nestedCalls` for generic history. A parent has one displayed call list.
+- The Host projects one child-call list per parent. Codemode supplies `details.calls`, live generic
+  tools use parented execution events, and generic history uses the result message's `nestedCalls`.
+  The browser renders that list for both live activity and history.
 - Keep parent and child outcomes distinct. Do not infer that a failed child was intentionally handled
   merely because the parent completed successfully. Missing child results do not hide parent output.
 - Use the shared text, image and authorized file readers. Classification-specific displays require
