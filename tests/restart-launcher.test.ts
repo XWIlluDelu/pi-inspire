@@ -248,24 +248,16 @@ describe.runIf(process.platform === "linux")(
     );
     it("keeps inherited default instance values under the installed service", async () => {
       const f = await fixture(false);
-      const { inspireRuntimeDirectory } = await import(
+      const { inspireRuntimeDirectory, installationKey } = await import(
         "../server/platform-paths.mjs"
       );
-      const { createHash } = await import("node:crypto");
-      const stateName = createHash("sha256")
-        .update(f.root)
-        .update("\0")
-        .update("127.0.0.1")
-        .update("\0")
-        .update("4587")
-        .digest("hex");
       // The child uses this fixture's runtime directory, not the real user instance.
       f.env.XDG_RUNTIME_DIR = f.root;
       f.env.INSPIRE_HOST = "127.0.0.1";
       f.env.INSPIRE_PORT = "4587";
       f.env.INSPIRE_STATE_PATH = join(
         inspireRuntimeDirectory({ environment: f.env }),
-        stateName + ".json",
+        `${installationKey(f.root, "127.0.0.1", 4587)}.json`,
       );
       const output = f.run(["restart"]);
       expect(output).toContain(

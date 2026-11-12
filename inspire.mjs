@@ -67,7 +67,7 @@ const {
   portAvailable,
   stopManagedInstance,
 } = await import(pathToFileURL(join(supportRoot, "instance-state.mjs")).href);
-const { inspireRuntimeDirectory, resolveUserPath } = await import(
+const { inspireRuntimeDirectory, installationKey, resolveUserPath } = await import(
   pathToFileURL(join(supportRoot, "platform-paths.mjs")).href
 );
 const { runChild, signalProcessTree } = await import(
@@ -235,13 +235,7 @@ function openUrl(url) {
 }
 
 function defaultInstanceStatePath(host, port) {
-  const key = createHash("sha256")
-    .update(root)
-    .update("\0")
-    .update(host)
-    .update("\0")
-    .update(String(port))
-    .digest("hex");
+  const key = installationKey(root, host, port);
   return join(inspireRuntimeDirectory(), `${key}.json`);
 }
 

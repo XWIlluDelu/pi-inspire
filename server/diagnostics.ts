@@ -2,9 +2,9 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, lstat, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { installationKey } from "./installation-key.js";
 import {
   inspireStateDirectory,
+  installationKey,
   supportsPosixPermissions,
 } from "./platform-paths.mjs";
 import { ensurePrivateDirectory } from "./private-directory.js";

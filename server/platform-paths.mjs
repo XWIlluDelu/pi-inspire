@@ -1,6 +1,18 @@
+import { createHash } from "node:crypto";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { posix, sep, win32 } from "node:path";
 import { environmentValue } from "./platform-environment.mjs";
+
+/** Stable key for the state paths owned by one installation and listener. */
+export function installationKey(root, host, port) {
+  return createHash("sha256")
+    .update(root)
+    .update("\0")
+    .update(host)
+    .update("\0")
+    .update(String(port))
+    .digest("hex");
+}
 
 function pathApi(platform) {
   return platform === "win32" ? win32 : posix;

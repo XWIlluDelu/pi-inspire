@@ -5,6 +5,8 @@ interface PlatformPathOptions {
   temporary?: string;
 }
 
+export function installationKey(root: string, host: string, port: number): string;
+
 export function resolveUserPath(
   value: string,
   cwd: string,

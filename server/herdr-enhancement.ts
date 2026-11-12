@@ -13,9 +13,8 @@ import {
   type HerdrWorkerProjection,
 } from "./herdr-worker-observer.js";
 import { HerdrWorkerRegistry } from "./herdr-worker-registry.js";
-import { installationKey } from "./installation-key.js";
 import { type PiRpcOptions, PiRpcProcess } from "./pi-rpc.js";
-import { inspireStateDirectory } from "./platform-paths.mjs";
+import { inspireStateDirectory, installationKey } from "./platform-paths.mjs";
 import { requestError } from "./request-error.js";
 import type { RuntimeWorkerStatus } from "./runtime.js";
 

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installationKey } from "./installation-key.js";
+import { installationKey } from "./platform-paths.mjs";
 import { TerminalDaemonClient } from "./terminal-daemon-client.js";
 import {
   resolveTerminalDaemonConfiguration,
