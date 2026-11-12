@@ -378,10 +378,14 @@ describe("HTTP resource and upload authority", () => {
       ]),
     );
 
-    const { body: list } = await local
-      .post("/api/resources/list")
+    const listResources = () => local.post("/api/resources/list");
+    const { body: list } = await listResources()
       .send({ sessionId })
       .expect(200);
+    await listResources()
+      .send({ sessionId, limit: 100 })
+      .expect(200)
+      .expect(({ body }) => expect(body.resources).toEqual(list.resources));
     const embedded = list.resources.find((resource: { reference: string }) =>
       resource.reference.startsWith("pi-embedded://"),
     );

@@ -83,7 +83,6 @@ export interface TerminalDescriptor {
   rows: number;
   resizeRevision: number;
   outputEpoch: string;
-  firstOutputOffset: number;
   nextOutputOffset: number;
   viewerCount: number;
   hasOwner: boolean;
@@ -165,7 +164,6 @@ export type TerminalClientControlMessage =
   | TerminalAttachRequest
   | { type: "resize"; cols: number; rows: number }
   | { type: "take_control"; cols: number; rows: number }
-  | { type: "release_control" }
   | { type: "ping" };
 
 export type TerminalServerControlMessage =
@@ -186,7 +184,7 @@ export type TerminalServerControlMessage =
       hasOwner: boolean;
       ownerToken?: string;
       nextInputSequence?: number;
-      reason: "available" | "claimed" | "released" | "taken" | "reconnected";
+      reason: "available" | "claimed" | "taken" | "reconnected";
     }
   | {
       type: "resized";

@@ -58,7 +58,6 @@ export function modelSettingsSnapshot(
         baseUrl: "http://localhost:8080/v1",
         api: "openai-completions",
         apiKeyConfigured: true,
-        advancedFields: ["headers", "modelOverrides"],
         models: [
           {
             id: "local",
@@ -67,7 +66,6 @@ export function modelSettingsSnapshot(
             maxTokens: 512,
             reasoning: true,
             input: ["text"],
-            advancedFields: ["cost", "compat"],
           },
         ],
       },

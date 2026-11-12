@@ -188,7 +188,6 @@ describe("bounded session branch tree", () => {
         role: "shell",
         canEdit: false,
         canFork: false,
-        canSwitch: true,
       });
       expect(branchEntryText(shell)).toContain(
         `${excludeFromContext ? "!!" : "!"}printf shell-marker`,

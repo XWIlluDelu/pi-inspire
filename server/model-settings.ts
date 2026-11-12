@@ -87,9 +87,6 @@ function declarationProjection(config: JsonObject): ProviderDeclaration[] {
         baseUrl: string(provider.baseUrl),
         api: string(provider.api),
         apiKeyConfigured: provider.apiKey !== undefined,
-        advancedFields: Object.keys(provider).filter(
-          (key) => !["baseUrl", "api", "apiKey", "models"].includes(key),
-        ),
         models: Array.isArray(provider.models)
           ? provider.models.flatMap((value) => {
               if (
@@ -124,9 +121,6 @@ function declarationProjection(config: JsonObject): ProviderDeclaration[] {
                     typeof model.maxTokens === "number"
                       ? model.maxTokens
                       : undefined,
-                  advancedFields: Object.keys(model).filter(
-                    (key) => !MODEL_FIELDS.includes(key),
-                  ),
                 },
               ];
             })

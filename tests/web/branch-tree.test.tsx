@@ -46,7 +46,6 @@ const point = (
   timestamp: "2026-08-01",
   active: true,
   leaf,
-  canSwitch: role === "assistant",
   canEdit: role === "user",
   canFork: role === "user",
 });

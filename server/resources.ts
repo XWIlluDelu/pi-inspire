@@ -17,7 +17,6 @@ import {
   isTextFileName,
   MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PATH_LENGTH,
-  RESOURCE_LIST_INITIAL_SIZE,
   type SessionResourceListResponse,
   type SessionResourceReference,
   stripResourceLocation,
@@ -379,61 +378,8 @@ interface ResourceCitationIndex {
   embedded: Map<string, EmbeddedCitation>;
 }
 
-interface ResourceListOptions {
-  cursor?: string;
-  limit?: number;
-}
-
 function citationIndexKey(context: ResourceContext): string {
   return JSON.stringify([context.sessionId, context.viewId, context.revision]);
-}
-
-function encodeResourceCursor(
-  index: ResourceCitationIndex,
-  offset: number,
-): string {
-  return Buffer.from(
-    JSON.stringify({
-      sessionId: index.sessionId,
-      viewId: index.viewId,
-      revision: index.revision,
-      offset,
-    }),
-  ).toString("base64url");
-}
-
-function resourceCursorOffset(
-  cursor: string,
-  index: ResourceCitationIndex,
-): number {
-  let value: unknown;
-  try {
-    value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
-  } catch {
-    throw requestError("The resource cursor is not valid", 400);
-  }
-  if (!value || typeof value !== "object") {
-    throw requestError("The resource cursor is not valid", 400);
-  }
-  const record = value as Record<string, unknown>;
-  if (
-    record.sessionId !== index.sessionId ||
-    record.viewId !== index.viewId ||
-    record.revision !== index.revision
-  ) {
-    throw requestError(
-      "The referenced-file view changed; reload the list",
-      409,
-    );
-  }
-  if (
-    !Number.isSafeInteger(record.offset) ||
-    Number(record.offset) < 0 ||
-    Number(record.offset) > index.resources.length
-  ) {
-    throw requestError("The resource cursor is not valid", 400);
-  }
-  return Number(record.offset);
 }
 
 function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
@@ -578,40 +524,17 @@ export class ResourceStore {
     return promise;
   }
 
-  /** Return one bounded page from the complete, revision-bound citation
-   * index. The index contains no transcript content or retained handles. */
+  /** Return the newest page of the complete, revision-bound citation index.
+   * The index contains no transcript content or retained handles. */
   async list(
     context: ResourceContext,
-    options: ResourceListOptions = {},
-  ): Promise<
-    Omit<SessionResourceListResponse, "sessionId" | "viewId" | "revision">
-  > {
+  ): Promise<Pick<SessionResourceListResponse, "resources" | "produced">> {
     const index = await this.citationIndex(context);
-    const limit = options.limit ?? RESOURCE_LIST_INITIAL_SIZE;
-    if (
-      !Number.isSafeInteger(limit) ||
-      limit < 1 ||
-      limit > MAX_RESOURCE_LIST_PAGE_SIZE
-    ) {
-      throw requestError("The resource page size is not valid", 400);
-    }
-    const offset = options.cursor
-      ? resourceCursorOffset(options.cursor, index)
-      : 0;
-    const end = Math.min(index.resources.length, offset + limit);
     return {
-      offset,
-      total: index.resources.length,
-      nextCursor:
-        end < index.resources.length ? encodeResourceCursor(index, end) : null,
-      resources: index.resources.slice(offset, end),
-      ...(offset === 0
-        ? {
-            produced: index.resources
-              .filter((resource) => resource.writes)
-              .slice(0, MAX_RESOURCE_LIST_PAGE_SIZE),
-          }
-        : {}),
+      resources: index.resources.slice(0, MAX_RESOURCE_LIST_PAGE_SIZE),
+      produced: index.resources
+        .filter((resource) => resource.writes)
+        .slice(0, MAX_RESOURCE_LIST_PAGE_SIZE),
     };
   }
 

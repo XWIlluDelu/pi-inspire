@@ -598,10 +598,7 @@ describe("native configuration round trips", () => {
     const before = await snapshot();
     expect(before.settingsError).toBeUndefined();
     expect(before.configError).toBeUndefined();
-    expect(before.providers[0]).toMatchObject({
-      apiKeyConfigured: true,
-      advancedFields: ["headers", "modelOverrides"],
-    });
+    expect(before.providers[0]).toMatchObject({ apiKeyConfigured: true });
     for (const secret of ["stored-config-secret", "never-project-this"])
       expect(JSON.stringify(before)).not.toContain(secret);
     await service.savePreferences(before.settingsRevision, {

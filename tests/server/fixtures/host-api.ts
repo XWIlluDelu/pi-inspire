@@ -139,7 +139,6 @@ export async function hostApiFixture(
       reason: "no-changes" as const,
     })),
   };
-  const shutdown = vi.fn<() => void>();
   const application = createInspireServer({
     token,
     runtime,
@@ -189,7 +188,6 @@ export async function hostApiFixture(
       defaults: { cwd, model: fixtureModel, thinkingLevel: "high" },
     }),
     distDir: join(temporary, "missing-dist"),
-    shutdown,
     ...options,
   });
   await new Promise<void>((resolve) =>
@@ -217,7 +215,6 @@ export async function hostApiFixture(
     attachments,
     runtime,
     git,
-    shutdown,
     application,
     baseUrl,
     localRequest,

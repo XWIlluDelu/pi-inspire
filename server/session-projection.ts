@@ -2555,7 +2555,6 @@ export class SessionProjection
       targetMessageId,
       rangeStart: target,
       rangeEnd,
-      hasMoreInTurn: rangeEnd < turnEnd,
       continuationCursor:
         rangeEnd < turnEnd
           ? userTurnCursorFor(

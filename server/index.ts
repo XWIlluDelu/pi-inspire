@@ -109,9 +109,10 @@ if (host !== "127.0.0.1" && host !== "::1" && host !== "localhost") {
 const port = Number.parseInt(process.env.INSPIRE_PORT ?? "4587", 10);
 if (!Number.isInteger(port) || port < 1 || port > 65_535)
   throw new Error("INSPIRE_PORT must be a valid TCP port");
-const tokenPath =
-  process.env.INSPIRE_TOKEN_PATH || defaultAccessTokenPath(root, host, port);
-const token = await resolveAccessToken(process.env.INSPIRE_TOKEN, tokenPath);
+const token = await resolveAccessToken(
+  process.env.INSPIRE_TOKEN,
+  defaultAccessTokenPath(root, host, port),
+);
 const repositoryUrl =
   typeof packageJson.repository === "string"
     ? packageJson.repository
@@ -334,7 +335,6 @@ const application = createInspireServer({
     : undefined,
   distDir,
   staticAssetCacheDirs,
-  shutdown: () => shutdown("authenticated host shutdown"),
 });
 
 const statePath = process.env.INSPIRE_STATE_PATH;

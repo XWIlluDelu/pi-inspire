@@ -5,7 +5,6 @@ import {
   fileResourceReference,
   isLocalResourceReference,
   isTextFileName,
-  RESOURCE_LIST_INITIAL_SIZE,
   resourceReferenceLine,
   stripResourceLocation,
 } from "../../shared/resource-references";
@@ -467,16 +466,11 @@ Not a file citation: C:relative.html or https://example.com/C:/report.pdf.`),
       message("assistant", textPart(`wrote \`file-${index}.md\``)),
     );
 
-    const bounded = collectSessionResourceReferences(
-      messages,
-      RESOURCE_LIST_INITIAL_SIZE,
-    );
-    expect(bounded).toHaveLength(RESOURCE_LIST_INITIAL_SIZE);
+    const bounded = collectSessionResourceReferences(messages, 8);
+    expect(bounded).toHaveLength(8);
     // Newest first: the bound keeps the most recent references, not the first.
     expect(bounded[0]?.reference).toBe("file-19.md");
-    expect(bounded.at(-1)?.reference).toBe(
-      `file-${20 - RESOURCE_LIST_INITIAL_SIZE}.md`,
-    );
+    expect(bounded.at(-1)?.reference).toBe("file-12.md");
     // No limit means no truncation — the authorization path sees everything.
     expect(collectSessionResourceReferences(messages)).toHaveLength(20);
   });

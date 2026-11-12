@@ -1086,18 +1086,11 @@ export function createApi() {
         `/api/host/dirs${query.size ? `?${query}` : ""}`,
       );
     },
-    listResources: (
-      sessionId: string,
-      options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
-    ) =>
+    listResources: (sessionId: string, signal?: AbortSignal) =>
       post<SessionResourceListResponse>(
         "/api/resources/list",
-        {
-          sessionId,
-          ...(options.cursor ? { cursor: options.cursor } : {}),
-          ...(options.limit ? { limit: options.limit } : {}),
-        },
-        { signal: options.signal },
+        { sessionId },
+        { signal },
         { mutation: false },
       ),
     probeResources: (

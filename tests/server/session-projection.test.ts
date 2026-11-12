@@ -1147,7 +1147,6 @@ describe("SessionProjection bounded paging", () => {
       page.messages.some((value) => JSON.stringify(value).includes("hidden 0")),
     ).toBe(false);
     expect(page.activityRanges?.length).toBeGreaterThan(0);
-    expect(page.hasMoreInTurn).toBe(true);
     expect(page.continuationCursor).toBeTruthy();
     const continuation = projection.userTurnTranscriptPage(
       target.id,

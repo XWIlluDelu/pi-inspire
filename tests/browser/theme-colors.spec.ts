@@ -227,7 +227,6 @@ for (const palette of PALETTE_PREFERENCES) {
               "activity-think",
               "activity-error",
               "activity-event",
-              "think",
               "bg-stage",
               "bg-prompt",
               "bg-surface",
@@ -275,7 +274,6 @@ for (const palette of PALETTE_PREFERENCES) {
         expect(identity["activity-tool"]).not.toBe(identity["activity-error"]);
         expect(identity["activity-think"]).not.toBe(identity["activity-tool"]);
         expect(identity["activity-event"]).toBe(identity["activity-tool"]);
-        expect(identity.think).toBe(identity["activity-think"]);
       });
   });
 }

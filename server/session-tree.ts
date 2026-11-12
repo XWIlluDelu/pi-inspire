@@ -214,7 +214,6 @@ export function branchNode(
     timestamp: entry.timestamp,
     active,
     leaf,
-    canSwitch: !edit,
     canEdit: edit,
     canFork: role === "user",
   };

@@ -21,7 +21,6 @@ export interface NotificationSubscription {
   keys: { p256dh: string; auth: string };
 }
 export interface TaskAlertSettings {
-  installationId: string;
   mode: CompletionAttentionPreference;
   grouping: TaskNotificationGrouping;
   groupingUpdatedAt: number;

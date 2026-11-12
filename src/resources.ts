@@ -36,9 +36,9 @@ export function resourceRows(
 /** A list page plus the view's written files that fell outside it. */
 export function withProducedResources(page: {
   resources: readonly SessionResourceReference[];
-  produced?: readonly SessionResourceReference[];
+  produced: readonly SessionResourceReference[];
 }): readonly SessionResourceReference[] {
-  if (!page.produced?.length) return page.resources;
+  if (!page.produced.length) return page.resources;
   const listed = new Set(page.resources.map((resource) => resource.key));
   return [
     ...page.resources,

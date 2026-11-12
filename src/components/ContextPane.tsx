@@ -19,7 +19,6 @@ import {
 } from "react";
 import { fencedMarkdown } from "../../shared/markdown-fence";
 import {
-  MAX_RESOURCE_LIST_PAGE_SIZE,
   resourceReferenceLabel,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
@@ -140,11 +139,7 @@ export const ContextPane = memo(function ContextPane({
       setResourceStatus("loading");
       setResourceError(null);
       try {
-        const response = await store.loadSessionResources({
-          // One page covers a long session's Used/Produced lists.
-          limit: MAX_RESOURCE_LIST_PAGE_SIZE,
-          signal: request.signal,
-        });
+        const response = await store.loadSessionResources(request.signal);
         if (
           request.signal.aborted ||
           store.getState().transportGeneration !== transportGeneration

@@ -31,10 +31,8 @@ import {
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
 import {
-  MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PROBE_REFERENCES,
   MAX_RESOURCE_REFERENCE_LENGTH,
-  RESOURCE_LIST_INITIAL_SIZE,
 } from "../shared/resource-references.js";
 import { emptyToolPresentationConfiguration } from "../shared/tool-presentation-config.js";
 import type { AttachmentStore } from "./attachments.js";
@@ -292,18 +290,7 @@ const sessionCwdsSchema = z.object({
     .max(MAX_SESSION_CWD_HYDRATION_CWDS),
 });
 const attachmentIdSchema = z.string().uuid();
-const resourceListSchema = z
-  .object({
-    sessionId: sessionIdField,
-    cursor: z.string().min(1).max(2_048).optional(),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_RESOURCE_LIST_PAGE_SIZE)
-      .default(RESOURCE_LIST_INITIAL_SIZE),
-  })
-  .strict();
+const resourceListSchema = z.object({ sessionId: sessionIdField });
 const resourceResolveSchema = z
   .object({
     sessionId: sessionIdField,
@@ -453,9 +440,6 @@ interface AppDependencies {
   /** The persistent PTY authority. Production connects to the terminal
    * daemon; tests may supply an in-process implementation. */
   terminal?: TerminalService;
-  /** Authenticated local launcher shutdown. System service policy remains
-   * outside the HTTP server; this callback only closes this exact Host. */
-  shutdown?: () => void | Promise<void>;
   /** Internal cadence override used by the transport liveness test. */
   websocketHeartbeatIntervalMs?: number;
 }
@@ -973,19 +957,6 @@ export function createInspireServer(deps: AppDependencies): {
     if (!deps.hostRestart)
       throw requestError("Page restart is unavailable for this Host.", 503);
     response.status(202).json(deps.hostRestart.start(intent));
-  });
-
-  app.post("/api/host/shutdown", (_request, response) => {
-    if (!deps.shutdown)
-      return response
-        .status(503)
-        .json({ error: "Host shutdown is unavailable" });
-    response.status(202).end();
-    setImmediate(() => {
-      Promise.resolve(deps.shutdown?.()).catch((error) => {
-        console.error("Authenticated host shutdown failed", error);
-      });
-    });
   });
 
   const terminalGateway = createTerminalGateway(
@@ -1636,9 +1607,9 @@ export function createInspireServer(deps: AppDependencies): {
   });
 
   app.post("/api/resources/list", async (request, response) => {
-    const { sessionId, cursor, limit } = resourceListSchema.parse(request.body);
+    const { sessionId } = resourceListSchema.parse(request.body);
     const context = await deps.runtime.resourceContext(sessionId);
-    const page = await deps.resources.list(context, { cursor, limit });
+    const page = await deps.resources.list(context);
     response.json({
       sessionId,
       viewId: context.viewId,

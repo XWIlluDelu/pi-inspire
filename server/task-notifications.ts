@@ -301,7 +301,6 @@ export class TaskNotifications {
   private currentSettings(id: string): TaskAlertSettings {
     const device = this.saved.devices[id];
     return {
-      installationId: id,
       mode: device?.mode ?? "off",
       grouping: device?.grouping ?? "session",
       groupingUpdatedAt: device?.groupingUpdatedAt ?? 0,
