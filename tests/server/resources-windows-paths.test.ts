@@ -20,7 +20,6 @@ vi.mock("node:os", async (importOriginal) => ({
   homedir: () => "C:\\Users\\Jane Doe",
 }));
 
-import { resolveUserPath } from "../../server/paths.js";
 import { referencePath } from "../../server/resources.js";
 import {
   collectSessionResourceReferences,
@@ -39,8 +38,11 @@ describe("Windows resource URI paths", () => {
     ],
     ["~\\C#\\report%20draft.md", "C:\\Users\\Jane Doe\\C#\\report%20draft.md"],
     ["C:\\C#\\literal.ts:12", "C:\\C#\\literal.ts:12"],
+    ["\\\\nas\\results\\ARTIFACT", "\\\\nas\\results\\ARTIFACT"],
+    ["~\\ARTIFACT", "C:\\Users\\Jane Doe\\ARTIFACT"],
+    [".\\ARTIFACT", "C:\\host\\ARTIFACT"],
   ])(
-    "round-trips literal native filename syntax through the link-form adapter: %s",
+    "round-trips a structured tool path through Windows resource resolution: %s",
     (path, expected) => {
       const resources = collectSessionResourceReferences([
         {
@@ -57,33 +59,10 @@ describe("Windows resource URI paths", () => {
     },
   );
 
-  it.each([
-    ["\\\\nas\\results\\ARTIFACT", "\\\\nas\\results\\ARTIFACT"],
-    ["~\\ARTIFACT", "C:\\Users\\Jane Doe\\ARTIFACT"],
-    [".\\ARTIFACT", "C:\\host\\ARTIFACT"],
-  ])(
-    "carries a native structured path from the index through Windows resolution: %s",
-    (path, expected) => {
-      const resources = collectSessionResourceReferences([
-        {
-          role: "assistant",
-          content: [{ type: "toolCall", name: "read", arguments: { path } }],
-        },
-      ]);
-      expect(resources).toHaveLength(1);
-      expect(referencePath(resources[0]!.reference!, "C:\\host")).toBe(
-        expected,
-      );
-    },
-  );
-
   it.each(["~/notes/file.ts", "~\\notes\\file.ts"])(
     "expands Host-native home syntax: %s",
     (reference) => {
       expect(referencePath(reference, "C:\\host")).toBe(
-        "C:\\Users\\Jane Doe\\notes\\file.ts",
-      );
-      expect(resolveUserPath(reference, "C:\\host")).toBe(
         "C:\\Users\\Jane Doe\\notes\\file.ts",
       );
     },

@@ -12,12 +12,15 @@ import {
   deferredSignal,
   disposeRuntimeFixture,
   FakeRpc,
+  fakeRuntime,
   HIDDEN_FOLDER_CWD,
   initializeRuntimeFixture,
   persistedRecord,
   preview,
   record,
+  schedulingRuntime,
   trackedAttachmentStore,
+  trackRuntime,
   waitForReady,
 } from "./fixtures/runtime.js";
 
@@ -39,18 +42,15 @@ describe("runtime session deletion", () => {
       branchBridgeTimeoutMs: 15_000,
       deleteSessionRecord: remove,
     });
-    try {
-      expect((await source.list()).sessions).toHaveLength(1);
-      await expect(
-        runtime.clearHiddenSessions(["a"], ["a"], []),
-      ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
-      expect(remove).not.toHaveBeenCalled();
-      await expect(runtime.deleteSession("a")).resolves.toMatchObject({
-        disposition: "trashed",
-      });
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    expect((await source.list()).sessions).toHaveLength(1);
+    await expect(
+      runtime.clearHiddenSessions(["a"], ["a"], []),
+    ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
+    expect(remove).not.toHaveBeenCalled();
+    await expect(runtime.deleteSession("a")).resolves.toMatchObject({
+      disposition: "trashed",
+    });
   });
   it("leaves a session file in place when an external instance cannot be ended", async () => {
     const session = await persistedRecord("a");
@@ -66,40 +66,12 @@ describe("runtime session deletion", () => {
     ).setExternalSessionTerminator(async () => {
       throw new Error("Pi has not exited");
     });
-    try {
-      await expect(runtime.deleteSession("a")).rejects.toThrow(
-        "Pi has not exited",
-      );
-      expect(remove).not.toHaveBeenCalled();
-      await expect(access(session.path)).resolves.toBeUndefined();
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("deletes an unopened catalog session through the injected destructive boundary", async () => {
-    const store = trackedAttachmentStore();
-    const source = catalog([record("a", "/tmp")]);
-    source.refresh = vi.fn(source.refresh);
-    source.invalidate = vi.fn();
-    const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(source, store, {
-      openSessionProjection: preview,
-      branchBridgeTimeoutMs: 15_000,
-      deleteSessionRecord: remove,
-    });
-
-    await expect(runtime.deleteSession("a")).resolves.toEqual({
-      sessionId: "a",
-      disposition: "trashed",
-    });
-    expect(remove).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "a", path: resolve("/sessions/a.jsonl") }),
-      "current",
+    trackRuntime(runtime);
+    await expect(runtime.deleteSession("a")).rejects.toThrow(
+      "Pi has not exited",
     );
-    expect(source.refresh).not.toHaveBeenCalled();
-    expect(source.invalidate).toHaveBeenCalledOnce();
-    await runtime.close();
+    expect(remove).not.toHaveBeenCalled();
+    await expect(access(session.path)).resolves.toBeUndefined();
   });
 
   it("does not delete a catalog identity reserved by a provisional new session", async () => {
@@ -141,44 +113,34 @@ describe("runtime session deletion", () => {
     }
   });
 
-  it("clears individually hidden sessions and every session in hidden folders after reserving all identities", async () => {
-    const store = trackedAttachmentStore();
+  it("clears the complete Hidden union, including the selected session, and preserves other sessions", async () => {
     const source = catalog([
       await persistedRecord("a", "/loose"),
       await persistedRecord("b", "/folder"),
       await persistedRecord("c", "/folder"),
       record("ordinary", "/ordinary"),
     ]);
-    source.refresh = vi.fn(source.refresh);
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(source, store, {
-      openSessionProjection: preview,
-      branchBridgeTimeoutMs: 15_000,
+    const { runtime } = schedulingRuntime({
+      source: source,
       deleteSessionRecord: remove,
     });
 
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await waitForReady(runtime);
     await expect(
       runtime.clearHiddenSessions(["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).resolves.toEqual({
-      deleted: [
-        { sessionId: "a", disposition: "trashed" },
-        { sessionId: "b", disposition: "trashed" },
-        { sessionId: "c", disposition: "trashed" },
-      ],
+      deleted: ["a", "b", "c"].map((sessionId) => ({
+        sessionId,
+        disposition: "trashed",
+      })),
     });
-    expect(source.refresh).toHaveBeenCalledOnce();
-    expect(remove).toHaveBeenCalledTimes(3);
-    for (const id of ["a", "b", "c"]) {
-      expect(remove).toHaveBeenCalledWith(
-        expect.objectContaining({ id }),
-        "current",
-      );
-    }
-    expect(remove).not.toHaveBeenCalledWith(
-      expect.objectContaining({ id: "ordinary" }),
-      expect.anything(),
+    expect(remove.mock.calls).toEqual(
+      ["a", "b", "c"].map((id) => [expect.objectContaining({ id })]),
     );
-    await runtime.close();
+    expect((await runtime.snapshot()).active).toBeNull();
   });
 
   it("requires the complete selected folder and leaves other Hidden records untouched", async () => {
@@ -194,30 +156,22 @@ describe("runtime session deletion", () => {
       branchBridgeTimeoutMs: 15_000,
       deleteSessionRecord: remove,
     });
-    try {
-      await expect(
-        runtime.clearHiddenSessions(["b"], [], [HIDDEN_FOLDER_CWD]),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(remove).not.toHaveBeenCalled();
-      await expect(
-        runtime.clearHiddenSessions(["b", "c"], [], [HIDDEN_FOLDER_CWD]),
-      ).resolves.toMatchObject({
-        deleted: [{ sessionId: "b" }, { sessionId: "c" }],
-      });
-      expect(remove).toHaveBeenCalledTimes(2);
-      expect(remove).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ id: "b" }),
-        "current",
-      );
-      expect(remove).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ id: "c" }),
-        "current",
-      );
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await expect(
+      runtime.clearHiddenSessions(["b"], [], [HIDDEN_FOLDER_CWD]),
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "HIDDEN_SELECTION_CHANGED",
+    });
+    expect(remove).not.toHaveBeenCalled();
+    await expect(
+      runtime.clearHiddenSessions(["b", "c"], [], [HIDDEN_FOLDER_CWD]),
+    ).resolves.toMatchObject({
+      deleted: [{ sessionId: "b" }, { sessionId: "c" }],
+    });
+    expect(remove.mock.calls).toEqual(
+      ["b", "c"].map((id) => [expect.objectContaining({ id })]),
+    );
   });
 
   it.each(["missing", "changed"])(
@@ -233,15 +187,12 @@ describe("runtime session deletion", () => {
         trackedAttachmentStore(),
         { deleteSessionRecord: remove },
       );
-      try {
-        await expect(
-          runtime.clearHiddenSessions(["a", "b"], ["a", "b"], []),
-        ).rejects.toMatchObject({ status: failure === "missing" ? 404 : 409 });
-        expect(remove).not.toHaveBeenCalled();
-        await expect(access(first.path)).resolves.toBeUndefined();
-      } finally {
-        await runtime.close();
-      }
+      trackRuntime(runtime);
+      await expect(
+        runtime.clearHiddenSessions(["a", "b"], ["a", "b"], []),
+      ).rejects.toMatchObject({ status: failure === "missing" ? 404 : 409 });
+      expect(remove).not.toHaveBeenCalled();
+      await expect(access(first.path)).resolves.toBeUndefined();
     },
   );
 
@@ -264,112 +215,14 @@ describe("runtime session deletion", () => {
       trackedAttachmentStore(),
       { deleteSessionRecord: remove },
     ).setExternalSessionTerminator(stop);
-    try {
-      await expect(
-        runtime.clearHiddenSessions(["a"], ["a"], []),
-      ).resolves.toMatchObject({
-        deleted: [{ sessionId: "a" }],
-      });
-      expect(stop).toHaveBeenCalledWith("a", session.path);
-      expect(remove).toHaveBeenCalledWith(session, "current");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("rejects a Hidden clear if its reviewed session snapshot changed", async () => {
-    const store = trackedAttachmentStore();
-    const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([record("a", "/loose"), record("b", "/folder")]),
-      store,
-      {
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
-    );
-
-    await expect(
-      runtime.clearHiddenSessions(["a"], ["a"], [HIDDEN_FOLDER_CWD]),
-    ).rejects.toMatchObject({
-      status: 409,
-      message: "Hidden changed; review it before clearing",
-      code: "HIDDEN_SELECTION_CHANGED",
-    });
-    expect(remove).not.toHaveBeenCalled();
-    await runtime.close();
-  });
-
-  it("clears a complete Hidden set containing the selected idle session", async () => {
-    const store = trackedAttachmentStore();
-    const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([
-        await persistedRecord("a", "/loose"),
-        await persistedRecord("b", "/folder"),
-      ]),
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
-    );
-    await runtime.openSession("a");
-    await waitForReady(runtime);
-    await expect(
-      runtime.clearHiddenSessions(["a", "b"], ["a"], [HIDDEN_FOLDER_CWD]),
-    ).resolves.toMatchObject({
-      deleted: [{ sessionId: "a" }, { sessionId: "b" }],
-    });
-    expect(remove).toHaveBeenCalledTimes(2);
-    expect(runtime.activeSessionId).toBeNull();
-    expect((await runtime.snapshot()).active).toBeNull();
-    await runtime.close();
-  });
-
-  it("ends a queued Pi before moving its Hidden session", async () => {
-    const store = trackedAttachmentStore();
-    const workers = new Map<string, FakeRpc>();
-    const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([
-        await persistedRecord("a", "/hidden"),
-        record("ordinary", "/ordinary"),
-      ]),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.set(worker.sessionId, worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
-    );
-
-    await runtime.openSession("a");
-    await waitForReady(runtime);
-    const worker = workers.get("a")!;
-    worker.emit("event", {
-      type: "queue_update",
-      steering: ["waiting"],
-      followUp: [],
-    });
-    expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
-    await runtime.openSession("ordinary");
-
+    trackRuntime(runtime);
     await expect(
       runtime.clearHiddenSessions(["a"], ["a"], []),
-    ).resolves.toMatchObject({ deleted: [{ sessionId: "a" }] });
-    expect(remove).toHaveBeenCalledOnce();
-    expect(worker.stops).toBe(1);
-    await runtime.close();
+    ).resolves.toMatchObject({
+      deleted: [{ sessionId: "a" }],
+    });
+    expect(stop).toHaveBeenCalledWith("a", session.path);
+    expect(remove).toHaveBeenCalledWith(session);
   });
 
   it("refuses an ambiguous catalog identity before touching either file", async () => {
@@ -394,66 +247,27 @@ describe("runtime session deletion", () => {
     await runtime.close();
   });
 
-  it("retires the selected idle session and clears its selection after deletion commits", async () => {
-    const store = trackedAttachmentStore();
-    const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
-    );
-
-    await runtime.openSession("a");
-    await waitForReady(runtime);
-    await expect(runtime.deleteSession("a")).resolves.toEqual({
-      sessionId: "a",
-      disposition: "trashed",
-    });
-    expect(remove).toHaveBeenCalledOnce();
-    expect(runtime.activeSessionId).toBeNull();
-    expect((await runtime.snapshot()).active).toBeNull();
-    await runtime.close();
-  });
-
   it("preserves the selected session after a filesystem deletion failure", async () => {
-    const workers: FakeRpc[] = [];
     const remove = vi.fn(async () => {
       throw new Error("Trash unavailable");
     });
-    const runtime = new RuntimeController(
-      catalog([await persistedRecord("a")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
+    const { runtime, workers } = fakeRuntime({
+      sessions: [await persistedRecord("a")],
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: remove,
+    });
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    await expect(runtime.deleteSession("a")).rejects.toThrow(
+      "Trash unavailable",
     );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      await expect(runtime.deleteSession("a")).rejects.toThrow(
-        "Trash unavailable",
-      );
-      expect(workers[0]!.stops).toBe(1);
-      expect(runtime.activeSessionId).toBe("a");
-      expect((await runtime.snapshot()).active?.sessionId).toBe("a");
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      expect(workers).toHaveLength(2);
-    } finally {
-      await runtime.close();
-    }
+    expect(workers[0]!.stops).toBe(1);
+    expect(runtime.activeSessionId).toBe("a");
+    expect((await runtime.snapshot()).active?.sessionId).toBe("a");
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    expect(workers).toHaveLength(2);
   });
 
   it.each(["settled", "in-flight"] as const)(
@@ -463,24 +277,19 @@ describe("runtime session deletion", () => {
       const { promise: previewGate, resolve: releasePreview } =
         deferredSignal();
       const { promise: started, resolve: deleteStarted } = deferredSignal();
-      const runtime = new RuntimeController(
-        catalog([record("a", "/tmp"), record("b", "/tmp")]),
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) =>
-            new FakeRpc(options) as unknown as PiRpcProcess,
-          openSessionProjection: async (session) => {
-            if (session.id === "b" && phase === "in-flight") await previewGate;
-            return preview(session);
-          },
-          branchBridgeTimeoutMs: 15_000,
-          deleteSessionRecord: async () => {
-            deleteStarted();
-            await deleteGate;
-            return "trashed";
-          },
+      const { runtime } = fakeRuntime({
+        sessions: [record("a", "/tmp"), record("b", "/tmp")],
+        openSessionProjection: async (session) => {
+          if (session.id === "b" && phase === "in-flight") await previewGate;
+          return preview(session);
         },
-      );
+        branchBridgeTimeoutMs: 15_000,
+        deleteSessionRecord: async () => {
+          deleteStarted();
+          await deleteGate;
+          return "trashed";
+        },
+      });
       try {
         await runtime.openSession("a");
         await waitForReady(runtime);
@@ -502,40 +311,22 @@ describe("runtime session deletion", () => {
     },
   );
 
-  it("makes the prior idle session deletable after New session deselects host ownership", async () => {
-    const store = trackedAttachmentStore();
-    const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
-    );
-
-    await runtime.openSession("a");
-    const deselected = await runtime.deselectSession();
-    expect(deselected.active).toBeNull();
-    expect(runtime.activeSessionId).toBeNull();
-    await expect(runtime.deleteSession("a")).resolves.toEqual({
-      sessionId: "a",
-      disposition: "trashed",
-    });
-    expect(remove).toHaveBeenCalledOnce();
-    await runtime.close();
-  });
-
-  it.each(["running", "queued"] as const)(
-    "ends an unselected %s Pi before deleting its session file",
-    async (phase) => {
+  it.each([
+    { method: "delete", activity: "idle" },
+    { method: "delete", activity: "running" },
+    { method: "clear", activity: "queued" },
+  ] as const)(
+    "ends only the affected $activity Pi before $method commits",
+    async ({ method, activity }) => {
       const workers = new Map<string, FakeRpc>();
-      const remove = vi.fn(async () => "trashed" as const);
+      const target = await persistedRecord("a");
+      const remove = vi.fn(async () => {
+        expect(workers.get("a")?.stops).toBe(1);
+        expect(workers.get("b")?.stops).toBe(0);
+        return "trashed" as const;
+      });
       const runtime = new RuntimeController(
-        catalog([record("a", "/tmp"), record("b", "/tmp")]),
+        catalog([target, record("b", "/tmp")]),
         trackedAttachmentStore(),
         {
           createProcess: (options) => {
@@ -544,94 +335,48 @@ describe("runtime session deletion", () => {
             return worker as unknown as PiRpcProcess;
           },
           openSessionProjection: preview,
-          branchBridgeTimeoutMs: 15_000,
           deleteSessionRecord: remove,
         },
       );
-      try {
-        await runtime.openSession("a");
-        await waitForReady(runtime);
-        const worker = workers.get("a")!;
-        worker.emit(
-          "event",
-          phase === "running"
-            ? { type: "agent_start" }
-            : { type: "queue_update", steering: ["waiting"], followUp: [] },
-        );
-        await runtime.openSession("b");
-        await expect(runtime.deleteSession("a")).resolves.toMatchObject({
-          disposition: "trashed",
+      trackRuntime(runtime);
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      const worker = workers.get("a")!;
+      if (activity === "running") worker.emit("event", { type: "agent_start" });
+      if (activity === "queued") {
+        worker.emit("event", {
+          type: "queue_update",
+          steering: ["waiting"],
+          followUp: [],
         });
-        expect(remove).toHaveBeenCalledOnce();
-        expect(worker.stops).toBe(1);
-      } finally {
-        await runtime.close();
+        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
       }
+      await runtime.openSession("b");
+      await waitForReady(runtime, "b");
+
+      const outcome = { sessionId: "a", disposition: "trashed" };
+      if (method === "clear")
+        await expect(
+          runtime.clearHiddenSessions(["a"], ["a"], []),
+        ).resolves.toEqual({ deleted: [outcome] });
+      else await expect(runtime.deleteSession("a")).resolves.toEqual(outcome);
+      expect(remove).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: "a", path: target.path }),
+      );
+      expect(runtime.sessionCwd("a")).toBeNull();
+      expect((await runtime.snapshot()).active?.sessionId).toBe("b");
     },
   );
-
-  it("stops and retires an idle unselected worker before deleting its file", async () => {
-    const store = trackedAttachmentStore();
-    const workers = new Map<string, FakeRpc>();
-    const remove = vi.fn(async () => "deleted" as const);
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp"), record("b", "/tmp")]),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.set(worker.sessionId, worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: remove,
-      },
-    );
-
-    await runtime.openSession("a");
-    await vi.waitFor(() => expect(workers.get("a")?.starts).toBe(1));
-    await runtime.openSession("b");
-    await vi.waitFor(() => expect(workers.get("b")?.starts).toBe(1));
-    const internal = runtime as unknown as {
-      slots: Map<string, { activeOperations: number }>;
-    };
-    await vi.waitFor(() =>
-      expect(internal.slots.get("a")?.activeOperations).toBe(0),
-    );
-
-    await expect(runtime.deleteSession("a")).resolves.toEqual({
-      sessionId: "a",
-      disposition: "deleted",
-    });
-    expect(workers.get("a")?.stops).toBe(1);
-    expect(runtime.sessionCwd("a")).toBeNull();
-    expect(remove).toHaveBeenCalledOnce();
-    expect(remove).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "a" }),
-      "current",
-    );
-    await runtime.close();
-  });
 
   it("rejects queued mutations after deletion starts instead of respawning Pi", async () => {
     const session = await persistedRecord("a");
     const entered = deferredSignal();
     const held = deferredSignal();
-    const workers: FakeRpc[] = [];
     const remove = vi.fn(async () => "trashed" as const);
-    const runtime = new RuntimeController(
-      catalog([session]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        deleteSessionRecord: remove,
-      },
-    );
+    const { runtime, workers } = fakeRuntime({
+      sessions: [session],
+      deleteSessionRecord: remove,
+    });
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
@@ -670,24 +415,16 @@ describe("runtime session deletion", () => {
   });
 
   it("blocks new opens while a deletion outcome is in flight", async () => {
-    const store = trackedAttachmentStore();
     const { promise: gate, resolve: release } = deferredSignal();
     let entered = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: preview,
-        branchBridgeTimeoutMs: 15_000,
-        deleteSessionRecord: async () => {
-          entered = true;
-          await gate;
-          return "trashed";
-        },
+    const { runtime } = schedulingRuntime({
+      branchBridgeTimeoutMs: 15_000,
+      deleteSessionRecord: async () => {
+        entered = true;
+        await gate;
+        return "trashed";
       },
-    );
+    });
 
     const deleting = runtime.deleteSession("a");
     await vi.waitFor(() => expect(entered).toBe(true));

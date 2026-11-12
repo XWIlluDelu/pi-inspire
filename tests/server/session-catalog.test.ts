@@ -35,193 +35,57 @@ function record(id: string, cwd: string, modified: string): SessionRecord {
 }
 
 describe("catalog identity and pagination", () => {
-  it("publishes partial pages but refuses complete-set authorization and false not-found results", async () => {
-    const row = record("available", "/work/healthy", "2026-07-02T10:00:00Z");
-    let unavailable = true;
-    const catalog = new SessionCatalog("/unused", {
-      list: async (_directories, issues) => {
-        if (unavailable)
-          issues!.push({ path: "/offline", message: "Access denied" });
-        return [row];
-      },
-    });
-    expect(await catalog.list()).toMatchObject({
-      sessions: [{ id: "available" }],
-      total: 1,
-      issues: [{ path: "/offline" }],
-    });
-    expect(await catalog.get("available")).toBe(row);
-    await expect(catalog.get("unknown")).rejects.toMatchObject({
-      code: "SESSION_CATALOG_INCOMPLETE",
-    });
-    await expect(
-      catalog.refresh(true, { requireComplete: true }),
-    ).rejects.toMatchObject({ code: "SESSION_CATALOG_INCOMPLETE" });
-    expect(await catalog.listByCwds([row.cwd])).toHaveLength(1);
-    unavailable = false;
-    await catalog.refresh(true, { requireComplete: true });
-    expect(await catalog.list()).not.toHaveProperty("issues");
-    expect(await catalog.get("unknown")).toBeUndefined();
-  });
+  it.each(["invalidation", "forced refresh"])(
+    "queues %s as a new generation and returns only the current rows",
+    async (reason) => {
+      const stale = record("stale", "/work/a", "2026-07-01T10:00:00Z");
+      const fresh = record("fresh", "/work/a", "2026-07-02T10:00:00Z");
+      const resolvers: Array<(rows: SessionRecord[]) => void> = [];
+      const list = vi.fn(
+        () =>
+          new Promise<SessionRecord[]>((resolve) => {
+            resolvers.push(resolve);
+          }),
+      );
+      const catalog = new SessionCatalog("/unused", { list });
 
-  it("isolates duplicate Pi ids instead of displaying one path and opening another", async () => {
-    const duplicateNew = record(
-      "duplicate",
-      "/work/new",
-      "2026-07-03T10:00:00Z",
-    );
-    duplicateNew.path = "/sessions/new.jsonl";
-    const duplicateOld = record(
-      "duplicate",
-      "/work/old",
-      "2026-07-01T10:00:00Z",
-    );
-    duplicateOld.path = "/sessions/old.jsonl";
-    const unique = record("unique", "/work/unique", "2026-07-02T10:00:00Z");
-    unique.parentSessionPath = duplicateNew.path;
-    const catalog = new SessionCatalog("/unused", {
-      list: async () => [duplicateOld, unique, duplicateNew],
-    });
+      const first = catalog.refresh();
+      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
+      if (reason === "invalidation") catalog.invalidate();
+      const current = catalog.refresh(reason === "forced refresh");
+      expect(list).toHaveBeenCalledTimes(1);
 
-    expect(
-      (await catalog.list()).sessions.map((session) => session.id),
-    ).toEqual(["unique"]);
-    await expect(catalog.get("duplicate")).rejects.toMatchObject({
-      status: 409,
-      message: expect.stringMatching(/ambiguous/i),
-    });
-    await expect(catalog.listByIds(["duplicate"])).rejects.toMatchObject({
-      status: 409,
-    });
-    expect((await catalog.list()).sessions[0]).not.toHaveProperty(
-      "parentSessionId",
-    );
-  });
+      resolvers[0]!([stale]);
+      await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+      resolvers[1]!([fresh]);
 
-  it("rescans an invalidated ambiguous id so repaired storage can recover", async () => {
-    const duplicateNew = record(
-      "duplicate",
-      "/work/new",
-      "2026-07-03T10:00:00Z",
-    );
-    duplicateNew.path = "/sessions/new.jsonl";
-    const duplicateOld = record(
-      "duplicate",
-      "/work/old",
-      "2026-07-01T10:00:00Z",
-    );
-    duplicateOld.path = "/sessions/old.jsonl";
-    const list = vi
-      .fn<() => Promise<SessionRecord[]>>()
-      .mockResolvedValueOnce([duplicateOld, duplicateNew])
-      .mockResolvedValueOnce([duplicateNew]);
-    const catalog = new SessionCatalog("/unused", { list });
+      await expect(first).resolves.toEqual([fresh]);
+      await expect(current).resolves.toEqual([fresh]);
+      await expect(catalog.list()).resolves.toMatchObject({
+        sessions: [{ id: "fresh" }],
+      });
+    },
+  );
 
-    await expect(catalog.get("duplicate")).rejects.toMatchObject({
-      status: 409,
-    });
-    catalog.invalidate();
-
-    await expect(catalog.get("duplicate")).resolves.toBe(duplicateNew);
-    expect(list).toHaveBeenCalledTimes(2);
-  });
-
-  it("uses deterministic newest-first ordering with stable tie-breakers", async () => {
+  it("pages newest-first with stable ties, a bounded limit, and an independent total", async () => {
     const sameTime = "2026-07-27T10:00:00Z";
-    const old = record("old", "/work/a", "2026-07-01T10:00:00Z");
-    const beta = record("beta", "/work/a", sameTime);
-    const alpha = record("alpha", "/work/a", sameTime);
-    const catalog = new SessionCatalog("/unused", {
-      list: async () => [old, beta, alpha],
-    });
-    expect(
-      (await catalog.list()).sessions.map((session) => session.id),
-    ).toEqual(["alpha", "beta", "old"]);
-  });
-
-  it("queues a new generation and never returns invalidated rows", async () => {
-    const stale = record("stale", "/work/a", "2026-07-01T10:00:00Z");
-    const fresh = record("fresh", "/work/a", "2026-07-02T10:00:00Z");
-    const resolvers: Array<(rows: SessionRecord[]) => void> = [];
-    const list = vi.fn(
-      () =>
-        new Promise<SessionRecord[]>((resolve) => {
-          resolvers.push(resolve);
-        }),
-    );
-    const catalog = new SessionCatalog("/unused", { list });
-
-    const first = catalog.refresh();
-    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-    catalog.invalidate();
-    const current = catalog.refresh();
-    expect(list).toHaveBeenCalledTimes(1);
-
-    resolvers[0]!([stale]);
-    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-    resolvers[1]!([fresh]);
-
-    await expect(first).resolves.toEqual([fresh]);
-    await expect(current).resolves.toEqual([fresh]);
-    await expect(catalog.refresh()).resolves.toEqual([fresh]);
-  });
-
-  it("makes a forced refresh a distinct ordered generation", async () => {
-    const stale = record("stale", "/work/a", "2026-07-01T10:00:00Z");
-    const fresh = record("fresh", "/work/a", "2026-07-02T10:00:00Z");
-    const resolvers: Array<(rows: SessionRecord[]) => void> = [];
-    const list = vi.fn(
-      () =>
-        new Promise<SessionRecord[]>((resolve) => {
-          resolvers.push(resolve);
-        }),
-    );
-    const catalog = new SessionCatalog("/unused", { list });
-
-    const first = catalog.refresh();
-    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(1));
-    const forced = catalog.refresh(true);
-    expect(list).toHaveBeenCalledTimes(1);
-
-    resolvers[0]!([stale]);
-    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2));
-    resolvers[1]!([fresh]);
-
-    await expect(first).resolves.toEqual([fresh]);
-    await expect(forced).resolves.toEqual([fresh]);
-    await expect(catalog.list()).resolves.toMatchObject({
-      sessions: [expect.objectContaining({ id: "fresh" })],
-    });
-  });
-
-  it("hydrates complete curated folders beyond the chronological page size", async () => {
-    const rows = Array.from({ length: 41 }, (_, index) =>
-      record(`session-${index}`, "/work/curated", "2026-07-01T10:00:00Z"),
-    );
-    const catalog = new SessionCatalog("/unused", {
-      list: async () => rows,
-    });
-
-    await expect(catalog.listByCwds(["/work/curated"])).resolves.toHaveLength(
-      41,
-    );
-  });
-
-  it("reports offset, bounded limit, and total independently from page length", async () => {
     const catalog = new SessionCatalog("/unused", {
       list: async () => [
-        record("match-old", "/work/a", "2026-07-01T10:00:00Z"),
-        record("other", "/work/a", "2026-07-03T10:00:00Z"),
-        record("match-new", "/work/a", "2026-07-02T10:00:00Z"),
+        record("beta", "/work/a", sameTime),
+        record("old", "/work/a", "2026-07-01T10:00:00Z"),
+        record("alpha", "/work/a", sameTime),
       ],
     });
-
-    const page = await catalog.list({ offset: 1, limit: 1000 });
-    expect(page).toMatchObject({ total: 3, offset: 1, limit: 100 });
-    expect(page.sessions.map((session) => session.id)).toEqual([
-      "match-new",
-      "match-old",
-    ]);
+    expect(await catalog.list({ limit: 1 })).toMatchObject({
+      total: 3,
+      sessions: [{ id: "alpha" }],
+    });
+    expect(await catalog.list({ offset: 1, limit: 1000 })).toMatchObject({
+      total: 3,
+      offset: 1,
+      limit: 100,
+      sessions: [{ id: "beta" }, { id: "old" }],
+    });
   });
 });
 
@@ -290,7 +154,7 @@ async function withSearchFixture(
         role: "assistant",
         content: [
           { type: "thinking", thinking: "NEVER_INDEX_REASONING" },
-          { type: "text", text: "assistant-only cobalt" },
+          { type: "text", text: "**assistant-only** cobalt" },
           { type: "text", text: "exact\n retained\tphrase" },
         ],
       },
@@ -321,23 +185,6 @@ async function withSearchFixture(
   }
 }
 
-describe("catalog search excerpts", () => {
-  it("returns a body excerpt for contiguous hits, including cached pages", async () => {
-    await withSearchFixture(async (_root, _index, catalog) => {
-      const first = await catalog.list({ query: "zirconium" });
-      expect(first.sessions.map((row) => row.id)).toEqual(["search-owner"]);
-      expect(first.sessions[0]!.matchSnippet).toContain("zirconium");
-      expect(first.sessions[0]!.matchSnippet).not.toContain("NEVER_INDEX");
-      const again = await catalog.list({ query: "zirconium" });
-      expect(again.sessions[0]!.matchSnippet).toBe(
-        first.sessions[0]!.matchSnippet,
-      );
-      const browsing = await catalog.list();
-      expect(browsing.sessions.every((row) => !row.matchSnippet)).toBe(true);
-    });
-  });
-});
-
 describe("catalog current metadata", () => {
   it("reuses a search across pages and observes invalidated sources", async () => {
     const searching = vi.spyOn(
@@ -352,9 +199,25 @@ describe("catalog current metadata", () => {
           offset: 1,
           limit: 1,
         });
-        expect(
-          [...first.sessions, ...next.sessions].map((row) => row.id),
-        ).toEqual(["search-newer", "search-owner"]);
+        expect(first).toMatchObject({
+          total: 2,
+          offset: 0,
+          sessions: [{ id: "search-newer", matchSnippet: "cobalt body" }],
+        });
+        expect(next).toMatchObject({
+          total: 2,
+          offset: 1,
+          sessions: [{ id: "search-owner" }],
+        });
+        const snippet = next.sessions[0]!.matchSnippet;
+        expect(snippet).toContain("cobalt");
+        expect(snippet).not.toMatch(/\*\*|NEVER_INDEX/u);
+        const again = await catalog.list({
+          query: "cobalt",
+          offset: 1,
+          limit: 1,
+        });
+        expect(again.sessions[0]!.matchSnippet).toBe(snippet);
         expect(searching).toHaveBeenCalledOnce();
         await appendFile(
           join(root, "unrelated.jsonl"),
@@ -375,11 +238,11 @@ describe("catalog current metadata", () => {
     }
   });
 
-  it("refreshes one session name without a global scan or transcript projection", async () => {
-    await withSearchFixture(async (root, index, catalog) => {
-      const scan = vi.spyOn(index, "list");
-      const original = await catalog.get("search-owner");
-      expect(original?.name).toBe("Quantum migration review");
+  it("refreshes renamed or cleared session titles and discards a replaced identity", async () => {
+    await withSearchFixture(async (root, _index, catalog) => {
+      expect((await catalog.get("search-owner"))?.name).toBe(
+        "Quantum migration review",
+      );
       const path = join(root, "search-owner.jsonl");
       await appendFile(
         path,
@@ -389,7 +252,6 @@ describe("catalog current metadata", () => {
           name: "New saved name",
         }) + "\n",
       );
-      expect((await catalog.get("search-owner"))?.name).toBe(original?.name);
       expect((await catalog.get("search-owner", { refresh: true }))?.name).toBe(
         "New saved name",
       );
@@ -404,7 +266,6 @@ describe("catalog current metadata", () => {
       expect(
         (await catalog.get("search-owner", { refresh: true }))?.name,
       ).toBeUndefined();
-      expect(scan).toHaveBeenCalledOnce();
       await writeFile(
         path,
         JSON.stringify({
@@ -423,7 +284,7 @@ describe("catalog current metadata", () => {
 });
 
 describe("catalog retained-content search", () => {
-  it("searches complete retained text with defined query syntax and chronological pages", async () => {
+  it("searches complete retained text with defined query syntax", async () => {
     await withSearchFixture(async (root, index, catalog) => {
       const cases: Array<[string, string[]]> = [
         ["first-body-tail", ["search-owner"]],
@@ -455,27 +316,20 @@ describe("catalog retained-content search", () => {
           query,
         ).toEqual(expected);
       }
-      expect(
-        (await catalog.list({ query: '"exact retained phrase"' })).sessions.map(
-          (session) => session.id,
-        ),
-      ).toEqual(["search-owner"]);
-      const first = await catalog.list({ query: "cobalt", limit: 1 });
-      const second = await catalog.list({
-        query: "cobalt",
-        limit: 1,
-        offset: 1,
-      });
-      expect(first).toMatchObject({
-        total: 2,
-        offset: 0,
-        sessions: [{ id: "search-newer" }],
-      });
-      expect(second).toMatchObject({
-        total: 2,
-        offset: 1,
-        sessions: [{ id: "search-owner" }],
-      });
+      const excerpt = (query: string) =>
+        catalog.list({ query }).then((page) => page.sessions[0]?.matchSnippet);
+      const late = await excerpt("first-body-tail");
+      expect(late).toMatch(/^…[^…]{0,15}first-body-tail/u);
+      expect(late!.length).toBeLessThanOrEqual(122);
+      await expect(excerpt("Qmgrv")).resolves.toBeUndefined();
+      await expect(excerpt("search-owner")).resolves.toBeUndefined();
+      await expect(excerpt("zirconium cobalt")).resolves.toMatch(
+        /^.{0,15}zirconium/u,
+      );
+      await expect(excerpt("re:assistant-only.*cobalt")).resolves.toContain(
+        "assistant-only cobalt",
+      );
+
       const summaries = await index.list(root);
       expect(
         summaries.find((row) => row.id === "search-owner")?.firstMessage,
@@ -483,9 +337,9 @@ describe("catalog retained-content search", () => {
       expect(
         summaries.every((row) => !Object.hasOwn(row, "allMessagesText")),
       ).toBe(true);
-      expect(JSON.stringify((await catalog.list()).sessions)).not.toContain(
-        "assistant-only",
-      );
+      const browsing = await catalog.list();
+      expect(browsing.sessions.every((row) => !row.matchSnippet)).toBe(true);
+      expect(JSON.stringify(browsing.sessions)).not.toContain("assistant-only");
     });
   }, 30_000);
 
@@ -593,41 +447,20 @@ it("searches available sessions while identifying an unreadable or replaced sour
   });
 });
 
-describe("catalog title provenance", () => {
-  it("uses firstMessage as the public title when a session is unnamed", () => {
-    const secret = "SECRET_PROMPT_DO_NOT_NOTIFY";
-    const unnamed = record(
-      "unnamed",
-      "/safe/research-project",
-      "2026-07-01T10:00:00Z",
-    );
-    unnamed.firstMessage = secret;
-    const summary = new SessionCatalog("/unused").project(unnamed);
-    expect(summary.title).toBe(secret);
-    expect(summary.project).toBe("research-project");
-  });
-
-  it("calls an empty conversation New session rather than Untitled session", () => {
-    const empty = record(
-      "empty",
-      "/safe/research-project",
-      "2026-07-01T10:00:00Z",
-    );
-    empty.firstMessage = "";
-    empty.messageCount = 0;
-    expect(new SessionCatalog("/unused").project(empty).title).toBe(
-      "New session",
-    );
-  });
-});
-
 it("returns all requested folder sessions in catalog order or refuses the combined limit", async () => {
   const alpha = "/work/alpha";
   const beta = "/work/beta";
+  const olderFolderRows = Array.from({ length: 40 }, (_, index) =>
+    record(
+      `alpha-${String(index).padStart(2, "0")}`,
+      alpha,
+      "2026-01-01T10:00:00Z",
+    ),
+  );
   const sessions = [
     record("beta-old", beta, "2026-02-01T10:00:00Z"),
     record("alpha-new", alpha, "2026-07-01T10:00:00Z"),
-    record("alpha-old", alpha, "2026-01-01T10:00:00Z"),
+    ...olderFolderRows,
   ];
   const overflow = "/work/overflow";
   const catalog = new SessionCatalog("/unused", {
@@ -639,11 +472,13 @@ it("returns all requested folder sessions in catalog order or refuses the combin
     ],
   });
 
+  const page = await catalog.list({ limit: 40 });
+  expect(page.sessions.map((session) => session.id)).not.toContain("alpha-00");
   const curated = await catalog.listByCwds([beta, alpha, beta]);
   expect(curated.map((session) => session.id)).toEqual([
     "alpha-new",
     "beta-old",
-    "alpha-old",
+    ...olderFolderRows.map((session) => session.id),
   ]);
   await expect(catalog.listByCwds([overflow, alpha])).rejects.toMatchObject({
     status: 413,

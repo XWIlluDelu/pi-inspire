@@ -1,9 +1,10 @@
 import {
   chmod,
   lstat,
-  mkdir,
   mkdtemp,
   open,
+  readdir,
+  readFile,
   rm,
   symlink,
   utimes,
@@ -12,10 +13,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TerminalHistoryStore } from "../../server/terminal-history-store.js";
+import type { TerminalPersistedState } from "../../server/terminal-session-manager.js";
+import {
+  readTerminalState,
+  TerminalStateWriter,
+} from "../../server/terminal-state-store.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...fs, mkdir: vi.fn(fs.mkdir), open: vi.fn(fs.open) };
+  return { ...fs, open: vi.fn(fs.open) };
 });
 
 const directories: string[] = [];
@@ -32,7 +38,7 @@ async function setup() {
   const root = await mkdtemp(join(tmpdir(), "inspire-terminal-history-"));
   directories.push(root);
   const directory = join(root, "history");
-  return { directory, store: new TerminalHistoryStore(directory) };
+  return { root, directory, store: new TerminalHistoryStore(directory) };
 }
 
 describe("TerminalHistoryStore", () => {
@@ -77,71 +83,56 @@ describe("TerminalHistoryStore", () => {
     expect(history.subarray(-25).toString()).toBe("first" + "tail".repeat(5));
   });
 
-  it.each([
-    { storage: "fast", chunkCount: 1, intervalMs: 50 },
-    { storage: "slow", chunkCount: 12, intervalMs: 100 },
-  ])(
-    "coalesces output within the flush interval with $storage storage",
-    async ({ storage, chunkCount, intervalMs }) => {
-      const { directory, store } = await setup();
-      const actual =
-        await vi.importActual<typeof import("node:fs/promises")>(
-          "node:fs/promises",
-        );
-      let release!: () => void;
-      let started!: () => void;
-      const blocked = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const writing = new Promise<void>((resolve) => {
-        started = resolve;
-      });
-      vi.mocked(mkdir).mockClear();
-      vi.mocked(open).mockClear();
-      vi.mocked(open).mockImplementationOnce(async (...args) => {
-        started();
+  it("coalesces output received during a slow disk write without reordering bytes", async () => {
+    const { directory, store } = await setup();
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    let release!: () => void;
+    let opened!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writing = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    vi.mocked(open)
+      .mockClear()
+      .mockImplementationOnce(async (...args) => {
+        opened();
         await blocked;
         return actual.open(...args);
       });
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      store.append("terminal-1", Buffer.from("first"));
-      const firstFlush = store.flush();
-      try {
-        await writing;
-        const chunks = Array.from({ length: chunkCount }, (_, index) =>
-          Buffer.alloc(64 * 1024, 0x41 + index),
-        );
-        for (const chunk of chunks) {
-          store.append("terminal-1", chunk);
-          // The first write is gated: advance only the synchronous batch timer,
-          // without making simulated arrival intervals wait on real event turns.
-          vi.advanceTimersByTime(intervalMs);
-        }
-        release();
-        await firstFlush;
-        if (storage === "fast") {
-          expect(open).toHaveBeenCalledTimes(1);
-          // A batch starts with mkdir before its async open; neither may start
-          // while the next batch's 100ms timer is still pending.
-          expect(mkdir).toHaveBeenCalledTimes(1);
-          await vi.advanceTimersByTimeAsync(50);
-        }
-        await store.flush();
-        const received = await actual.readFile(
-          join(directory, "terminal-1.log"),
-        );
-        const expected = Buffer.concat([Buffer.from("first"), ...chunks]);
-        // Compare every byte natively, not as hundreds of thousands of object keys.
-        expect(received.equals(expected)).toBe(true);
-        expect(open).toHaveBeenCalledTimes(2);
-      } finally {
-        release();
-        await store.flush();
-        vi.useRealTimers();
-        vi.mocked(open).mockReset().mockImplementation(actual.open);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    store.append("terminal-1", Buffer.from("first"));
+    const firstFlush = store.flush();
+    try {
+      await writing;
+      const chunks = Array.from({ length: 12 }, (_, index) =>
+        Buffer.alloc(64 * 1024, 0x41 + index),
+      );
+      for (const chunk of chunks) {
+        store.append("terminal-1", chunk);
+        vi.advanceTimersByTime(100);
       }
-    },
-  );
+      expect(open).toHaveBeenCalledTimes(1);
+      release();
+      await firstFlush;
+      await store.flush();
+
+      const received = await readFile(join(directory, "terminal-1.log"));
+      expect(
+        received.equals(Buffer.concat([Buffer.from("first"), ...chunks])),
+      ).toBe(true);
+      expect(open).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      await store.flush();
+      vi.useRealTimers();
+      vi.mocked(open).mockReset().mockImplementation(actual.open);
+    }
+  });
 
   it("prunes output older than the configured retention", async () => {
     const { directory, store } = await setup();
@@ -168,6 +159,43 @@ describe("TerminalHistoryStore", () => {
       await symlink(target, join(directory, "terminal-link.log"));
 
       await expect(store.read("terminal-link")).rejects.toThrow(/invalid/u);
+    },
+  );
+});
+
+describe("terminal metadata persistence", () => {
+  const state: TerminalPersistedState = {
+    version: 1,
+    settings: { persistOutput: false, historyRetentionDays: 30 },
+    terminals: [],
+    orderByProject: [],
+  };
+
+  it("publishes scheduled state on flush", async () => {
+    const { root } = await setup();
+    const path = join(root, "state.json");
+    const writer = new TerminalStateWriter(path, () => state);
+    writer.schedule();
+    await writer.flush();
+    expect(await readTerminalState(path)).toEqual(state);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a shared state parent without changing its permissions",
+    async () => {
+      const { root } = await setup();
+      await chmod(root, 0o755);
+      const failed = vi.fn();
+      const writer = new TerminalStateWriter(
+        join(root, "state.json"),
+        () => state,
+        failed,
+      );
+      writer.schedule();
+      await writer.flush();
+      expect(failed).toHaveBeenCalledWith(expect.any(Error));
+      expect((await lstat(root)).mode & 0o777).toBe(0o755);
+      expect(await readdir(root)).toEqual([]);
     },
   );
 });

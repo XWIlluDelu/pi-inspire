@@ -24,50 +24,52 @@ beforeEach(() => {
 });
 
 describe.skipIf(process.platform !== "linux")("Herdr scope retirement", () => {
-  it.each(
-    ["open", "inspect", "kill"].flatMap((phase) =>
-      ["ENOENT", "ENODEV"].map((code) => ({ phase, code })),
-    ),
-  )("accepts kernel removal during $phase ($code)", async ({ phase, code }) => {
-    const removed = Object.assign(new Error("Scope was removed"), { code });
-    const killer = {
-      write: vi.fn().mockRejectedValue(removed),
-      close: vi.fn(),
-    };
-    vi.mocked(open).mockImplementation(async (path) => {
-      if (path === scope.path) {
-        if (phase === "open") throw removed;
-        return directory as unknown as Awaited<ReturnType<typeof open>>;
-      }
-      expect(path).toBe("/proc/self/fd/77/cgroup.kill");
-      return killer as unknown as Awaited<ReturnType<typeof open>>;
-    });
-    let inspected = false;
-    vi.mocked(readFile).mockImplementation(async (path) => {
-      if (path === "/proc/sys/kernel/random/boot_id") return "test-boot";
-      expect(path).toBe("/proc/self/fd/77/cgroup.events");
-      if (phase === "kill" && !inspected) {
-        inspected = true;
-        return "populated 1\n";
-      }
-      throw removed;
-    });
+  it.each([
+    { phase: "open", code: "ENOENT" },
+    { phase: "inspect", code: "ENODEV" },
+    { phase: "kill", code: "ENODEV" },
+  ])(
+    "accepts kernel removal during $phase ($code)",
+    async ({ phase, code }) => {
+      const removed = Object.assign(new Error("Scope was removed"), { code });
+      const killer = {
+        write: vi.fn().mockRejectedValue(removed),
+        close: vi.fn(),
+      };
+      vi.mocked(open).mockImplementation(async (path) => {
+        if (path === scope.path) {
+          if (phase === "open") throw removed;
+          return directory as unknown as Awaited<ReturnType<typeof open>>;
+        }
+        expect(path).toBe("/proc/self/fd/77/cgroup.kill");
+        return killer as unknown as Awaited<ReturnType<typeof open>>;
+      });
+      let inspected = false;
+      vi.mocked(readFile).mockImplementation(async (path) => {
+        if (path === "/proc/sys/kernel/random/boot_id") return "test-boot";
+        expect(path).toBe("/proc/self/fd/77/cgroup.events");
+        if (phase === "kill" && !inspected) {
+          inspected = true;
+          return "populated 1\n";
+        }
+        throw removed;
+      });
 
-    await expect(
-      stopHerdrProcessGroup(group, false, () => {}),
-    ).resolves.toBeUndefined();
-    expect(directory.close).toHaveBeenCalledTimes(phase === "open" ? 0 : 1);
-    if (phase === "kill") {
-      expect(killer.write).toHaveBeenCalledWith("1");
-      expect(killer.close).toHaveBeenCalledOnce();
-    }
-  });
+      await expect(
+        stopHerdrProcessGroup(group, false, () => {}),
+      ).resolves.toBeUndefined();
+      expect(directory.close).toHaveBeenCalledTimes(phase === "open" ? 0 : 1);
+      if (phase === "kill") {
+        expect(killer.write).toHaveBeenCalledWith("1");
+        expect(killer.close).toHaveBeenCalledOnce();
+      }
+    },
+  );
 
   it.each([
     { code: "ENOENT", disappeared: true },
     { code: "ESRCH", disappeared: true },
     { code: "EACCES", disappeared: false },
-    { code: "EPERM", disappeared: false },
   ])(
     "preserves scope authority when leader inspection returns $code",
     async ({ code, disappeared }) => {

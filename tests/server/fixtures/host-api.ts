@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { vi } from "vitest";
-import { WebSocket } from "ws";
+import { type ClientOptions, WebSocket } from "ws";
 import { createInspireServer } from "../../../server/app.js";
 import { AttachmentStore } from "../../../server/attachments.js";
 import type { GitInspectionLike } from "../../../server/git-inspection.js";
@@ -19,15 +19,17 @@ import type {
 } from "../../../shared/contracts.js";
 import { workbenchFixture } from "../../fixtures/workbench.js";
 
-export type DetailFrame = Record<string, unknown> & {
+type DetailFrame = Record<string, unknown> & {
+  type: string;
   data?: ActiveSnapshot;
   snapshotDigest?: string;
   sessionStatus?: SessionRuntimeStatus;
 };
 
-export function observeEventSocket(url: string) {
+export function observeEventSocket(url: string, options: ClientOptions = {}) {
   const frames: DetailFrame[] = [];
   const socket = new WebSocket(url, {
+    ...options,
     headers: { Authorization: `Bearer ${token}` },
   });
   socket.on("message", (data) => frames.push(JSON.parse(data.toString())));
@@ -69,12 +71,7 @@ export async function pairedBrowser(
     .set("Origin", origin)
     .send({ challenge, signature })
     .expect(200);
-  return {
-    bearer: exchanged.body.bearer as string,
-    certificate,
-    privateKey,
-    publicKey: jwk,
-  };
+  return { bearer: exchanged.body.bearer as string };
 }
 
 export async function socketAdmission(

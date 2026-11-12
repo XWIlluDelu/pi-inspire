@@ -350,7 +350,7 @@ function serviceRootLine(root) {
   return `WorkingDirectory=${systemdEscape(resolve(root))}`;
 }
 
-export function sshReverseServiceBelongsToRoot(unit, root) {
+function sshReverseServiceBelongsToRoot(unit, root) {
   return unit.split(/\r?\n/u).includes(serviceRootLine(root));
 }
 

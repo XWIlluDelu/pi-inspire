@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
+  PI_NATIVE_COMMANDS,
   parseCommandInvocation,
   parseNativeCommand,
 } from "../../shared/commands";
 
 describe("Pi native command parsing", () => {
+  it("classifies every built-in from the pinned development Pi", async () => {
+    const entry = import.meta.resolve("@earendil-works/pi-coding-agent");
+    const { BUILTIN_SLASH_COMMANDS: builtins } = (await import(
+      new URL("./core/slash-commands.js", entry).href
+    )) as { BUILTIN_SLASH_COMMANDS: ReadonlyArray<{ name: string }> };
+    expect(PI_NATIVE_COMMANDS.map(({ name }) => name).sort()).toEqual(
+      builtins.map(({ name }) => name).sort(),
+    );
+  });
+
   it("parses a leading command token and preserves arguments", () => {
     expect(
       parseCommandInvocation("  /compact  keep exact paths\nnext  "),

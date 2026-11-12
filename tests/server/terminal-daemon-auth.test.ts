@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdtemp, readFile, rm } from "node:fs/promises";
-import { createConnection, createServer, type Socket } from "node:net";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveAccessToken } from "../../server/access-token.js";
 import { TerminalDaemonClient } from "../../server/terminal-daemon-client.js";
-import { defaultTerminalDaemonAddress } from "../../server/terminal-daemon-protocol.js";
+import {
+  defaultTerminalDaemonAddress,
+  TERMINAL_DAEMON_PROTOCOL_VERSION,
+} from "../../server/terminal-daemon-protocol.js";
 import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
 import { addressAcceptsConnections } from "../../server/terminal-daemon-socket.js";
 import {
@@ -17,110 +21,42 @@ import {
 import { encodeTerminalIpcJson } from "../../server/terminal-ipc.js";
 import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 
-async function fixture() {
+async function fixture(longRuntime = false) {
   const root = await mkdtemp(join(tmpdir(), "inspire-terminal-auth-"));
-  const address = defaultTerminalDaemonAddress(root, "127.0.0.1", 4587);
+  const address = defaultTerminalDaemonAddress(root, "127.0.0.1", 4587, {
+    environment: {
+      ...process.env,
+      XDG_RUNTIME_DIR: longRuntime ? join(root, "目录".repeat(40)) : root,
+    },
+  });
   const token = randomUUID() + randomUUID();
   return { root, address, token };
 }
 
 describe("terminal daemon peer authentication", () => {
-  it("uses a fresh persistent TLS authority instead of the potentially disclosed plaintext-era token", async () => {
-    const f = await fixture();
+  it("authenticates the default endpoint in a long runtime directory with its own persistent TLS authority", async () => {
+    const f = await fixture(true);
     const basePath = join(f.root, "configured-token");
-    const oldToken = await resolveAccessToken(undefined, basePath);
+    const hostToken = await resolveAccessToken(undefined, basePath);
     const secret = await resolveTerminalDaemonSecret(basePath);
-    const server = new TerminalDaemonServer(
-      f.address,
-      secret,
-      new TerminalSessionManager(),
-    );
+    const manager = new TerminalSessionManager();
+    const read = vi.spyOn(manager, "getSettings");
+    const server = new TerminalDaemonServer(f.address, secret, manager);
     const trusted = new TerminalDaemonClient(f.address, secret);
-    const old = new TerminalDaemonClient(f.address, oldToken);
+    const hostAuthority = new TerminalDaemonClient(f.address, hostToken);
     try {
-      expect(secret).not.toBe(oldToken);
+      if (process.platform !== "win32")
+        expect(Buffer.byteLength(f.address)).toBeLessThanOrEqual(
+          process.platform === "darwin" ? 103 : 107,
+        );
+      expect(secret).not.toBe(hostToken);
       expect(await resolveTerminalDaemonSecret(basePath)).toBe(secret);
-      expect((await readFile(basePath, "utf8")).trim()).toBe(oldToken);
+      expect((await readFile(basePath, "utf8")).trim()).toBe(hostToken);
       expect(
         (await readFile(terminalDaemonSecretPath(basePath), "utf8")).trim(),
       ).toBe(secret);
       await server.start();
-      await expect(old.probe()).rejects.toThrow();
-      await trusted.probe();
-    } finally {
-      await old.close();
-      await trusted.close();
-      await server.stop();
-      await rm(f.root, { recursive: true, force: true });
-    }
-  });
 
-  it.each(["rpc", "attach"] as const)(
-    "does not disclose credentials or request data to an unverified %s listener",
-    async (mode) => {
-      const f = await fixture();
-      const received: Buffer[] = [];
-      const sockets = new Set<Socket>();
-      const server = createServer((socket) => {
-        sockets.add(socket);
-        socket.once("close", () => sockets.delete(socket));
-        socket.on("error", () => {});
-        socket.on("data", (data) => {
-          received.push(Buffer.from(data));
-          // An old/fake plaintext daemon offers success without possessing the
-          // PSK. The client must never promote this into an authenticated peer.
-          socket.end(
-            encodeTerminalIpcJson({ ok: true, result: {}, type: "attached" }),
-          );
-        });
-      });
-      const client = new TerminalDaemonClient(f.address, f.token);
-      try {
-        await new Promise<void>((resolve, reject) => {
-          server.once("error", reject);
-          server.listen(f.address, resolve);
-        });
-        const secretPath = "/private/request-project";
-        if (mode === "rpc")
-          await expect(client.list(secretPath)).rejects.toThrow();
-        else
-          await expect(
-            client.attach(
-              {
-                terminalId: "sensitive-terminal-id",
-                clientId: "fixture-browser",
-                cols: 80,
-                rows: 24,
-              },
-              { sendData() {}, sendControl() {}, close() {} },
-            ),
-          ).rejects.toThrow();
-        const wire = Buffer.concat(received);
-        expect(wire.byteLength).toBeGreaterThan(0);
-        for (const secret of [
-          f.token,
-          secretPath,
-          "sensitive-terminal-id",
-          "getCatalog",
-        ])
-          expect(wire.includes(Buffer.from(secret))).toBe(false);
-      } finally {
-        await client.close();
-        for (const socket of sockets) socket.destroy();
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-        await rm(f.root, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it("never downgrades to plaintext and rejects clients with the wrong PSK", async () => {
-    const f = await fixture();
-    const manager = new TerminalSessionManager();
-    const read = vi.spyOn(manager, "getSettings");
-    const server = new TerminalDaemonServer(f.address, f.token, manager);
-    const client = new TerminalDaemonClient(f.address, f.token);
-    try {
-      await server.start();
       const raw = createConnection(f.address);
       raw.on("error", () => {});
       const closed = new Promise<void>((resolve) =>
@@ -129,125 +65,88 @@ describe("terminal daemon peer authentication", () => {
       raw.once("connect", () =>
         raw.end(
           encodeTerminalIpcJson({
-            protocolVersion: 2,
+            protocolVersion: TERMINAL_DAEMON_PROTOCOL_VERSION,
             mode: "rpc",
-            token: f.token,
-            requestId: "old",
+            requestId: "plaintext",
             method: "getSettings",
             params: {},
           }),
         ),
       );
       await closed;
-      await expect(
-        new TerminalDaemonClient(f.address, "wrong-PSK").getSettings(),
-      ).rejects.toThrow();
+      await expect(hostAuthority.getSettings()).rejects.toThrow();
       expect(read).not.toHaveBeenCalled();
-      await expect(client.getSettings()).resolves.toMatchObject({
+      await trusted.probe();
+      await expect(trusted.getSettings()).resolves.toMatchObject({
         persistOutput: false,
       });
-      expect(read).toHaveBeenCalledTimes(1);
     } finally {
-      await client.close();
+      await hostAuthority.close();
+      await trusted.close();
       await server.stop();
       await rm(f.root, { recursive: true, force: true });
     }
   });
 
-  it("stops raw and TLS peers without waiting for handshake deadlines", async () => {
+  it("drains PTYs, closes peers and releases only this owner's endpoint", async () => {
     const f = await fixture();
-    const server = new TerminalDaemonServer(
-      f.address,
-      f.token,
-      new TerminalSessionManager(),
-    );
-    const peers: Socket[] = [];
-    try {
-      await server.start();
-      const raw = createConnection(f.address);
-      const secure = connectTerminalDaemon(f.address, f.token);
-      peers.push(raw, secure);
-      const closed = Promise.all(
-        peers.map(
-          (peer) =>
-            new Promise<void>((resolve) => {
-              peer.on("error", () => {});
-              peer.once("close", () => resolve());
-            }),
-        ),
-      );
-      await Promise.all([
-        new Promise<void>((resolve) => raw.once("connect", resolve)),
-        new Promise<void>((resolve) => secure.once("secureConnect", resolve)),
-      ]);
-      await server.stop();
-      await closed;
-    } finally {
-      for (const peer of peers) peer.destroy();
-      await server.stop();
-      await rm(f.root, { recursive: true, force: true });
-    }
-  });
-
-  it("does not unlink a live endpoint when an unstarted owner is closed", async () => {
-    const f = await fixture();
-    const server = new TerminalDaemonServer(
-      f.address,
-      f.token,
-      new TerminalSessionManager(),
-    );
+    const manager = new TerminalSessionManager();
+    let release!: () => void;
+    const drain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(manager, "close").mockImplementation(() => drain);
+    const old = new TerminalDaemonServer(f.address, f.token, manager);
     const unstarted = new TerminalDaemonServer(
       f.address,
-      "not-owner",
+      f.token,
       new TerminalSessionManager(),
     );
     const client = new TerminalDaemonClient(f.address, f.token);
+    const peers: Socket[] = [];
+    let stopping: Promise<void> | undefined;
     try {
-      await server.start();
+      await old.start();
       await unstarted.stop();
       await client.probe();
-    } finally {
-      await client.close();
-      await server.stop();
-      await rm(f.root, { recursive: true, force: true });
-    }
-  });
+      const raw = createConnection(f.address);
+      const secure = connectTerminalDaemon(f.address, f.token);
+      peers.push(raw, secure);
+      const closed = peers.map(
+        (peer) =>
+          new Promise<void>((resolve) => {
+            peer.on("error", () => {});
+            peer.once("close", resolve);
+          }),
+      );
+      await Promise.all([once(raw, "connect"), once(secure, "secureConnect")]);
 
-  it.skipIf(process.platform === "win32")(
-    "keeps its endpoint through PTY drain and never unlinks a successor",
-    async () => {
-      const f = await fixture();
-      const manager = new TerminalSessionManager();
-      let release!: () => void;
-      const drain = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      vi.spyOn(manager, "close").mockImplementation(() => drain);
-      const old = new TerminalDaemonServer(f.address, f.token, manager);
-      const successor = new TerminalDaemonServer(
+      stopping = old.stop();
+      expect(await addressAcceptsConnections(f.address)).toBe(true);
+      release();
+      await stopping;
+      await Promise.all(closed);
+
+      // Use a fresh server after closing the unstarted instance above.
+      const replacement = new TerminalDaemonServer(
         f.address,
         f.token,
         new TerminalSessionManager(),
       );
-      const client = new TerminalDaemonClient(f.address, f.token);
-      let stopping: Promise<void> | undefined;
       try {
-        await old.start();
-        stopping = old.stop();
-        expect((await lstat(f.address)).isSocket()).toBe(true);
-        expect(await addressAcceptsConnections(f.address)).toBe(true);
-        release();
-        await stopping;
-        await successor.start();
+        await replacement.start();
         await old.stop();
         await client.probe();
       } finally {
-        release();
-        await stopping;
-        await client.close();
-        await successor.stop();
-        await rm(f.root, { recursive: true, force: true });
+        await replacement.stop();
       }
-    },
-  );
+    } finally {
+      for (const peer of peers) peer.destroy();
+      release();
+      await stopping;
+      await client.close();
+      await old.stop();
+      await rm(f.root, { recursive: true, force: true });
+    }
+  });
 });

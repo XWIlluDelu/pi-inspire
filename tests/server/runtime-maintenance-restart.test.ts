@@ -3,22 +3,17 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostRestartController } from "../../server/host-restart.js";
-import { type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
-
-import { RuntimeController } from "../../server/runtime.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
 import {
-  FakeRpc,
-  TEST_CWD,
-  record,
-  waitForReady,
-  preview,
-  catalog,
-  trackedAttachmentStore,
   deferredSignal,
-  initializeRuntimeFixture,
   disposeRuntimeFixture,
+  fakeRuntime,
+  initializeRuntimeFixture,
+  preview,
+  schedulingRuntime,
+  TEST_CWD,
+  waitForReady,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -28,31 +23,16 @@ describe("maintenance restart admission", () => {
   afterEach(() => vi.useRealTimers());
 
   function idleRuntime() {
-    return new RuntimeController(catalog([]), trackedAttachmentStore(), {
-      createProcess: (options) =>
-        new FakeRpc(options) as unknown as PiRpcProcess,
-      openSessionProjection: preview,
-    });
+    return schedulingRuntime({ sessions: [] }).runtime;
   }
 
   it.each(["committed", "released"])(
     "retains busy workers only for a committed Host-only restart (%s)",
     async (phase) => {
-      const workers: FakeRpc[] = [];
-      const runtime = new RuntimeController(
-        catalog([record("a", "/tmp")]),
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) => {
-            const worker = Object.assign(new FakeRpc(options), {
-              detach: vi.fn(async () => {}),
-            });
-            workers.push(worker);
-            return worker as unknown as PiRpcProcess;
-          },
-          openSessionProjection: preview,
-        },
-      );
+      const detach = vi.fn(async () => {});
+      const { runtime, workers } = schedulingRuntime({
+        configure: (worker) => Object.assign(worker, { detach }),
+      });
       await runtime.openSession("a");
       await waitForReady(runtime);
       workers[0]!.emit("event", { type: "agent_start" });
@@ -70,49 +50,31 @@ describe("maintenance restart admission", () => {
           "released",
         );
       await runtime.close();
-      const worker = workers[0] as FakeRpc & { detach: () => Promise<void> };
-      expect(worker.detach).toHaveBeenCalledTimes(
-        phase === "committed" ? 1 : 0,
-      );
-      expect(worker.stops).toBe(phase === "released" ? 1 : 0);
+      expect(detach).toHaveBeenCalledTimes(phase === "committed" ? 1 : 0);
+      expect(workers[0]!.stops).toBe(phase === "released" ? 1 : 0);
     },
   );
 
-  it.each(["start-error", "transport-exit", "startup-dialog"])(
-    "allows a fresh ordinary restart after confirmed retirement of a %s",
-    async (failure) => {
+  it.each(["completed", "unconfirmed"] as const)(
+    "fences a failed startup until its worker retirement is %s",
+    async (retirement) => {
       const stopStarted = deferredSignal();
-      const stopped = deferredSignal();
-      const runtime = new RuntimeController(
-        catalog([record("a", "/tmp")]),
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) => {
-            const worker = new FakeRpc(options);
-            worker.start = async () => {
-              if (failure === "startup-dialog") {
-                worker.emit("event", {
-                  type: "extension_ui_request",
-                  id: "startup-confirm",
-                  method: "confirm",
-                  title: "Startup confirmation",
-                  message: "Confirm?",
-                });
-              } else {
-                const error = new Error("Pi failed during startup");
-                if (failure === "transport-exit") worker.emit("exit", error);
-                throw error;
-              }
-            };
-            worker.stop = async () => {
-              stopStarted.resolve();
-              await stopped.promise;
-            };
-            return worker as unknown as PiRpcProcess;
-          },
-          openSessionProjection: preview,
+      const stopGate = deferredSignal();
+      const { runtime, workers } = schedulingRuntime({
+        configure(worker) {
+          worker.start = async () => {
+            const error = new Error("Pi failed during startup");
+            if (retirement === "completed") worker.emit("exit", error);
+            throw error;
+          };
+          worker.stop = async () => {
+            stopStarted.resolve();
+            await stopGate.promise;
+            if (retirement === "unconfirmed")
+              throw new Error("Pi stop unconfirmed");
+          };
         },
-      );
+      });
       const submit = vi.fn(
         async (_all: boolean, commit: () => boolean | Promise<boolean>) => ({
           code: (await commit()) ? 0 : 1,
@@ -123,6 +85,7 @@ describe("maintenance restart admission", () => {
         prepare: async () => {},
         request: submit,
       });
+      const rejected = { phase: "rejected", busyReason: "in-flight-operation" };
       try {
         await runtime.openSession("a");
         await stopStarted.promise;
@@ -133,83 +96,48 @@ describe("maintenance restart admission", () => {
         };
         controller.start(intent);
         await vi.waitFor(async () =>
-          expect((await controller.status()).operation).toMatchObject({
-            phase: "rejected",
-            busyReason: "in-flight-operation",
-          }),
+          expect((await controller.status()).operation).toMatchObject(rejected),
         );
         expect(submit).not.toHaveBeenCalled();
 
-        stopped.resolve();
+        stopGate.resolve();
         const slot = (
           runtime as unknown as { slots: Map<string, RuntimeSlot> }
         ).slots.get("a")!;
-        await vi.waitFor(() => {
-          expect(slot.activeOperations).toBe(0);
-          expect(slot.stopping).toBeNull();
-        });
-        expect(slot.process).toBeNull();
-        expect(slot.runState).toBe("failed");
-        // A historical rejection remains immutable; a new ordinary request
-        // must re-evaluate current work without requiring interruption consent.
+        await vi.waitFor(() => expect(slot.activeOperations).toBe(0));
+        if (retirement === "unconfirmed") {
+          await expect(slot.stopping).rejects.toThrow("Pi stop unconfirmed");
+          await expect(runtime.openSession("a")).rejects.toThrow(
+            "Pi stop unconfirmed",
+          );
+          expect(workers).toHaveLength(1);
+        } else {
+          await vi.waitFor(() => expect(slot.stopping).toBeNull());
+          expect((await runtime.snapshot("a")).runState).toBe("failed");
+        }
+
         expect(controller.start(intent).phase).toBe("rejected");
-        controller.start({ ...intent, operationId: randomUUID() });
+        const retry = { ...intent, operationId: randomUUID() };
+        controller.start(retry);
         await vi.waitFor(async () =>
-          expect((await controller.status()).operation?.phase).toBe(
-            "submitted",
-          ),
+          expect((await controller.status()).operation).toMatchObject({
+            id: retry.operationId,
+            ...(retirement === "unconfirmed"
+              ? rejected
+              : { phase: "submitted" }),
+          }),
         );
-        expect(slot.startupPhase).toBe("idle");
-        expect(submit).toHaveBeenCalledOnce();
+        expect(submit).toHaveBeenCalledTimes(
+          retirement === "unconfirmed" ? 0 : 1,
+        );
       } finally {
-        stopped.resolve();
-        await runtime.close();
+        stopGate.resolve();
+        if (retirement === "unconfirmed")
+          await expect(runtime.close()).rejects.toThrow("Pi stop unconfirmed");
+        else await runtime.close();
       }
     },
   );
-
-  it("keeps a failed startup fenced when actual worker retirement rejects", async () => {
-    const stopStarted = deferredSignal();
-    const stopGate = deferredSignal();
-    const createProcess = vi.fn((options: PiRpcOptions) => {
-      const worker = new FakeRpc(options);
-      worker.start = async () => {
-        throw new Error("Pi failed during startup");
-      };
-      worker.stop = async () => {
-        stopStarted.resolve();
-        await stopGate.promise;
-        throw new Error("Pi stop unconfirmed");
-      };
-      return worker as unknown as PiRpcProcess;
-    });
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      { createProcess, openSessionProjection: preview },
-    );
-    try {
-      await runtime.openSession("a");
-      await stopStarted.promise;
-      stopGate.resolve();
-      const slot = (
-        runtime as unknown as { slots: Map<string, RuntimeSlot> }
-      ).slots.get("a")!;
-      await vi.waitFor(() => expect(slot.activeOperations).toBe(0));
-      await expect(slot.stopping).rejects.toThrow("Pi stop unconfirmed");
-      expect(runtime.reserveMaintenanceRestart()).toEqual({
-        kind: "busy",
-        reason: "in-flight-operation",
-      });
-      await expect(runtime.openSession("a")).rejects.toThrow(
-        "Pi stop unconfirmed",
-      );
-      expect(createProcess).toHaveBeenCalledOnce();
-    } finally {
-      stopGate.resolve();
-      await expect(runtime.close()).rejects.toThrow("Pi stop unconfirmed");
-    }
-  });
 
   it("rejects an expired lease even after a fresh owner prepares", async () => {
     vi.useFakeTimers();
@@ -281,11 +209,8 @@ describe("maintenance restart admission", () => {
   });
 
   it("fences every new runtime command after an idle lease", async () => {
-    const store = trackedAttachmentStore();
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) =>
-        new FakeRpc(options) as unknown as PiRpcProcess,
-      openSessionProjection: preview,
+    const { runtime } = schedulingRuntime({
+      sessions: [],
     });
 
     const decision = runtime.reserveMaintenanceRestart();
@@ -297,22 +222,10 @@ describe("maintenance restart admission", () => {
   });
 
   it("allows explicit interruption of active Pi work while another restart lease stays exclusive", async () => {
-    const workers = new Map<string, FakeRpc>();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.set(worker.sessionId, worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
+    const { runtime, workers } = schedulingRuntime();
     await runtime.openSession("a");
     await waitForReady(runtime);
-    const worker = workers.get("a")!;
+    const worker = workers[0]!;
     worker.emit("event", {
       type: "queue_update",
       steering: ["pending input"],
@@ -339,22 +252,10 @@ describe("maintenance restart admission", () => {
   });
 
   it("interrupts a genuinely pending manual compaction rather than waiting for its RPC", async () => {
-    const workers = new Map<string, FakeRpc>();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.set(worker.sessionId, worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
+    const { runtime, workers } = schedulingRuntime();
     await runtime.openSession("a");
     await waitForReady(runtime);
-    const worker = workers.get("a")!;
+    const worker = workers[0]!;
     const { promise: compactStarted, resolve: started } = deferredSignal();
     let cancelCompact!: (error: Error) => void;
     worker.responseOverrides.set("compact", () => {
@@ -390,22 +291,15 @@ describe("maintenance restart admission", () => {
   });
 
   it("does not grant an idle-only lease while an open request is still in flight", async () => {
-    const store = trackedAttachmentStore();
     const { promise: gate, resolve: release } = deferredSignal();
     const { promise: reachedPreview, resolve: entered } = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: async (session) => {
-          entered();
-          await gate;
-          return preview(session);
-        },
+    const { runtime } = fakeRuntime({
+      openSessionProjection: async (session) => {
+        entered();
+        await gate;
+        return preview(session);
       },
-    );
+    });
 
     const opening = runtime.openSession("a");
     await reachedPreview;

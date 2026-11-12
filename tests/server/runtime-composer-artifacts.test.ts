@@ -147,6 +147,9 @@ describe("prompt project-file revalidation", () => {
     await writeFile(join(root, ".gitignore"), ".settings/\n");
     await mkdir(join(root, ".git"));
     await writeFile(join(root, ".git", "index"), "invalid Git fixture");
+    await expect(resolveProjectFiles(root, [".settings"])).rejects.toThrow(
+      /not a regular file/,
+    );
     await expect(
       revalidateProjectFiles(root, [selected], expected),
     ).resolves.toEqual(expected);
@@ -185,55 +188,32 @@ describe("prompt project-file revalidation", () => {
     ).resolves.toMatchObject({ projectFiles: expected });
   });
 
-  it("still refuses an in-workspace symlink retarget between selection and delivery", async () => {
+  it("revalidates canonical project files before delivery and rejects retargeted selections", async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), "inspire-prompt-files-")),
     );
     roots.push(root);
-    for (const name of ["first.txt", "second.txt"])
-      await writeFile(join(root, name), name);
-    await symlink(join(root, "first.txt"), join(root, "selected.txt"));
-    const expected = await resolveProjectFiles(root, ["selected.txt"]);
-    await rm(join(root, "selected.txt"));
-    await symlink(join(root, "second.txt"), join(root, "selected.txt"));
-    await expect(
-      revalidateProjectFiles(root, ["selected.txt"], expected),
-    ).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("rejects a selected path replaced by an outside symlink before delivery", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-prompt-files-"));
-    roots.push(root);
     const workspace = join(root, "workspace");
-    const selected = join(workspace, "source.ts");
+    await mkdir(workspace);
+    const original = join(workspace, "first.txt");
+    const replacement = join(workspace, "second.txt");
     const outside = join(root, "outside.txt");
-    await mkdir(workspace);
-    await writeFile(selected, "export const safe = true;\n");
-    await writeFile(outside, "outside\n");
+    for (const file of [original, replacement, outside])
+      await writeFile(file, file);
 
-    const expected = await resolveProjectFiles(workspace, ["source.ts"]);
-    await rm(selected);
-    await symlink(outside, selected);
-
+    const selected = join(workspace, "selected.txt");
+    await symlink(original, selected);
+    const expected = await resolveProjectFiles(workspace, ["selected.txt"]);
     await expect(
-      revalidateProjectFiles(workspace, ["source.ts"], expected),
-    ).rejects.toMatchObject({ status: 409 });
-  });
+      revalidateProjectFiles(workspace, ["selected.txt", original], expected),
+    ).resolves.toEqual([original]);
 
-  it("returns freshly authorized canonical paths when they are unchanged", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-prompt-files-"));
-    roots.push(root);
-    const workspace = join(root, "workspace");
-    const selected = join(workspace, "source.ts");
-    await mkdir(workspace);
-    await writeFile(selected, "export const safe = true;\n");
-
-    const expected = await resolveProjectFiles(workspace, ["source.ts"]);
-    await expect(
-      revalidateProjectFiles(workspace, ["source.ts"], expected),
-    ).resolves.toEqual(expected);
-    await expect(
-      revalidateProjectFiles(workspace, ["source.ts", selected], expected),
-    ).resolves.toEqual(expected);
+    for (const target of [replacement, outside]) {
+      await rm(selected);
+      await symlink(target, selected);
+      await expect(
+        revalidateProjectFiles(workspace, ["selected.txt"], expected),
+      ).rejects.toMatchObject({ status: 409 });
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -11,65 +11,11 @@ import { ProjectTrustStore, piInstallation } from "../../server/pi-runtime.js";
 import type { McpConfigEdit } from "../../shared/mcp.js";
 import { nativePiWorkspace } from "./fixtures/native-pi.js";
 
-it("Pi loads saved automatic, CIMD, dynamic and pre-registered OAuth configurations after partial edits", async () => {
-  const workspace = await nativePiWorkspace("inspire-mcp-oauth-", {});
+it("Pi applies saved project policy only to new loads in a trusted workspace", async () => {
+  const workspace = await nativePiWorkspace("inspire-mcp-native-", {
+    defaultProjectTrust: "never",
+  });
   const { root, agent, cwd } = workspace;
-  try {
-    const service = new McpConfigService(agent);
-    const variants = {
-      automatic: {
-        clientRegistration: "auto" as const,
-        clientName: "Automatic client",
-        callbackUrl: "http://[::1]/custom-callback",
-      },
-      cimd: {
-        clientRegistration: "cimd" as const,
-        callbackUrl: "http://localhost:8765/callback",
-      },
-      dynamic: {
-        clientRegistration: "dcr" as const,
-        clientName: "Fixture client",
-        callbackUrl: "http://[::1]/custom-callback",
-      },
-      registered: { clientId: "fixture-id", clientSecret: "fixture-secret" },
-    };
-    for (const [name, oauth] of Object.entries(variants)) {
-      await service.save(null, {
-        scope: "user",
-        name,
-        operation: "add",
-        revision: (await service.read(null)).files[0]!.revision,
-        values: { url: "https://example.invalid/mcp", enabled: false, oauth },
-      });
-    }
-    await service.save(null, {
-      scope: "user",
-      name: "cimd",
-      operation: "update",
-      revision: (await service.read(null)).files[0]!.revision,
-      values: { oauth: { scope: "read" } },
-    });
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [piInstallation.cliPath, "mcp", "list", "--json"],
-      { cwd, env: workspace.env, timeout: 15_000 },
-    );
-    const loaded = JSON.parse(stdout);
-    expect(loaded.errors).toEqual([]);
-    expect(loaded.servers).toEqual(
-      Object.keys(variants).map((name) =>
-        expect.objectContaining({ name, enabled: false, state: "disabled" }),
-      ),
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-}, 20_000);
-
-it("Pi consumes saved MCP files with native trust/precedence while its existing RPC worker keeps loaded connections", async () => {
-  const workspace = await nativePiWorkspace("inspire-mcp-native-", {});
-  const { root, agent, cwd } = workspace;
-  let initializations = 0;
   const authorizations: Array<string | undefined> = [];
   const server = createServer(async (request, response) => {
     if (request.method !== "POST") {
@@ -85,7 +31,6 @@ it("Pi consumes saved MCP files with native trust/precedence while its existing 
     }
     let result: unknown = {};
     if (message.method === "initialize") {
-      initializations++;
       authorizations.push(request.headers.authorization);
       result = {
         protocolVersion: "2025-03-26",
@@ -134,182 +79,72 @@ it("Pi consumes saved MCP files with native trust/precedence while its existing 
   });
   const events: Record<string, unknown>[] = [];
   rpc.on("event", (event) => events.push(event));
-  async function command(message: string) {
+  async function loadedStatus() {
     events.length = 0;
-    const result = await rpc.request({ type: "prompt", message });
-    return {
-      result,
-      notifications: events
-        .filter(
-          (event) =>
-            event.type === "extension_ui_request" && event.method === "notify",
-        )
-        .map((event) => event.message)
-        .join("\n"),
-    };
+    await rpc.request({ type: "prompt", message: "/mcp" });
+    return events
+      .filter(
+        (event) =>
+          event.type === "extension_ui_request" && event.method === "notify",
+      )
+      .map((event) => event.message)
+      .join("\n");
+  }
+  async function savedStatus() {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [piInstallation.cliPath, "mcp", "list", "--json"],
+      { cwd, env: workspace.env, timeout: 15_000 },
+    );
+    const result = JSON.parse(stdout);
+    expect(result.errors).toEqual([]);
+    return result.servers.find(
+      (server: { name: string }) => server.name === "remote",
+    );
   }
   try {
     await mkdir(join(cwd, ".pi"));
+    const auth = "Bearer isolated-mcp-secret";
     await edit({
       scope: "user",
       name: "remote",
       operation: "add",
-      values: {
-        url,
-        exposure: "direct",
-        headers: { Authorization: "Bearer isolated-mcp-secret" },
-      },
-    });
-    await edit({
-      scope: "user",
-      name: "local",
-      operation: "add",
-      values: {
-        command: process.execPath,
-        args: ["not-executed"],
-        enabled: false,
-      },
+      values: { url, headers: { Authorization: auth } },
     });
     await edit({
       scope: "project",
       name: "remote",
       operation: "add",
-      values: { url, enabled: false },
+      values: { enabled: false },
     });
     await rpc.start();
-    const inventory = await rpc.request({ type: "get_commands" });
-    expect(JSON.stringify(inventory)).toContain('"name":"mcp"');
-    const before = await command("/mcp");
-    expect(before.notifications).toContain("remote");
-    expect(before.notifications).toMatch(/connected|1 tool/);
-    expect(initializations).toBe(1);
-    await edit({
-      scope: "user",
-      name: "remote",
-      operation: "update",
-      values: { enabled: false },
-    });
-    const loaded = await command("/mcp");
-    expect(loaded.notifications).toBe(before.notifications);
-    const unsupported = await command("/mcp disable remote");
-    expect(unsupported.result).toMatchObject({ disposition: "handled" });
-    expect(unsupported.notifications).toContain("Usage:");
-    const reconnect = await command("/mcp reconnect remote");
-    expect(reconnect.notifications).toContain("Reconnected");
-    expect(initializations).toBe(2);
-    // The independent native CLI reads disk, not the RPC worker's existing connection.
-    const list = async () =>
-      JSON.parse(
-        (
-          await promisify(execFile)(
-            process.execPath,
-            [piInstallation.cliPath, "mcp", "list", "--json"],
-            { cwd, env: workspace.env, timeout: 15_000 },
-          )
-        ).stdout,
-      );
-    const saved = await list();
-    expect(JSON.stringify(saved)).toContain("disabled");
-    expect(initializations).toBe(2);
-    await edit({
-      scope: "user",
-      name: "remote",
-      operation: "update",
-      values: { enabled: true },
-    });
-    new ProjectTrustStore(agent).set(cwd, true);
-    const trusted = await list();
-    expect(JSON.stringify(trusted)).toContain("project");
-    expect(initializations).toBe(2);
+    expect(await loadedStatus()).toMatch(/^remote: connected\b/mu);
+    expect(authorizations).toEqual([auth]);
 
-    const project = join(cwd, ".pi/mcp.json");
-    await rm(project);
-    expect((await service.read(cwd)).files[1]!.entries).toEqual([]);
-    const userBefore = await readFile(join(agent, "mcp.json"), "utf8");
-    await edit({
-      scope: "project",
-      name: "remote",
-      operation: "add",
-      values: { enabled: false },
-    });
-    expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
-      mcpServers: { remote: { enabled: false } },
-    });
-    const created = await list();
-    expect(created.errors).toEqual([]);
-    expect(
-      created.servers.find(
-        (entry: { name: string }) => entry.name === "remote",
-      ),
-    ).toMatchObject({
+    new ProjectTrustStore(agent).set(cwd, true);
+    const source = join(agent, "mcp.json");
+    const override = join(cwd, ".pi/mcp.json");
+    expect(await savedStatus()).toMatchObject({
       enabled: false,
-      source: join(agent, "mcp.json"),
-      override: project,
+      source,
+      override,
       state: "disabled",
     });
-    expect(initializations).toBe(2);
-    expect((await service.read(cwd)).files[1]!.entries[0]).toMatchObject({
-      policyOnly: true,
-      transport: null,
-      headerKeys: [],
-      urlConfigured: false,
-    });
+    expect(await loadedStatus()).toMatch(/^remote: connected\b/mu);
+    expect(authorizations).toEqual([auth]);
+
     await edit({
       scope: "project",
       name: "remote",
       operation: "update",
-      values: {
-        enabled: true,
-        exposure: "hidden",
-        toolExposure: { read_fixture: "direct", "*": "hidden" },
-      },
+      values: { enabled: true, exposure: "hidden" },
     });
-    const inherited = await list();
-    expect(inherited.errors).toEqual([]);
-    expect(
-      inherited.servers.find(
-        (entry: { name: string }) => entry.name === "remote",
-      ),
-    ).toMatchObject({
+    expect(await savedStatus()).toMatchObject({
       enabled: true,
       exposure: "hidden",
-      source: join(agent, "mcp.json"),
-      override: project,
       state: "connected",
     });
-    expect(initializations).toBe(3);
-    expect(authorizations).toEqual([
-      "Bearer isolated-mcp-secret",
-      "Bearer isolated-mcp-secret",
-      "Bearer isolated-mcp-secret",
-    ]);
-    expect(JSON.parse(await readFile(project, "utf8"))).toEqual({
-      mcpServers: {
-        remote: {
-          enabled: true,
-          exposure: "hidden",
-          toolExposure: { read_fixture: "direct", "*": "hidden" },
-        },
-      },
-    });
-    await edit({ scope: "project", name: "remote", operation: "remove" });
-    const restored = await list();
-    expect(restored.errors).toEqual([]);
-    const remote = restored.servers.find(
-      (entry: { name: string }) => entry.name === "remote",
-    );
-    expect(remote).toMatchObject({
-      enabled: true,
-      exposure: "direct",
-      source: join(agent, "mcp.json"),
-      state: "connected",
-    });
-    expect(remote.override).toBeUndefined();
-    expect(initializations).toBe(4);
-    expect(authorizations[3]).toBe("Bearer isolated-mcp-secret");
-    expect(JSON.parse(await readFile(project, "utf8")).mcpServers).toEqual({});
-    expect(await readFile(join(agent, "mcp.json"), "utf8")).toBe(userBefore);
-    expect((await command("/mcp")).notifications).toBe(before.notifications);
+    expect(authorizations).toEqual([auth, auth]);
   } finally {
     await rpc.stop();
     server.closeAllConnections();

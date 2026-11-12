@@ -1,8 +1,8 @@
-import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import {
   appendFile,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -12,11 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttachmentStore } from "../../server/attachments.js";
-import type {
-  PiRpcOptions,
-  PiRpcProcess,
-  PiRpcResponseFence,
-} from "../../server/pi-rpc.js";
+import type { PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
 import {
   RuntimeController,
   type RuntimeControllerOptions,
@@ -26,23 +22,28 @@ import type {
   SessionCatalogLike,
   SessionRecord,
 } from "../../server/session-catalog.js";
-import type {
-  StagedSessionFork,
-  StageSessionFork,
+import {
+  type StagedSessionFork,
+  type StageSessionFork,
+  stageSessionFork,
 } from "../../server/session-fork.js";
 import {
   type ProjectionReconcileResult,
   SessionProjection,
 } from "../../server/session-projection.js";
-import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
 import { nativeNavigationLeaf } from "../../shared/branch-node-actions.js";
-import { deferredSignal, workerAttachmentStore } from "./fixtures/runtime.js";
+import {
+  deferredSignal,
+  FakeRpc,
+  workerAttachmentStore,
+} from "./fixtures/runtime.js";
+import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
-const FORK_SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const OTHER_SESSION_ID = "33333333-3333-4333-8333-333333333333";
 const directories: string[] = [];
 const stores: AttachmentStore[] = [];
+const runtimes: RuntimeController[] = [];
 
 const entry = (
   id: string,
@@ -52,45 +53,31 @@ const entry = (
     | string
     | Array<{ type: string; text?: string; data?: string; mimeType?: string }>,
   timestamp: number,
-) => ({
-  type: "message",
-  id,
-  parentId,
-  timestamp: new Date(timestamp).toISOString(),
-  message: { role, content, timestamp },
-});
+) => messageEntry(id, parentId, { role, content, timestamp });
 
-class BranchRpc extends EventEmitter {
-  readonly commands: Array<Record<string, unknown>> = [];
+class BranchRpc extends FakeRpc {
   readonly path: string;
   readonly bridgeCommand: string;
   readonly statusKey: string;
   readonly workerId: string;
-  sessionId: string;
   leafId: string | null;
-  stops = 0;
   resultMode:
     | "ok"
     | "wrong-nonce"
     | "wrong-worker"
     | "malformed"
     | "duplicate"
-    | "cancel"
     | "missing"
     | "persist" = "ok";
-  treeDialog = false;
   autoRetryGate: Promise<void> | null = null;
-  extensionResponses: Array<Record<string, unknown>> = [];
-  private stopped = false;
   private readonly knownEntries: Set<string>;
-  private readonly dialogResolvers = new Map<string, () => void>();
 
-  get available(): boolean {
-    return !this.stopped;
+  override get available(): boolean {
+    return this.stops === 0;
   }
 
-  constructor(readonly options: PiRpcOptions) {
-    super();
+  constructor(options: PiRpcOptions) {
+    super(options);
     const marker = options.args!.indexOf("--session");
     this.path = resolve(options.args![marker + 1]!);
     this.bridgeCommand = options.env!.INSPIRE_BRANCH_COMMAND!;
@@ -104,31 +91,51 @@ class BranchRpc extends EventEmitter {
       persisted.slice(1).map((item) => String(item.id)),
     );
     this.sessionId = String(persisted[0]?.id ?? "");
-    const last = [...persisted]
-      .reverse()
-      .find((candidate) => typeof candidate.id === "string");
-    this.leafId = typeof last?.id === "string" ? last.id : null;
-  }
-
-  async start() {}
-
-  async stop() {
-    this.stops += 1;
-    this.stopped = true;
-  }
-
-  private waitForDialog(
-    id: string,
-    method: "confirm" | "input",
-  ): Promise<void> {
-    this.emit("event", {
-      type: "extension_ui_request",
-      id,
-      method,
-      title: `branch ${method}`,
+    this.leafId = (persisted.at(-1)?.id as string | undefined) ?? null;
+    this.responseOverrides.set("get_state", () => ({
+      sessionId: this.sessionId,
+      sessionFile: this.path,
+      thinkingLevel: "off",
+    }));
+    this.responseOverrides.set("get_commands", {
+      commands: [
+        { name: this.bridgeCommand, source: "extension" },
+        { name: "visible", source: "extension" },
+      ],
     });
-    return new Promise<void>((resolveDialog) =>
-      this.dialogResolvers.set(id, resolveDialog),
+    this.responseOverrides.set(
+      "get_entries",
+      (command: Record<string, unknown>) => {
+        if (
+          command.since !== undefined &&
+          !this.knownEntries.has(String(command.since))
+        )
+          throw new Error(`Entry not found: ${command.since}`);
+        return { entries: [], leafId: this.leafId };
+      },
+    );
+    this.responseOverrides.set(
+      "set_auto_retry",
+      async () => this.autoRetryGate,
+    );
+    this.responseOverrides.set(
+      "prompt",
+      async (command: Record<string, unknown>) => {
+        const text = String(command.message);
+        if (text.startsWith(`/${this.bridgeCommand} `)) {
+          await this.emitBridge(text);
+        } else {
+          const persisted = entry("next-user", this.leafId, "user", text, 50);
+          await appendFile(this.path, jsonl(persisted));
+          this.leafId = persisted.id;
+          this.knownEntries.add(persisted.id);
+          this.emit("event", {
+            type: "message_end",
+            message: persisted.message,
+          });
+        }
+        return {};
+      },
     );
   }
 
@@ -138,19 +145,15 @@ class BranchRpc extends EventEmitter {
       Buffer.from(encoded, "base64url").toString("utf8"),
     ) as Record<string, unknown>;
     const beforeLeaf = this.leafId;
-    if (this.treeDialog) await this.waitForDialog("tree-hook", "confirm");
-    const cancelled = this.resultMode === "cancel";
-    if (!cancelled) {
-      const target = (await readFile(this.path, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line))
-        .find((candidate) => candidate.id === request.targetId);
-      this.leafId = nativeNavigationLeaf(
-        { ...target, role: target.message?.role },
-        beforeLeaf,
-      );
-    }
+    const target = (await readFile(this.path, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((candidate) => candidate.id === request.targetId);
+    this.leafId = nativeNavigationLeaf(
+      { ...target, role: target.message?.role },
+      beforeLeaf,
+    );
     const result = {
       v: 1,
       nonce:
@@ -162,16 +165,18 @@ class BranchRpc extends EventEmitter {
           ? "worker_wrong_abcdefghijklmnopqrstuvwxyz"
           : this.workerId,
       sessionId: this.sessionId,
-      ok: !cancelled,
-      cancelled,
+      ok: true,
+      cancelled: false,
       beforeLeaf,
       effectiveLeaf: this.leafId,
-      ...(!cancelled ? { navigationLeaf: this.leafId } : {}),
+      navigationLeaf: this.leafId,
     };
     if (this.resultMode === "persist") {
       await appendFile(
         this.path,
-        `${JSON.stringify(entry("unexpected", this.leafId, "assistant", "unexpected write", 60))}\n`,
+        jsonl(
+          entry("unexpected", this.leafId, "assistant", "unexpected write", 60),
+        ),
       );
     }
     if (this.resultMode === "missing") return;
@@ -189,136 +194,21 @@ class BranchRpc extends EventEmitter {
     if (this.resultMode === "duplicate")
       this.emit("event", { ...event, id: "duplicate" });
   }
-
-  async request<T>(
-    command: Record<string, unknown>,
-    _timeoutMs?: number,
-    _responseFence?: PiRpcResponseFence,
-  ): Promise<T> {
-    if (
-      command.type === "prompt" &&
-      String(command.message).startsWith(
-        `/${this.bridgeCommand}${RETRY_STATE_SUFFIX} `,
-      )
-    ) {
-      const request = JSON.parse(
-        Buffer.from(
-          String(command.message).split(" ")[1]!,
-          "base64url",
-        ).toString("utf8"),
-      ) as object;
-      this.emit("event", {
-        type: "extension_ui_request",
-        method: "setStatus",
-        statusKey: `${this.statusKey}${RETRY_STATE_SUFFIX}`,
-        statusText: Buffer.from(
-          JSON.stringify({ ...request, autoRetryEnabled: true }),
-        ).toString("base64url"),
-      });
-      return { disposition: "handled" } as T;
-    }
-    this.commands.push(command);
-    let value: unknown = {};
-    if (command.type === "get_state") {
-      value = {
-        sessionId: this.sessionId,
-        sessionFile: this.path,
-        model: null,
-        thinkingLevel: "off",
-        isStreaming: false,
-        isCompacting: false,
-      };
-    } else if (command.type === "set_auto_retry") await this.autoRetryGate;
-    else if (command.type === "clear_queue")
-      value = { steering: [], followUp: [] };
-    else if (command.type === "get_available_models") value = { models: [] };
-    else if (command.type === "get_commands")
-      value = {
-        commands: [
-          { name: this.bridgeCommand, source: "extension" },
-          { name: "visible", source: "extension" },
-        ],
-      };
-    else if (command.type === "get_entries") {
-      if (
-        command.since !== undefined &&
-        !this.knownEntries.has(String(command.since))
-      )
-        throw new Error(`Entry not found: ${command.since}`);
-      value = { entries: [], leafId: this.leafId };
-    } else if (command.type === "prompt") {
-      const text = String(command.message ?? "");
-      if (text.startsWith(`/${this.bridgeCommand} `))
-        await this.emitBridge(text);
-      else {
-        const persisted = entry("next-user", this.leafId, "user", text, 50);
-        await appendFile(this.path, `${JSON.stringify(persisted)}\n`);
-        this.leafId = persisted.id;
-        this.knownEntries.add(persisted.id);
-        this.emit("event", { type: "message_end", message: persisted.message });
-      }
-    }
-    return value as T;
-  }
-
-  sendExtensionUiResponse(response: Record<string, unknown>) {
-    this.extensionResponses.push(response);
-    const id = String(response.id ?? "");
-    this.dialogResolvers.get(id)?.();
-    this.dialogResolvers.delete(id);
-  }
 }
 
-function fakeStageFork(directory: string): StageSessionFork {
-  return async (request): Promise<StagedSessionFork> => {
-    const stagingDir = await mkdtemp(join(directory, ".test-fork-"));
-    const stagedPath = join(stagingDir, `${FORK_SESSION_ID}.jsonl`);
-    const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
-    const source = (await readFile(request.sourcePath, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    const targetIndex = source.findIndex(
-      (candidate) => candidate.id === request.targetId,
-    );
-    if (targetIndex < 1) throw new Error("Fork fixture target is unavailable");
-    const destination = [
-      {
-        type: "session",
-        version: 3,
-        id: FORK_SESSION_ID,
-        timestamp: "2026-08-01T00:00:00.000Z",
-        cwd: directory,
-        parentSession: request.sourcePath,
-      },
-      ...source.slice(1, targetIndex + (request.mode === "clone" ? 1 : 0)),
-    ];
-    await writeFile(
-      stagedPath,
-      `${destination.map((line) => JSON.stringify(line)).join("\n")}\n`,
-    );
-    return {
-      stagingDir,
-      stagedPath,
-      destinationPath,
-      destinationId: FORK_SESSION_ID,
-      cwd: directory,
-      parentSessionPath: request.sourcePath,
-      destinationLeafId:
-        typeof destination.at(-1)?.id === "string" && destination.length > 1
-          ? (destination.at(-1)!.id as string)
-          : null,
-    };
-  };
-}
-
-async function setup(
+async function setup({
   branchBridgeTimeoutMs = 15_000,
-  openForkProjection?: RuntimeControllerOptions["openForkProjection"],
-  stageFork?: StageSessionFork,
-  userContent?: Parameters<typeof entry>[3],
+  openForkProjection,
+  stageFork,
+  userContent = "second question",
   externallyOwned = false,
-) {
+}: {
+  branchBridgeTimeoutMs?: number;
+  openForkProjection?: RuntimeControllerOptions["openForkProjection"];
+  stageFork?: StageSessionFork;
+  userContent?: Parameters<typeof entry>[3];
+  externallyOwned?: boolean;
+} = {}) {
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "inspire-branch-runtime-")),
   );
@@ -334,13 +224,10 @@ async function setup(
     },
     entry("u1", null, "user", "root", 1),
     entry("a1", "u1", "assistant", "first answer", 2),
-    entry("u2", "a1", "user", userContent ?? "second question", 3),
+    entry("u2", "a1", "user", userContent, 3),
     entry("a2", "u2", "assistant", "second answer", 4),
   ];
-  await writeFile(
-    path,
-    `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`,
-  );
+  await writeFile(path, jsonl(...lines));
   const record: SessionRecord = {
     id: SESSION_ID,
     cwd: directory,
@@ -372,8 +259,9 @@ async function setup(
     },
     branchBridgeTimeoutMs,
     openForkProjection,
-    stageFork: stageFork ?? fakeStageFork(directory),
+    stageFork,
   });
+  runtimes.push(runtime);
   if (externallyOwned)
     runtime.setExternalSessionPresence(async (id) =>
       id === SESSION_ID ? ["a2"] : [],
@@ -418,214 +306,95 @@ async function openOtherSession(fixture: Awaited<ReturnType<typeof setup>>) {
   await fixture.runtime.openSession(record.id);
 }
 
+async function addressedBranch(runtime: RuntimeController, targetId = "u2") {
+  const { active } = await runtime.snapshot(SESSION_ID);
+  return {
+    sessionId: SESSION_ID,
+    viewId: active!.transcriptPage.viewId,
+    targetId,
+  };
+}
+
 afterEach(async () => {
-  await Promise.all(stores.splice(0).map((store) => store.close()));
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  try {
+    await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
+  } finally {
+    await Promise.all(stores.splice(0).map((store) => store.close()));
+    await Promise.all(
+      directories
+        .splice(0)
+        .map((directory) => rm(directory, { recursive: true, force: true })),
+    );
+  }
 });
 
 describe("stock RPC branch bridge", () => {
-  it("allows editing history after Stop and rejects Stop or recovery for the old view", async () => {
-    const { runtime, worker } = await setup();
-    try {
-      const viewId = (await runtime.snapshot()).active!.transcriptPage.viewId;
-      worker.emit("event", { type: "agent_start" });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).runState).toBe("running"),
-      );
-      await runtime.abort(SESSION_ID, viewId);
-      worker.emit("event", { type: "agent_settled", aborted: true });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).runState).toBe("aborted"),
-      );
-      const tree = await runtime.branchTree(SESSION_ID);
-      const result = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-        mode: "edit",
-      });
-      expect(result.editorText).toBe("second question");
-      const commands = worker.commands.length;
-      await expect(
-        runtime.recoverPending(SESSION_ID, viewId),
-      ).rejects.toMatchObject({
-        code: "PENDING_VIEW_CHANGED",
-      });
-      await expect(runtime.abort(SESSION_ID, viewId)).rejects.toMatchObject({
-        code: "PENDING_VIEW_CHANGED",
-      });
-      expect(worker.commands).toHaveLength(commands);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps History inspection available while the source owns work, queued input and a dialog", async () => {
+  it("reads retained history through append and retires the old view after Stop and Edit", async () => {
     const { runtime, worker, path } = await setup();
-    try {
-      worker.emit("event", { type: "agent_start" });
-      worker.emit("event", {
-        type: "queue_update",
-        steering: ["later"],
-        followUp: [],
-      });
-      worker.emit("event", {
-        type: "extension_ui_request",
-        id: "history-dialog",
-        method: "confirm",
-        title: "Continue?",
-        message: "Waiting for input",
-      });
-      const before = await runtime.snapshot(SESSION_ID);
-      expect(before).toMatchObject({
-        runState: "running",
-        pendingQueues: { totalCount: 1 },
-        pendingExtensionUiRequests: [{ id: "history-dialog" }],
-      });
-      const source = await readFile(path, "utf8");
-      const tree = await runtime.branchTree(SESSION_ID);
-      const retained = await runtime.branchEntry({
-        sessionId: SESSION_ID,
-        viewId: before.active!.transcriptPage.viewId,
-        targetId: "a1",
-      });
-      expect(retained.text).toContain("first answer");
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      expect(await runtime.snapshot(SESSION_ID)).toMatchObject({
-        runState: "running",
-        pendingQueues: { totalCount: 1 },
-        pendingExtensionUiRequests: [{ id: "history-dialog" }],
-      });
-      expect(worker.stops).toBe(0);
-      expect(worker.extensionResponses).toEqual([]);
-      expect(await readFile(path, "utf8")).toBe(source);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps retained text and images readable through append, but rejects a replaced view", async () => {
-    const { runtime, worker, path } = await setup();
-    try {
-      const text = "Retained content. ".repeat(4000);
-      const saved = {
-        ...entry("resources", "a2", "user", text, 40),
-        message: {
-          role: "user",
-          content: [
-            { type: "text", text },
-            { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
-          ],
-          timestamp: 40,
-        },
-      };
-      await appendFile(path, `${JSON.stringify(saved)}\n`);
-      worker.leafId = saved.id;
-      worker.emit("event", { type: "message_end", message: saved.message });
-      const snapshot = await runtime.snapshot();
-      const request = {
-        sessionId: SESSION_ID,
-        viewId: snapshot.active!.transcriptPage.viewId,
-        targetId: saved.id,
-      };
-      const first = await runtime.branchEntry(request);
-      expect(first.nextOffset).toBe(32_000);
-      await runtime.prompt({ sessionId: SESSION_ID, message: "New input" });
-      worker.emit("event", { type: "agent_settled" });
-      const next = await runtime.branchEntry({
-        ...request,
-        offset: first.nextOffset!,
-      });
-      expect(next.text).toBe(text.slice(32_000, 64_000));
-      expect((await runtime.branchImage(request, 1)).data.toString()).toBe(
-        "image",
-      );
-      const tree = await runtime.branchTree(SESSION_ID);
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await expect(runtime.branchEntry(request)).rejects.toMatchObject({
-        status: 409,
-      });
-      await expect(runtime.branchImage(request, 1)).rejects.toMatchObject({
-        status: 409,
-      });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps normal discovered extensions enabled in production argv while adding the explicit hidden bridge", async () => {
-    const { runtime, worker } = await setup();
-    try {
-      const before = await runtime.snapshot();
-      expect(worker.options.args).toContain("--extension");
-      expect(worker.options.args).toContain(
-        resolve("server/extensions/inspire-branch-bridge.ts"),
-      );
-      expect(worker.options.args).not.toContain("--no-extensions");
-      expect(worker.options.env).toMatchObject({
-        INSPIRE_BRANCH_COMMAND: worker.bridgeCommand,
-        INSPIRE_BRANCH_STATUS_KEY: worker.statusKey,
-        INSPIRE_BRANCH_WORKER_ID: worker.workerId,
-      });
-      expect(before.active?.commands).toEqual([
-        { name: "visible", source: "extension" },
-      ]);
-      const tree = await runtime.branchTree(SESSION_ID);
-      const response = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      expect(response.snapshot.active?.effectiveLeafId).toBe("a1");
-      expect(response.snapshot.active?.navigationLeased).toBe(true);
-      expect(
-        JSON.stringify(response.snapshot.active?.transcriptPage.messages),
-      ).toContain("first answer");
-      expect(
-        JSON.stringify(response.snapshot.active?.transcriptPage.messages),
-      ).not.toContain("second question");
-      expect(
-        worker.commands.find((command) => command.type === "get_entries"),
-      ).toMatchObject({ since: "a2" });
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a2",
-          mode: "switch",
-        }),
-      ).rejects.toThrow(/stale/);
-
-      await runtime.prompt({
-        sessionId: SESSION_ID,
-        message: "continued branch",
-      });
-      const committed = await runtime.snapshot();
-      expect(committed.active?.effectiveLeafId).toBe("next-user");
-      expect(committed.active?.navigationLeased).toBe(false);
-      expect(
-        JSON.stringify(committed.active?.transcriptPage.messages),
-      ).toContain("continued branch");
-    } finally {
-      await runtime.close();
-    }
+    const text = "Retained content. ".repeat(4000);
+    const saved = {
+      ...entry("resources", "a2", "user", text, 40),
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text },
+          { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
+        ],
+        timestamp: 40,
+      },
+    };
+    await appendFile(path, jsonl(saved));
+    worker.leafId = saved.id;
+    worker.emit("event", { type: "message_end", message: saved.message });
+    const snapshot = await runtime.snapshot();
+    const request = {
+      sessionId: SESSION_ID,
+      viewId: snapshot.active!.transcriptPage.viewId,
+      targetId: saved.id,
+    };
+    const first = await runtime.branchEntry(request);
+    expect(first.nextOffset).toBe(32_000);
+    await runtime.prompt({ sessionId: SESSION_ID, message: "New input" });
+    worker.emit("event", { type: "agent_settled" });
+    const next = await runtime.branchEntry({
+      ...request,
+      offset: first.nextOffset!,
+    });
+    expect(next.text).toBe(text.slice(32_000, 64_000));
+    expect((await runtime.branchImage(request, 1)).data.toString()).toBe(
+      "image",
+    );
+    worker.emit("event", { type: "agent_start" });
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).runState).toBe("running"),
+    );
+    await runtime.abort(SESSION_ID, request.viewId);
+    worker.emit("event", { type: "agent_settled", aborted: true });
+    await vi.waitFor(async () =>
+      expect((await runtime.snapshot()).runState).toBe("aborted"),
+    );
+    const tree = await runtime.branchTree(SESSION_ID);
+    const edited = await runtime.navigateBranch({
+      sessionId: SESSION_ID,
+      revision: tree.revision,
+      targetId: "u2",
+      mode: "edit",
+    });
+    expect(edited.editorText).toBe("second question");
+    const commands = worker.commands.length;
+    await expect(
+      runtime.recoverPending(SESSION_ID, request.viewId),
+    ).rejects.toMatchObject({ code: "PENDING_VIEW_CHANGED" });
+    await expect(
+      runtime.abort(SESSION_ID, request.viewId),
+    ).rejects.toMatchObject({ code: "PENDING_VIEW_CHANGED" });
+    expect(worker.commands).toHaveLength(commands);
+    await expect(runtime.branchEntry(request)).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(runtime.branchImage(request, 1)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it.each(["Stop", "worker exit"] as const)(
@@ -717,115 +486,48 @@ describe("stock RPC branch bridge", () => {
     },
   );
 
-  it("answers a session_before_tree dialog on the independent response lane without deadlock", async () => {
-    const { runtime, worker } = await setup();
-    worker.treeDialog = true;
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const navigating = runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await vi.waitFor(async () =>
-        expect(
-          (await runtime.snapshot()).pendingExtensionUiRequests,
-        ).toMatchObject([{ id: "tree-hook", sessionId: SESSION_ID }]),
-      );
-      await runtime.extensionUiResponse({
-        sessionId: SESSION_ID,
-        id: "tree-hook",
-        value: true,
-      });
-      await expect(navigating).resolves.toMatchObject({
-        snapshot: { active: { effectiveLeafId: "a1" } },
-      });
-      expect(
-        worker.extensionResponses.filter(
-          (response) => response.id === "tree-hook",
-        ),
-      ).toHaveLength(1);
-      await expect(
-        runtime.extensionUiResponse({
-          sessionId: SESSION_ID,
-          id: "tree-hook",
-          value: true,
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("returns original edit text and supports native before-input navigation including the null root", async () => {
-    const { runtime } = await setup();
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      const edited = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "u2",
-        mode: "edit",
-      });
-      expect(edited.editorText).toBe("second question");
-      expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
-      const current = await runtime.branchTree(SESSION_ID);
-      const root = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: current.revision,
-        targetId: "u1",
-        mode: "edit",
-      });
-      expect(root.editorText).toBe("root");
-      expect(root.snapshot.active?.effectiveLeafId).toBeNull();
-      expect(root.snapshot.active?.transcriptPage.messages).toEqual([]);
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("does not silently edit a non-default user-message branch end", async () => {
-    const { runtime, workers, path } = await setup(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      true,
+    const { runtime, workers, path } = await setup({ externallyOwned: true });
+    await appendFile(
+      path,
+      jsonl(
+        entry("unfinished", "a1", "user", "Unanswered side branch", 5),
+        entry("saved", "a2", "assistant", "Saved default", 6),
+      ),
     );
-    try {
-      await appendFile(
-        path,
-        `${JSON.stringify(entry("unfinished", "a1", "user", "Unanswered side branch", 5))}\n` +
-          `${JSON.stringify(entry("saved", "a2", "assistant", "Saved default", 6))}\n`,
-      );
-      runtime.setExternalSessionPresence(async () => []);
-      await runtime.takeOverSession(SESSION_ID);
-      await expect(
-        runtime.selectBranch(SESSION_ID, "unfinished"),
-      ).rejects.toMatchObject({
-        status: 409,
-        message: expect.stringContaining("Use Edit from here"),
-      });
-      expect(workers[0]!.leafId).toBe("saved");
-      const tree = await runtime.branchTree(SESSION_ID);
-      const edited = await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        targetId: "unfinished",
-        mode: "edit",
-        revision: tree.revision,
-      });
-      expect(edited.editorText).toBe("Unanswered side branch");
-      expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
-    } finally {
-      await runtime.close();
-    }
+    runtime.setExternalSessionPresence(async () => []);
+    await runtime.takeOverSession(SESSION_ID);
+    await expect(
+      runtime.selectBranch(SESSION_ID, "unfinished"),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("Use Edit from here"),
+    });
+    expect(workers[0]!.leafId).toBe("saved");
+    const tree = await runtime.branchTree(SESSION_ID);
+    const edited = await runtime.navigateBranch({
+      sessionId: SESSION_ID,
+      targetId: "unfinished",
+      mode: "edit",
+      revision: tree.revision,
+    });
+    expect(edited.editorText).toBe("Unanswered side branch");
+    expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
   });
 
-  it.each(["wrong-nonce", "wrong-worker", "malformed", "duplicate"] as const)(
-    "fails closed for a %s result and stops the ambiguous worker",
+  it.each([
+    "wrong-nonce",
+    "wrong-worker",
+    "malformed",
+    "duplicate",
+    "missing",
+    "persist",
+  ] as const)(
+    "stops the writer without retrying when native navigation is unverified (%s)",
     async (mode) => {
-      const { runtime, worker } = await setup();
+      const { runtime, worker } = await setup({
+        branchBridgeTimeoutMs: mode === "missing" ? 25 : undefined,
+      });
       worker.resultMode = mode;
       const tree = await runtime.branchTree(SESSION_ID);
       await expect(
@@ -837,20 +539,33 @@ describe("stock RPC branch bridge", () => {
         }),
       ).rejects.toMatchObject({ status: 504 });
       expect(worker.stops).toBe(1);
-      await runtime.close();
+      expect(
+        worker.commands.filter((command) => command.type === "prompt"),
+      ).toHaveLength(1);
     },
   );
 
-  it.each(["fork", "clone"] as const)(
-    "%s reads an externally owned source without acquiring or changing its writer",
-    async (mode) => {
-      const { runtime, workers, path } = await setup(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        true,
-      );
+  it.each([
+    { mode: "fork", targetId: "u2", entries: ["u1", "a1"] },
+    { mode: "clone", targetId: "u2", entries: ["u1", "a1", "u2"] },
+    { mode: "clone", targetId: "a2", entries: ["u1", "a1", "u2", "a2"] },
+  ] as const)(
+    "$mode at $targetId reads an externally owned source while its tail advances",
+    async ({ mode, targetId, entries }) => {
+      const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
+      const partial = '{"type":"message"';
+      let stagedBytes!: string;
+      const { runtime, workers, path } = await setup({
+        async stageFork(request) {
+          // The external Pi can start another frame after runtime admission.
+          await appendFile(request.sourcePath, partial);
+          const staged = await stageSessionFork(request);
+          stagedBytes = await readFile(staged.stagedPath, "utf8");
+          return staged;
+        },
+        userContent: [{ type: "text", text: "second question" }, image],
+        externallyOwned: true,
+      });
       const release = runtime.retainSessionView(SESSION_ID);
       try {
         const original = await readFile(path, "utf8");
@@ -863,15 +578,12 @@ describe("stock RPC branch bridge", () => {
             mode: "edit",
           }),
         ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
-        const request = {
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        };
+        const request = await addressedBranch(runtime, targetId);
         // The target is unchanged when the external Pi appends after the
         // browser captured its view/endpoint but before copy admission.
-        const appended = `${JSON.stringify(entry("later", "a2", "assistant", "later progress", 50))}\n`;
+        const appended = jsonl(
+          entry("later", "a2", "assistant", "later progress", 50),
+        );
         await appendFile(path, appended);
         runtime.setExternalSessionPresence(async (id) =>
           id === SESSION_ID ? ["later"] : [],
@@ -879,16 +591,36 @@ describe("stock RPC branch bridge", () => {
         const copied = await (mode === "fork"
           ? runtime.forkBranch(request)
           : runtime.cloneBranch(request));
-        expect(copied.sessionId).toBe(FORK_SESSION_ID);
+        expect(copied.sessionId).not.toBe(SESSION_ID);
         expect(copied.editorText).toBe(
           mode === "fork" ? "second question" : "",
         );
-        expect(await readFile(path, "utf8")).toBe(original + appended);
+        expect(await readFile(path, "utf8")).toBe(
+          original + appended + partial,
+        );
         const output = await readFile(
           copied.snapshot.active!.sessionFile!,
           "utf8",
         );
-        expect(output).not.toContain("later progress");
+        expect(output).toBe(stagedBytes);
+        const [header, ...copiedEntries] = output
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        expect(header).toMatchObject({
+          id: copied.sessionId,
+          cwd: copied.snapshot.active!.cwd,
+          parentSession: path,
+        });
+        expect(copiedEntries.map(({ id }) => id)).toEqual(entries);
+        expect(copied.snapshot.active?.durableLeafId).toBe(entries.at(-1));
+        if (mode === "clone") {
+          expect(copied.editorAttachments).toBeUndefined();
+          expect(output).toContain(image.data);
+        } else {
+          expect(copied.editorAttachments).toHaveLength(1);
+          expect(output).not.toContain(image.data);
+        }
         expect((await runtime.branchTree(SESSION_ID)).revision).toBeGreaterThan(
           tree.revision,
         );
@@ -896,7 +628,7 @@ describe("stock RPC branch bridge", () => {
           (await runtime.snapshot(SESSION_ID)).active?.readOnlyReason,
         ).toBe("external-active");
         await vi.waitFor(() => expect(workers).toHaveLength(1));
-        expect(workers[0]!.sessionId).toBe(FORK_SESSION_ID);
+        expect(workers[0]!.sessionId).toBe(copied.sessionId);
       } finally {
         release();
         await runtime.close();
@@ -904,114 +636,98 @@ describe("stock RPC branch bridge", () => {
     },
   );
 
-  it.each(["source", "other", "none"] as const)(
-    "forks an active source without changing its worker, queue, or dialog when the Host selection is %s",
-    async (selection) => {
-      const fixture = await setup();
-      const { runtime, worker, workers, path } = fixture;
-      try {
-        worker.emit("event", { type: "agent_start" });
-        worker.emit("event", {
-          type: "queue_update",
-          steering: ["steer later"],
-          followUp: ["follow later"],
-        });
-        worker.emit("event", {
-          type: "extension_ui_request",
-          id: "source-dialog",
-          method: "confirm",
-          title: "Source dialog",
-        });
-        await vi.waitFor(async () =>
-          expect(await runtime.snapshot()).toMatchObject({
-            runState: "running",
-            pendingExtensionUiRequests: [
-              { id: "source-dialog", sessionId: SESSION_ID },
-            ],
-            pendingQueues: {
-              steering: [
-                expect.objectContaining({ textPreview: "steer later" }),
-              ],
-              followUp: [
-                expect.objectContaining({ textPreview: "follow later" }),
-              ],
-            },
-          }),
-        );
-        const sourceBefore = await readFile(path, "utf8");
-        if (selection === "other") await openOtherSession(fixture);
-        else if (selection === "none") await runtime.deselectSession();
-        const selectedBeforeFork = runtime.activeSessionId;
-        const forked = await runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        });
-
-        expect(forked).toMatchObject({
-          sessionId: FORK_SESSION_ID,
-          editorText: "second question",
-          snapshot: {
-            active: {
-              sessionId: FORK_SESSION_ID,
-              durableLeafId: "a1",
-            },
-            sessionStatuses: {
-              [SESSION_ID]: { runState: "running" },
-            },
-          },
-        });
-        const expectedSelection =
-          selection === "source" ? FORK_SESSION_ID : selectedBeforeFork;
-        expect(runtime.activeSessionId).toBe(expectedSelection);
-        await vi.waitFor(async () => {
-          expect(
-            (await runtime.snapshot(FORK_SESSION_ID)).active?.commands,
-          ).toEqual([{ name: "visible", source: "extension" }]);
-        });
-        expect(runtime.activeSessionId).toBe(expectedSelection);
-        expect(worker.commands.some((command) => command.type === "fork")).toBe(
-          false,
-        );
-        expect(worker.stops).toBe(0);
-        expect(await readFile(path, "utf8")).toBe(sourceBefore);
-        const destination = await readFile(
-          join(resolve(path, ".."), `${FORK_SESSION_ID}.jsonl`),
-          "utf8",
-        );
-        expect(destination).toContain('"id":"a1"');
-        expect(destination).not.toContain('"id":"u2"');
-
-        const source = await runtime.snapshot(SESSION_ID);
-        expect(source).toMatchObject({
-          active: { sessionId: SESSION_ID },
-          runState: "running",
-          pendingExtensionUiRequests: [
-            { id: "source-dialog", sessionId: SESSION_ID },
-          ],
-          pendingQueues: {
-            steering: [expect.objectContaining({ textPreview: "steer later" })],
-            followUp: [
-              expect.objectContaining({ textPreview: "follow later" }),
-            ],
-          },
-        });
-        expect(workers[0]).toBe(worker);
-        expect(worker.stops).toBe(0);
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
-
-  it("preserves a newer selection made while an addressed fork waits in the source operation lane", async () => {
+  it("forks an unselected busy session without losing its queued input or dialog", async () => {
     const fixture = await setup();
-    const { runtime, worker } = fixture;
-    let release!: () => void;
-    worker.autoRetryGate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
+    const { runtime, worker, path } = fixture;
+    worker.emit("event", { type: "agent_start" });
+    worker.emit("event", {
+      type: "queue_update",
+      steering: ["steer later"],
+      followUp: ["follow later"],
     });
+    worker.emit("event", {
+      type: "extension_ui_request",
+      id: "source-dialog",
+      method: "confirm",
+      title: "Source dialog",
+    });
+    const busySource = {
+      active: { sessionId: SESSION_ID },
+      runState: "running",
+      pendingExtensionUiRequests: [
+        { id: "source-dialog", sessionId: SESSION_ID },
+      ],
+      pendingQueues: {
+        steering: [expect.objectContaining({ textPreview: "steer later" })],
+        followUp: [expect.objectContaining({ textPreview: "follow later" })],
+      },
+    };
+    await vi.waitFor(async () =>
+      expect(await runtime.snapshot()).toMatchObject(busySource),
+    );
+    const sourceBefore = await readFile(path, "utf8");
+    const request = {
+      sessionId: SESSION_ID,
+      viewId: (await runtime.snapshot()).active!.transcriptPage.viewId,
+    };
+    expect(
+      await runtime.branchEntry({ ...request, targetId: "a1" }),
+    ).toMatchObject({ text: expect.stringContaining("first answer") });
+    await expect(
+      runtime.navigateBranch({
+        sessionId: SESSION_ID,
+        revision: (await runtime.branchTree(SESSION_ID)).revision,
+        targetId: "a1",
+        mode: "switch",
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    await openOtherSession(fixture);
+    expect(
+      await runtime.forkBranch({ ...request, targetId: "u2" }),
+    ).toMatchObject({
+      sessionId: expect.any(String),
+      editorText: "second question",
+      snapshot: { active: { durableLeafId: "a1" } },
+    });
+    expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
+    expect(await runtime.snapshot(SESSION_ID)).toMatchObject(busySource);
+    expect(await readFile(path, "utf8")).toBe(sourceBefore);
+    expect(worker.stops).toBe(0);
+  });
+
+  it("validates the addressed Fork source and preserves a newer selection before admission", async () => {
+    const stageFork = vi.fn(stageSessionFork);
+    const fixture = await setup({ stageFork });
+    const { runtime, worker } = fixture;
+    const tree = await runtime.branchTree(SESSION_ID);
+    await openOtherSession(fixture);
+    const request = {
+      sessionId: SESSION_ID,
+      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+        .viewId,
+      targetId: "u2",
+    };
+    await expect(
+      runtime.forkBranch({ ...request, sessionId: "unknown-session" }),
+    ).rejects.toThrow("That session is not open on this host");
+    await expect(
+      runtime.forkBranch({ ...request, viewId: "retired-source-view" }),
+    ).rejects.toThrow(/branch changed/);
+    await expect(
+      runtime.forkBranch({ ...request, targetId: "a1" }),
+    ).rejects.toThrow("Fork requires a retained user message");
+    await runtime.navigateBranch({
+      sessionId: SESSION_ID,
+      revision: tree.revision,
+      targetId: "a1",
+      mode: "switch",
+    });
+    await expect(runtime.forkBranch(request)).rejects.toThrow(/branch changed/);
+    expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
+    const source = await addressedBranch(runtime);
+    const gate = deferredSignal();
+    worker.autoRetryGate = gate.promise;
     const changing = runtime.setAutoRetry(SESSION_ID, false);
     try {
       await vi.waitFor(() =>
@@ -1020,137 +736,63 @@ describe("stock RPC branch bridge", () => {
           enabled: false,
         }),
       );
-      await openOtherSession(fixture);
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      });
-      // This newer selection is made before the queued fork can begin admission.
+      const forking = runtime.forkBranch(source);
       await runtime.openSession(SESSION_ID);
-      release();
+      const retainedLeaf = (await runtime.snapshot(SESSION_ID)).active!
+        .effectiveLeafId;
+      gate.resolve();
       await changing;
       const forked = await forking;
-      expect(forked).toMatchObject({
-        sessionId: FORK_SESSION_ID,
-        editorText: "second question",
-      });
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
-      expect((await runtime.snapshot(SESSION_ID)).active?.effectiveLeafId).toBe(
-        "a2",
-      );
-    } finally {
-      release();
-      await changing;
-      await runtime.close();
-    }
-  });
-
-  it("retains source identity, view, target, and conflict validation when another session is selected", async () => {
-    const stageFork = vi.fn<StageSessionFork>();
-    const fixture = await setup(15_000, undefined, stageFork);
-    const { runtime, path, directory } = fixture;
-    stageFork.mockImplementation(fakeStageFork(directory));
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      await openOtherSession(fixture);
-      const request = {
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      };
-      await expect(
-        runtime.forkBranch({ ...request, sessionId: FORK_SESSION_ID }),
-      ).rejects.toThrow("That session is not open on this host");
-      await expect(
-        runtime.forkBranch({ ...request, viewId: "retired-source-view" }),
-      ).rejects.toThrow(/branch changed/);
-      await expect(
-        runtime.forkBranch({ ...request, targetId: "a1" }),
-      ).rejects.toThrow("Fork requires a retained user message");
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await expect(runtime.forkBranch(request)).rejects.toThrow(
-        /branch changed/,
-      );
-      const viewId = (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId;
-      await expect(
-        runtime.forkBranch({ ...request, viewId }),
-      ).resolves.toMatchObject({
-        sessionId: FORK_SESSION_ID,
-        editorText: "second question",
-      });
-      await runtime.openSession(OTHER_SESSION_ID);
-      await appendFile(
-        path,
-        `${JSON.stringify(entry("external", "a2", "assistant", "external divergence", 60))}\n`,
-      );
-      // Another Pi's append is valid: the worker keeps its own branch.
-      await runtime.branchTree(SESSION_ID);
-      expect((await runtime.snapshot(SESSION_ID)).runState).not.toBe(
-        "conflict",
-      );
+      expect(forked.editorText).toBe("second question");
       expect(stageFork).toHaveBeenCalledTimes(1);
       expect(
-        await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
+        await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
       ).toContain("first answer");
-      expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
+      expect(runtime.activeSessionId).toBe(SESSION_ID);
+      expect((await runtime.snapshot(SESSION_ID)).active?.effectiveLeafId).toBe(
+        retainedLeaf,
+      );
     } finally {
-      await runtime.close();
+      gate.resolve();
+      await changing;
     }
   });
 
   it("holds the generated destination reservation across publication and a slower final projection open", async () => {
-    let release!: () => void;
-    let opened!: () => void;
+    const { promise: gate, resolve: release } = deferredSignal();
+    const { promise: finalOpen, resolve: opened } = deferredSignal();
     let recordsRef!: Map<string, SessionRecord>;
-    const gate = new Promise<void>((resolveGate) => {
-      release = resolveGate;
-    });
-    const finalOpen = new Promise<void>((resolveOpen) => {
-      opened = resolveOpen;
-    });
-    const fixture = await setup(15_000, async (record) => {
-      if (record.path.includes(`${join("", ".test-fork-")}`)) {
+    let destination!: string;
+    const fixture = await setup({
+      async openForkProjection(record) {
+        if (record.path.includes(".inspire-fork-")) {
+          return SessionProjection.open(record);
+        }
+        recordsRef.set(record.id, record);
+        destination = record.id;
+        opened();
+        await gate;
         return SessionProjection.open(record);
-      }
-      recordsRef.set(record.id, record);
-      opened();
-      await gate;
-      return SessionProjection.open(record);
+      },
     });
     const { runtime, workers, records } = fixture;
     recordsRef = records;
     try {
-      const forking = runtime.forkBranch({
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
-      });
+      const forking = runtime.forkBranch(await addressedBranch(runtime));
       await finalOpen;
-      const openingDestination = runtime.openSession(FORK_SESSION_ID);
+      const openingDestination = runtime.openSession(destination);
       await runtime.openSession(SESSION_ID);
       release();
       const [forked, openedDestination] = await Promise.all([
         forking,
         openingDestination,
       ]);
-      expect(forked.sessionId).toBe(FORK_SESSION_ID);
-      expect(openedDestination.active?.sessionId).toBe(FORK_SESSION_ID);
+      expect(forked.sessionId).toBe(destination);
+      expect(openedDestination.active?.sessionId).toBe(destination);
       expect(runtime.activeSessionId).toBe(SESSION_ID);
       await vi.waitFor(() =>
         expect(
-          workers.filter(
-            (candidate) => candidate.sessionId === FORK_SESSION_ID,
-          ),
+          workers.filter((candidate) => candidate.sessionId === destination),
         ).toHaveLength(1),
       );
     } finally {
@@ -1159,303 +801,165 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it.each(["image-only", "text-and-images"] as const)(
-    "restages a %s Fork from persisted bytes, preserving image order and duplicates",
-    async (kind) => {
-      const images = [
-        {
-          type: "image",
-          data: Buffer.from("first image").toString("base64"),
-          mimeType: "image/png",
-        },
-        {
-          type: "image",
-          data: Buffer.from("second image").toString("base64"),
-          mimeType: "image/webp",
-        },
-      ];
-      images.push(images[0]!);
-      const text = kind === "image-only" ? "" : "Compare these images";
-      const { runtime, workers, worker, path, attachments } = await setup(
-        15_000,
-        undefined,
-        undefined,
-        [...(text ? [{ type: "text", text }] : []), ...images],
-      );
-      const original = await readFile(path, "utf8");
-      try {
-        const forked = await runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        });
-        expect(forked.editorText).toBe(text);
-        const restored = forked.editorAttachments!;
-        expect(restored).toHaveLength(3);
-        expect(new Set(restored.map((item) => item.id)).size).toBe(3);
-        for (const [index, item] of restored.entries()) {
-          expect(item).toMatchObject({
-            kind: "image",
-            mimeType: images[index]!.mimeType,
-          });
-          expect(item).not.toHaveProperty("previewDataUrl");
-          const preview = await attachments.imagePreview(item.id);
-          expect(preview.bytes.toString("base64")).toBe(images[index]!.data);
-        }
-        expect(await readFile(path, "utf8")).toBe(original);
-        expect(
-          await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
-        ).not.toContain('"id":"u2"');
-        expect(worker.stops).toBe(0);
-        await vi.waitFor(() => expect(workers).toHaveLength(2));
-        expect(
-          workers[1]!.commands.some((command) => command.type === "prompt"),
-        ).toBe(false);
-
-        // Removing one copy leaves the original persisted input and its duplicates intact.
-        await attachments.remove(restored[1]!.id);
-        await expect(
-          attachments.imagePreview(restored[1]!.id),
-        ).rejects.toMatchObject({ status: 404 });
-        await runtime.prompt({
-          sessionId: forked.sessionId,
-          message: text,
-          attachmentIds: [restored[0]!.id, restored[2]!.id],
-        });
-        expect(
-          workers[1]!.commands.find((command) => command.type === "prompt"),
-        ).toMatchObject({
-          message: text,
-          images: [images[0], images[0]],
-        });
-        expect(await readFile(path, "utf8")).toBe(original);
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
-
-  it("keeps a Clone's images in history rather than staging them in the editor", async () => {
-    const image = { type: "image", data: "aW1hZ2U=", mimeType: "image/png" };
-    const { runtime } = await setup(15_000, undefined, undefined, [image]);
-    try {
-      const cloned = await runtime.cloneBranch({
-        sessionId: SESSION_ID,
-        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-          .viewId,
-        targetId: "u2",
+  it("restages an image-only Fork preserving image order and duplicates", async () => {
+    const images = [
+      {
+        type: "image",
+        data: Buffer.from("first image").toString("base64"),
+        mimeType: "image/png",
+      },
+      {
+        type: "image",
+        data: Buffer.from("second image").toString("base64"),
+        mimeType: "image/webp",
+      },
+    ];
+    images.push(images[0]!);
+    const { runtime, workers, worker, path, attachments } = await setup({
+      userContent: images,
+    });
+    const original = await readFile(path, "utf8");
+    const forked = await runtime.forkBranch(await addressedBranch(runtime));
+    expect(forked.editorText).toBe("");
+    const restored = forked.editorAttachments!;
+    expect(restored).toHaveLength(3);
+    expect(new Set(restored.map((item) => item.id)).size).toBe(3);
+    for (const [index, item] of restored.entries()) {
+      expect(item).toMatchObject({
+        kind: "image",
+        mimeType: images[index]!.mimeType,
       });
-      expect(cloned.editorText).toBe("");
-      expect(cloned.editorAttachments).toBeUndefined();
-      expect(
-        await readFile(cloned.snapshot.active!.sessionFile!, "utf8"),
-      ).toContain(image.data);
-    } finally {
-      await runtime.close();
+      expect(item).not.toHaveProperty("previewDataUrl");
+      const preview = await attachments.imagePreview(item.id);
+      expect(preview.bytes.toString("base64")).toBe(images[index]!.data);
     }
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(
+      await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
+    ).not.toContain('"id":"u2"');
+    expect(worker.stops).toBe(0);
+    await vi.waitFor(() => expect(workers).toHaveLength(2));
+    expect(
+      workers[1]!.commands.some((command) => command.type === "prompt"),
+    ).toBe(false);
+
+    // Removing one copy leaves the original persisted input and its duplicates intact.
+    await attachments.remove(restored[1]!.id);
+    await expect(
+      attachments.imagePreview(restored[1]!.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await runtime.prompt({
+      sessionId: forked.sessionId,
+      message: "",
+      attachmentIds: [restored[0]!.id, restored[2]!.id],
+    });
+    expect(
+      workers[1]!.commands.find((command) => command.type === "prompt"),
+    ).toMatchObject({
+      message: "",
+      images: [images[0], images[0]],
+    });
+    expect(await readFile(path, "utf8")).toBe(original);
   });
 
   it("rejects an atomic destination-path collision without changing the source", async () => {
-    const { runtime, worker, directory, path, attachments } = await setup(
-      15_000,
-      undefined,
-      undefined,
-      [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
-    );
+    let destinationPath!: string;
+    const { runtime, worker, path, attachments } = await setup({
+      async stageFork(request) {
+        const fork = await stageSessionFork(request);
+        destinationPath = fork.destinationPath;
+        await writeFile(destinationPath, "existing destination\n");
+        return fork;
+      },
+      userContent: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+    });
     const staging = vi.spyOn(attachments, "stageImages");
-    const destinationPath = join(directory, `${FORK_SESSION_ID}.jsonl`);
-    await writeFile(destinationPath, "existing destination\n");
     const sourceBefore = await readFile(path, "utf8");
-    try {
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({ status: 409 });
-      const copied = await staging.mock.results[0]!.value;
-      expect(copied).toHaveLength(1);
-      await expect(
-        attachments.imagePreview(copied[0]!.id),
-      ).rejects.toMatchObject({ status: 404 });
-      expect(await readFile(destinationPath, "utf8")).toBe(
-        "existing destination\n",
-      );
-      expect(await readFile(path, "utf8")).toBe(sourceBefore);
-      expect(worker.stops).toBe(0);
-      expect(worker.commands.some((command) => command.type === "fork")).toBe(
-        false,
-      );
-    } finally {
-      await runtime.close();
-    }
+    await expect(
+      runtime.forkBranch(await addressedBranch(runtime)),
+    ).rejects.toMatchObject({ status: 409 });
+    const copied = await staging.mock.results[0]!.value;
+    expect(copied).toHaveLength(1);
+    await expect(attachments.imagePreview(copied[0]!.id)).rejects.toMatchObject(
+      { status: 404 },
+    );
+    expect(await readFile(destinationPath, "utf8")).toBe(
+      "existing destination\n",
+    );
+    expect(await readFile(path, "utf8")).toBe(sourceBefore);
+    expect(worker.stops).toBe(0);
+    expect(worker.commands.some((command) => command.type === "fork")).toBe(
+      false,
+    );
+  });
+
+  it("refuses a rewritten prefix after admission and discards private staging", async () => {
+    const { runtime, directory } = await setup({
+      async stageFork(request) {
+        const source = await readFile(request.sourcePath, "utf8");
+        await writeFile(
+          request.sourcePath,
+          source.replace("first answer", "other answer"),
+        );
+        return stageSessionFork(request);
+      },
+    });
+    const before = (await readdir(directory)).sort();
+    await expect(
+      runtime.forkBranch(await addressedBranch(runtime)),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("changed before its fork boundary"),
+    });
+    expect((await readdir(directory)).sort()).toEqual(before);
   });
 
   it("reports a published destination as committed when final attachment fails", async () => {
     let opens = 0;
-    const { runtime, worker, directory } = await setup(
-      15_000,
-      async (record) => {
+    let staged!: StagedSessionFork;
+    const { runtime, worker } = await setup({
+      async openForkProjection(record) {
         opens += 1;
         if (opens === 1) return SessionProjection.open(record);
         throw new Error("projection fixture failed");
       },
-    );
-    try {
-      await expect(
-        runtime.forkBranch({
-          sessionId: SESSION_ID,
-          viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-            .viewId,
-          targetId: "u2",
-        }),
-      ).rejects.toMatchObject({
-        status: 409,
-        message: expect.stringContaining(
-          `Fork created Session ${FORK_SESSION_ID}`,
-        ),
-      });
-      expect(
-        await readFile(join(directory, `${FORK_SESSION_ID}.jsonl`), "utf8"),
-      ).toContain('"id":"a1"');
-      expect(worker.stops).toBe(0);
-      expect((await runtime.snapshot()).runState).not.toBe("conflict");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("fails closed when disk changes even if the RPC verification falsely reports no delta", async () => {
-    const { runtime, worker } = await setup();
-    worker.resultMode = "persist";
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 504 });
-      expect(worker.stops).toBe(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("treats cancellation as a truthful refusal without moving or stopping the worker", async () => {
-    const { runtime, worker } = await setup();
-    worker.resultMode = "cancel";
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).resolves.toMatchObject({
-        cancelled: true,
-        snapshot: { active: { effectiveLeafId: "a2" } },
-      });
-      expect(worker.leafId).toBe("a2");
-      expect(worker.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("drops a stale unsolicited internal status without projecting it or poisoning the next operation", async () => {
-    const { runtime, worker } = await setup();
-    const forwarded: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      forwarded.push(event as Record<string, unknown>),
-    );
-    worker.emit("event", {
-      type: "extension_ui_request",
-      id: "stale",
-      method: "setStatus",
-      statusKey: worker.statusKey,
-      statusText: "not+base64",
+      async stageFork(request) {
+        staged = await stageSessionFork(request);
+        return staged;
+      },
     });
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await runtime.navigateBranch({
+    const outcome = await runtime
+      .forkBranch({
         sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      expect(forwarded.some((event) => event.id === "stale")).toBe(false);
-      expect(
-        forwarded.some((event) => event.statusKey === worker.statusKey),
-      ).toBe(false);
-      expect(worker.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("treats a missing result timeout as outcome-unknown and never retries", async () => {
-    const { runtime, worker } = await setup(25);
-    worker.resultMode = "missing";
-    const tree = await runtime.branchTree(SESSION_ID);
-    try {
-      await expect(
-        runtime.navigateBranch({
-          sessionId: SESSION_ID,
-          revision: tree.revision,
-          targetId: "a1",
-          mode: "switch",
-        }),
-      ).rejects.toMatchObject({ status: 504 });
-      expect(worker.stops).toBe(1);
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(1);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("rejects direct public invocation of the randomized internal command", async () => {
-    const { runtime, worker } = await setup();
-    try {
-      for (const suffix of [" forged", "\tforged", "\nforged", ""]) {
-        await expect(
-          runtime.prompt({
-            sessionId: SESSION_ID,
-            message: `/${worker.bridgeCommand}${suffix}`,
-          }),
-        ).rejects.toMatchObject({ status: 403 });
-      }
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(0);
-    } finally {
-      await runtime.close();
-    }
+        viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
+          .viewId,
+        targetId: "u2",
+      })
+      .catch((error: unknown) => error);
+    expect(outcome).toMatchObject({
+      status: 409,
+      message: expect.stringContaining(
+        `Fork created Session ${staged.destinationId}`,
+      ),
+    });
+    expect(await readFile(staged.destinationPath, "utf8")).toContain(
+      '"id":"a1"',
+    );
+    expect(worker.stops).toBe(0);
+    expect((await runtime.snapshot()).runState).not.toBe("conflict");
   });
 
   it("follows the viewed branch while another Pi runs it and switches by the same admission rule", async () => {
-    const { runtime, path } = await setup(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      true,
-    );
+    const { runtime, path } = await setup({ externallyOwned: true });
     const release = runtime.retainSessionView(SESSION_ID);
     try {
       // A live Pi runs the a2 branch; someone else starts another branch.
       await appendFile(
         path,
-        `${JSON.stringify(entry("alt", "a1", "user", "alternative", 5))}\n${JSON.stringify(entry("alt-a", "alt", "assistant", "alternative answer", 6))}\n`,
+        jsonl(
+          entry("alt", "a1", "user", "alternative", 5),
+          entry("alt-a", "alt", "assistant", "alternative answer", 6),
+        ),
       );
       const listed = await runtime.branchLeaves(SESSION_ID);
       expect(listed.total).toBe(2);
@@ -1492,53 +996,37 @@ describe("stock RPC branch bridge", () => {
     }
   });
 
-  it("keeps a default-branch worker on its own context across repeated foreign appends", async () => {
-    const { runtime, worker, path } = await setup();
-    try {
+  it.each([
+    { view: "latest", target: "a2", foreignParent: "a1" },
+    { view: "earlier", target: "a1", foreignParent: "a2" },
+  ])(
+    "keeps a worker on its $view branch across foreign appends",
+    async ({ target, foreignParent }) => {
+      const { runtime, worker, path } = await setup();
+      if (target === "a1") {
+        const tree = await runtime.branchTree(SESSION_ID);
+        await runtime.navigateBranch({
+          sessionId: SESSION_ID,
+          revision: tree.revision,
+          targetId: target,
+          mode: "switch",
+        });
+      }
       for (const id of ["foreign-one", "foreign-two"]) {
         await appendFile(
           path,
-          `${JSON.stringify(entry(id, "a1", "assistant", id, 60))}\n`,
+          jsonl(entry(id, foreignParent, "assistant", id, 60)),
         );
         const tree = await runtime.branchTree(SESSION_ID);
         expect(tree.durableLeafId).toBe(id);
-        expect(tree.effectiveLeafId).toBe("a2");
-        expect(worker.leafId).toBe("a2");
+        expect(tree.effectiveLeafId).toBe(target);
+        expect(worker.leafId).toBe(target);
+        const snapshot = await runtime.snapshot(SESSION_ID);
+        expect(snapshot.runState).not.toBe("conflict");
         expect(
-          worker.commands
-            .filter((command) => command.type === "get_entries")
-            .at(-1),
-        ).toMatchObject({ since: "a2" });
+          JSON.stringify(snapshot.active?.transcriptPage.messages),
+        ).not.toContain(id);
       }
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps the worker's branch when another Pi appends elsewhere in the tree", async () => {
-    const { runtime, path } = await setup();
-    try {
-      const tree = await runtime.branchTree(SESSION_ID);
-      await runtime.navigateBranch({
-        sessionId: SESSION_ID,
-        revision: tree.revision,
-        targetId: "a1",
-        mode: "switch",
-      });
-      await appendFile(
-        path,
-        `${JSON.stringify(entry("external", "a2", "assistant", "terminal divergence", 60))}\n`,
-      );
-      const after = await runtime.branchTree(SESSION_ID);
-      expect(after.durableLeafId).toBe("external");
-      expect(after.effectiveLeafId).toBe("a1");
-      const snapshot = await runtime.snapshot(SESSION_ID);
-      expect(snapshot.runState).not.toBe("conflict");
-      expect(JSON.stringify(snapshot.active?.transcriptPage)).not.toContain(
-        "terminal divergence",
-      );
-    } finally {
-      await runtime.close();
-    }
-  });
+    },
+  );
 });

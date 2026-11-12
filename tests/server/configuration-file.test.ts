@@ -82,6 +82,17 @@ describe("Pi configuration editing", () => {
     },
   );
 
+  it("recovers an abandoned native-compatible lock", async () => {
+    const file = join(root, "config.json");
+    const lock = `${file}.lock`;
+    await fs.writeFile(file, original);
+    await fs.mkdir(lock);
+    const old = new Date(Date.now() - 20_000);
+    await fs.utimes(lock, old, old);
+    await edit(file);
+    expect(await fs.readFile(file, "utf8")).toBe(replacement);
+  });
+
   it("allows only one competing save from the same reviewed revision", async () => {
     const file = join(root, "config.json");
     await fs.writeFile(file, original);

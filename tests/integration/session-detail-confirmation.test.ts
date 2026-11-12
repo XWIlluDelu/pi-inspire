@@ -1,173 +1,150 @@
 // @vitest-environment jsdom
-import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   closeHostApiFixture,
   hostApiFixture,
   observeEventSocket,
-  token,
 } from "../server/fixtures/host-api";
 import {
-  activeSnapshot,
+  deferred,
   installFakeWebSocket,
-  installFetch,
   TEST_HOST_AUTHORITY,
 } from "../web/helpers";
-import { baseRoutes, initStore } from "../web/store-fixture";
+import { initStore, installStoreRoutes } from "../web/store-fixture";
+import { forwardHostRequests } from "./host-requests";
 
-describe("addressed snapshot confirmation", () => {
-  let f: Awaited<ReturnType<typeof hostApiFixture>>;
-  beforeEach(async () => {
-    installFakeWebSocket();
-    f = await hostApiFixture();
-  });
-  afterEach(async () => {
-    await closeHostApiFixture(f);
-  });
-
-  it("accepts the real Host's unchanged B confirmation after its already-sent A detail arrives late", async () => {
-    await f.runtime.openSession("fixture-active");
-    await f.runtime.openSession("fixture-history");
-    await vi.waitFor(
-      async () => {
-        expect(
-          (await f.runtime.snapshot("fixture-active")).active?.runtimeSettings
-            ?.autoRetryEnabled,
-        ).toBeDefined();
-        expect(
-          (await f.runtime.snapshot("fixture-history")).active?.runtimeSettings
-            ?.autoRetryEnabled,
-        ).toBeDefined();
-      },
-      { timeout: 10_000 },
-    );
-    const observed = observeEventSocket(
-      `${f.baseUrl.replace("http", "ws")}/events?detail=fixture-active`,
-    );
-    try {
-      await vi.waitFor(() =>
-        expect(observed.frames.some((frame) => frame.type === "snapshot")).toBe(
-          true,
-        ),
-      );
-      f.runtime.emit("event", {
-        type: "message_update",
-        sessionId: "fixture-active",
-        message: {
-          role: "assistant",
-          timestamp: 1,
-          content: [{ type: "text", text: "A fragment in transit" }],
-        },
-      });
-      await vi.waitFor(() =>
-        expect(
-          observed.frames.some((frame) => frame.type === "message_update"),
-        ).toBe(true),
-      );
-      const oldFrame = observed.frames.find(
-        (frame) => frame.type === "message_update",
-      )!;
-      installFetch(async (url, init) => {
-        if (url === "/api/sessions/open") {
-          const response = await request(f.application.server)
-            .post(url)
-            .set("Authorization", `Bearer ${token}`)
-            .send(JSON.parse(String(init.body)));
-          return {
-            status: response.status,
-            body: { ...response.body, authorityId: TEST_HOST_AUTHORITY },
-          };
-        }
-        return baseRoutes(url, init);
-      });
-      const { store, socket } = await initStore();
-      await store.openSession("fixture-history");
-      const interest = JSON.parse(socket.sent.at(-1)!);
-      const messages = store.getState().messages;
-      const read = vi.spyOn(f.runtime, "snapshot");
-      observed.socket.send(
-        JSON.stringify({ ...interest, authorityId: f.application.authorityId }),
-      );
-      await vi.waitFor(() =>
-        expect(
-          observed.frames.some(
-            (frame) => frame.detailRevision === interest.revision,
-          ),
-        ).toBe(true),
-      );
-      const confirmation = observed.frames.find(
-        (frame) => frame.detailRevision === interest.revision,
-      )!;
-      expect(read).toHaveBeenCalledWith("fixture-history");
-      expect(confirmation).toMatchObject({
-        unchanged: true,
-        snapshotDigest: interest.snapshotDigest,
-      });
-      expect(confirmation).not.toHaveProperty("data");
-      socket.emit(oldFrame);
-      expect(store.getState().messages).toEqual(messages);
-      socket.emit({ ...confirmation, authorityId: TEST_HOST_AUTHORITY });
-      expect(socket.readyState).toBe(1);
-      expect(store.getState()).toMatchObject({
-        sessionId: "fixture-history",
-        connection: "open",
-      });
-    } finally {
-      observed.socket.close();
-    }
-  }, 15_000);
-
-  it.each(["target-changed", "wrong-authority", "wrong-digest"] as const)(
-    "still refuses unchanged when %s",
-    async (problem) => {
-      const digest = "b".repeat(64);
-      installFetch((url, init) =>
-        url === "/api/sessions/open"
-          ? {
-              body: {
-                ...activeSnapshot({ sessionId: "s2" }),
-                authorityId: TEST_HOST_AUTHORITY,
-                snapshotDigest: digest,
-              },
-            }
-          : baseRoutes(url, init),
-      );
-      const { store, socket } = await initStore();
-      await store.openSession("s2");
-      const interest = JSON.parse(socket.sent.at(-1)!);
-      if (problem === "target-changed")
-        socket.emit({
-          type: "message_update",
-          sessionId: "s2",
-          message: {
-            role: "assistant",
-            timestamp: 1,
-            content: [{ type: "text", text: "new B fragment" }],
-          },
-        });
-      else
-        socket.emit({
-          type: "message_update",
-          sessionId: "s1",
-          message: {
-            role: "assistant",
-            timestamp: 1,
-            content: [{ type: "text", text: "old A fragment" }],
-          },
-        });
-      socket.emit({
-        type: "snapshot",
-        unchanged: true,
-        detailRevision: interest.revision,
-        detailSessionId: "s2",
-        authorityId:
-          problem === "wrong-authority"
-            ? "foreign-authority"
-            : TEST_HOST_AUTHORITY,
-        snapshotDigest: problem === "wrong-digest" ? "c".repeat(64) : digest,
-      });
-      expect(socket.readyState).toBe(3);
-      expect(store.getState().connection).toBe("reconnecting");
-    },
-  );
+let fixture: Awaited<ReturnType<typeof hostApiFixture>> | undefined;
+afterEach(async () => {
+  if (fixture) await closeHostApiFixture(fixture);
 });
+
+it("confirms a large unchanged window before new events despite already-sent detail from another session", async () => {
+  installFakeWebSocket();
+  const { application, baseUrl, runtime } = (fixture = await hostApiFixture());
+  const forward = forwardHostRequests(application);
+  const previous = "fixture-active";
+  const next = "fixture-history";
+  await runtime.openSession(previous);
+  await runtime.openSession(next);
+  await vi.waitFor(async () => {
+    for (const id of [previous, next])
+      expect(
+        (await runtime.snapshot(id)).active?.runtimeSettings,
+      ).toBeDefined();
+  });
+  const window = await runtime.snapshot(next);
+  const message = {
+    role: "user",
+    content: "large window ".repeat(40_000),
+    timestamp: 1,
+  };
+  window.active!.transcriptPage.messages = [message];
+  const { socket: hostSocket, frames } = observeEventSocket(
+    `${baseUrl.replace("http", "ws")}/events?detail=${previous}`,
+  );
+  const readStarted = deferred<void>();
+  const releaseRead = deferred<void>();
+  try {
+    await vi.waitFor(() => expect(frames[0]?.type).toBe("snapshot"));
+    runtime.emit("event", {
+      type: "message_update",
+      sessionId: previous,
+      message: { role: "assistant", timestamp: 2, content: "Old detail" },
+    });
+    const oldFrame = await vi.waitFor(() => {
+      const frame = frames.find(({ type }) => type === "message_update");
+      expect(frame).toBeDefined();
+      return frame!;
+    });
+    frames.length = 0;
+
+    vi.spyOn(runtime, "openSession").mockResolvedValue(window);
+    const snapshot = vi
+      .spyOn(runtime, "snapshot")
+      .mockResolvedValue(window)
+      .mockImplementationOnce(async () => {
+        readStarted.resolve();
+        await releaseRead.promise;
+        return window;
+      });
+    installStoreRoutes(async (url, init) => {
+      if (url !== "/api/sessions/open") return;
+      const response = await forward(url, init);
+      expect(response.status).toBe(200);
+      expect(Buffer.byteLength(JSON.stringify(response.body))).toBeGreaterThan(
+        500_000,
+      );
+      return response;
+    });
+    const { store, socket } = await initStore();
+    await store.openSession(next);
+    const interest = JSON.parse(socket.sent.at(-1)!);
+    expect(interest).toMatchObject({
+      type: "detail_interest",
+      sessionId: next,
+    });
+    const messages = store.getState().messages;
+    expect(messages).toMatchObject([message]);
+    const send = (patch: Record<string, unknown> = {}) =>
+      hostSocket.send(
+        JSON.stringify({
+          ...interest,
+          authorityId: application.authorityId,
+          ...patch,
+        }),
+      );
+    const incoming = () =>
+      frames.filter(
+        (frame) =>
+          frame.detailRevision === interest.revision ||
+          (frame.sessionId === next && frame.type === "agent_start"),
+      );
+    send();
+    await readStarted.promise;
+    runtime.emit("event", {
+      type: "agent_start",
+      sessionId: next,
+      sessionStatus: { runState: "running" },
+    });
+    expect(incoming()).toEqual([]);
+    releaseRead.resolve();
+    await vi.waitFor(() => expect(incoming()).toHaveLength(2));
+    const [confirmation, event] = incoming();
+    expect(confirmation).toMatchObject({
+      unchanged: true,
+      detailRevision: interest.revision,
+      snapshotDigest: interest.snapshotDigest,
+    });
+    expect(confirmation).not.toHaveProperty("data");
+    expect(event?.type).toBe("agent_start");
+    expect(Buffer.byteLength(JSON.stringify(incoming()))).toBeLessThan(2_000);
+
+    socket.emit(oldFrame);
+    socket.emit({ ...confirmation, authorityId: TEST_HOST_AUTHORITY });
+    socket.emit(event!);
+    expect(store.getState()).toMatchObject({
+      sessionId: next,
+      connection: "open",
+      runState: "running",
+    });
+    expect(store.getState().messages).toEqual(messages);
+
+    for (const [patch, value] of [
+      [{}, { ...window, runState: "running" }],
+      [{ authorityId: "00000000-0000-4000-8000-000000000000" }, window],
+      [{ snapshotDigest: "0".repeat(64) }, window],
+    ] as const) {
+      const revision = ++interest.revision;
+      snapshot.mockResolvedValueOnce(value);
+      send(patch);
+      await vi.waitFor(() =>
+        expect(
+          frames.find((frame) => frame.detailRevision === revision),
+        ).toHaveProperty("data"),
+      );
+    }
+  } finally {
+    releaseRead.resolve();
+    hostSocket.close();
+  }
+}, 15_000);

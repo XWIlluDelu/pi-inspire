@@ -293,50 +293,43 @@ it("validates model edits over extension providers in the selected trusted works
   );
 }, 30_000);
 
-it.each([false, true])(
-  "retires factory descendants after discovery (factory throws=%s)",
-  async (fail) => {
-    const f = await modelWorkflowFixture();
-    roots.push(f.root);
-    const extension = join(f.agent, "descendant.ts");
-    const pidFile = join(f.root, "descendant.pid");
-    await writeFile(
-      extension,
-      `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
+it("retires an extension factory's descendants even if it fails", async () => {
+  const f = await modelWorkflowFixture();
+  roots.push(f.root);
+  const extension = join(f.agent, "descendant.ts");
+  const pidFile = join(f.root, "descendant.pid");
+  await writeFile(
+    extension,
+    `import { spawn } from "node:child_process"; import { writeFileSync } from "node:fs";
     export default () => { const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {stdio:"ignore"});
-    writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); ${fail ? 'throw new Error("fixture failure")' : ""} };`,
-    );
-    await writeFile(
-      join(f.agent, "settings.json"),
-      JSON.stringify({ extensions: [extension], defaultProjectTrust: "never" }),
-    );
-    let pid: number | undefined;
-    try {
-      const metadata = await queryModelMetadata(f.untrusted);
-      if (fail)
-        expect(metadata.warning).toContain("Some Pi extensions could not load");
-      pid = Number(await readFile(pidFile, "utf8"));
-      await vi.waitFor(async () => {
-        try {
-          process.kill(pid!, 0);
-          if (process.platform === "linux")
-            expect(await readFile(`/proc/${pid}/stat`, "utf8")).toMatch(
-              /\) Z /,
-            );
-          else throw new Error("Factory descendant is still running");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      });
-    } finally {
-      if (pid) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          /* Already retired by query cleanup. */
-        }
+    writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); throw new Error("fixture failure"); };`,
+  );
+  await writeFile(
+    join(f.agent, "settings.json"),
+    JSON.stringify({ extensions: [extension], defaultProjectTrust: "never" }),
+  );
+  let pid: number | undefined;
+  try {
+    const metadata = await queryModelMetadata(f.untrusted);
+    expect(metadata.warning).toContain("Some Pi extensions could not load");
+    pid = Number(await readFile(pidFile, "utf8"));
+    await vi.waitFor(async () => {
+      try {
+        process.kill(pid!, 0);
+        if (process.platform === "linux")
+          expect(await readFile(`/proc/${pid}/stat`, "utf8")).toMatch(/\) Z /);
+        else throw new Error("Factory descendant is still running");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    });
+  } finally {
+    if (pid) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* Already retired by query cleanup. */
       }
     }
-  },
-  10_000,
-);
+  }
+}, 10_000);

@@ -152,10 +152,7 @@ export class RuntimeSessionDeletionController {
         );
       // Identity is pinned by the catalog; version is pinned after every Pi
       // exits, including legitimate final appends from shutdown hooks.
-      const disposition = await this.host.deleteSessionRecord(
-        initial,
-        "current",
-      );
+      const disposition = await this.host.deleteSessionRecord(initial);
       if (slot) {
         slot.projection = null;
         slot.preview = null;

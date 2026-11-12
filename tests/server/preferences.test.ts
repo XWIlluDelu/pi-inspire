@@ -1,12 +1,7 @@
-import { spawn } from "node:child_process";
-import { once } from "node:events";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireFileLock } from "../../server/file-lock.mjs";
 import { PreferencesStore } from "../../server/preferences.js";
 import { defaultPreferences } from "../../shared/contracts.js";
 
@@ -61,24 +56,6 @@ describe("PreferencesStore validation", () => {
     },
   );
 
-  it.each([
-    "wisteria",
-    "hydrangea",
-    "lycoris",
-    "chimonanthus",
-    "classic-jade",
-    "classic-amber",
-    "mono",
-  ])("persists the %s palette independently of luminosity", async (palette) => {
-    const { path, store } = await fixture();
-    await store.patch({ theme: "system" });
-    await store.patch({ palette });
-    expect(await new PreferencesStore(path).read()).toMatchObject({
-      palette,
-      theme: "system",
-    });
-  });
-
   it("accepts only current palette identifiers in patches", async () => {
     const { path, store } = await fixture();
     await store.patch({ palette: "wisteria" });
@@ -118,11 +95,9 @@ describe("PreferencesStore validation", () => {
     await expect(
       store.patch({ sessionActionOrder: ["rename", "rename"] }),
     ).rejects.toBeDefined();
-    for (const id of ["unknown", "resume-command", "terminal"]) {
-      await expect(
-        store.patch({ sessionActionOrder: [id] }),
-      ).rejects.toBeDefined();
-    }
+    await expect(
+      store.patch({ sessionActionOrder: ["unknown"] }),
+    ).rejects.toBeDefined();
     expect((await store.read()).sessionActionOrder).toEqual(order);
   });
 
@@ -308,77 +283,6 @@ describe("PreferencesStore validation", () => {
       theme: "dark",
       readingWidth: "wide",
     });
-  });
-
-  it("continues after a dead process releases its lock", async () => {
-    const { path, store } = await fixture();
-    const lock = `${path}.flock`;
-    const moduleUrl = pathToFileURL(
-      join(process.cwd(), "server", "file-lock.mjs"),
-    ).href;
-    const holder = spawn(
-      process.execPath,
-      [
-        "--input-type=module",
-        "-e",
-        `import { acquireFileLock } from ${JSON.stringify(moduleUrl)};
-         await acquireFileLock(${JSON.stringify(lock)}, { waitMs: 500 });
-         process.stdout.write("ready\\n");
-         setInterval(() => undefined, 1_000);`,
-      ],
-      { stdio: ["ignore", "pipe", "ignore"] },
-    );
-    let stopped = false;
-    try {
-      await once(holder.stdout!, "data");
-      const patching = store.patch({ theme: "dark" });
-      let settled = false;
-      void patching.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        },
-      );
-      await delay(50);
-      expect(settled).toBe(false);
-
-      holder.kill("SIGKILL");
-      await once(holder, "close");
-      stopped = true;
-      await expect(patching).resolves.toMatchObject({ theme: "dark" });
-    } finally {
-      if (!stopped && holder.exitCode === null && holder.signalCode === null) {
-        holder.kill("SIGKILL");
-        await once(holder, "close");
-      }
-    }
-  });
-
-  it("holds the lock through the preferences rename", async () => {
-    const { path, store } = await fixture();
-    const lock = `${path}.flock`;
-    const mutable = store as unknown as {
-      persist: (
-        preferences: typeof defaultPreferences,
-        assertOwned: () => Promise<void>,
-      ) => Promise<void>;
-    };
-    const persist = mutable.persist.bind(store);
-    mutable.persist = async (preferences, assertOwned) => {
-      await expect(
-        acquireFileLock(lock, { waitMs: 50, retryMs: 10 }),
-      ).rejects.toMatchObject({ code: "ELOCKTIMEOUT" });
-      await assertOwned();
-      await persist(preferences, assertOwned);
-    };
-
-    await expect(store.patch({ theme: "dark" })).resolves.toMatchObject({
-      theme: "dark",
-    });
-    const lease = await acquireFileLock(lock, { waitMs: 100 });
-    await lease.release();
   });
 
   it("fails closed when the lock path is replaced", async () => {

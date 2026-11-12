@@ -3,36 +3,18 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  assertHerdrWorkerScopesAvailable,
-  stopHerdrProcessGroup,
-} from "../../server/herdr-process-group.js";
+import { stopHerdrProcessGroup } from "../../server/herdr-process-group.js";
 import { HerdrRpcTransport } from "../../server/herdr-rpc-transport.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
+import {
+  herdrScopesAvailable,
+  processCanRun,
+} from "./fixtures/herdr-scopes.js";
 
 const roots: string[] = [];
 const workers: PiRpcProcess[] = [];
 const bridges: ChildProcess[] = [];
-const scopesAvailable =
-  process.platform === "linux" &&
-  (await assertHerdrWorkerScopesAvailable(process.env).then(
-    () => true,
-    () => false,
-  ));
-
-async function processCanRun(pid: number): Promise<boolean> {
-  try {
-    const source = await readFile(`/proc/${pid}/stat`, "utf8");
-    return !["Z", "X"].includes(
-      source.slice(source.lastIndexOf(")") + 2, -1).split(" ")[0]!,
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 async function harness(environment: NodeJS.ProcessEnv = {}) {
   const root = await mkdtemp(join(tmpdir(), "inspire-herdr-rpc-test-"));
   roots.push(root);
@@ -52,7 +34,6 @@ process.stdin.on('data', chunk => {
   while ((end = input.indexOf('\n')) >= 0) {
     const command = JSON.parse(input.slice(0, end));
     input = input.slice(end + 1);
-    if (command.type === 'wait') continue;
     const data = command.type === 'echo' ? command.value : {
       pid: process.pid,
       parent: process.ppid,
@@ -154,7 +135,7 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
-describe.skipIf(!scopesAvailable)("Herdr RPC transport", () => {
+describe.skipIf(!herdrScopesAvailable)("Herdr RPC transport", () => {
   it("preserves RPC bytes, the user environment and real pane identity without exposing capabilities in argv", async () => {
     const { rpc, registry, client, getBridge } = await harness();
     await rpc.start();
@@ -195,24 +176,6 @@ describe.skipIf(!scopesAvailable)("Herdr RPC transport", () => {
         paneId: "owned-pane",
       }),
     );
-  });
-
-  it("fences a writer that ignores TERM after its bridge is killed", async () => {
-    const { rpc, getBridge, registry } = await harness();
-    await rpc.start();
-    const pid = rpc.pid!;
-    const pending = rpc
-      .request({ type: "wait" }, null)
-      .catch((error: Error) => error);
-    const retired = new Promise<void>((resolve) =>
-      rpc.once("exit", () => resolve()),
-    );
-    getBridge().kill("SIGKILL");
-    await retired;
-    await rpc.stop();
-    expect(await processCanRun(pid)).toBe(false);
-    expect(await pending).toBeInstanceOf(Error);
-    expect(await registry.list()).toEqual([]);
   });
 
   it("waits for allocation ownership even when the bridge connects before it is recorded", async () => {

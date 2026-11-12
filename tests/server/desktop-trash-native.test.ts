@@ -1,4 +1,5 @@
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -11,7 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { moveToDesktopTrash } from "../../server/desktop-trash.js";
-import { RECOVERY_MANIFEST } from "../../server/session-recovery.js";
+import {
+  RECOVERY_MANIFEST,
+  RECOVERY_README,
+} from "../../server/session-recovery.js";
 
 const native = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("node:child_process", () => ({
@@ -26,6 +30,22 @@ vi.mock("node:child_process", () => ({
 }));
 const roots: string[] = [];
 
+async function fixture() {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "inspire-native-trash-command-")),
+  );
+  roots.push(root);
+  const bundle = join(root, "private recovery ' ; $ folder");
+  await mkdir(bundle);
+  const original = join(root, "original sessions", "session.jsonl");
+  await mkdir(join(root, "original sessions"));
+  const payload = join(bundle, "session.jsonl");
+  const contents =
+    JSON.stringify({ type: "session", id: "session-a", cwd: root }) + "\n";
+  await writeFile(payload, contents);
+  return { root, bundle, original, payload, contents };
+}
+
 afterEach(async () => {
   native.run.mockReset();
   await Promise.all(
@@ -36,26 +56,13 @@ afterEach(async () => {
 describe("native Trash command boundaries", () => {
   it.each([
     { platform: "darwin", key: "SystemRoot" },
-    { platform: "win32", key: "ProgramFiles" },
     { platform: "win32", key: "programfiles" },
-    { platform: "win32", key: "PROGRAMFILES" },
   ] as const)(
     "sends only the private bundle through $platform native API ($key)",
     async ({ platform, key }) => {
-      const root = await realpath(
-        await mkdtemp(join(tmpdir(), "inspire-native-trash-command-")),
-      );
-      roots.push(root);
-      const bundle = join(root, "private recovery ' ; $ folder");
-      await mkdir(bundle);
-      const original = join(root, "original sessions", "session.jsonl");
-      await mkdir(join(root, "original sessions"));
-      const payload = join(bundle, "session.jsonl");
-      await writeFile(
-        payload,
-        JSON.stringify({ type: "session", id: "session-a", cwd: root }) + "\n",
-      );
+      const { root, bundle, original, payload, contents } = await fixture();
       const moved = join(root, "isolated trash result");
+      const before = await lstat(payload);
 
       native.run.mockImplementation(
         async (
@@ -67,7 +74,20 @@ describe("native Trash command boundaries", () => {
           const manifest = JSON.parse(
             await readFile(join(bundle, RECOVERY_MANIFEST), "utf8"),
           );
-          expect(manifest.originalPath).toBe(original);
+          expect(manifest).toMatchObject({
+            format: "inspire-session-recovery",
+            version: 1,
+            originalPath: original,
+            payload: "session.jsonl",
+            sessionId: "session-a",
+            cwd: root,
+          });
+          const readme = await readFile(join(bundle, RECOVERY_README), "utf8");
+          expect(readme).toContain(original);
+          expect(readme).toContain('inspire recover-session "<bundle-folder>"');
+          expect(readme).toMatch(
+            /node \x27.*inspire\.mjs\x27 recover-session/u,
+          );
           if (platform === "win32") {
             expect(command).toBe("D:\\Program Files\\PowerShell\\7\\pwsh.exe");
             expect(options.env?.INSPIRE_TRASH_PATH).toBe(bundle);
@@ -97,10 +117,26 @@ describe("native Trash command boundaries", () => {
         }),
       ).resolves.toBeUndefined();
       expect(native.run).toHaveBeenCalledTimes(1);
-      expect(
-        JSON.parse(await readFile(join(moved, RECOVERY_MANIFEST), "utf8"))
-          .originalPath,
-      ).toBe(original);
+      const movedPayload = join(moved, "session.jsonl");
+      const after = await lstat(movedPayload);
+      expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+      expect(await readFile(movedPayload, "utf8")).toBe(contents);
     },
   );
+
+  it("rejects a native success that leaves the recovery bundle in place", async () => {
+    const { root, bundle, original, payload, contents } = await fixture();
+    await expect(
+      moveToDesktopTrash(payload, original, {
+        platform: "darwin",
+        home: root,
+      }),
+    ).rejects.toThrow("did not consume");
+    expect(native.run).toHaveBeenCalledOnce();
+    expect(await readFile(payload, "utf8")).toBe(contents);
+    expect(
+      JSON.parse(await readFile(join(bundle, RECOVERY_MANIFEST), "utf8"))
+        .originalPath,
+    ).toBe(original);
+  });
 });

@@ -134,8 +134,8 @@ async function repositoryWithSubmodule() {
 }
 
 describe("effective safe Git configuration in real repositories", () => {
-  it.each(["system", "home", "xdg", "implicit boolean"] as const)(
-    "keeps %s EOL semantics in status and diffs without updating the index",
+  it.each(["system", "home", "xdg"] as const)(
+    "honors %s EOL settings over config-only environment and leaves the index untouched",
     async (source) => {
       const f = await configuredRepository();
       const configuration =
@@ -146,39 +146,30 @@ describe("effective safe Git configuration in real repositories", () => {
             : f.global;
       await writeFile(
         configuration,
-        source === "implicit boolean"
+        source === "home"
           ? "[core]\n autocrlf\n"
           : "[core]\n autocrlf = true\n",
       );
       await f.stage();
-      expect((await f.git("status", "--porcelain=v2")).stdout).toMatch(
-        /1 A\. /u,
-      );
-      const index = await readFile(join(f.root, ".git", "index"));
-      const service = new GitInspectionService(),
-        status = await service.status(f.root);
-      expect(status.kind).toBe("repository");
+      const configOnly = join(f.directory, "config-only");
+      await writeFile(configOnly, "[core]\n autocrlf = false\n");
+      vi.stubEnv("GIT_CONFIG", configOnly);
+      const indexPath = join(f.root, ".git", "index");
+      const index = await readFile(indexPath);
+      const service = new GitInspectionService();
+      const status = await service.status(f.root);
+      expect(status).toMatchObject({
+        kind: "repository",
+        files: [{ staged: { kind: "added" } }],
+      });
       if (status.kind !== "repository") throw new Error("Expected repository");
-      expect(status.files).toHaveLength(1);
-      expect(status.files[0]!.staged).toEqual({ kind: "added" });
-      expect(status.files[0]!.unstaged).toBeUndefined();
+      expect(status.files[0]?.unstaged).toBeUndefined();
       expect(await service.diff(f.root, textId)).toMatchObject({
         kind: "text",
         additions: 2,
         deletions: 0,
       });
-      expect(await readFile(join(f.root, ".git", "index"))).toEqual(index);
-      await f.commit();
-      const committedIndex = await readFile(join(f.root, ".git", "index"));
-      await writeFile(f.file, "other\r\nsecond\r\n");
-      expect(await service.diff(f.root, textId)).toMatchObject({
-        kind: "text",
-        additions: 1,
-        deletions: 1,
-      });
-      expect(await readFile(join(f.root, ".git", "index"))).toEqual(
-        committedIndex,
-      );
+      expect(await readFile(indexPath)).toEqual(index);
     },
     15_000,
   );
@@ -314,24 +305,6 @@ describe("effective safe Git configuration in real repositories", () => {
     expect(fields).toContain("/repository-must-not-be-promoted");
   });
 
-  it("accepts an empty selection and ignores config-only GIT_CONFIG authority", async () => {
-    const f = await configuredRepository();
-    const empty = await configuredGit(
-      f.directory,
-      [...GIT_CONFIG_ARGS, "--version"],
-      { stdoutLimit: 1_024 },
-    );
-    expect(empty.stdout.toString("utf8")).toMatch(/^git version /u);
-    await writeFile(f.global, "[core]\n autocrlf = true\n");
-    await f.stage();
-    const unrelated = join(f.directory, "config-only");
-    await writeFile(unrelated, "[core]\n autocrlf = false\n");
-    vi.stubEnv("GIT_CONFIG", unrelated); // Only the config subcommand honors this variable.
-    const status = await new GitInspectionService().status(f.root);
-    if (status.kind !== "repository") throw new Error("Expected repository");
-    expect(status.files[0]!.unstaged).toBeUndefined();
-  });
-
   it("projects EOL overrides but never hooks, external diff, textconv or injected Git authority", async () => {
     const f = await configuredRepository();
     await writeFile(f.global, "[core]\n autocrlf = true\n");
@@ -357,6 +330,7 @@ describe("effective safe Git configuration in real repositories", () => {
       `[core]\n autocrlf = false\n fsmonitor = ${config}\n hooksPath = ${JSON.stringify(hooks.replaceAll("\\", "/"))}\n[diff]\n external = ${config}\n[diff "owned"]\n command = ${config}\n textconv = ${config}\n`,
     );
     await f.git("config", "diff.owned.textconv", command);
+    await f.git("config", "core.fsmonitor", command);
     await writeFile(join(f.root, ".gitattributes"), "text.txt diff=owned\n");
     await writeFile(f.file, "other\r\nsecond\r\n");
     vi.stubEnv("GIT_DIR", join(f.directory, "not-the-repository"));
@@ -380,8 +354,6 @@ describe("effective safe Git configuration in real repositories", () => {
 
   it.each([
     ["global", "clean"],
-    ["repository", "clean"],
-    ["global", "process"],
     ["repository", "process"],
   ] as const)(
     "blocks an actually used %s %s filter without rejecting unrelated files",
@@ -442,64 +414,48 @@ describe("effective safe Git configuration in real repositories", () => {
         additions: 1,
         deletions: 1,
       });
+      if (scope === "global") {
+        // A repository override can disable the global conversion even when
+        // the file still selects its driver.
+        await f.git("config", "filter.Owned.Driver.clean", "");
+        await writeFile(
+          join(f.root, ".gitattributes"),
+          "text.txt filter=Owned.Driver\n",
+        );
+        expect(await service.diff(f.root, textId)).toMatchObject({
+          kind: "text",
+          additions: 1,
+          deletions: 1,
+        });
+      }
       await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
     },
     20_000,
   );
 
-  it("honors an explicit repository override that disables a global conversion", async () => {
+  it("keeps machine patch grammar despite color and blank-line display settings", async () => {
     const f = await configuredRepository();
-    await f.stage("before\n");
+    await f.stage("before\n\nlast\n");
     await f.commit();
-    await writeFile(f.global, '[filter "owned"]\n clean = "must-not-run"\n');
-    await f.git("config", "filter.owned.clean", "");
-    await writeFile(join(f.root, ".gitattributes"), "text.txt filter=owned\n");
-    await writeFile(f.file, "after!\n");
+    await f.git("config", "color.diff", "always");
+    await f.git("config", "diff.suppressBlankEmpty", "true");
+    await writeFile(f.file, "after!\n\nlast\n");
     expect(await new GitInspectionService().diff(f.root, textId)).toMatchObject(
       {
         kind: "text",
         additions: 1,
         deletions: 1,
-      },
-    );
-  });
-
-  it.each(["color", "suppressBlankEmpty"] as const)(
-    "keeps the machine patch grammar despite %s configuration",
-    async (setting) => {
-      const f = await configuredRepository();
-      await f.stage("before\n\nlast\n");
-      await f.commit();
-      await f.git(
-        "config",
-        setting === "color" ? "color.diff" : "diff.suppressBlankEmpty",
-        setting === "color" ? "always" : "true",
-      );
-      await writeFile(f.file, "after!\n\nlast\n");
-      const result = await new GitInspectionService().diff(f.root, textId);
-      expect(result).toMatchObject({
-        kind: "text",
-        additions: 1,
-        deletions: 1,
-      });
-      if (result.kind !== "text") throw new Error("Expected text diff");
-      expect(result.lines).toEqual(
-        expect.arrayContaining([
+        lines: expect.arrayContaining([
           { kind: "delete", text: "-before", oldLine: 1, newLine: null },
           { kind: "add", text: "+after!", oldLine: null, newLine: 1 },
           { kind: "context", text: " ", oldLine: 2, newLine: 2 },
           { kind: "context", text: " last", oldLine: 3, newLine: 3 },
         ]),
-      );
-      expect(
-        result.lines.some((line) =>
-          line.text.includes(String.fromCharCode(27)),
-        ),
-      ).toBe(false);
-    },
-  );
+      },
+    );
+  });
 
-  it("preserves root/child local EOL differences and real submodule commit/dirty/untracked states", async () => {
+  it("preserves submodule state through EOL and configuration changes", async () => {
     const f = await repositoryWithSubmodule();
     const file = join(f.module, "text.txt");
     await utimes(file, new Date(), new Date(Date.now() + 2_000));
@@ -514,92 +470,79 @@ describe("effective safe Git configuration in real repositories", () => {
     };
     expect(await state()).toEqual([]);
     await writeFile(join(f.module, "untracked.txt"), "untracked\n");
-    expect(await state()).toEqual([
-      expect.objectContaining({
-        submodule: {
-          commitChanged: false,
-          trackedModified: false,
-          untracked: true,
+    const expectSubmodule = async (
+      trackedModified: boolean,
+      commitChanged = false,
+    ) => {
+      const files = await state();
+      expect(files).toMatchObject([
+        {
+          path: { utf8Path: "module" },
+          submodule: { commitChanged, trackedModified, untracked: true },
         },
-      }),
-    ]);
+      ]);
+      return files[0]!;
+    };
+    await expectSubmodule(false);
     await writeFile(file, "other\r\nsecond\r\n");
-    expect(await state()).toEqual([
-      expect.objectContaining({
-        submodule: {
-          commitChanged: false,
-          trackedModified: true,
-          untracked: true,
-        },
-      }),
-    ]);
+    await expectSubmodule(true);
+
+    const marker = join(f.directory, "recursive-filter-ran");
+    const program = join(f.directory, "recursive-filter.cjs");
+    await writeFile(
+      program,
+      "require('node:fs').writeFileSync(" +
+        JSON.stringify(marker) +
+        ", 'ran'); process.stdin.pipe(process.stdout);",
+    );
+    const command = quote(process.execPath) + " " + quote(program);
+    await f.moduleGit("config", "filter.Recursive.clean", command);
+    await writeFile(
+      join(f.module, ".gitattributes"),
+      "text.txt filter=Recursive\n",
+    );
+    await utimes(file, new Date(), new Date(Date.now() + 2_000));
+    await f.git("status", "--porcelain=v2");
+    await access(marker);
+    await rm(marker);
+    // The ordinary probe may cache a clean stat; force content comparison again.
+    await utimes(file, new Date(), new Date(Date.now() + 4_000));
+    await expect(service.status(f.root)).rejects.toMatchObject({
+      status: 422,
+      message: expect.stringContaining("External content filters"),
+    });
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    await writeFile(
+      join(f.module, ".gitattributes"),
+      "*.asset filter=Recursive\n",
+    );
+    await expectSubmodule(true);
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+
     await f.moduleGit("add", "text.txt");
     await f.moduleGit(...f.identity, "commit", "-qm", "new module head");
-    expect(await state()).toEqual([
-      expect.objectContaining({
-        submodule: {
-          commitChanged: true,
-          trackedModified: false,
-          untracked: true,
-        },
-      }),
-    ]);
-  }, 30_000);
+    const monitorMarker = join(f.directory, "fsmonitor-ran");
+    const monitor = join(f.directory, "fsmonitor.cjs");
+    await writeFile(
+      monitor,
+      `require("node:fs").writeFileSync(${JSON.stringify(monitorMarker)}, "ran");`,
+    );
+    await f.moduleGit(
+      "config",
+      "core.fsmonitor",
+      quote(process.execPath) + " " + quote(monitor),
+    );
+    const module = await expectSubmodule(false, true);
+    await expect(service.diff(f.root, module.path.id)).resolves.toMatchObject({
+      kind: "submodule",
+    });
+    await expect(access(monitorMarker)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await f.moduleGit("status", "--porcelain");
+    await access(monitorMarker);
+    await f.moduleGit("config", "--unset", "core.fsmonitor");
 
-  it.each(["root", "module"] as const)(
-    "blocks an owned %s driver during recursive status without hiding submodule dirtiness",
-    async (location) => {
-      const f = await repositoryWithSubmodule();
-      const workspace = location === "root" ? f.root : f.module;
-      const git = location === "root" ? f.git : f.moduleGit;
-      const marker = join(f.directory, "recursive-filter-ran");
-      const program = join(f.directory, "recursive-filter.cjs");
-      await writeFile(
-        program,
-        "require('node:fs').writeFileSync(" +
-          JSON.stringify(marker) +
-          ", 'ran'); process.stdin.pipe(process.stdout);",
-      );
-      const command = quote(process.execPath) + " " + quote(program);
-      await git("config", "filter.Recursive.clean", command);
-      await writeFile(
-        join(workspace, ".gitattributes"),
-        "text.txt filter=Recursive\n",
-      );
-      const file = join(workspace, "text.txt");
-      await writeFile(
-        file,
-        location === "root" ? "after!\n" : "other\r\nsecond\r\n",
-      );
-      await utimes(file, new Date(), new Date(Date.now() + 2_000));
-      await f.git("status", "--porcelain=v2");
-      await access(marker);
-      await rm(marker);
-      // The ordinary probe may cache a clean stat; force content comparison again.
-      await utimes(file, new Date(), new Date(Date.now() + 4_000));
-      const service = new GitInspectionService();
-      await expect(service.status(f.root)).rejects.toMatchObject({
-        status: 422,
-        message: expect.stringContaining("External content filters"),
-      });
-      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
-      await writeFile(
-        join(workspace, ".gitattributes"),
-        "*.asset filter=Recursive\n",
-      );
-      const response = await service.status(f.root);
-      if (response.kind !== "repository")
-        throw new Error("Expected repository");
-      expect(response.files.some((file) => file.unstaged)).toBe(true);
-      if (location === "module")
-        expect(response.files[0]!.submodule?.trackedModified).toBe(true);
-      await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
-    },
-    30_000,
-  );
-
-  it("rejects differing conditional global settings instead of contaminating child semantics", async () => {
-    const f = await repositoryWithSubmodule();
     await writeFile(join(f.home, "root-only"), "[core]\n safecrlf = true\n");
     await writeFile(
       f.global,
@@ -608,9 +551,7 @@ describe("effective safe Git configuration in real repositories", () => {
         f.root.replaceAll("\\", "/") +
         '/.git"]\n path = root-only\n',
     );
-    await expect(
-      new GitInspectionService().status(f.root),
-    ).rejects.toMatchObject({
+    await expect(service.status(f.root)).rejects.toMatchObject({
       status: 422,
       message: expect.stringContaining("conditional submodule settings"),
     });

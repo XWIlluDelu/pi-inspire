@@ -85,27 +85,24 @@ afterEach(async () => {
 });
 
 describe("installed Inspire source identity", () => {
-  it("retains clean and dirty source revision semantics", async () => {
+  it("uses the current checkout's revision only while its worktree is clean", async () => {
     const test = await fixture();
     await test.source();
     const revision = (await test.git("rev-parse", "HEAD")).stdout.trim();
     await expect(test.inspect()).resolves.toEqual({ kind: "source", revision });
-    await test.write("server/index.ts", "export const changed = true;\n");
-    await expect(test.inspect()).resolves.toEqual({
-      kind: "source",
-      revision: null,
-    });
-  });
-
-  it("recognizes a worktree gitfile as source authority", async () => {
-    const test = await fixture();
-    await test.source();
     const worktree = join(test.parent, "worktree");
     await test.git("worktree", "add", "--detach", worktree);
-    const revision = (await test.git("rev-parse", "HEAD")).stdout.trim();
     await expect(test.inspect(worktree)).resolves.toEqual({
       kind: "source",
       revision,
+    });
+    await writeFile(
+      join(worktree, "server/index.ts"),
+      "export const changed = true;\n",
+    );
+    await expect(test.inspect(worktree)).resolves.toEqual({
+      kind: "source",
+      revision: null,
     });
   });
 
@@ -120,7 +117,7 @@ describe("installed Inspire source identity", () => {
     await expect(test.inspect()).resolves.toEqual({ kind: "unknown" });
   });
 
-  it("requires positive package layout and rejects a broken gitfile", async () => {
+  it("requires a compiled package layout without source checkout markers", async () => {
     const test = await fixture();
     await expect(test.inspect()).resolves.toEqual({ kind: "unknown" });
     await test.write("build/server/index.js", "export {};\n");
@@ -128,6 +125,9 @@ describe("installed Inspire source identity", () => {
       kind: "package",
       version: "0.6.5",
     });
+    await test.write("server/index.ts", "export {};\n");
+    await expect(test.inspect()).resolves.toEqual({ kind: "unknown" });
+    await rm(join(test.root, "server/index.ts"));
     await test.write(".git", "gitdir: missing-metadata\n");
     await expect(test.inspect()).resolves.toEqual({ kind: "unknown" });
   });
@@ -148,12 +148,5 @@ describe("installed Inspire source identity", () => {
       kind: "package",
       version: "0.6.6",
     });
-  });
-
-  it("keeps an exported source tree without Git authority indeterminate", async () => {
-    const test = await fixture();
-    await test.write("server/index.ts", "export {};\n");
-    await test.write("build/server/index.js", "export {};\n");
-    await expect(test.inspect()).resolves.toEqual({ kind: "unknown" });
   });
 });

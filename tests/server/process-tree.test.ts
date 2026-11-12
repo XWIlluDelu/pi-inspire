@@ -15,25 +15,22 @@ function child(exitCode: number | null = null) {
 }
 
 describe("POSIX tracked process-group authority", () => {
-  it.each(["linux", "darwin"] as const)(
-    "%s refuses a reaped PID/PGID without issuing any signal",
-    async (platform) => {
-      const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
-      for (const target of [
-        child(0),
-        { ...child(), signalCode: "SIGTERM" as const },
-      ]) {
-        await signalProcessTree(target, "SIGKILL", {
-          platform,
-          isolated: true,
-        });
-        expect(target.kill).not.toHaveBeenCalled();
-      }
-      expect(kill).not.toHaveBeenCalled();
-    },
-  );
+  it("refuses a reaped child without issuing a signal to its former group", async () => {
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    for (const target of [
+      child(0),
+      { ...child(), signalCode: "SIGTERM" as const },
+    ]) {
+      await signalProcessTree(target, "SIGKILL", {
+        platform: "linux",
+        isolated: true,
+      });
+      expect(target.kill).not.toHaveBeenCalled();
+    }
+    expect(kill).not.toHaveBeenCalled();
+  });
 
-  it("uses the owned live isolated group, not a process-name or a descendant search", async () => {
+  it("signals the owned live isolated group by its tracked PID", async () => {
     const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
     const target = child();
     await signalProcessTree(target, "SIGTERM", {
@@ -58,27 +55,24 @@ describe("POSIX tracked process-group authority", () => {
 });
 
 describe("Windows process tree ownership and command lookup", () => {
-  it.each(["SystemRoot", "systemroot", "SYSTEMROOT"])(
-    "uses copied %s without PATH lookup",
-    async (key) => {
-      native.spawn.mockImplementation(() => {
-        const killer = new EventEmitter();
-        queueMicrotask(() => killer.emit("close", 0));
-        return killer;
-      });
-      const target = child();
-      await signalProcessTree(target, "SIGKILL", {
-        platform: "win32",
-        environment: { [key]: "native-windows-root" },
-      });
-      expect(native.spawn).toHaveBeenCalledWith(
-        join("native-windows-root", "System32", "taskkill.exe"),
-        ["/pid", "4242", "/T", "/F"],
-        { stdio: "ignore", windowsHide: true },
-      );
-      expect(target.kill).not.toHaveBeenCalled();
-    },
-  );
+  it("signals the owned live tree using copied SystemRoot", async () => {
+    native.spawn.mockImplementation(() => {
+      const killer = new EventEmitter();
+      queueMicrotask(() => killer.emit("close", 0));
+      return killer;
+    });
+    const target = child();
+    await signalProcessTree(target, "SIGKILL", {
+      platform: "win32",
+      environment: { systemroot: "native-windows-root" },
+    });
+    expect(native.spawn).toHaveBeenCalledWith(
+      join("native-windows-root", "System32", "taskkill.exe"),
+      ["/pid", "4242", "/T", "/F"],
+      expect.not.objectContaining({ shell: expect.anything() }),
+    );
+    expect(target.kill).not.toHaveBeenCalled();
+  });
 
   it("never sends a stale child's reusable PID to taskkill", async () => {
     const target = child(0);

@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import {
-  mkdtemp,
   mkdir,
-  readFile,
+  mkdtemp,
   readdir,
+  readFile,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, it } from "node:test";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { buildWeb } from "../../scripts/build-web.mjs";
-import { publishWebBuild } from "../../scripts/web-build-output.mjs";
 import { sourceBuildHash } from "../../scripts/source-build-hash.mjs";
+import { publishWebBuild } from "../../scripts/web-build-output.mjs";
 import {
   currentStaticAssetPaths,
   prepareStaticAssetCache,
@@ -46,25 +46,31 @@ afterEach(async () => {
   );
 });
 
-describe("source build freshness", () => {
-  it("leaves a save during compilation stale until the next build includes it", async () => {
-    const root = await directory("inspire-build-save-");
-    const cacheDirectory = join(root, "cache");
-    const beforeSave = 'console.log("before-save");\n';
-    const afterSave = 'console.log("after-save");\n';
-    await put(root, "package.json", '{"type":"module"}\n');
-    await put(
-      root,
-      "index.html",
-      '<script type="module" src="/src/main.js"></script>\n',
-    );
-    await put(root, "src/main.js", beforeSave);
-    await put(
-      root,
-      "vite.config.ts",
-      `import { writeFile } from "node:fs/promises";
+it("stamps the inputs actually compiled and detects asset plugin edits", async () => {
+  const root = await directory("inspire-build-save-");
+  const cacheDirectory = join(root, "cache");
+  const afterSave = 'console.log("after-save", __ASSET_MARKER__);\n';
+  const assetPlugin = "scripts/vite-pdf-assets.ts";
+  await put(root, "package.json", '{"type":"module"}\n');
+  await put(
+    root,
+    "index.html",
+    '<script type="module" src="/src/main.js"></script>\n',
+  );
+  await put(
+    root,
+    "src/main.js",
+    'console.log("before-save", __ASSET_MARKER__);\n',
+  );
+  await put(root, assetPlugin, 'export const marker = "pdf-assets-first";\n');
+  await put(
+    root,
+    "vite.config.ts",
+    `import { writeFile } from "node:fs/promises";
+import { marker } from "./scripts/vite-pdf-assets";
 export default {
   logLevel: "silent",
+  define: { __ASSET_MARKER__: JSON.stringify(marker) },
   plugins: [{
     name: "save-source-after-compilation",
     async writeBundle() {
@@ -72,186 +78,88 @@ export default {
     },
   }],
 };\n`,
-    );
-    const compiledScript = async () => {
-      const assets = join(root, "dist", "assets");
-      const [script] = (await readdir(assets)).filter((name) =>
-        name.endsWith(".js"),
-      );
-      assert.ok(script);
-      return readFile(join(assets, script), "utf8");
-    };
-    const stamp = async () =>
-      (await readFile(join(root, ".inspire-build"), "utf8")).trim();
+  );
+  const compiledScript = async () => {
+    const assets = join(root, "dist", "assets");
+    const script = (await readdir(assets)).find((name) => name.endsWith(".js"));
+    assert.ok(script);
+    return readFile(join(assets, script), "utf8");
+  };
+  const stamp = async () =>
+    (await readFile(join(root, ".inspire-build"), "utf8")).trim();
 
-    await buildWeb(root, { cacheDirectory });
-    assert.match(await compiledScript(), /before-save/);
-    assert.equal(await readFile(join(root, "src/main.js"), "utf8"), afterSave);
-    assert.notEqual(await stamp(), await sourceBuildHash(root));
+  await buildWeb(root, { cacheDirectory });
+  assert.match(await compiledScript(), /before-save.*pdf-assets-first/);
+  assert.notEqual(await stamp(), await sourceBuildHash(root));
 
-    await buildWeb(root, { cacheDirectory, clean: true });
-    assert.match(await compiledScript(), /after-save/);
-    assert.equal(await stamp(), await sourceBuildHash(root));
-  });
+  await buildWeb(root, { cacheDirectory, clean: true });
+  assert.match(await compiledScript(), /after-save.*pdf-assets-first/);
+  const compiledHash = await stamp();
+  assert.equal(compiledHash, await sourceBuildHash(root));
 
-  it("invalidates the cached build when its asset plugin changes", async () => {
-    const root = await directory("inspire-build-inputs-");
-    await put(
-      root,
-      "vite.config.ts",
-      'import { pdfAssets } from "./scripts/vite-pdf-assets.js";\n',
-    );
-    await put(
-      root,
-      "scripts/vite-pdf-assets.ts",
-      'export const prefix = "assets/pdfjs-old/";\n',
-    );
-    const before = await sourceBuildHash(root);
-    await put(
-      root,
-      "scripts/vite-pdf-assets.ts",
-      'export const prefix = "assets/pdfjs-new/";\n',
-    );
-    assert.notEqual(await sourceBuildHash(root), before);
-  });
+  await put(root, assetPlugin, 'export const marker = "pdf-assets-next";\n');
+  assert.notEqual(await sourceBuildHash(root), compiledHash);
 });
 
-describe("web build publication", () => {
-  it("publishes and retains gzip and Brotli sidecars with their executable generation", async () => {
-    const dist = await directory("inspire-published-encoded-");
-    const staging = await directory("inspire-staged-encoded-");
-    const cache = await directory("inspire-cached-encoded-");
-    const name = join("nested", "index-hashed.js");
-    const source = 'console.log("fixture");\n'.repeat(100);
-    await put(staging, "index.html", "index\n");
-    await put(staging, join("assets", name), source);
-    await put(staging, "assets/tiny-hashed.css", "body {}\n");
-    await publishWebBuild(staging, dist);
-    const assetPaths = await currentStaticAssetPaths(dist);
-    assert.deepEqual(assetPaths, [
-      name,
-      `${name}.br`,
-      `${name}.gz`,
-      "tiny-hashed.css",
-    ]);
-    const retained = await prepareStaticAssetCache(
-      join(dist, "assets"),
-      cache,
-      { assetPaths },
-    );
-    for (const directory of [
-      join(dist, "assets"),
-      retained.generationDirectories[0],
-    ]) {
-      const original = await readFile(join(directory, name));
-      assert.equal(original.toString(), source);
-      for (const [suffix, decode] of [
-        [".br", brotliDecompressSync],
-        [".gz", gunzipSync],
-      ]) {
-        const compressed = await readFile(join(directory, `${name}${suffix}`));
-        assert.ok(compressed.length < original.length);
-        assert.deepEqual(decode(compressed), original);
-      }
-    }
+it("keeps one outgoing executable generation and its encodings until the next publication", async () => {
+  const root = await directory("inspire-web-publication-");
+  const dist = join(root, "dist");
+  const cache = join(root, "cache");
+  const first = join(root, "first");
+  const second = join(root, "second");
+  const release = join(root, "release");
+  const asset = join("nested", "main-first.js");
+  const source = Buffer.from('console.log("fixture");\n'.repeat(100));
+
+  await put(dist, "assets/main-old.js", "old main");
+  await put(dist, "assets/old.png", "old image");
+  await put(first, "index.html", "first index");
+  await put(first, "theme-init.js", "first theme");
+  await put(first, join("assets", asset), source);
+  await publishWebBuild(first, dist);
+
+  assert.equal(await readFile(join(dist, "index.html"), "utf8"), "first index");
+  assert.equal(
+    await readFile(join(dist, "theme-init.js"), "utf8"),
+    "first theme",
+  );
+  assert.equal(
+    await readFile(join(dist, "assets/main-old.js"), "utf8"),
+    "old main",
+  );
+  await missing(join(dist, "assets/old.png"));
+
+  const cached = await prepareStaticAssetCache(join(dist, "assets"), cache, {
+    assetPaths: await currentStaticAssetPaths(dist),
   });
+  await missing(join(cached.generationDirectories[0], "main-old.js"));
+  await put(second, "index.html", "second index");
+  await put(second, "assets/main-second.js", "second main");
+  await publishWebBuild(second, dist);
 
-  it("switches staged output while retaining one outgoing executable generation", async () => {
-    const dist = await directory("inspire-published-dist-");
-    const firstStaging = await directory("inspire-staged-web-");
-    await put(dist, "index.html", "old index\n");
-    await put(dist, "assets/ContextPane-old.js", "old context\n");
-    await put(dist, "assets/common-old.css", "old css\n");
-    await put(dist, "assets/obsolete-old.png", "old image\n");
-    await put(firstStaging, "index.html", "first index\n");
-    await put(firstStaging, "theme-init.js", "first theme\n");
-    await put(firstStaging, "assets/index-first.js", "first main\n");
-    await put(firstStaging, "assets/logo-first.png", "first image\n");
-
-    assert.deepEqual(await publishWebBuild(firstStaging, dist), {
-      currentAssets: 2,
-      retainedOutgoingAssets: 2,
-      cleanupFailures: 0,
-    });
-    assert.equal(
-      await readFile(join(dist, "index.html"), "utf8"),
-      "first index\n",
-    );
-    assert.equal(
-      await readFile(join(dist, "theme-init.js"), "utf8"),
-      "first theme\n",
-    );
-    assert.equal(
-      await readFile(join(dist, "assets", "ContextPane-old.js"), "utf8"),
-      "old context\n",
-    );
-    await missing(join(dist, "assets", "obsolete-old.png"));
-
-    const secondStaging = await directory("inspire-staged-web-");
-    await put(secondStaging, "index.html", "second index\n");
-    await put(secondStaging, "theme-init.js", "second theme\n");
-    await put(secondStaging, "assets/index-second.js", "second main\n");
-
-    assert.deepEqual(await publishWebBuild(secondStaging, dist), {
-      currentAssets: 1,
-      retainedOutgoingAssets: 1,
-      cleanupFailures: 0,
-    });
-    assert.equal(
-      await readFile(join(dist, "assets", "index-first.js"), "utf8"),
-      "first main\n",
-    );
-    await missing(join(dist, "assets", "ContextPane-old.js"));
-    assert.equal(
-      await readFile(join(dist, "index.html"), "utf8"),
-      "second index\n",
-    );
-  });
-
-  it("omits the outgoing generation from a clean release build", async () => {
-    const dist = await directory("inspire-clean-dist-");
-    const staging = await directory("inspire-clean-staging-");
-    await put(dist, "index.html", "old index\n");
-    await put(dist, "assets/index-old.js", "old main\n");
-    await put(dist, "legacy-worker.js", "old worker\n");
-    await put(staging, "index.html", "new index\n");
-    await put(staging, "assets/index-new.js", "new main\n");
-
+  assert.equal(
+    await readFile(join(dist, "index.html"), "utf8"),
+    "second index",
+  );
+  await missing(join(dist, "assets/main-old.js"));
+  for (const dir of [join(dist, "assets"), cached.generationDirectories[0]]) {
+    assert.deepEqual(await readFile(join(dir, asset)), source);
     assert.deepEqual(
-      await publishWebBuild(staging, dist, { retainOutgoing: false }),
-      {
-        currentAssets: 1,
-        retainedOutgoingAssets: 0,
-        cleanupFailures: 0,
-      },
+      brotliDecompressSync(await readFile(join(dir, `${asset}.br`))),
+      source,
     );
-    await missing(join(dist, "assets", "index-old.js"));
-    await missing(join(dist, "legacy-worker.js"));
-    assert.equal(
-      await readFile(join(dist, "assets", "index-new.js"), "utf8"),
-      "new main\n",
+    assert.deepEqual(
+      gunzipSync(await readFile(join(dir, `${asset}.gz`))),
+      source,
     );
-  });
+  }
 
-  it("publishes the first build when dist does not exist", async () => {
-    const parent = await directory("inspire-first-dist-");
-    const dist = join(parent, "dist");
-    const staging = await directory("inspire-first-staging-");
-    await put(staging, "index.html", "first index\n");
-    await put(staging, "assets/index-first.js", "first main\n");
-
-    assert.deepEqual(await publishWebBuild(staging, dist), {
-      currentAssets: 1,
-      retainedOutgoingAssets: 0,
-      cleanupFailures: 0,
-    });
-    assert.equal(
-      await readFile(join(dist, "index.html"), "utf8"),
-      "first index\n",
-    );
-    assert.equal(
-      await readFile(join(dist, "assets", "index-first.js"), "utf8"),
-      "first main\n",
-    );
-  });
+  await put(release, "index.html", "release index");
+  await put(release, "assets/main-release.js", "release main");
+  await publishWebBuild(release, dist, { retainOutgoing: false });
+  await missing(join(dist, "assets/main-second.js"));
+  assert.equal(
+    await readFile(join(dist, "assets/main-release.js"), "utf8"),
+    "release main",
+  );
 });

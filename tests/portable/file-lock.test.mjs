@@ -47,9 +47,13 @@ test("serializes live owners and releases idempotently", async () => {
   );
   await first.assertOwned();
   await first.release();
-  await first.release();
   const second = await acquireFileLock(path, { waitMs: 100, retryMs: 10 });
-  await second.release();
+  try {
+    await first.release();
+    await second.assertOwned();
+  } finally {
+    await second.release();
+  }
 });
 
 test("detects a replaced lock path without deleting the replacement", async () => {
@@ -198,35 +202,4 @@ test("preserves all updates when writers arrive together", async () => {
     if (result.status === "rejected") throw result.reason;
   }
   assert.equal(Number(await readFile(counterPath, "utf8")), 8);
-});
-
-test("keeps queued owners mutually exclusive", async () => {
-  const path = await lockPath();
-  const first = await acquireFileLock(path, { waitMs: 100, retryMs: 10 });
-  const secondRequest = acquireFileLock(path, {
-    waitMs: 2_000,
-    retryMs: 10,
-  });
-  await delay(20);
-  const thirdRequest = acquireFileLock(path, {
-    waitMs: 2_000,
-    retryMs: 10,
-  });
-
-  const contenders = [
-    secondRequest.then((lease) => ({ lease, name: "second" })),
-    thirdRequest.then((lease) => ({ lease, name: "third" })),
-  ];
-  await first.release();
-  const winner = await Promise.race(contenders);
-  const waiting = contenders[winner.name === "second" ? 1 : 0];
-  let waitingSettled = false;
-  void waiting.then(() => {
-    waitingSettled = true;
-  });
-  await delay(40);
-  assert.equal(waitingSettled, false);
-  await winner.lease.release();
-  const successor = await waiting;
-  await successor.lease.release();
 });

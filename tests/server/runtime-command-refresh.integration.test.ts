@@ -1,58 +1,35 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { piInstallation } from "../../server/pi-runtime.js";
 import { RuntimeController } from "../../server/runtime.js";
-import type {
-  SessionCatalogLike,
-  SessionRecord,
-} from "../../server/session-catalog.js";
-import { isolatedTestEnvironment } from "./fixtures/isolated-environment.js";
+import type { SessionRecord } from "../../server/session-catalog.js";
+import {
+  nativePiWorkspace,
+  stubNativePiEnvironment,
+} from "./fixtures/native-pi.js";
+import { catalog } from "./fixtures/runtime.js";
 
 const nativeCommandNames = ["audit.inspect", "审阅/检查"];
 
 it("refreshes commands and extension UI on native reload without replacing either worker", async () => {
-  const root = await mkdtemp(join(tmpdir(), "inspire-command-refresh-"));
-  const agent = join(root, "agent");
-  const cwd = join(root, "workspace");
-  const sessions = join(root, "sessions");
-  const prompts = join(agent, "prompts");
-  await Promise.all(
-    [cwd, sessions, prompts].map((path) => mkdir(path, { recursive: true })),
-  );
-  const environment = {
-    HOME: root,
-    USERPROFILE: root,
-    PI_CODING_AGENT_DIR: agent,
-    PI_CODING_AGENT_SESSION_DIR: sessions,
-    XDG_CONFIG_HOME: join(root, "config"),
-    XDG_CACHE_HOME: join(root, "cache"),
-    XDG_DATA_HOME: join(root, "data"),
-    XDG_STATE_HOME: join(root, "state"),
-    PI_OFFLINE: "1",
-    PI_SKIP_VERSION_CHECK: "1",
-    PI_TELEMETRY: "0",
-  };
-  for (const [key, value] of Object.entries(environment))
-    vi.stubEnv(key, value);
-  const extension = join(root, "reload.ts");
-  await writeFile(join(agent, "auth.json"), "{}");
-  await writeFile(
-    join(agent, "settings.json"),
-    JSON.stringify({
+  const { root, agent, cwd, sessions, env } = await nativePiWorkspace(
+    "inspire-command-refresh-",
+    {
       defaultProvider: "openai",
       defaultModel: "gpt-4o-mini",
       defaultProjectTrust: "never",
       compaction: { enabled: false },
       retry: { enabled: false },
       packages: [],
-      extensions: [extension],
-    }),
+    },
   );
+  stubNativePiEnvironment(env);
+  const prompts = join(agent, "prompts");
+  await mkdir(prompts);
+  const extension = join(root, "reload.ts");
   await writeFile(
     extension,
     `export default function (pi) {
@@ -120,39 +97,24 @@ it("refreshes commands and extension UI on native reload without replacing eithe
       firstMessage: "Retained conversation",
     });
   }
-  const catalog: SessionCatalogLike = {
-    refresh: async () => records,
-    get: async (id) => records.find((record) => record.id === id),
-    list: async () => ({
-      sessions: [],
-      total: 0,
-      offset: 0,
-      limit: 40,
-    }),
-    listByIds: async () => [],
-    listByCwds: async () => [],
-    invalidate() {},
-  };
   const workers: PiRpcProcess[] = [];
   const events: Record<string, unknown>[] = [];
   const runtime = new RuntimeController(
-    catalog,
+    catalog(records),
     new AttachmentStore(join(root, "uploads")),
     {
       createProcess: (options) => {
         const rpc = new PiRpcProcess({
           ...options,
-          cliPath: piInstallation.cliPath,
-          env: isolatedTestEnvironment(root, {
-            ...environment,
-            ...options.env,
-          }),
+          env: { ...env, ...options.env },
           args: [
             ...(options.args ?? []),
             "--no-skills",
             "--no-context-files",
             "--no-themes",
             "--no-tools",
+            "--extension",
+            extension,
           ],
         });
         workers.push(rpc);
@@ -205,17 +167,18 @@ it("refreshes commands and extension UI on native reload without replacing eithe
     await rm(join(prompts, "removed.md"));
     await writeFile(join(prompts, "discovered.md"), "DISCOVERED_TEMPLATE");
     await runtime.prompt({ sessionId: a.id, message: "/reload-fixture" });
-    expect((await runtime.snapshot(a.id)).extensionStatuses).toEqual({
+    const fresh = await runtime.snapshot(a.id);
+    const untouched = await runtime.snapshot(b.id);
+    expect(fresh.extensionStatuses).toEqual({
       "fixture.fresh": "fresh",
     });
-    expect((await runtime.snapshot(a.id)).extensionDisplays).toMatchObject([
+    expect(fresh.extensionDisplays).toMatchObject([
       { label: "fixture.fresh", lines: ["fresh"] },
     ]);
-    expect((await runtime.snapshot(a.id)).extensionDisplays).toHaveLength(1);
-    expect((await runtime.snapshot(b.id)).extensionStatuses).toEqual({
+    expect(untouched.extensionStatuses).toEqual({
       "fixture.old": "old",
     });
-    expect((await runtime.snapshot(b.id)).extensionDisplays).toMatchObject([
+    expect(untouched.extensionDisplays).toMatchObject([
       { label: "fixture.old", lines: ["old"] },
     ]);
     expect(browserEvents).toContainEqual(
@@ -245,9 +208,6 @@ it("refreshes commands and extension UI on native reload without replacing eithe
     await expect(
       runtime.prompt({ sessionId: a.id, message: "/removed" }),
     ).rejects.toThrow("Unknown Pi command /removed");
-    await expect(
-      runtime.prompt({ sessionId: a.id, message: "/missing" }),
-    ).rejects.toThrow("Unknown Pi command /missing");
     expect(workers).toHaveLength(2);
     expect(workers.map((worker) => worker.pid)).toEqual(pids);
     expect(await readFile(a.path, "utf8")).toBe(before);

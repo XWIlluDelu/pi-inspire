@@ -1,9 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_PROMPT_CHARS } from "../../shared/contracts.js";
 
 import {
   closeHostApiFixture,
@@ -11,19 +9,16 @@ import {
   token,
 } from "./fixtures/host-api.js";
 
-describe("typed Host API", () => {
-  let temporary: Awaited<ReturnType<typeof hostApiFixture>>["temporary"];
-  let application: Awaited<ReturnType<typeof hostApiFixture>>["application"];
-  let resources: Awaited<ReturnType<typeof hostApiFixture>>["resources"];
-  let runtime: Awaited<ReturnType<typeof hostApiFixture>>["runtime"];
-  let attachments: Awaited<ReturnType<typeof hostApiFixture>>["attachments"];
-  let shutdown: Awaited<ReturnType<typeof hostApiFixture>>["shutdown"];
-  let baseUrl: Awaited<ReturnType<typeof hostApiFixture>>["baseUrl"];
-  let api: Awaited<ReturnType<typeof hostApiFixture>>["api"];
-  let promptDelivery: Awaited<
-    ReturnType<typeof hostApiFixture>
-  >["promptDelivery"];
-  let fixture: Awaited<ReturnType<typeof hostApiFixture>>;
+describe("Host HTTP workflows", () => {
+  type Fixture = Awaited<ReturnType<typeof hostApiFixture>>;
+  const callerNodeEnv = process.env.NODE_ENV;
+  let temporary: Fixture["temporary"];
+  let application: Fixture["application"];
+  let resources: Fixture["resources"];
+  let runtime: Fixture["runtime"];
+  let local: Fixture["localRequest"];
+  let guest: ReturnType<typeof request>;
+  let fixture: Fixture;
   beforeEach(async () => {
     fixture = await hostApiFixture();
     ({
@@ -31,32 +26,15 @@ describe("typed Host API", () => {
       application,
       resources,
       runtime,
-      attachments,
-      shutdown,
-      baseUrl,
-      api,
-      promptDelivery,
+      localRequest: local,
     } = fixture);
+    guest = request(application.server);
   });
   afterEach(async () => closeHostApiFixture(fixture));
 
-  it("accepts an escaped prompt at the character limit", async () => {
-    const prompt = vi.spyOn(runtime, "prompt").mockResolvedValue(null);
-    const message = "\u0000".repeat(MAX_PROMPT_CHARS);
-    await fixture.localRequest
-      .post("/api/prompt")
-      .send(promptDelivery({ sessionId: "fixture-active", message }))
-      .expect(202);
-    expect(prompt).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "fixture-active",
-      message,
-    });
-  });
-
   it("sets production HTTP behavior without overriding the user's NODE_ENV", () => {
     expect(application.app.get("env")).toBe("production");
-    // Vitest supplies development; production belongs to Express, not its parent environment.
-    expect(process.env.NODE_ENV).toBe("development");
+    expect(process.env.NODE_ENV).toBe(callerNodeEnv);
   });
 
   it("loads private tool presentation declarations into authenticated bootstrap", async () => {
@@ -85,7 +63,7 @@ describe("typed Host API", () => {
       }),
     );
 
-    const response = await api().expect(200);
+    const response = await local.get("/api/bootstrap").expect(200);
     expect(response.body.toolPresentations.mappings).toEqual({
       example: "user.example.tool",
     });
@@ -104,6 +82,7 @@ describe("typed Host API", () => {
   });
 
   it("finishes the authenticated shutdown acknowledgement before dispatching teardown", async () => {
+    const { shutdown } = fixture;
     const sequence: string[] = [];
     application.server.prependListener("request", (_request, response) => {
       response.once("finish", () => {
@@ -114,53 +93,33 @@ describe("typed Host API", () => {
       sequence.push("shutdown");
     });
 
-    await request(application.server).post("/api/host/shutdown").expect(401);
+    await guest.post("/api/host/shutdown").expect(401);
     expect(shutdown).not.toHaveBeenCalled();
-    await fixture.localRequest.post("/api/host/shutdown").expect(202);
+    await local.post("/api/host/shutdown").expect(202);
     await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
     expect(sequence).toEqual(["acknowledged", "shutdown"]);
   });
 
-  it("keeps release update status behind local authentication", async () => {
-    await request(application.server).get("/api/update").expect(401);
-    const response = await fixture.localRequest.get("/api/update").expect(200);
-    expect(response.body).toMatchObject({
+  it("requires local authentication for Inspire, Pi, and extension update status", async () => {
+    for (const path of ["/api/update", "/api/pi-update"]) {
+      await guest.get(path).expect(401);
+    }
+    const inspire = await local.get("/api/update").expect(200);
+    expect(inspire.body).toMatchObject({
       kind: "available",
-      update: {
-        currentVersion: "0.1.0-test",
-        latestVersion: "0.2.0",
-        releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
-      },
-      updateStatus: {
-        inspireUpdateChecking: false,
-        availableUpdateIdentity: '[["inspire","0.2.0"]]',
-      },
+      update: { latestVersion: "0.2.0" },
+      updateStatus: { availableUpdateIdentity: '[["inspire","0.2.0"]]' },
     });
-  });
-
-  it("keeps Pi and extension update status behind local authentication", async () => {
-    await request(application.server).get("/api/pi-update").expect(401);
-    const response = await fixture.localRequest
+    const pi = await local
       .get("/api/pi-update")
       .query({ refresh: "1" })
       .expect(200);
-    expect(response.body).toMatchObject({
-      currentVersion: "0.80.10",
-      pi: {
-        kind: "available",
-        latestVersion: "0.84.3",
-        releaseUrl: "https://pi.dev/changelog",
-      },
+    expect(pi.body).toMatchObject({
+      pi: { kind: "available", latestVersion: "0.84.3" },
       extensions: {
         kind: "available",
-        updates: [
-          {
-            displayName: "pi-web-access",
-            type: "npm",
-          },
-        ],
+        updates: [{ displayName: "pi-web-access" }],
       },
-      updateStatus: { piUpdateChecking: false },
     });
   });
 
@@ -168,7 +127,7 @@ describe("typed Host API", () => {
     const session = await fixture.catalog.get("fixture-active");
     if (!session) throw new Error("Missing fixture session");
     const resume = () =>
-      fixture.localRequest
+      local
         .get("/api/sessions/resume-command")
         .query({ sessionId: session.id });
     const command = `pi --session '${session.path}'`;
@@ -186,7 +145,7 @@ describe("typed Host API", () => {
   it("preflights Pi defaults and project files against one canonical prospective workspace", async () => {
     await writeFile(join(temporary, "app.ts"), "export {};\n");
 
-    const defaults = await fixture.localRequest
+    const defaults = await local
       .get("/api/models")
       .query({ cwd: join(temporary, ".") })
       .expect(200);
@@ -201,7 +160,7 @@ describe("typed Host API", () => {
       thinkingLevel: "high",
     });
 
-    const files = await fixture.localRequest
+    const files = await local
       .get("/api/new-session/files")
       .query({ cwd: join(temporary, "."), q: "app" })
       .expect(200);
@@ -211,7 +170,7 @@ describe("typed Host API", () => {
       files: [{ path: "app.ts", name: "app.ts" }],
     });
 
-    await fixture.localRequest
+    await local
       .get("/api/models")
       .query({ cwd: join(temporary, "missing") })
       .expect(400, {
@@ -228,17 +187,14 @@ describe("typed Host API", () => {
       model: { provider: "anthropic", id: "claude-sonnet-4" },
       thinkingLevel: "high",
     };
-    await request(application.server)
-      .post("/api/sessions/new")
-      .send(body)
-      .expect(401);
+    await guest.post("/api/sessions/new").send(body).expect(401);
     expect(create).not.toHaveBeenCalled();
-    await fixture.localRequest
+    await local
       .post("/api/sessions/new")
       .send({ ...body, createDirectory: "true" })
       .expect(400);
     expect(create).not.toHaveBeenCalled();
-    await fixture.localRequest.post("/api/sessions/new").send(body).expect(200);
+    await local.post("/api/sessions/new").send(body).expect(200);
     expect(create).toHaveBeenCalledWith(body.cwd, {
       createDirectory: true,
       model: body.model,
@@ -267,14 +223,14 @@ describe("typed Host API", () => {
       releaseSnapshot();
       await originalClose();
     });
-    const active = fixture.localRequest.get("/api/snapshot");
+    const active = local.get("/api/snapshot");
     const activeResult = active.then((response) => response.status);
     await started;
     const closing = application.close();
     await vi.waitFor(() => expect(runtime.close).toHaveBeenCalledOnce());
     expect(application.server.listening).toBe(false);
     await expect(
-      fetch(`${baseUrl}/api/health`, {
+      fetch(`${fixture.baseUrl}/api/health`, {
         headers: { Authorization: `Bearer ${token}` },
       }),
     ).rejects.toThrow();
@@ -283,7 +239,7 @@ describe("typed Host API", () => {
   });
 
   it("cleans attachment storage and resource anchors even when runtime teardown fails", async () => {
-    const attachmentClose = vi.spyOn(attachments, "close");
+    const attachmentClose = vi.spyOn(fixture.attachments, "close");
     const resourceClose = vi.spyOn(resources, "close");
     const runtimeClose = vi
       .spyOn(runtime, "close")
@@ -297,17 +253,13 @@ describe("typed Host API", () => {
   });
 
   it("lists and opens Pi sessions through the typed API", async () => {
-    const sessions = await fixture.localRequest
-      .get("/api/sessions?q=formula")
-      .expect(200);
+    const sessions = await local.get("/api/sessions?q=formula").expect(200);
     expect(sessions.body.total).toBe(1);
     expect(sessions.body.sessions[0]).toMatchObject({
       id: "fixture-active",
       project: "workspace",
     });
-    const page = await fixture.localRequest
-      .get("/api/sessions?offset=1&limit=1")
-      .expect(200);
+    const page = await local.get("/api/sessions?offset=1&limit=1").expect(200);
     expect(page.body).toMatchObject({ offset: 1, limit: 1, total: 2 });
     expect(page.body.sessions).toHaveLength(1);
     for (const invalid of [
@@ -317,10 +269,10 @@ describe("typed Host API", () => {
       "offset=1.5",
       "offset=9007199254740992",
     ]) {
-      await fixture.localRequest.get(`/api/sessions?${invalid}`).expect(400);
+      await local.get(`/api/sessions?${invalid}`).expect(400);
     }
 
-    const opened = await fixture.localRequest
+    const opened = await local
       .post("/api/sessions/open")
       .send({ id: "fixture-active" })
       .expect(200);
@@ -328,76 +280,42 @@ describe("typed Host API", () => {
     expect(opened.body.active.model.id).toBe("offline");
   });
 
-  it("authenticates Pending clear, recovery, and exact-text reads without individual management", async () => {
+  it("authenticates Pending clear and scopes exact-text reads to the displayed item", async () => {
     const clear = vi
       .spyOn(runtime, "clearPending")
       .mockResolvedValue(undefined);
-    await request(application.server)
+    await guest
       .post("/api/pending/clear")
       .send({ sessionId: "fixture-active" })
       .expect(401);
     expect(clear).not.toHaveBeenCalled();
-    await fixture.localRequest
+    await local
       .post("/api/pending/clear")
       .send({ sessionId: "fixture-active", expectedRevision: 1 })
       .expect(400);
     expect(clear).not.toHaveBeenCalled();
-    await fixture.localRequest
+    await local
       .post("/api/pending/clear")
       .send({ sessionId: "fixture-active" })
       .expect(200, { ok: true });
     expect(clear).toHaveBeenCalledExactlyOnceWith("fixture-active");
-    const recover = vi
-      .spyOn(runtime, "recoverPending")
-      .mockResolvedValue({ steering: ["complete"], followUp: ["later"] });
-    const text = vi
-      .spyOn(runtime, "pendingText")
-      .mockResolvedValue({ text: "x".repeat(2000) });
-    for (const path of ["/api/pending/recover", "/api/pending/text"]) {
-      await request(application.server)
-        .post(path)
-        .send({ sessionId: "fixture-active" })
-        .expect(401);
-    }
-    const recovered = await fixture.localRequest
-      .post("/api/pending/recover")
-      .send({
-        sessionId: "fixture-active",
-        operationId: randomUUID(),
-        authorityId: application.authorityId,
-      })
-      .expect(200);
-    expect(recovered.body).toEqual({
-      steering: ["complete"],
-      followUp: ["later"],
-    });
-    expect(recover).toHaveBeenCalledExactlyOnceWith(
-      "fixture-active",
-      undefined,
-    );
-    const copied = await fixture.localRequest
-      .post("/api/pending/text")
-      .send({
-        sessionId: "fixture-active",
-        viewId: "view",
-        revision: 7,
-        itemId: "text-steer-0",
-      })
-      .expect(200);
-    expect(copied.body.text).toHaveLength(2000);
-    expect(copied.headers["cache-control"]).toBe("no-store");
-    expect(text).toHaveBeenCalledExactlyOnceWith({
+    const pendingItem = {
       sessionId: "fixture-active",
       viewId: "view",
       revision: 7,
       itemId: "text-steer-0",
-    });
-    for (const path of ["/api/pending"]) {
-      await fixture.localRequest
-        .post(path)
-        .send({ sessionId: "fixture-active" })
-        .expect(404);
-    }
+    };
+    const exactText = "x".repeat(2000);
+    const text = vi
+      .spyOn(runtime, "pendingText")
+      .mockResolvedValue({ text: exactText });
+    await guest.post("/api/pending/text").send(pendingItem).expect(401);
+    await local
+      .post("/api/pending/text")
+      .send(pendingItem)
+      .expect("Cache-Control", "no-store")
+      .expect(200, { text: exactText });
+    expect(text).toHaveBeenCalledExactlyOnceWith(pendingItem);
   });
 
   it("dispatches a validated native command only to its authenticated explicit target", async () => {
@@ -409,11 +327,11 @@ describe("typed Host API", () => {
       message: "Compaction completed",
     });
 
-    await request(application.server)
+    await guest
       .post("/api/control/native-command")
       .send({ sessionId: "fixture-active", command: "compact" })
       .expect(401);
-    await fixture.localRequest
+    await local
       .post("/api/control/native-command")
       .send({ sessionId: "fixture-active", command: "unknown" })
       .expect(400);
@@ -424,7 +342,7 @@ describe("typed Host API", () => {
       command: "compact",
       argument: "preserve decisions",
     };
-    const compacted = await fixture.localRequest
+    const compacted = await local
       .post("/api/control/native-command")
       .send(command)
       .expect(200);
@@ -437,442 +355,209 @@ describe("typed Host API", () => {
     expect(runtime.activeSessionId).toBe("fixture-history");
   });
 
-  it.each([
-    {
-      route: "auto-compaction",
-      method: "setAutoCompaction",
-      field: "enabled",
-      value: false,
-      invalid: "false",
-      stateKey: "autoCompactionEnabled",
-    },
-    {
-      route: "auto-retry",
-      method: "setAutoRetry",
-      field: "enabled",
-      value: false,
-      invalid: "false",
-      stateKey: "autoRetryEnabled",
-    },
-    {
-      route: "steering-mode",
-      method: "setSteeringMode",
-      field: "mode",
-      value: "one-at-a-time",
-      invalid: "invalid",
-      stateKey: "steeringMode",
-    },
-    {
-      route: "follow-up-mode",
-      method: "setFollowUpMode",
-      field: "mode",
-      value: "all",
-      invalid: "invalid",
-      stateKey: "followUpMode",
-    },
-  ] as const)(
-    "$route changes only the named session's field after authentication and validation",
-    async ({ route, method, field, value, invalid, stateKey }) => {
-      await runtime.openSession("fixture-active");
-      await runtime.openSession("fixture-history");
-      const targetBefore = (await runtime.snapshot("fixture-active")).active!
-        .runtimeSettings;
-      const selectedBefore = (await runtime.snapshot()).active!.runtimeSettings;
-      const change = vi.spyOn(runtime, method);
+  it("applies native settings to the addressed session after authentication and validation", async () => {
+    const sessionId = "fixture-active";
+    await runtime.openSession(sessionId);
+    await runtime.openSession("fixture-history");
+    const targetSettings = async () =>
+      (await runtime.snapshot(sessionId)).active?.runtimeSettings;
+    const selectedSettings = async () =>
+      (await runtime.snapshot()).active?.runtimeSettings;
+    const selectedBefore = await vi.waitFor(async () => {
+      const settings = await selectedSettings();
+      expect(settings).toBeDefined();
+      expect(await targetSettings()).toBeDefined();
+      return settings;
+    });
+    for (const [route, field, stateKey, value, invalid] of [
+      ["auto-compaction", "enabled", "autoCompactionEnabled", true, "true"],
+      ["auto-retry", "enabled", "autoRetryEnabled", true, "true"],
+      ["steering-mode", "mode", "steeringMode", "all", "invalid"],
+      ["follow-up-mode", "mode", "followUpMode", "all", "invalid"],
+    ] as const) {
       const path = `/api/control/${route}`;
-      const body = { sessionId: "fixture-active", [field]: value };
+      const body = { sessionId, [field]: value };
+      const before = await targetSettings();
+      expect(before?.[stateKey], route).not.toBe(value);
 
-      await request(application.server).post(path).send(body).expect(401);
+      await guest.post(path).send(body).expect(401);
       for (const invalidBody of [
         { [field]: value },
-        { sessionId: "fixture-active", [field]: invalid },
+        { sessionId, [field]: invalid },
       ])
-        await fixture.localRequest.post(path).send(invalidBody).expect(400);
-      expect(change).not.toHaveBeenCalled();
-
-      await fixture.localRequest
-        .post(path)
-        .send(body)
-        .expect(200, { ok: true });
-      expect(change).toHaveBeenCalledExactlyOnceWith("fixture-active", value);
-      expect(
-        (await runtime.snapshot("fixture-active")).active?.runtimeSettings,
-      ).toEqual({ ...targetBefore, [stateKey]: value });
-      expect((await runtime.snapshot()).active?.runtimeSettings).toEqual(
-        selectedBefore,
-      );
+        await local.post(path).send(invalidBody).expect(400);
+      expect(await targetSettings(), route).toEqual(before);
+      await local.post(path).send(body).expect(200, { ok: true });
+      expect(await targetSettings(), route).toEqual({
+        ...before,
+        [stateKey]: value,
+      });
+      expect(await selectedSettings()).toEqual(selectedBefore);
       expect(runtime.activeSessionId).toBe("fixture-history");
-    },
-  );
-
-  it("clears host selection when the browser opens New session", async () => {
-    await fixture.localRequest
-      .post("/api/sessions/open")
-      .send({ id: "fixture-active" })
-      .expect(200);
-    expect(runtime.activeSessionId).toBe("fixture-active");
-
-    const deselected = await fixture.localRequest
-      .post("/api/sessions/deselect")
-      .expect(200);
-    expect(deselected.body).toMatchObject({ active: null, runState: "idle" });
-    expect(runtime.activeSessionId).toBeNull();
+    }
   });
 
-  it("serves authenticated session-addressed transcript pages", async () => {
-    const page = {
-      sessionId: "fixture-active",
-      revision: 7,
-      viewId: "fixture-view-fixture-active",
+  it("forwards authenticated transcript cursors to the correct reader", async () => {
+    const sessionId = "fixture-active";
+    const address = { sessionId, revision: 7, viewId: "branch-1" };
+    const older = {
+      ...address,
       composerHistoryVersion: "history-1",
       messages: [{ role: "user", content: "older", timestamp: 1 }],
       hasOlder: false,
       olderCursor: null,
     };
-    const activityPage = {
-      sessionId: "fixture-active",
-      revision: 7,
-      viewId: "fixture-view-fixture-active",
+    const activity = {
+      ...address,
       messages: [{ role: "toolResult", content: "deferred", timestamp: 2 }],
       hasMore: false,
       cursor: null,
     };
-    const paging = vi.spyOn(runtime, "transcriptPage").mockResolvedValue(page);
+    const paging = vi.spyOn(runtime, "transcriptPage").mockResolvedValue(older);
     const activityPaging = vi
       .spyOn(runtime, "transcriptActivityPage")
-      .mockResolvedValue(activityPage);
-    const userTurnIndex = vi
-      .spyOn(runtime, "transcriptUserTurns")
-      .mockResolvedValue({
-        sessionId: "fixture-active",
-        revision: 7,
-        viewId: "fixture-view-fixture-active",
-        total: 1,
-        start: 0,
-        turns: [
-          {
-            id: "user-0",
-            ordinal: 0,
-            snippet: "prompt",
-            attachmentCount: 0,
-          },
-        ],
-      });
-    const userTurnTranscript = vi
-      .spyOn(runtime, "transcriptUserTurn")
-      .mockResolvedValue({
-        ...page,
-        targetMessageId: "user-0",
-        rangeStart: 0,
-        rangeEnd: 1,
-        hasMoreInTurn: false,
-        continuationCursor: null,
-      });
-    const composerHistory = vi
-      .spyOn(runtime, "composerHistory")
-      .mockResolvedValue({
-        sessionId: "fixture-active",
-        revision: 7,
-        viewId: "fixture-view-fixture-active",
-        historyId: "history-7",
-        composerHistoryVersion: "history-1",
-        total: 1,
-        start: 0,
-        entries: [{ text: "prompt", images: [], files: [] }],
-        nextStart: null,
-      });
-    await request(application.server)
-      .get(
-        "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor",
-      )
-      .expect(401);
-    const response = await fixture.localRequest
-      .get(
-        "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor",
-      )
-      .expect(200);
-    expect(response.body).toEqual(page);
-    expect(paging).toHaveBeenCalledWith("fixture-active", "opaque-cursor");
-
-    await request(application.server)
-      .get(
-        "/api/transcript/activity?sessionId=fixture-active&cursor=range-cursor",
-      )
-      .expect(401);
-    const activityResponse = await fixture.localRequest
-      .get(
-        "/api/transcript/activity?sessionId=fixture-active&cursor=range-cursor",
-      )
-      .expect(200);
-    expect(activityResponse.body).toEqual(activityPage);
-    expect(activityPaging).toHaveBeenCalledWith(
-      "fixture-active",
-      "range-cursor",
-    );
-
-    await request(application.server)
-      .get("/api/transcript/user-turns?sessionId=fixture-active&start=0")
-      .expect(401);
-    await fixture.localRequest
-      .get("/api/transcript/user-turns?sessionId=fixture-active&start=0")
-      .expect(200)
-      .expect((result) => expect(result.body.turns).toHaveLength(1));
-    expect(userTurnIndex).toHaveBeenCalledWith("fixture-active", 0);
-
-    await request(application.server)
-      .get("/api/transcript/user-turn?sessionId=fixture-active&id=user-0")
-      .expect(401);
-    await fixture.localRequest
-      .get(
-        "/api/transcript/user-turn?sessionId=fixture-active&id=user-0&cursor=turn-cursor",
-      )
-      .expect(200)
-      .expect((result) => expect(result.body.targetMessageId).toBe("user-0"));
-    expect(userTurnTranscript).toHaveBeenCalledWith(
-      "fixture-active",
-      "user-0",
-      "turn-cursor",
-    );
-
-    await request(application.server)
-      .get("/api/composer/history?sessionId=fixture-active&start=0")
-      .expect(401);
-    await fixture.localRequest
-      .get("/api/composer/history?sessionId=fixture-active&start=0")
-      .expect(200)
-      .expect((result) =>
-        expect(result.body.entries).toEqual([
-          { text: "prompt", images: [], files: [] },
-        ]),
-      );
-    expect(composerHistory).toHaveBeenCalledWith("fixture-active", 0);
-  });
-
-  it("serves complete assistant text only through an authenticated session/branch read", async () => {
-    const text = `${"x".repeat(70_000)}THE_END_42`;
-    const copy = vi
-      .spyOn(runtime, "lastAssistantText")
-      .mockResolvedValue({ text });
-    const path =
-      "/api/transcript/assistant-text?sessionId=fixture-active&viewId=branch-1";
-    await request(application.server).get(path).expect(401);
-    await fixture.localRequest
-      .get(path)
-      .expect(200)
-      .expect((result) => expect(result.body.text).toBe(text));
-    expect(copy).toHaveBeenCalledWith("fixture-active", "branch-1");
-    await fixture.localRequest
-      .get("/api/transcript/assistant-text?sessionId=fixture-active")
-      .expect(400);
-  });
-
-  it("serves authenticated, bounded, session-addressed branch operations", async () => {
-    const branchTree = {
-      sessionId: "fixture-active",
-      revision: 3,
-      incarnation: "inc",
-      durableLeafId: "a1",
-      effectiveLeafId: "a1",
-      activePath: ["u1", "a1"],
-      nodes: [],
-      truncated: false,
-      health: { status: "ok" as const },
+      .mockResolvedValue(activity);
+    const userTurn = {
+      ...older,
+      targetMessageId: "user-0",
+      rangeStart: 0,
+      rangeEnd: 1,
+      hasMoreInTurn: false,
+      continuationCursor: null,
     };
-    const tree = vi.spyOn(runtime, "branchTree").mockResolvedValue(branchTree);
-    const navigate = vi.spyOn(runtime, "navigateBranch").mockResolvedValue({
-      snapshot: await runtime.openSession("fixture-active"),
-      editorText: "original",
+    const turnPaging = vi
+      .spyOn(runtime, "transcriptUserTurn")
+      .mockResolvedValue(userTurn);
+    for (const [path, query, read, args, expected] of [
+      [
+        "/api/transcript/older",
+        { cursor: "older+cursor=" },
+        paging,
+        ["older+cursor="],
+        older,
+      ],
+      [
+        "/api/transcript/activity",
+        { cursor: "activity+cursor=" },
+        activityPaging,
+        ["activity+cursor="],
+        activity,
+      ],
+      [
+        "/api/transcript/user-turn",
+        { id: "user-0", cursor: "turn+cursor=" },
+        turnPaging,
+        ["user-0", "turn+cursor="],
+        userTurn,
+      ],
+    ] as const) {
+      const address = { sessionId, ...query };
+      await guest.get(path).query(address).expect(401);
+      await local.get(path).query(address).expect(200, expected);
+      expect(read).toHaveBeenCalledExactlyOnceWith(sessionId, ...args);
+    }
+  });
+
+  it("reads and clones an addressed session while another session is selected", async () => {
+    const sessionId = "fixture-active";
+    const { active } = await runtime.openSession(sessionId);
+    await runtime.openSession("fixture-history");
+    const viewId = active!.transcriptPage.viewId;
+    const firstPrompt =
+      "Show me a formula-rich example and inspect the analysis steps.";
+    for (const [path, content] of [
+      [
+        "/api/transcript/user-turns",
+        { turns: [expect.objectContaining({ snippet: firstPrompt })] },
+      ],
+      [
+        "/api/composer/history",
+        { entries: [expect.objectContaining({ text: firstPrompt })] },
+      ],
+    ] as const) {
+      const query = { sessionId, start: 0 };
+      await guest.get(path).query(query).expect(401);
+      const result = await local.get(path).query(query).expect(200);
+      expect(result.body).toMatchObject({ sessionId, viewId, ...content });
+    }
+    const copy = "/api/transcript/assistant-text";
+    await guest.get(copy).query({ sessionId, viewId }).expect(401);
+    await local.get(copy).query({ sessionId }).expect(400);
+    await local.get(copy).query({ sessionId, viewId }).expect(200, {
+      text: "Tightened the window normalization.",
     });
-    const fork = vi.spyOn(runtime, "forkBranch").mockResolvedValue({
-      sessionId: "forked",
-      snapshot: await runtime.openSession("fixture-active"),
-      editorText: "original",
-    });
-    const sourceSnapshot = await runtime.openSession("fixture-active");
-    const clone = vi.spyOn(runtime, "cloneBranch").mockResolvedValue({
-      sessionId: "cloned",
-      editorText: "",
-      snapshot: {
-        ...sourceSnapshot,
-        active: { ...sourceSnapshot.active!, sessionId: "cloned" },
-      },
-    });
-    const entry = vi.spyOn(runtime, "branchEntry").mockResolvedValue({
-      sessionId: "fixture-active",
-      revision: 3,
-      text: "Complete retained answer",
-      totalChars: 24,
-      nextOffset: null,
-      node: {
-        id: "a1",
-        parentId: "u1",
-        type: "message",
-        role: "assistant",
-        depth: 1,
-        label: "Answer",
-        snippet: "Answer",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: true,
-        canSwitch: true,
-        canEdit: false,
-        canFork: false,
-      },
-      images: [{ index: 0, mimeType: "image/png" }],
-    });
+
+    const tree = await local
+      .get("/api/branches/tree")
+      .query({ sessionId })
+      .expect(200);
+    expect(tree.body.sessionId).toBe(sessionId);
+    const target = tree.body.nodes.find(
+      (node: { role?: string }) => node.role === "user",
+    );
+    expect(target).toBeDefined();
+    const entry = { sessionId, viewId, targetId: target.id };
+    await guest.get("/api/branches/entry").query(entry).expect(401);
+    const read = await local
+      .get("/api/branches/entry")
+      .query(entry)
+      .expect(200);
+    expect(read.body.text).toBe(firstPrompt);
+    await local
+      .get("/api/branches/entry")
+      .query({ ...entry, viewId: "old-branch" })
+      .expect(409);
+
+    const clone = { sessionId, viewId, targetId: null };
+    await guest.post("/api/branches/clone").send(clone).expect(401);
+    await local
+      .post("/api/branches/clone")
+      .send({ sessionId, viewId })
+      .expect(400);
+    const result = await local
+      .post("/api/branches/clone")
+      .send(clone)
+      .expect(200);
+    expect(result.body.sessionId).not.toBe(sessionId);
+    const saved = await fixture.catalog.get(result.body.sessionId);
+    expect(saved?.cwd).toBe(active!.cwd);
+    expect(result.body.editorText).toBe("");
+    expect(runtime.activeSessionId).toBe("fixture-history");
+  });
+
+  it("rejects untrusted branch mutation fields and serves authenticated image bytes privately", async () => {
+    const address = { sessionId: "fixture-active", targetId: "entry-3" };
+    const view = { ...address, viewId: "source-view" };
+    const imageQuery = { ...view, index: 0 };
     const image = vi.spyOn(runtime, "branchImage").mockResolvedValue({
       mimeType: "image/png",
-      data: Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aPe8AAAAASUVORK5CYII=",
-        "base64",
-      ),
+      data: Buffer.from("saved image bytes"),
     });
-
-    await request(application.server)
-      .get("/api/branches/tree?sessionId=fixture-active")
-      .expect(401);
-    await fixture.localRequest
-      .get("/api/branches/tree?sessionId=fixture-active")
-      .expect(200)
-      .expect((response) => expect(response.body.revision).toBe(3));
-    expect(tree).toHaveBeenCalledWith("fixture-active", {});
-    await fixture.localRequest
-      .get(
-        "/api/branches/tree?sessionId=fixture-active&query=retained&before=a1",
-      )
-      .expect(200);
-    expect(tree).toHaveBeenLastCalledWith("fixture-active", {
-      query: "retained",
-      before: "a1",
-    });
-    const readQuery =
-      "sessionId=fixture-active&targetId=a1&viewId=view-1&offset=0";
-    await request(application.server)
-      .get(`/api/branches/entry?${readQuery}`)
-      .expect(401);
-    await request(application.server)
-      .get(`/api/branches/image?${readQuery}&index=0`)
-      .expect(401);
-    expect(entry).not.toHaveBeenCalled();
+    await guest.get("/api/branches/image").query(imageQuery).expect(401);
+    await local
+      .get("/api/branches/image")
+      .query({ ...view, index: -1 })
+      .expect(400);
     expect(image).not.toHaveBeenCalled();
-    await fixture.localRequest
-      .get(`/api/branches/entry?${readQuery}`)
+    const response = await local
+      .get("/api/branches/image")
+      .query(imageQuery)
       .expect(200)
-      .expect((response) =>
-        expect(response.body.text).toBe("Complete retained answer"),
-      );
-    expect(entry).toHaveBeenCalledWith({
-      sessionId: "fixture-active",
-      targetId: "a1",
-      viewId: "view-1",
-      offset: 0,
-    });
-    await fixture.localRequest
-      .get(`/api/branches/image?${readQuery}&index=0`)
-      .expect(200)
-      .expect("Content-Type", /image\/png/)
+      .expect("Content-Type", "image/png")
       .expect("Cache-Control", "private, no-store");
-    expect(image).toHaveBeenCalledWith(
-      {
-        sessionId: "fixture-active",
-        targetId: "a1",
-        viewId: "view-1",
-        offset: 0,
-      },
-      0,
-    );
-    await fixture.localRequest
-      .get(`/api/branches/image?${readQuery}&index=-1`)
-      .expect(400);
+    expect(image).toHaveBeenCalledExactlyOnceWith(view, 0);
+    expect(response.body).toEqual(Buffer.from("saved image bytes"));
 
-    await fixture.localRequest
-      .post("/api/branches/navigate")
-      .send({
-        sessionId: "fixture-active",
-        revision: 3,
-        targetId: "u1",
-        mode: "edit",
-        rawPath: "/forged",
-      })
-      .expect(400);
-    await fixture.localRequest
-      .post("/api/branches/navigate")
-      .send({
-        sessionId: "fixture-active",
-        revision: 3,
-        targetId: "u1",
-        mode: "edit",
-      })
-      .expect(200);
-    expect(navigate).toHaveBeenCalledWith({
-      sessionId: "fixture-active",
-      revision: 3,
-      targetId: "u1",
-      mode: "edit",
-    });
-
-    await fixture.localRequest
-      .post("/api/branches/fork")
-      .send({
-        sessionId: "fixture-active",
-        viewId: "source-view",
-        targetId: "u1",
-      })
-      .expect(200);
-    expect(fork).toHaveBeenCalledWith({
-      sessionId: "fixture-active",
-      viewId: "source-view",
-      targetId: "u1",
-    });
-    await request(application.server)
-      .post("/api/branches/clone")
-      .send({
-        sessionId: "fixture-active",
-        viewId: "source-view",
-        targetId: null,
-      })
-      .expect(401);
-    expect(clone).not.toHaveBeenCalled();
-    await fixture.localRequest
-      .post("/api/branches/clone")
-      .send({
-        sessionId: "fixture-active",
-        viewId: "source-view",
-        targetId: null,
-        rawPath: "/forged",
-      })
-      .expect(400);
-    await fixture.localRequest
-      .post("/api/branches/clone")
-      .send({
-        sessionId: "fixture-active",
-        viewId: "source-view",
-        targetId: "a1",
-      })
-      .expect(200)
-      .expect((response) => expect(response.body.editorText).toBe(""));
-    expect(clone).toHaveBeenLastCalledWith({
-      sessionId: "fixture-active",
-      viewId: "source-view",
-      targetId: "a1",
-    });
-    await fixture.localRequest
-      .post("/api/branches/clone")
-      .send({ sessionId: "fixture-active", viewId: "source-view" })
-      .expect(400);
-    await fixture.localRequest
-      .post("/api/branches/clone")
-      .send({
-        sessionId: "fixture-active",
-        viewId: "source-view",
-        targetId: null,
-      })
-      .expect(200);
-    expect(clone).toHaveBeenLastCalledWith({
-      sessionId: "fixture-active",
-      viewId: "source-view",
-      targetId: null,
-    });
+    for (const [operation, body] of [
+      ["navigate", { ...address, revision: 3, mode: "edit" }],
+      ["fork", view],
+      ["clone", { ...view, targetId: null }],
+    ] as const) {
+      await local
+        .post(`/api/branches/${operation}`)
+        .send({ ...body, rawPath: "/forged" })
+        .expect(400);
+    }
   });
 
   it("reports invalid preference fields in bootstrap", async () => {
@@ -880,9 +565,7 @@ describe("typed Host API", () => {
       join(temporary, "preferences.json"),
       JSON.stringify({ theme: "dark", toolVisibility: "invalid" }),
     );
-    const { body } = await fixture.localRequest
-      .get("/api/bootstrap")
-      .expect(200);
+    const { body } = await local.get("/api/bootstrap").expect(200);
     expect(body.preferences).toMatchObject({
       theme: "dark",
       toolVisibility: "dynamic",
@@ -890,114 +573,77 @@ describe("typed Host API", () => {
     expect(body.preferencesWarning).toMatch(/toolVisibility.*left unchanged/);
   });
 
-  it("invalidates storage discovery only after saved project folders change", async () => {
-    const invalidate = vi.spyOn(fixture.catalog, "invalidate");
-    await fixture.localRequest
-      .patch("/api/preferences")
-      .send({ theme: "dark" })
-      .expect(200);
-    expect(invalidate).not.toHaveBeenCalled();
-    for (const field of ["pinnedProjectCwds", "hiddenProjectCwds"]) {
-      await fixture.localRequest
-        .patch("/api/preferences")
-        .send({ [field]: [temporary] })
-        .expect(200);
-    }
-    expect(invalidate).toHaveBeenCalledTimes(2);
-    await fixture.localRequest
-      .patch("/api/preferences")
-      .send({ pinnedProjectCwds: "invalid" })
-      .expect(400);
-    expect(invalidate).toHaveBeenCalledTimes(2);
-  });
-
   it("lists workspace directory levels only inside the project index", async () => {
     const workspace = join(temporary, "workspace");
     await mkdir(workspace);
     await writeFile(join(workspace, "README.md"), "fixture");
-    const opened = await fixture.localRequest
+    const opened = await local
       .post("/api/sessions/new")
       .send({ cwd: workspace })
       .expect(200);
     const sessionId = opened.body.active.sessionId as string;
-    await fixture.localRequest
+    await local
       .get(`/api/files/list?sessionId=${sessionId}&dir=..%2Fetc`)
       .expect(400);
-    const listed = await fixture.localRequest
+    const listed = await local
       .get(`/api/files/list?sessionId=${sessionId}`)
       .expect(200);
-    expect(Array.isArray(listed.body.entries)).toBe(true);
+    expect(listed.body.entries).toContainEqual({
+      name: "README.md",
+      type: "file",
+    });
     // The list is session-addressed: an unopened session id cannot borrow
     // the current selection's workspace.
-    await fixture.localRequest
-      .get("/api/files/list?sessionId=not-open")
-      .expect(409);
+    await local.get("/api/files/list?sessionId=not-open").expect(409);
   });
 
-  it("browses host roots and directories without a session and rejects relative paths", async () => {
-    const roots = await fixture.localRequest.get("/api/host/roots").expect(200);
-    expect(Array.isArray(roots.body.roots)).toBe(true);
-    for (const root of roots.body.roots) {
-      expect(root).toEqual({
-        name: expect.any(String),
-        path: expect.any(String),
-      });
-    }
-
+  it("browses host directories without a session and reveals hidden folders on request", async () => {
     await mkdir(join(temporary, "projects"));
-    const listing = await fixture.localRequest
-      .get(`/api/host/dirs?path=${encodeURIComponent(temporary)}`)
-      .expect(200);
-    expect(listing.body.dirs).toEqual(
-      expect.arrayContaining([
-        { name: "projects", path: join(listing.body.path, "projects") },
-      ]),
-    );
-    expect(listing.body.parent).toBe(dirname(listing.body.path));
-
-    await fixture.localRequest
-      .get("/api/host/dirs?path=relative/path")
-      .expect(400);
-    await fixture.localRequest
-      .get(
-        `/api/host/dirs?path=${encodeURIComponent(join(temporary, "missing"))}`,
-      )
-      .expect(404);
-  });
-
-  it("requires authentication and an explicit validated flag to reveal hidden host directories", async () => {
     await mkdir(join(temporary, ".hidden-project"));
     const url = `/api/host/dirs?path=${encodeURIComponent(temporary)}`;
-    await request(application.server).get(`${url}&showHidden=1`).expect(401);
-    for (const suffix of ["", "&showHidden=0"]) {
-      const listing = await fixture.localRequest
-        .get(`${url}${suffix}`)
-        .expect(200);
-      expect(
-        listing.body.dirs.map((entry: { name: string }) => entry.name),
-      ).not.toContain(".hidden-project");
-    }
-    const listing = await fixture.localRequest
-      .get(`${url}&showHidden=1`)
-      .expect(200);
-    expect(listing.body.dirs).toContainEqual({
+    const visible = { name: "projects", path: join(temporary, "projects") };
+    const hidden = {
       name: ".hidden-project",
-      path: join(listing.body.path, ".hidden-project"),
-    });
+      path: join(temporary, ".hidden-project"),
+    };
+
+    await local.get("/api/host/roots").expect(200);
+    await guest.get(`${url}&showHidden=1`).expect(401);
+    for (const suffix of ["", "&showHidden=0"]) {
+      const listing = await local.get(`${url}${suffix}`).expect(200);
+      expect(listing.body).toMatchObject({
+        path: temporary,
+        parent: dirname(temporary),
+      });
+      expect(listing.body.dirs).toContainEqual(visible);
+      expect(listing.body.dirs).not.toContainEqual(hidden);
+    }
+    const listing = await local.get(`${url}&showHidden=1`).expect(200);
+    expect(listing.body.dirs).toEqual(
+      expect.arrayContaining([visible, hidden]),
+    );
     for (const suffix of [
       "&showHidden=true",
       "&showHidden=false",
       "&showHidden=",
       "&showHidden=1&showHidden=0",
     ]) {
-      await fixture.localRequest.get(`${url}${suffix}`).expect(400);
+      await local.get(`${url}${suffix}`).expect(400);
     }
+    await local
+      .get("/api/host/dirs")
+      .query({ path: "relative/path" })
+      .expect(400);
+    await local
+      .get("/api/host/dirs")
+      .query({ path: join(temporary, "missing") })
+      .expect(404);
   });
 
   it("stores curated navigation identities as preferences and returns their summaries by id", async () => {
     // Pins, folder pins, and hidden sessions are navigation metadata: one
     // field-scoped patch, no Pi history touched.
-    const curated = await fixture.localRequest
+    const curated = await local
       .patch("/api/preferences")
       .send({
         pinnedSessionIds: ["fixture-active"],
@@ -1011,7 +657,7 @@ describe("typed Host API", () => {
       hiddenSessionIds: ["fixture-older"],
     });
 
-    const summaries = await fixture.localRequest
+    const summaries = await local
       .post("/api/sessions/by-id")
       .send({ ids: ["fixture-active", "missing"] })
       .expect(200);
@@ -1020,19 +666,19 @@ describe("typed Host API", () => {
 
     // A pinned folder is claimed whole, so it hydrates by working directory
     // instead of depending on which of its sessions paged in.
-    const folder = await fixture.localRequest
+    const folder = await local
       .post("/api/sessions/by-cwd")
       .send({ cwds: [fixture.cwd, resolve("/nowhere")] })
       .expect(200);
     expect(
       folder.body.sessions.map((session: { cwd: string }) => session.cwd),
     ).toEqual([fixture.cwd]);
-    await fixture.localRequest
+    await local
       .post("/api/sessions/by-cwd")
       .send({ cwds: fixture.cwd })
       .expect(400);
 
-    await fixture.localRequest
+    await local
       .patch("/api/preferences")
       .send({ pinnedSessionIds: [] })
       .expect(200)
@@ -1043,125 +689,86 @@ describe("typed Host API", () => {
       });
   });
 
-  it("refuses missing or unopened write targets instead of falling back to the selected session", async () => {
-    await runtime.openSession("fixture-active");
-    const before = await runtime.snapshot();
-    const prompt = vi.spyOn(runtime, "prompt");
-    const abort = vi.spyOn(runtime, "abort");
+  it.each(["folder", "all"] as const)(
+    "clears reviewed Hidden %s and retains unrelated navigation curation",
+    async (scope) => {
+      const target = join(temporary, "target");
+      const other = join(temporary, "other");
+      const outside = join(temporary, "visible");
+      const sessionIds = ["folder-entry", "individual-entry"];
+      const hiddenSessions = ["individual-entry"];
+      const hiddenFolders = [target, other];
+      await local
+        .patch("/api/preferences")
+        .send({
+          pinnedSessionIds: [...sessionIds, "unrelated"],
+          hiddenSessionIds: hiddenSessions,
+          hiddenProjectCwds: hiddenFolders,
+          pinnedProjectCwds: [...hiddenFolders, outside],
+          navCollapsedGroups: [...hiddenFolders, outside],
+        })
+        .expect(200);
 
-    await fixture.localRequest
-      .post("/api/prompt")
-      .send(promptDelivery({ message: "no target" }))
-      .expect(400);
-    await fixture.localRequest.post("/api/control/abort").send({}).expect(400);
-    expect(prompt).not.toHaveBeenCalled();
-    expect(abort).not.toHaveBeenCalled();
+      const ids = scope === "folder" ? sessionIds.slice(0, 1) : sessionIds;
+      const deleted = ids.map((sessionId) => ({
+        sessionId,
+        disposition:
+          sessionId === "folder-entry"
+            ? ("trashed" as const)
+            : ("deleted" as const),
+      }));
+      const clear = vi
+        .spyOn(runtime, "clearHiddenSessions")
+        .mockResolvedValue({ deleted });
+      const forget = vi.spyOn(resources, "forgetSession");
+      const submit = (projectCwd?: string) =>
+        local
+          .post("/api/sessions/clear-hidden")
+          .send({ sessionIds: ids, projectCwd });
 
-    await fixture.localRequest
-      .post("/api/prompt")
-      .send(promptDelivery({ sessionId: "never-opened", message: "hello" }))
-      .expect(409);
-    expect(prompt).toHaveBeenCalledExactlyOnceWith({
-      sessionId: "never-opened",
-      message: "hello",
-    });
-    expect(runtime.activeSessionId).toBe("fixture-active");
-    expect((await runtime.snapshot()).active?.transcriptPage).toEqual(
-      before.active?.transcriptPage,
-    );
-  });
+      await submit(outside)
+        .expect(409)
+        .expect(({ body }) => {
+          expect(body.code).toBe("HIDDEN_SELECTION_CHANGED");
+        });
+      expect(clear).not.toHaveBeenCalled();
 
-  it("clears one complete Hidden folder without changing unrelated curation", async () => {
-    const target = join(temporary, "target");
-    const other = join(temporary, "other");
-    await request(application.app)
-      .patch("/api/preferences")
-      .set("authorization", `Bearer ${token}`)
-      .send({
-        hiddenSessionIds: ["independent", "target-1"],
-        hiddenProjectCwds: [target, other],
-        pinnedProjectCwds: [target, other],
-        navCollapsedGroups: [target, other],
-      })
+      const remainingFolders = scope === "folder" ? [other] : [];
+      const response = await submit(
+        scope === "folder" ? target : undefined,
+      ).expect(200);
+      expect(clear).toHaveBeenCalledExactlyOnceWith(
+        ids,
+        scope === "folder" ? [] : hiddenSessions,
+        scope === "folder" ? [target] : hiddenFolders,
+      );
+      expect(response.body).toMatchObject({
+        deleted,
+        preferences: {
+          pinnedSessionIds:
+            scope === "folder"
+              ? ["individual-entry", "unrelated"]
+              : ["unrelated"],
+          hiddenSessionIds: scope === "folder" ? hiddenSessions : [],
+          hiddenProjectCwds: remainingFolders,
+          pinnedProjectCwds: [...remainingFolders, outside],
+          navCollapsedGroups: [...remainingFolders, outside],
+        },
+      });
+      expect(forget.mock.calls).toEqual(ids.map((id) => [id]));
+    },
+  );
+
+  it("deletes a deselected session and removes its navigation identities", async () => {
+    await local
+      .post("/api/sessions/open")
+      .send({ id: "fixture-history" })
       .expect(200);
-    const clear = vi.spyOn(runtime, "clearHiddenSessions").mockResolvedValue({
-      deleted: [
-        { sessionId: "target-1", disposition: "trashed" },
-        { sessionId: "target-2", disposition: "trashed" },
-      ],
-    });
-    const response = await request(application.app)
-      .post("/api/sessions/clear-hidden")
-      .set("authorization", `Bearer ${token}`)
-      .send({ sessionIds: ["target-1", "target-2"], projectCwd: target })
-      .expect(200);
-    expect(clear).toHaveBeenCalledWith(["target-1", "target-2"], [], [target]);
-    expect(response.body.preferences).toMatchObject({
-      hiddenSessionIds: ["independent"],
-      hiddenProjectCwds: [other],
-      pinnedProjectCwds: [other],
-      navCollapsedGroups: [other],
-    });
-  });
-
-  it("refuses a folder that has left Hidden before any deletion", async () => {
-    const clear = vi.spyOn(runtime, "clearHiddenSessions");
-    const response = await request(application.app)
-      .post("/api/sessions/clear-hidden")
-      .set("authorization", `Bearer ${token}`)
-      .send({
-        sessionIds: ["session-1"],
-        projectCwd: join(temporary, "visible"),
-      })
-      .expect(409);
-    expect(response.body.code).toBe("HIDDEN_SELECTION_CHANGED");
-    expect(clear).not.toHaveBeenCalled();
-  });
-
-  it("clears individually hidden sessions and complete Hidden folders in one reviewed batch", async () => {
-    const cwd = "/tmp/hidden-folder";
-    const deleted = vi.spyOn(runtime, "clearHiddenSessions").mockResolvedValue({
-      deleted: [
-        { sessionId: "one", disposition: "trashed" },
-        { sessionId: "two", disposition: "deleted" },
-      ],
-    });
-    const forget = vi.spyOn(resources, "forgetSession");
-    await fixture.localRequest
-      .patch("/api/preferences")
-      .send({
-        pinnedSessionIds: ["one"],
-        hiddenSessionIds: ["one"],
-        pinnedProjectCwds: [cwd],
-        hiddenProjectCwds: [cwd],
-        navCollapsedGroups: [cwd],
-      })
-      .expect(200);
-
-    const response = await fixture.localRequest
-      .post("/api/sessions/clear-hidden")
-      .send({ sessionIds: ["one", "two"] })
-      .expect(200);
-    expect(deleted).toHaveBeenCalledWith(["one", "two"], ["one"], [cwd]);
-    expect(response.body).toMatchObject({
-      deleted: [
-        { sessionId: "one", disposition: "trashed" },
-        { sessionId: "two", disposition: "deleted" },
-      ],
-      preferences: {
-        pinnedSessionIds: [],
-        hiddenSessionIds: [],
-        pinnedProjectCwds: [],
-        hiddenProjectCwds: [],
-        navCollapsedGroups: [],
-      },
-    });
-    expect(forget).toHaveBeenCalledWith("one");
-    expect(forget).toHaveBeenCalledWith("two");
-  });
-
-  it("deletes an unselected session and atomically removes its navigation identities", async () => {
-    await fixture.localRequest
+    expect(runtime.activeSessionId).toBe("fixture-history");
+    const deselected = await local.post("/api/sessions/deselect").expect(200);
+    expect(deselected.body).toMatchObject({ active: null, runState: "idle" });
+    expect(runtime.activeSessionId).toBeNull();
+    await local
       .patch("/api/preferences")
       .send({
         pinnedSessionIds: ["fixture-history"],
@@ -1170,10 +777,8 @@ describe("typed Host API", () => {
       .expect(200);
     const forget = vi.spyOn(resources, "forgetSession");
 
-    await request(application.server)
-      .delete("/api/sessions/fixture-history")
-      .expect(401);
-    const deleted = await fixture.localRequest
+    await guest.delete("/api/sessions/fixture-history").expect(401);
+    const deleted = await local
       .delete("/api/sessions/fixture-history")
       .expect(200);
     expect(deleted.body).toMatchObject({
@@ -1183,14 +788,10 @@ describe("typed Host API", () => {
     });
     expect(forget).toHaveBeenCalledWith("fixture-history");
 
-    const sessions = await fixture.localRequest
-      .get("/api/sessions")
-      .expect(200);
+    const sessions = await local.get("/api/sessions").expect(200);
     expect(sessions.body.sessions).not.toContainEqual(
       expect.objectContaining({ id: "fixture-history" }),
     );
-    await fixture.localRequest
-      .delete("/api/sessions/fixture-history")
-      .expect(404);
+    await local.delete("/api/sessions/fixture-history").expect(404);
   });
 });

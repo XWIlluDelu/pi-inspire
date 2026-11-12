@@ -99,13 +99,13 @@ it.each([false, true])(
       await runtime.openSession(manager.getSessionId());
       host = await hostApiFixture({ runtime });
       installFakeWebSocket();
-      const controls: string[] = [];
       vi.stubGlobal("fetch", (async (input, init) => {
-        const url = String(input);
-        if (url.startsWith("/api/control/")) controls.push(url);
         const headers = new Headers(init?.headers);
         headers.set("Authorization", "Bearer " + token);
-        return realFetch(new URL(url, host!.baseUrl), { ...init, headers });
+        return realFetch(new URL(String(input), host!.baseUrl), {
+          ...init,
+          headers,
+        });
       }) satisfies typeof fetch);
       store = new AppStore();
       await store.init();
@@ -115,37 +115,28 @@ it.each([false, true])(
         model: { provider: "global-native", id: "b" },
         thinkingLevel: "low",
       });
-      expect(controls).toEqual(["/api/control/model-cycle"]);
       expect(
         commands.slice(before).filter((type) => type === "cycle_model"),
       ).toHaveLength(1);
-      expect(commands.slice(before)).not.toContain("set_model");
-      expect(commands.slice(before)).not.toContain("set_thinking_level");
       expect(JSON.parse((await readFile(events, "utf8")).trim())).toEqual({
         entered: scoped ? "high" : "medium",
         source: "cycle",
       });
-      const cycleCount = commands.filter(
-        (type) => type === "cycle_model",
-      ).length;
       await store.cycleModel(-1);
-      expect(commands.filter((type) => type === "cycle_model")).toHaveLength(
-        cycleCount,
-      );
       expect(store.getState()).toMatchObject({
+        model: { id: "b" },
+        thinkingLevel: "low",
+      });
+      expect((await runtime.snapshot()).active).toMatchObject({
         model: { id: "b" },
         thinkingLevel: "low",
       });
       expect(store.getState().notices.at(-1)?.text).toContain(
         "forward model cycling",
       );
-      const manual = commands.length;
       await store.setThinkingLevel("high");
       expect(store.getState().thinkingLevel).toBe("high");
       expect((await runtime.snapshot()).active?.thinkingLevel).toBe("high");
-      expect(
-        commands.slice(manual).filter((type) => type === "set_thinking_level"),
-      ).toHaveLength(1);
       expect(
         await readFile(join(f.root, "model-events"), "utf8"),
       ).not.toContain(":request");

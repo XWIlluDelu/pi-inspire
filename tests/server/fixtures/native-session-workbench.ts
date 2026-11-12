@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, vi } from "vitest";
 import { createInspireServer } from "../../../server/app.js";
@@ -12,89 +10,34 @@ import { piInstallation } from "../../../server/pi-runtime.js";
 import { PreferencesStore } from "../../../server/preferences.js";
 import { ResourceStore } from "../../../server/resources.js";
 import { RuntimeController } from "../../../server/runtime.js";
-import type {
-  SessionCatalogLike,
-  SessionRecord,
-} from "../../../server/session-catalog.js";
-import { isolatedTestEnvironment } from "./isolated-environment.js";
+import type { SessionRecord } from "../../../server/session-catalog.js";
+import { nativePiWorkspace, stubNativePiEnvironment } from "./native-pi.js";
+import { listenOnLoopback, writeOfflineModels } from "./offline-model.js";
+import { catalog as sessionCatalog } from "./runtime.js";
 
 export async function nativeSessionWorkbench(
   cleanup: Array<() => Promise<unknown>>,
-  {
-    openSource = true,
-    workspaceName = "workspace",
-    extraExtensions = [] as readonly string[],
-  } = {},
+  { openSource = true, extraExtensions = [] as readonly string[] } = {},
 ) {
-  const directory = await realpath(
-    await mkdtemp(join(tmpdir(), "inspire-export-test-")),
-  );
+  const {
+    root: directory,
+    cwd: workspace,
+    sessions,
+    agent,
+    env,
+  } = await nativePiWorkspace("inspire-native-workbench-", {
+    defaultProvider: "export-fixture",
+    defaultModel: "offline",
+    defaultThinkingLevel: "off",
+    defaultProjectTrust: "never",
+    retry: { enabled: false },
+    compaction: { enabled: false },
+  });
   cleanup.push(() => rm(directory, { recursive: true, force: true }));
-  const home = join(directory, "home"),
-    config = join(directory, "config"),
-    sessions = join(directory, "sessions"),
-    workspace = join(directory, workspaceName),
-    temporary = join(directory, "tmp");
-  await Promise.all(
-    [home, config, sessions, workspace, temporary].map((path) =>
-      mkdir(path, { recursive: true }),
-    ),
-  );
-  const environment = {
-    HOME: home,
-    USERPROFILE: home,
-    XDG_CONFIG_HOME: config,
-    XDG_CACHE_HOME: join(home, "cache"),
-    XDG_DATA_HOME: join(home, "data"),
-    PI_CODING_AGENT_DIR: config,
-    PI_CODING_AGENT_SESSION_DIR: sessions,
-    TMPDIR: temporary,
-    TMP: temporary,
-    TEMP: temporary,
-    PI_OFFLINE: "1",
-    PI_SKIP_VERSION_CHECK: "1",
-    PI_TELEMETRY: "0",
-  };
-  for (const [name, value] of Object.entries(environment))
-    vi.stubEnv(name, value);
-  await writeFile(join(config, "auth.json"), "{}\n");
-  await writeFile(
-    join(config, "settings.json"),
-    JSON.stringify({
-      defaultProvider: "export-fixture",
-      defaultModel: "offline",
-      defaultThinkingLevel: "off",
-      defaultProjectTrust: "never",
-      enableInstallTelemetry: false,
-      packages: [],
-      extensions: [],
-      prompts: [],
-      skills: [],
-      retry: { enabled: false },
-      compaction: { enabled: false },
-    }),
-  );
-  await writeFile(
-    join(config, "models.json"),
-    JSON.stringify({
-      providers: {
-        "export-fixture": {
-          api: "openai-completions",
-          apiKey: "synthetic",
-          baseUrl: "http://127.0.0.1:1/v1",
-          models: [
-            {
-              id: "offline",
-              reasoning: false,
-              input: ["text", "image"],
-              contextWindow: 8192,
-              maxTokens: 128,
-            },
-          ],
-        },
-      },
-    }),
-  );
+  stubNativePiEnvironment(env);
+  await writeOfflineModels(agent, "http://127.0.0.1:1/v1", "export-fixture", [
+    { id: "offline", input: ["text", "image"] },
+  ]);
   const id = randomUUID();
   const path = join(sessions, `${id}.jsonl`);
   const timestamp = "2026-01-01T00:00:00.000Z";
@@ -185,14 +128,7 @@ export async function nativeSessionWorkbench(
     messageCount: 3,
     firstMessage: "Shared prompt",
   };
-  const catalog: SessionCatalogLike = {
-    refresh: async () => [record],
-    get: async (key) => (key === id ? record : undefined),
-    list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
-    listByIds: async () => [],
-    listByCwds: async () => [],
-    invalidate() {},
-  };
+  const catalog = sessionCatalog([record]);
   const attachments = new AttachmentStore(join(directory, "uploads"));
   const workers: PiRpcProcess[] = [];
   const preferences = new PreferencesStore(join(directory, "prefs.json"));
@@ -217,10 +153,7 @@ export async function nativeSessionWorkbench(
           ...(options.args ?? []),
           ...extraExtensions.flatMap((path) => ["--extension", path]),
         ],
-        env: isolatedTestEnvironment(directory, {
-          ...options.env,
-          ...environment,
-        }),
+        env: { ...env, ...options.env },
       });
       workers.push(worker);
       return worker;
@@ -238,10 +171,7 @@ export async function nativeSessionWorkbench(
     git: new GitInspectionService(),
   });
   cleanup.push(() => application.close());
-  await new Promise<void>((ready) =>
-    application.server.listen(0, "127.0.0.1", ready),
-  );
-  const url = `http://127.0.0.1:${(application.server.address() as AddressInfo).port}`;
+  const url = await listenOnLoopback(application.server);
   const headers = {
     Authorization: "Bearer export-test-token",
     "Content-Type": "application/json",
@@ -267,6 +197,5 @@ export async function nativeSessionWorkbench(
     url,
     headers,
     catalog,
-    environment,
   };
 }

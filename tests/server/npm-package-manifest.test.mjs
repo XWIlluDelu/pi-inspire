@@ -14,14 +14,9 @@ describe("npm package manifest compatibility", () => {
     ["array", [record]],
     ["direct object", record],
     ["package-name keyed object", { "inspire-pi-gui": record }],
-  ])("accepts npm's %s record shape", (_name, manifest) => {
-    expect(npmPackageRecord(manifest)).toEqual(record);
-  });
-
-  it("parses a trailing JSON record after lifecycle output", () => {
-    expect(
-      parseNpmJsonOutput(`vite v7.3.0 building\n${JSON.stringify(record)}`),
-    ).toEqual(record);
+  ])("extracts npm's %s record after lifecycle output", (_name, manifest) => {
+    const output = `building release assets\n${JSON.stringify(manifest)}\n`;
+    expect(npmPackageRecord(parseNpmJsonOutput(output))).toEqual(record);
   });
 
   it("rejects JSON that does not contain a package record", () => {

@@ -33,34 +33,20 @@ function fixture(
 }
 
 describe("native Windows PTY authority contract (no native Windows execution)", () => {
-  it("never calls taskkill or native PID kill after observed exit", async () => {
-    const f = fixture();
-    f.pty.emitExit(0);
-    await f.wrapper.killTree!("SIGKILL");
-    f.wrapper.kill("SIGKILL");
-    expect(native.spawn).not.toHaveBeenCalled();
-    expect(f.kill).not.toHaveBeenCalled();
-  });
-
-  it("validates startup birth even if the late onExit still says running", async () => {
-    const f = fixture();
-    await Promise.resolve();
-    vi.mocked(f.inspector.identity).mockResolvedValue("reused-pid-birth");
-    await f.wrapper.killTree!("SIGKILL");
-    expect(native.spawn).not.toHaveBeenCalled();
-    expect(f.kill.mock.calls).toEqual([[]]);
-  });
-
-  it("closes only native ConPTY when identity cannot be proven", async () => {
-    const f = fixture();
-    await Promise.resolve();
-    vi.mocked(f.inspector.identity).mockRejectedValueOnce(
-      new Error("native query failed"),
-    );
-    await f.wrapper.killTree!("SIGKILL");
-    expect(native.spawn).not.toHaveBeenCalled();
-    expect(f.kill.mock.calls).toEqual([[]]);
-  });
+  it.each(["recycled PID", "failed identity lookup"] as const)(
+    "closes only native ConPTY for a %s while exit is still pending",
+    async (failure) => {
+      const f = fixture();
+      await Promise.resolve();
+      const identity = vi.mocked(f.inspector.identity);
+      if (failure === "recycled PID")
+        identity.mockResolvedValueOnce("reused-pid-birth");
+      else identity.mockRejectedValueOnce(new Error("native query failed"));
+      await f.wrapper.killTree!("SIGKILL");
+      expect(native.spawn).not.toHaveBeenCalled();
+      expect(f.kill.mock.calls).toEqual([[]]);
+    },
+  );
 
   it("cancels numeric tree work when exit arrives during verification", async () => {
     const f = fixture();
@@ -95,7 +81,9 @@ describe("native Windows PTY authority contract (no native Windows execution)", 
     expect(native.spawn.mock.calls[0]![1]).toEqual(["/pid", "100", "/T", "/F"]);
     expect(f.kill).not.toHaveBeenCalled();
     await f.wrapper.killTree!("SIGKILL");
+    f.wrapper.kill("SIGKILL");
     expect(native.spawn).toHaveBeenCalledTimes(1);
+    expect(f.kill).not.toHaveBeenCalled();
   });
 
   it("queues native close before asynchronous PID assignment, without querying PID zero", async () => {

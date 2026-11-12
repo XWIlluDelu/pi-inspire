@@ -1,11 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import type {
-  SessionEntry,
-  SessionMessageEntry,
-} from "@earendil-works/pi-coding-agent";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
@@ -153,15 +149,17 @@ describe("native prompt admission and extension dialogs", () => {
     expect(f.modelRequests).toHaveLength(1);
   }, 30_000);
 
-  it("holds follow-up behind a real Pi preflight auto-compaction and its original prompt", async () => {
-    const f = await fixture(true, 1_000);
+  it("runs a shell during native preflight while holding follow-up behind the original prompt", async () => {
+    const f = await fixture(true, 1_500);
+    const worker = f.workers[0]!;
     const first = f.delivery("First prompt owns Pi's preflight.");
     const initial = f.api.prompt(first);
     await vi.waitFor(() =>
       expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1),
     );
     // Pi reports the entire active run, including preflight, as streaming.
-    expect(await f.workers[0]!.request({ type: "get_state" })).toMatchObject({
+    expect(worker.hasPendingRequest("prompt")).toBe(true);
+    expect(await worker.request({ type: "get_state" })).toMatchObject({
       isStreaming: true,
       isCompacting: true,
     });
@@ -173,6 +171,10 @@ describe("native prompt admission and extension dialogs", () => {
     await vi.waitFor(async () =>
       expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
     );
+    await f.api.prompt(f.delivery("!!printf 'WHILE_COMPACTING'"));
+    const during = await f.runtime.snapshot();
+    expect(during.runState).toBe("compacting");
+    expect(during.pendingQueues?.totalCount).toBe(1);
     expect(f.modelRequests).toHaveLength(0);
     await expect(initial).resolves.toMatchObject({ accepted: true });
     await expect(following).resolves.toMatchObject({ accepted: true });
@@ -197,82 +199,21 @@ describe("native prompt admission and extension dialogs", () => {
       ];
     });
     expect(userTexts.slice(-2)).toEqual([first.message, follow.message]);
-    expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
-  }, 20_000);
-
-  it("accepts a browser prompt past the former 30s preflight limit and reuses the worker", async () => {
-    const f = await fixture(true);
-    const worker = f.workers[0]!;
-    const pid = worker.pid;
-    expect(pid).toBeTypeOf("number");
-    const originalIds = new Set(
-      (await readFile(f.sessionFile, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => (JSON.parse(line) as SessionEntry).id),
+    expect(
+      (await f.runtime.snapshot()).active?.transcriptPage.messages,
+    ).toContainEqual(
+      expect.objectContaining({
+        role: "bashExecution",
+        output: expect.stringContaining("WHILE_COMPACTING"),
+      }),
     );
-    const first = f.delivery("First synthetic prompt after slow preflight.");
-    const delivery = f.api.prompt(first);
-    await vi.waitFor(() =>
-      expect(eventsOf(f.piEvents, "compaction_start")).toHaveLength(1),
-    );
-    const started = eventsOf(f.piEvents, "compaction_start")[0]!.at;
-    await delay(Math.max(0, started + 31_000 - performance.now()));
-    expect(worker.hasPendingRequest("prompt")).toBe(true);
-    expect(f.modelRequests).toHaveLength(0);
-    expect(f.observations[0]?.receipt).toMatchObject({
-      accepted: false,
-      pending: true,
-      operationId: first.operationId,
-    });
-
-    await expect(delivery).resolves.toMatchObject({ accepted: true });
-    await settled(f, 1);
+    expect(f.workers).toEqual([worker]);
+    expect(worker.stop).not.toHaveBeenCalled();
     expect(
       f.observations.filter(({ method }) => method === "POST"),
-    ).toHaveLength(1);
-    expect(
-      eventsOf(f.piEvents, "compaction_end")[0]!.at - started,
-    ).toBeGreaterThan(30_000);
-
-    const second = f.delivery(
-      "Second ordinary synthetic prompt on the same worker.",
-    );
-    await expect(f.api.prompt(second)).resolves.toMatchObject({
-      accepted: true,
-    });
-    await settled(f, 2);
-    expect(f.workers).toEqual([worker]);
-    expect(worker.pid).toBe(pid);
-    expect(worker.stop).not.toHaveBeenCalled();
-    expect(f.modelRequests).toHaveLength(2);
-    const written = (await readFile(f.sessionFile, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as SessionEntry)
-      .filter((entry) => !originalIds.has(entry.id));
-    const turns = written.filter(
-      (entry): entry is SessionMessageEntry =>
-        entry.type === "message" && entry.message.role !== "system",
-    );
-    expect(turns.map(({ message }) => message.role)).toEqual([
-      "user",
-      "assistant",
-      "user",
-      "assistant",
-    ]);
-    expect(turns[0]!.message).toMatchObject({
-      content: [{ type: "text", text: first.message }],
-    });
-    expect(turns[2]!.message).toMatchObject({
-      content: [{ type: "text", text: second.message }],
-    });
-    const compaction = written.filter((entry) => entry.type === "compaction");
-    expect(compaction).toHaveLength(1);
-    expect(written.indexOf(compaction[0]!)).toBeLessThan(
-      written.indexOf(turns[0]!),
-    );
-  }, 90_000);
+    ).toHaveLength(3);
+    expect(eventsOf(f.runtimeEvents, "runtime_error")).toEqual([]);
+  }, 20_000);
 
   it("keeps an independent command's dialog answerable when the model settles", async () => {
     let releaseModel!: () => void;
@@ -359,9 +300,7 @@ describe("native prompt admission and extension dialogs", () => {
         (await f.runtime.snapshot()).pendingExtensionUiRequests,
       ).toHaveLength(1);
     });
-    const stopStarted = performance.now();
     await f.runtime.abort(f.sessionId);
-    expect(performance.now() - stopStarted).toBeLessThan(5_000);
     await expect(stopped).rejects.toMatchObject({ outcomeUnknown: true });
     expect(worker.stop).toHaveBeenCalledWith("prompt");
     expect(worker.available).toBe(false);

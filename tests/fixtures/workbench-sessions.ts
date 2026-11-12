@@ -1,8 +1,9 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import {
-  historyFixtureEntries,
   HISTORY_FIXTURE_SESSION_ID,
+  historyFixtureEntries,
 } from "./history-session.js";
 
 const now = Date.now();
@@ -10,6 +11,21 @@ const COMPACTION_FIXTURE_SESSION_ID = "fixture-compaction";
 const ERROR_FIXTURE_SESSION_ID = "fixture-errors";
 const RESOURCE_FIXTURE_SESSION_ID = "fixture-resources";
 const PROMPT_MAP_FIXTURE_SESSION_ID = "fixture-prompt-map";
+export const COPY_FIXTURE_SESSION_ID = "fixture-saved-copy";
+export const savedCopy = {
+  user: "User source. ".repeat(6000) + "USER_COPY_TAIL",
+  response: "Assistant source. ".repeat(4500) + "ASSISTANT_COPY_TAIL",
+  final: "Final response fragment.",
+  custom: "Custom source. ".repeat(6000) + "CUSTOM_COPY_TAIL",
+  details: { note: "Custom details. ".repeat(4500) + "DETAIL_COPY_TAIL" },
+};
+
+const mixedFileContext = `${ATTACHMENT_CONTEXT_HEADING}\n- "/workspace/report.md"`;
+export const mixedCopySource = [
+  "Inspect mixed attachments in report.md.",
+  mixedFileContext,
+  "[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]",
+].join("\n\n");
 
 const richText = `## A compact result
 
@@ -179,6 +195,8 @@ const promptMapFixtureMessages = Array.from({ length: 13 }, (_, index) => {
   ];
 }).flat();
 
+const writtenResource =
+  "tests/browser/fixtures/file-previews/report%20 draft.md";
 const resourceFixtureReferences = [
   ...Array.from(
     { length: 72 },
@@ -186,18 +204,19 @@ const resourceFixtureReferences = [
       `tests/browser/fixtures/unavailable-resource-${String(index + 1).padStart(3, "0")}.txt`,
   ),
   "tests/browser/fixtures/file-previews/page.html",
+  writtenResource,
 ];
 
 /** A large, deterministic citation set exercises the same list/probe/preview
  * routes as a real session without turning ordinary presentation sessions into
- * an oversized transcript. The final HTML reference is recent-first. */
+ * an oversized transcript. The two real files stay at the top of Recent. */
 const resourceFixtureMessages = [
   {
     role: "assistant",
     content: resourceFixtureReferences.map((path, index) => ({
       type: "toolCall",
       id: `fixture-resource-${index + 1}`,
-      name: "read",
+      name: path === writtenResource ? "write" : "read",
       arguments: { path },
     })),
     provider: "workbench",
@@ -207,7 +226,56 @@ const resourceFixtureMessages = [
   },
 ];
 
-function messagesForFixture(id: string): unknown[] {
+function messagesForFixture(id: string, image?: string): unknown[] {
+  if (id === COPY_FIXTURE_SESSION_ID)
+    return [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: savedCopy.user },
+          { type: "image", mimeType: "image/png", data: image },
+        ],
+        timestamp: now,
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Private reasoning for the test" },
+          { type: "text", text: savedCopy.response },
+          {
+            type: "toolCall",
+            id: "copy-tool",
+            name: "read",
+            arguments: { path: "notes.txt" },
+          },
+          { type: "text", text: savedCopy.final },
+        ],
+        timestamp: now,
+      },
+      {
+        role: "custom",
+        customType: "copy_fixture",
+        content: savedCopy.custom,
+        details: savedCopy.details,
+        timestamp: now,
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: mixedCopySource },
+          { type: "image", mimeType: "image/png", data: image },
+        ],
+        timestamp: now,
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: mixedFileContext },
+          { type: "image", mimeType: "image/png", data: image },
+        ],
+        timestamp: now,
+      },
+    ];
   if (id === COMPACTION_FIXTURE_SESSION_ID)
     return [
       {
@@ -306,6 +374,7 @@ export async function seedWorkbenchSessions(
 ) {
   await mkdir(directory, { recursive: true });
   const sessions = [
+    [COPY_FIXTURE_SESSION_ID, "Copy saved messages"],
     ["fixture-active", "Formula rendering and spectral analysis"],
     ["fixture-history", "Review extension event lifecycle"],
     ["fixture-branch", "Earlier branch recovery fixture"],
@@ -318,8 +387,10 @@ export async function seedWorkbenchSessions(
       "Resource virtualization and sandbox fixture",
     ],
   ] as const;
-  for (const [id, name] of sessions.filter(
-    ([id]) => rich || ["fixture-active", "fixture-history"].includes(id),
+  for (const [id, name] of sessions.filter(([id]) =>
+    id === COPY_FIXTURE_SESSION_ID
+      ? rich && image
+      : rich || ["fixture-active", "fixture-history"].includes(id),
   )) {
     const sessionCwd =
       !rich && id !== "fixture-active" ? join(cwd, "extension") : cwd;
@@ -355,7 +426,7 @@ export async function seedWorkbenchSessions(
       const messages =
         !rich && id !== "fixture-active"
           ? [{ role: "user", content: name, timestamp: now }]
-          : messagesForFixture(id);
+          : messagesForFixture(id, image);
       for (const value of messages) {
         const message = value as Record<string, unknown>;
         if (message.role === "compactionSummary") {
@@ -364,6 +435,14 @@ export async function seedWorkbenchSessions(
             summary: message.summary,
             tokensBefore: message.tokensBefore,
             firstKeptEntryId: parentId,
+          });
+        } else if (message.role === "custom") {
+          append({
+            type: "custom_message",
+            customType: message.customType,
+            content: message.content,
+            details: message.details,
+            display: true,
           });
         } else append({ type: "message", message: persistedMessage(message) });
       }

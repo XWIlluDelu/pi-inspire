@@ -15,20 +15,15 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrEnhancement } from "../../server/herdr-enhancement.js";
-import {
-  assertHerdrWorkerScopesAvailable,
-  stopHerdrProcessGroup,
-} from "../../server/herdr-process-group.js";
+import { stopHerdrProcessGroup } from "../../server/herdr-process-group.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
 import { piInstallation } from "../../server/pi-runtime.js";
+import {
+  processCanRun,
+  herdrScopesAvailable as supported,
+} from "./fixtures/herdr-scopes.js";
 
 const require = createRequire(import.meta.url);
-const supported =
-  process.platform === "linux" &&
-  (await assertHerdrWorkerScopesAvailable(process.env).then(
-    () => true,
-    () => false,
-  ));
 const fixtures: {
   root: string;
   host: ChildProcess;
@@ -80,15 +75,15 @@ const rpc = new PiRpcProcess({
     }});
   },
 });
+await rpc.start();
+const pendingBash = rpc.request({ type: 'bash', command: ${JSON.stringify(`echo $$ > '${join(root, "tool.pid")}'; while :; do echo tick >> '${join(root, "writes")}'; sleep 0.05; done`)} }, null).then(() => false, () => true);
 process.on('message', async () => {
   console.error('fixture: stop requested');
   await rpc.stop();
   console.error('fixture: stopped');
-  process.send({ stopped: true });
+  process.send({ stopped: true, bashRejected: await pendingBash });
   process.disconnect();
 });
-await rpc.start();
-void rpc.request({ type: 'bash', command: ${JSON.stringify(`echo $$ > '${join(root, "tool.pid")}'; while :; do echo tick >> '${join(root, "writes")}'; sleep 0.05; done`)} }, null).catch(() => {});
 let toolPid;
 for (let i = 0; i < 200; i++) {
   try { toolPid = Number(await readFile(root + '/tool.pid', 'utf8')); break; } catch {}
@@ -149,7 +144,7 @@ process.send({ ready: true, piPid: rpc.pid, bridgePid: bridge.pid, toolPid });
   }
   // Observe shutdown before killing any child: an early Host exit must reject,
   // not strand a waiter until the outer test deadline.
-  const stopped = message<void>("stopped");
+  const stopped = message<{ bashRejected: boolean }>("stopped");
   void stopped.catch(() => {});
   const ready = await message<{
     piPid: number;
@@ -157,18 +152,6 @@ process.send({ ready: true, piPid: rpc.pid, bridgePid: bridge.pid, toolPid });
     toolPid: number;
   }>("ready");
   return { root, host, registry, stopped, ...ready };
-}
-
-async function processCanRun(pid: number): Promise<boolean> {
-  try {
-    const source = await readFile(`/proc/${pid}/stat`, "utf8");
-    return !["Z", "X"].includes(
-      source.slice(source.lastIndexOf(")") + 2).split(" ")[0]!,
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
 }
 
 async function assertStopped(root: string, ...pids: number[]) {
@@ -211,7 +194,8 @@ describe.skipIf(!supported)("Herdr real Pi detached Bash ownership", () => {
       if (mode === "Pi SIGKILL") process.kill(piPid, "SIGKILL");
       if (mode === "bridge SIGKILL") process.kill(bridgePid, "SIGKILL");
       host.send({ stop: true });
-      await stopped;
+      const receipt = await stopped;
+      if (mode === "bridge SIGKILL") expect(receipt.bashRejected).toBe(true);
       await assertStopped(root, piPid, bridgePid, toolPid);
       expect(await registry.list()).toEqual([]);
     },

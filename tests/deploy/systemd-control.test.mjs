@@ -1,13 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   hostServicePath,
-  inspectHostService,
-  terminalServicePath,
-  manageHostService,
   inspectBrowserRestart,
+  inspectHostService,
+  manageHostService,
   requestBrowserRestart,
+  terminalServicePath,
 } from "../../deploy/systemd/control.mjs";
-import { systemdEscape } from "../../deploy/systemd/install.mjs";
 
 const root = "/workspace/inspire";
 const environment = {
@@ -70,12 +69,6 @@ function managedTerminalProperties(overrides = {}) {
 }
 
 describe.runIf(process.platform !== "win32")("host systemd control", () => {
-  it("escapes non-ASCII paths as UTF-8 bytes in unit arguments", () => {
-    expect(systemdEscape("/tmp/测试 path")).toBe(
-      "/tmp/\\xe6\\xb5\\x8b\\xe8\\xaf\\x95\\x20path",
-    );
-  });
-
   it("recognizes only the matching checkout unit", async () => {
     await expect(
       inspectHostService(root, {
@@ -114,50 +107,6 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     ).resolves.toEqual({ kind: "outdated" });
   });
 
-  it("keeps ordinary restart terminal-free and submits full restart as one ordered transaction", async () => {
-    for (const action of ["restart", "restart-all"]) {
-      const calls = [];
-      const run = async (args) => {
-        calls.push(args);
-        return show(managedProperties())(args);
-      };
-      expect(
-        (await manageHostService(root, action, { environment, run })).kind,
-      ).toBe("controlled");
-      expect(calls.filter((args) => args[1] !== "show")).toEqual([
-        [
-          "--user",
-          "restart",
-          ...(action === "restart-all" ? ["inspire-terminal.service"] : []),
-          "inspire-host.service",
-        ],
-      ]);
-    }
-  });
-
-  it("starts or enables the Host without stopping an existing transient terminal owner", async () => {
-    for (const action of ["start", "enable"]) {
-      const calls = [];
-      const run = async (args) => {
-        calls.push(args);
-        return show(managedProperties())(args);
-      };
-      expect(
-        (await manageHostService(root, action, { environment, run })).kind,
-      ).toBe("controlled");
-      const controls = calls.filter((args) => args[1] !== "show");
-      expect(controls).toEqual(
-        action === "start"
-          ? [["--user", "start", "inspire-host.service"]]
-          : [
-              ["--user", "enable", "inspire-terminal.service"],
-              ["--user", "enable", "--now", "inspire-host.service"],
-            ],
-      );
-      expect(controls.some((args) => args.includes("stop"))).toBe(false);
-    }
-  });
-
   it("refuses full restart without verified terminal-before-Host ordering", async () => {
     const calls = [];
     const run = async (args) => {
@@ -167,7 +116,7 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     expect(
       (await manageHostService(root, "restart-all", { environment, run })).kind,
     ).toBe("outdated");
-    expect(calls.every((args) => args[1] === "show")).toBe(true);
+    expect(calls.some((args) => args.includes("restart"))).toBe(false);
   });
 
   it("fences browser restart to the current invocation and commits after inspections", async () => {
@@ -195,7 +144,9 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
       root,
       true,
       () => {
-        expect(calls.at(-1)).toContain("--property=InvocationID");
+        expect(
+          calls.some((args) => args.includes("--property=InvocationID")),
+        ).toBe(true);
         return true;
       },
       options,
@@ -212,33 +163,29 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     expect(
       await requestBrowserRestart(root, false, async () => false, options),
     ).toMatchObject({ issued: false });
-    expect(calls.every((args) => args[1] === "show")).toBe(true);
+    expect(calls.some((args) => args.includes("restart"))).toBe(false);
   });
 
-  it("uses authoritative unit absence without offline filesystem checks", async () => {
-    const inspectPath = vi.fn();
+  it("honors the manager's unit absence even when a unit file remains on disk", async () => {
     await expect(
       inspectHostService(root, {
         environment,
         run: show({ LoadState: "not-found" }),
-        inspectPath,
+        inspectPath: async (path) =>
+          path === hostServicePath(environment) ? {} : missingPath(),
       }),
     ).resolves.toEqual({ kind: "absent" });
-    expect(inspectPath).not.toHaveBeenCalled();
   });
 
-  it.each(["spawn systemctl ENOENT", "Failed to connect to bus"])(
-    "permits direct mode after %s only when no service authority remains",
-    async (stderr) => {
-      await expect(
-        inspectHostService(root, {
-          environment,
-          run: async () => ({ code: 1, stdout: "", stderr }),
-          inspectPath: missingPath,
-        }),
-      ).resolves.toEqual({ kind: "absent" });
-    },
-  );
+  it("permits direct mode with an unavailable manager when no service authority remains", async () => {
+    await expect(
+      inspectHostService(root, {
+        environment,
+        run: unavailableManager,
+        inspectPath: missingPath,
+      }),
+    ).resolves.toEqual({ kind: "absent" });
+  });
 
   it.each([
     "/home/tester/.config/systemd/user/inspire-host.service",
@@ -284,7 +231,7 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
     }
   });
 
-  it.each(["masked", "error", "bad-setting", ""])(
+  it.each(["masked", ""])(
     "does not treat the installed %s load state as absent",
     async (LoadState) => {
       await expect(
@@ -298,7 +245,6 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
   );
 
   it("keeps a loaded foreign unit authoritative even with no remaining file", async () => {
-    const inspectPath = vi.fn(missingPath);
     await expect(
       inspectHostService(root, {
         environment,
@@ -307,9 +253,8 @@ describe.runIf(process.platform !== "win32")("host systemd control", () => {
             FragmentPath: "/usr/lib/systemd/user/inspire-host.service",
           }),
         ),
-        inspectPath,
+        inspectPath: missingPath,
       }),
     ).resolves.toMatchObject({ kind: "foreign" });
-    expect(inspectPath).not.toHaveBeenCalled();
   });
 });

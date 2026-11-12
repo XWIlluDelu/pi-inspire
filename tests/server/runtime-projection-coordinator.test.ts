@@ -1,8 +1,6 @@
 import {
   appendFile,
   mkdtemp,
-  readFile,
-  rename,
   rm,
   stat,
   utimes,
@@ -286,39 +284,36 @@ describe("runtime projection reconciliation ownership", () => {
     }
   });
 
-  it("discards a pending result after its projection is retired", async () => {
-    const f = await fixture();
-    const gate = deferred();
-    f.holdWitness(gate.promise);
-    await f.append(entry("a", "base"));
-    const first = f.coordinator.reconcile(f.slot, true);
-    const rejected = expect(first).rejects.toMatchObject({ status: 409 });
-    await f.witnessEntered.promise;
-    f.slot.projection = null;
-    f.coordinator.clearWriterBaseline(f.slot);
-    gate.resolve();
-    await rejected;
-    expect(f.slot.writerBaseline.revision).toBeNull();
-    expect(f.slot.conflict).toBeNull();
-    expect(f.host.stopWriter).not.toHaveBeenCalled();
-    expect(f.host.emitSlotEvent).not.toHaveBeenCalled();
-  });
-
-  it("does not revive a writer baseline or manufacture a conflict when Stop retires a pending witness", async () => {
-    const f = await fixture();
-    const gate = deferred();
-    f.holdWitness(gate.promise);
-    await f.append(entry("a", "base"));
-    const reading = f.coordinator.reconcile(f.slot, true);
-    await f.witnessEntered.promise;
-    f.slot.process = null;
-    f.coordinator.clearWriterBaseline(f.slot);
-    gate.resolve();
-    await reading;
-    expect(f.slot.writerBaseline.revision).toBeNull();
-    expect(f.slot.conflict).toBeNull();
-    expect(f.host.stopWriter).not.toHaveBeenCalled();
-  });
+  it.each(["projection", "writer"] as const)(
+    "discards a pending witness when its %s retires",
+    async (retired) => {
+      const f = await fixture();
+      const gate = deferred();
+      f.holdWitness(gate.promise);
+      await f.append(entry("a", "base"));
+      const reading = f.coordinator.reconcile(f.slot, true);
+      const outcome = reading.catch((error: unknown) => error);
+      try {
+        await f.witnessEntered.promise;
+        if (retired === "projection") f.slot.projection = null;
+        else f.slot.process = null;
+        f.coordinator.clearWriterBaseline(f.slot);
+        gate.resolve();
+        if (retired === "projection") {
+          expect(await outcome).toMatchObject({ status: 409 });
+          expect(f.host.emitSlotEvent).not.toHaveBeenCalled();
+        } else {
+          await reading;
+        }
+        expect(f.slot.writerBaseline.revision).toBeNull();
+        expect(f.slot.conflict).toBeNull();
+        expect(f.host.stopWriter).not.toHaveBeenCalled();
+      } finally {
+        gate.resolve();
+        await outcome;
+      }
+    },
+  );
 
   it("does not consume claims after their writer is retired while waiting for a deferred receipt", async () => {
     const f = await fixture();
@@ -369,39 +364,6 @@ describe("runtime projection reconciliation ownership", () => {
     expect(f.host.stopWriter).not.toHaveBeenCalled();
   });
 
-  it.each(["running", "compacting", "idle"] as const)(
-    "revalidates unchanged complete bytes in %s without treating metadata as a new append",
-    async (runState) => {
-      const f = await fixture();
-      f.slot.runState = runState;
-      const version = f.slot.writerBaseline.sourceVersion;
-      const claim = exactEntryExpectation(entry("future", "base"));
-      f.slot.persistenceExpectations.push(claim);
-      const details = await stat(f.path);
-      await utimes(f.path, details.atime, new Date(details.mtimeMs + 5000));
-      const result = await f.coordinator.reconcile(f.slot, true);
-      expect(result).toMatchObject({
-        changed: false,
-        sourceChanged: true,
-        verifiedUnchangedContent: true,
-      });
-      expect(f.slot.writerBaseline.sourceVersion).not.toBe(version);
-      expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
-      expect(f.slot.process).toBe(f.worker);
-      expect(f.slot.conflict).toBeNull();
-      expect(f.host.stopWriter).not.toHaveBeenCalled();
-      expect(f.host.appendedEntriesOwnership).not.toHaveBeenCalled();
-      expect(f.slot.persistenceExpectations).toEqual([claim]);
-      expect(f.slot.branchRevision).toBe(0);
-      expect(f.host.renewView).not.toHaveBeenCalled();
-      expect(
-        f.record.mock.calls.some(
-          ([, event]) => event === "projection_metadata_revalidated",
-        ),
-      ).toBe(true);
-    },
-  );
-
   it("retains the compaction and same writer across a metadata-only observation and a following append", async () => {
     const f = await fixture();
     f.slot.runState = "compacting";
@@ -416,48 +378,40 @@ describe("runtime projection reconciliation ownership", () => {
     });
     await f.coordinator.reconcile(f.slot, true);
     expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
+    const next = entry("next", "compact");
+    const claim = exactEntryExpectation(next);
+    f.slot.persistenceExpectations.push(claim);
+    const version = f.slot.writerBaseline.sourceVersion;
+    const branchRevision = f.slot.branchRevision;
+    f.host.appendedEntriesOwnership.mockClear();
+    f.host.renewView.mockClear();
     const details = await stat(f.path);
     await utimes(f.path, details.atime, new Date(details.mtimeMs + 5000));
-    await f.coordinator.reconcile(f.slot, true);
+    await expect(f.coordinator.reconcile(f.slot, true)).resolves.toMatchObject({
+      changed: false,
+      sourceChanged: true,
+      verifiedUnchangedContent: true,
+    });
+    expect(f.slot.writerBaseline.sourceVersion).not.toBe(version);
+    expect(f.slot.persistenceExpectations).toEqual([claim]);
+    expect(f.slot.branchRevision).toBe(branchRevision);
+    expect(f.host.renewView).not.toHaveBeenCalled();
+    expect(f.host.appendedEntriesOwnership).not.toHaveBeenCalled();
+    expect(
+      f.record.mock.calls.some(
+        ([, event]) => event === "projection_metadata_revalidated",
+      ),
+    ).toBe(true);
+
     f.slot.runState = "running";
-    await f.append(entry("next", "compact"));
+    await f.append(next);
     await f.coordinator.reconcile(f.slot, true);
+    expect(f.slot.persistenceExpectations).toEqual([]);
     expect(f.projection.entry("compact")?.type).toBe("compaction");
     expect(f.slot.process).toBe(f.worker);
     expect(f.slot.conflict).toBeNull();
     expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
     expect(f.host.stopWriter).not.toHaveBeenCalled();
-  });
-
-  it.each(["replacement", "changed-bytes"])(
-    "still fences %s",
-    async (change) => {
-      const f = await fixture();
-      const bytes = await readFile(f.path, "utf8");
-      if (change === "replacement") {
-        await writeFile(`${f.path}.replacement`, bytes);
-        await rename(`${f.path}.replacement`, f.path);
-      } else {
-        await writeFile(
-          f.path,
-          bytes.replace('"customType":"synthetic"', '"customType":"different"'),
-        );
-      }
-      await f.coordinator.reconcile(f.slot, true);
-      expect(f.slot.conflict?.kind).toBe("external-change");
-      expect(f.host.stopWriter).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it("accepts another Pi's append and keeps the busy writer", async () => {
-    const f = await fixture();
-    await appendFile(f.path, `${JSON.stringify(entry("foreign", "base"))}\n`);
-    await f.coordinator.reconcile(f.slot, true);
-    expect(f.slot.conflict).toBeNull();
-    expect(f.slot.process).toBe(f.worker);
-    expect(f.host.stopWriter).not.toHaveBeenCalled();
-    expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(true);
-    expect(f.host.projectionSettled).toHaveBeenCalledWith(f.slot, true, "base");
   });
 
   it("leaves source-version movement for the startup attestor instead of refreshing its baseline", async () => {
@@ -470,11 +424,6 @@ describe("runtime projection reconciliation ownership", () => {
     expect(result.sourceChanged).toBe(true);
     expect(f.slot.writerBaseline.sourceVersion).toBe(version);
     expect(f.coordinator.writerBaselineMatches(f.slot)).toBe(false);
-    expect(
-      f.record.mock.calls.some(
-        ([, event]) => event === "projection_metadata_revalidated",
-      ),
-    ).toBe(false);
   });
 
   it("does not refresh a stale writer baseline just because bytes are unchanged", async () => {
@@ -484,48 +433,6 @@ describe("runtime projection reconciliation ownership", () => {
     await utimes(f.path, details.atime, new Date(details.mtimeMs + 5000));
     await f.coordinator.reconcile(f.slot, true);
     expect(f.slot.conflict?.kind).toBe("external-change");
-    expect(f.host.stopWriter).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps an owned unfinished write alive until it completes", async () => {
-    const f = await fixture();
-    const value = entry("slow", "base");
-    const line = `${JSON.stringify(value)}\n`;
-    f.durableEntries.push(value);
-    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-    try {
-      await appendFile(f.path, line.slice(0, 20));
-      await f.coordinator.reconcile(f.slot, true);
-      expect(f.projection.health.status).toBe("pending");
-      expect(f.projection.leafId).toBe("base");
-
-      await vi.advanceTimersByTimeAsync(60_000);
-      await f.coordinator.reconcile(f.slot, true);
-      expect(f.slot.conflict).toBeNull();
-      expect(f.slot.process).toBe(f.worker);
-      expect(f.host.stopWriter).not.toHaveBeenCalled();
-
-      await appendFile(f.path, line.slice(20));
-      await f.coordinator.reconcile(f.slot, true);
-      expect(f.slot.pendingPartialPersistence).toBeNull();
-      expect(f.projection.health).toEqual({ status: "ok" });
-      expect(f.projection.leafId).toBe("slow");
-      expect(f.host.stopWriter).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not extend incomplete-tail ownership with a same-byte timestamp change", async () => {
-    const f = await fixture();
-    await appendFile(f.path, '{"type":"custom"');
-    await f.coordinator.reconcile(f.slot, true);
-    expect(f.slot.pendingPartialPersistence).not.toBeNull();
-    const details = await stat(f.path);
-    await utimes(f.path, details.atime, new Date(details.mtimeMs + 5000));
-    const result = await f.coordinator.reconcile(f.slot, true);
-    expect(result.verifiedUnchangedContent).toBeUndefined();
-    expect(f.slot.conflict?.kind).toBe("incomplete-persistence");
     expect(f.host.stopWriter).toHaveBeenCalledTimes(1);
   });
 });

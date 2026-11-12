@@ -52,29 +52,19 @@ test("finds npm through a quoted Windows PATH containing semicolons and copied k
   assert.deepEqual(invocation.args, [npmCli, "--version"]);
 });
 
-test("uses copied ProgramFiles casing for the current Windows PowerShell runtime", () => {
-  const invocation = npmInvocation(["--version"], {
-    platform: "win32",
-    executable: "C:\\missing\\node.exe",
-    environment: { programfiles: "C:\\Program Files" },
-  });
-  assert.equal(
-    invocation.command,
-    "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
-  );
-});
-
-test("keeps Windows fallback arguments out of PowerShell source text", () => {
+test("finds the Windows PowerShell fallback and passes arguments as data", () => {
   const hostile = "C:\\project & echo injected";
   const invocation = npmInvocation(["install", hostile], {
     platform: "win32",
     executable: "C:\\missing\\node.exe",
-    environment: { ProgramFiles: "C:\\Program Files" },
+    environment: { programfiles: "C:\\Program Files" },
   });
   const script = invocation.args.at(-1);
 
-  assert.match(invocation.command, /pwsh\.exe$/iu);
-  assert.equal(typeof script, "string");
+  assert.equal(
+    invocation.command,
+    "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  );
   assert.doesNotMatch(script, /echo injected/u);
   assert.deepEqual(
     JSON.parse(invocation.environment.INSPIRE_NPM_ARGUMENTS_JSON),

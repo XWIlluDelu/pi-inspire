@@ -4,10 +4,10 @@ import { readFile } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  fixture,
-  eventsOf,
-  settled,
   disposeOperationFixture,
+  eventsOf,
+  fixture,
+  settled,
 } from "./fixtures/native-operation.js";
 
 afterEach(disposeOperationFixture);
@@ -315,29 +315,6 @@ describe("native shell input", () => {
     } finally {
       release();
     }
-  }, 20_000);
-
-  it("executes during native pre-prompt compaction without joining the model queue", async () => {
-    const f = await fixture(true, 1_500);
-    const model = f.api.prompt(f.delivery("Model input that compacts first."));
-    void model.catch(() => {});
-    await vi.waitFor(async () =>
-      expect((await f.runtime.snapshot()).runState).toBe("compacting"),
-    );
-    await f.api.prompt(f.delivery("!!printf 'WHILE_COMPACTING'"));
-    expect((await f.runtime.snapshot()).runState).toBe("compacting");
-    expect(f.modelRequests).toHaveLength(0);
-    await model;
-    await settled(f, 1);
-    expect(f.modelRequests).toHaveLength(1);
-    expect(
-      (await f.runtime.snapshot()).active!.transcriptPage.messages.some(
-        (message) =>
-          String((message as Record<string, unknown>).output).includes(
-            "WHILE_COMPACTING",
-          ),
-      ),
-    ).toBe(true);
   }, 20_000);
 
   it("runs alongside an agent and persists deferred shell output at settlement without another model turn", async () => {

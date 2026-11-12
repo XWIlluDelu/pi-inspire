@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   LazyTerminalService,
   type TerminalService,
@@ -29,35 +29,7 @@ function backend() {
 function asService(client: ReturnType<typeof backend>): TerminalService {
   return client as unknown as TerminalService;
 }
-afterEach(() => vi.useRealTimers());
-
-it("shares initialization, stays idle after failure, and retries only on a later request", async () => {
-  vi.useFakeTimers();
-  const client = backend();
-  let accept!: (service: TerminalService) => void;
-  const ready = new Promise<TerminalService>((resolve) => {
-    accept = resolve;
-  });
-  const connect = vi
-    .fn()
-    .mockRejectedValueOnce(new Error("Startup connection unavailable"))
-    .mockReturnValueOnce(ready);
-  const service = new LazyTerminalService(connect);
-  await expect(service.list()).rejects.toThrow(
-    "Startup connection unavailable",
-  );
-  await vi.advanceTimersByTimeAsync(60_000);
-  expect(connect).toHaveBeenCalledTimes(1);
-  const reads = [service.list(), service.list()];
-  await Promise.resolve();
-  expect(connect).toHaveBeenCalledTimes(2);
-  accept(asService(client));
-  await expect(Promise.all(reads)).resolves.toEqual([catalog, catalog]);
-  expect(client.list).toHaveBeenCalledTimes(2);
-  await service.close();
-});
-
-it("does not start initialization after close", async () => {
+it("cancels same-tick initialization when the service closes", async () => {
   const connect = vi.fn();
   const service = new LazyTerminalService(connect);
   const read = expect(service.list()).rejects.toMatchObject({

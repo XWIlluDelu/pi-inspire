@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   access,
@@ -11,26 +11,33 @@ import {
 } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstanceHttpControl } from "../../server/instance-control.mjs";
 import {
+  completeInstanceShutdown,
   consumeStopRequest,
   INSTANCE_STATE_VERSION,
   type InstanceState,
   inspectInstance,
+  instanceShutdownRequested,
   instanceUrl,
   portAvailable,
   processStartIdentity,
   removeInstanceState,
+  requestInstanceShutdown,
   stopManagedInstance,
+  watchInstanceShutdown,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
 
 const temporaryDirectories: string[] = [];
 const servers: Server[] = [];
+const controls: Array<() => void> = [];
 
 afterEach(async () => {
+  for (const close of controls.splice(0)) close();
   await Promise.all(
     servers
       .splice(0)
@@ -160,7 +167,9 @@ describe("Inspire instance state", () => {
     const path = await temporaryStatePath();
     const control = new InstanceHttpControl();
     let owner: InstanceState;
+    let requests = 0;
     const server = createServer(async (request, response) => {
+      requests++;
       expect(request.headers.authorization).toBeUndefined();
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(chunk);
@@ -195,6 +204,23 @@ describe("Inspire instance state", () => {
       state: value,
     });
 
+    await writeFile(
+      path,
+      JSON.stringify({ ...value, durableWorkerRelease: undefined }),
+      { mode: 0o600 },
+    );
+    await expect(inspectInstance(path, expected)).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(stopManagedInstance(path, expected)).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(stat(path + ".shutdown-request")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(requests).toBe(1);
+
+    await writeInstanceState(path, value);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     servers.splice(servers.indexOf(server), 1);
     await expect(
@@ -287,5 +313,115 @@ describe("Inspire instance state", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     servers.splice(servers.indexOf(server), 1);
     await expect(portAvailable("127.0.0.1", address.port)).resolves.toBe(true);
+  });
+});
+
+async function shutdownFixture() {
+  const path = await temporaryStatePath();
+  return {
+    path,
+    state: {
+      ...state(),
+      root: dirname(path),
+      startedAt: "2026-10-19T00:00:00Z",
+    },
+  };
+}
+
+describe("authenticated local Host shutdown", () => {
+  it.runIf(process.platform !== "win32")(
+    "rejects a FIFO without blocking filesystem workers",
+    async () => {
+      const f = await shutdownFixture();
+      await promisify(execFile)("mkfifo", [f.path + ".shutdown-request"]);
+      expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    },
+  );
+  it("authenticates a private Host-only request and completes it once", async () => {
+    const f = await shutdownFixture();
+    const path = f.path + ".shutdown-request";
+    const nonce = await requestInstanceShutdown(
+      f.path,
+      f.state,
+      15_000,
+      "host-only",
+    );
+    const original = await readFile(path, "utf8");
+    expect(Buffer.byteLength(original)).toBeLessThan(2048);
+    expect(original).not.toContain(f.state.token);
+    expect(original).not.toContain(f.state.root);
+    if (process.platform !== "win32")
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+
+    const { scope, ...unscoped } = JSON.parse(original);
+    expect(scope).toBe("host-only");
+    await writeFile(path, JSON.stringify(unscoped));
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(path, original);
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(true);
+
+    const shutdown = vi.fn(async () => {
+      await completeInstanceShutdown(f.path, f.state, true, nonce);
+    });
+    controls.push(watchInstanceShutdown(f.path, f.state, shutdown));
+    await vi.waitFor(() =>
+      expect(shutdown).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ nonce, scope: "host-only" }),
+      ),
+    );
+    await shutdown.mock.results[0]!.value;
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    expect(await readFile(f.path + ".shutdown-result", "utf8")).not.toContain(
+      f.state.token,
+    );
+  });
+
+  it.each([
+    { token: "different-token" },
+    { pid: process.pid + 1 },
+    { processStartTime: "reused-pid" },
+    { startedAt: "2026-10-19T00:00:01Z" },
+    { root: "different-installation" },
+    { host: "localhost" },
+    { port: 41235 },
+  ])(
+    "rejects other credentials, incarnation or configuration: %j",
+    async (change) => {
+      const f = await shutdownFixture();
+      await requestInstanceShutdown(f.path, { ...f.state, ...change });
+      expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    },
+  );
+
+  it("rejects an expired authentic request and tampered payload/MAC", async () => {
+    const f = await shutdownFixture();
+    await requestInstanceShutdown(f.path, f.state, -1);
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await requestInstanceShutdown(f.path, f.state);
+    const original = JSON.parse(
+      await readFile(f.path + ".shutdown-request", "utf8"),
+    );
+    await writeFile(
+      f.path + ".shutdown-request",
+      JSON.stringify({ ...original, expiresAt: original.expiresAt + 1 }),
+    );
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(
+      f.path + ".shutdown-request",
+      JSON.stringify({ ...original, signature: "X".repeat(43) }),
+    );
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+    await writeFile(f.path + ".shutdown-request", "x".repeat(4096));
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
+  });
+
+  it("never runs a disposed monitor, including a request already being read", async () => {
+    const f = await shutdownFixture();
+    await requestInstanceShutdown(f.path, f.state);
+    const shutdown = vi.fn(async () => {});
+    const close = watchInstanceShutdown(f.path, f.state, shutdown);
+    close();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });

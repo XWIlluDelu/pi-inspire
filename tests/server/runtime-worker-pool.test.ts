@@ -5,15 +5,18 @@ import { type PiRpcProcess } from "../../server/pi-rpc.js";
 import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
 
 import {
-  FakeRpc,
-  record,
-  waitForReady,
-  preview,
   catalog,
-  trackedAttachmentStore,
   deferredSignal,
-  initializeRuntimeFixture,
   disposeRuntimeFixture,
+  FakeRpc,
+  initializeRuntimeFixture,
+  persistedRecord,
+  preview,
+  record,
+  schedulingRuntime,
+  trackedAttachmentStore,
+  trackRuntime,
+  waitForReady,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -24,10 +27,15 @@ describe("worker and projection retention", () => {
     const spawn = vi.fn(() => {
       throw new Error("Viewing must not launch Pi");
     });
+    const sessions = await Promise.all(
+      ["a", "b"].map((id) => persistedRecord(id)),
+    );
     const runtime = new RuntimeController(
-      catalog(["a", "b"].map((id) => record(id, "/project"))),
+      catalog(sessions),
       trackedAttachmentStore(),
-      { createProcess: spawn, openSessionProjection: preview },
+      {
+        createProcess: spawn,
+      },
     );
     const first = runtime.retainSessionView("a");
     const second = runtime.retainSessionView("a");
@@ -36,7 +44,9 @@ describe("worker and projection retention", () => {
       const initial = await runtime.snapshot("a");
       await runtime.snapshot("b");
       await runtime.composerHistory("a");
-      await runtime.transcriptUserTurns("b");
+      await expect(runtime.transcriptUserTurns("b")).resolves.toMatchObject({
+        turns: [expect.objectContaining({ snippet: "persisted:b" })],
+      });
       expect(runtime.activeSessionId).toBeNull();
       expect(spawn).not.toHaveBeenCalled();
       const restart = runtime.reserveMaintenanceRestart();
@@ -69,300 +79,140 @@ describe("worker and projection retention", () => {
     }
   });
 
-  it("keeps an idle worker viewed by another browser until its observer leaves", async () => {
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog(
-        ["a", "b", "c", "d", "e", "f"].map((id) => record(id, "/project")),
-      ),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    const release = runtime.retainSessionView("a");
+  it("reclaims only idle workers as browser views, prompts, and extension answers release them", async () => {
+    const ids = [
+      "busy",
+      "dialog",
+      "queued",
+      "viewed",
+      "idle",
+      "f",
+      "g",
+      "h",
+      "current",
+    ];
+    const { runtime, workers } = schedulingRuntime({
+      sessions: ids.map((id) => record(id, "/project")),
+    });
+    const released = deferredSignal();
+    let responding: Promise<void> | undefined;
+    const releaseView = runtime.retainSessionView("viewed");
+    const open = async (id: string) => {
+      await runtime.openSession(id);
+      await waitForReady(runtime, id);
+    };
+    const worker = (id: string) =>
+      workers.find((item) => item.sessionId === id)!;
+    const liveWorkers = () =>
+      workers.filter((item) => item.stops === 0).map((item) => item.sessionId);
+
     try {
-      for (const id of ["a", "b", "c", "d", "e", "f"]) {
-        await runtime.openSession(id);
-        await waitForReady(runtime, id);
-      }
+      await open("busy");
+      worker("busy").emit("event", { type: "agent_start" });
+      await open("dialog");
+      const dialog = worker("dialog");
+      dialog.emit("event", {
+        type: "extension_ui_request",
+        id: "question",
+        method: "confirm",
+      });
+      await open("queued");
+      await runtime.prompt({
+        sessionId: "queued",
+        message: "Before agent_start",
+      });
+      await open("viewed");
+      for (const id of ids.slice(4, -1)) await open(id);
+      await vi.waitFor(() => expect(liveWorkers()).toEqual(ids.slice(0, -1)));
+      expect((await runtime.snapshot()).sessionStatuses.queued).toMatchObject({
+        runState: "queued",
+        indicator: "running",
+      });
+
+      const ackStarted = deferredSignal();
+      dialog.responseOverrides.set("get_state", async () => {
+        ackStarted.resolve();
+        await released.promise;
+        return { sessionId: "dialog", isStreaming: false };
+      });
+      responding = runtime.extensionUiResponse({
+        sessionId: "dialog",
+        id: "question",
+        confirmed: true,
+      });
+      await ackStarted.promise;
+      await open("current");
       await vi.waitFor(() =>
-        expect(workers.find((worker) => worker.sessionId === "b")?.stops).toBe(
-          1,
-        ),
+        expect(liveWorkers()).toEqual(ids.filter((id) => id !== "idle")),
       );
-      expect(workers.find((worker) => worker.sessionId === "a")?.stops).toBe(0);
-      release();
-      await vi.waitFor(() =>
-        expect(workers.find((worker) => worker.sessionId === "a")?.stops).toBe(
-          1,
-        ),
+
+      worker("busy").emit("event", { type: "agent_settled" });
+      releaseView();
+      await vi.waitFor(() => {
+        expect(liveWorkers()).toEqual([
+          "dialog",
+          "queued",
+          "f",
+          "g",
+          "h",
+          "current",
+        ]);
+      });
+      released.resolve();
+      await responding;
+      expect(dialog.uiResponses).toEqual([{ id: "question", confirmed: true }]);
+
+      worker("queued").emit("event", { type: "agent_start" });
+      worker("queued").emit("event", {
+        type: "queue_update",
+        steering: ["parked"],
+        followUp: [],
+      });
+      worker("queued").emit("event", { type: "agent_settled" });
+      await vi.waitFor(() => {
+        expect(liveWorkers()).toHaveLength(MAX_IDLE_WORKERS + 2);
+        expect(worker("queued").stops).toBe(0);
+      });
+      worker("queued").emit("event", {
+        type: "queue_update",
+        steering: [],
+        followUp: [],
+      });
+      await vi.waitFor(() => {
+        expect(liveWorkers()).toHaveLength(MAX_IDLE_WORKERS + 1);
+        expect(worker("queued").stops).toBe(1);
+      });
+      expect((await runtime.snapshot("queued")).active?.sessionId).toBe(
+        "queued",
       );
+      expect(runtime.activeSessionId).toBe("current");
+      expect(liveWorkers()).not.toContain("queued");
+
+      await open("queued");
+      expect(
+        workers
+          .filter((item) => item.sessionId === "queued")
+          .map((item) => item.stops),
+      ).toEqual([1, 0]);
     } finally {
-      release();
+      released.resolve();
+      await responding?.catch(() => undefined);
+      releaseView();
       await runtime.close();
     }
   });
 
-  it("keeps an accepted prompt non-evictable until its lifecycle event arrives", async () => {
-    const store = trackedAttachmentStore();
-    const ids = ["a", "b", "c", "d", "e", "f"];
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog(ids.map((id) => record(id, "/tmp"))),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
+  it("reclaims failed projections while retaining their status after worker exit", async () => {
+    const ids = Array.from(
+      { length: MAX_IDLE_WORKERS + 2 },
+      (_, index) => `failed-${index}`,
     );
-    for (const id of ids.slice(0, 4)) await runtime.openSession(id);
-    await runtime.prompt({
-      sessionId: "a",
-      message: "accepted before agent_start",
-    });
-    await runtime.openSession("e");
-    await runtime.openSession("f");
-
-    await vi.waitFor(() =>
-      expect(workers.find((worker) => worker.sessionId === "b")?.stops).toBe(1),
-    );
-    expect(workers.find((worker) => worker.sessionId === "a")?.stops).toBe(0);
-    expect((await runtime.snapshot()).sessionStatuses.a).toMatchObject({
-      runState: "queued",
-      indicator: "running",
-    });
-    await runtime.close();
-  });
-
-  it("keeps an extension-response worker protected until Pi acknowledges the ordered input", async () => {
-    const store = trackedAttachmentStore();
-    const ids = ["a", "b", "c", "d", "e", "f"];
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog(ids.map((id) => record(id, "/project"))),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    for (const id of ids.slice(0, 4)) await runtime.openSession(id);
-    const workerA = workers.find((worker) => worker.sessionId === "a")!;
-    workerA.emit("event", {
-      type: "extension_ui_request",
-      id: "question-a",
-      method: "confirm",
-    });
-
-    const { promise: ackGate, resolve: releaseAck } = deferredSignal();
-    const { promise: started, resolve: ackStarted } = deferredSignal();
-    const request = workerA.request.bind(workerA);
-    workerA.request = async <T>(
-      command: Record<string, unknown>,
-    ): Promise<T> => {
-      if (command.type === "get_state") {
-        ackStarted();
-        await ackGate;
-      }
-      return request<T>(command);
-    };
-
-    const responding = runtime.extensionUiResponse({
-      sessionId: "a",
-      id: "question-a",
-      confirmed: true,
-    });
-    await started;
-    await runtime.openSession("e");
-    await runtime.openSession("f");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    expect(workerA.stops).toBe(0);
-
-    releaseAck();
-    await responding;
-    expect(workerA.uiResponses).toEqual([
-      { id: "question-a", confirmed: true },
-    ]);
-    await runtime.close();
-  });
-
-  it("bounds the idle worker cache without stopping busy, queued, or extension-blocked sessions", async () => {
-    const store = trackedAttachmentStore();
-    const ids = ["a", "b", "c", "d", "e", "f", "g"];
-    const workers: FakeRpc[] = [];
-    const previewCalls = new Map<string, number>();
-    const runtime = new RuntimeController(
-      catalog(ids.map((id) => record(id, "/project"))),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: async (session) => {
-          previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
-          return preview(session);
-        },
-      },
-    );
-
-    await runtime.openSession("a");
-    await waitForReady(runtime, "a");
-    workers[0]!.emit("event", { type: "agent_start" });
-    await runtime.openSession("b");
-    await waitForReady(runtime, "b");
-    workers[1]!.emit("event", {
-      type: "extension_ui_request",
-      id: "question-b",
-      method: "confirm",
-    });
-    await runtime.openSession("c");
-    await waitForReady(runtime, "c");
-    workers[2]!.emit("event", {
-      type: "queue_update",
-      steering: ["parked"],
-      followUp: [],
-    });
-    for (const id of ids.slice(3)) await runtime.openSession(id);
-
-    await vi.waitFor(() =>
-      expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
-        MAX_IDLE_WORKERS + 4,
-      ),
-    );
-    expect(workers[0]!.stops).toBe(0); // busy
-    expect(workers[1]!.stops).toBe(0); // awaiting extension input
-    expect(workers[2]!.stops).toBe(0); // queued input owns worker memory
-
-    workers[0]!.emit("event", { type: "agent_settled" });
-    await runtime.extensionUiResponse({
-      sessionId: "b",
-      id: "question-b",
-      confirmed: true,
-    });
-    await vi.waitFor(() =>
-      expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
-        MAX_IDLE_WORKERS + 2,
-      ),
-    );
-    expect(workers[2]!.stops).toBe(0);
-
-    workers[2]!.emit("event", {
-      type: "queue_update",
-      steering: [],
-      followUp: [],
-    });
-    await vi.waitFor(() =>
-      expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
-        MAX_IDLE_WORKERS + 1,
-      ),
-    );
-
-    // Reopening a reclaimed session transparently starts one replacement,
-    // after the previous process and sole projection have stopped.
-    await runtime.openSession("c");
-    await vi.waitFor(() =>
-      expect(workers.filter((worker) => worker.sessionId === "c")).toHaveLength(
-        2,
-      ),
-    );
-    expect(
-      workers
-        .filter((worker) => worker.sessionId === "c")
-        .map((worker) => worker.stops),
-    ).toEqual([1, 0]);
-    expect(previewCalls.get("c")).toBe(2);
-    await runtime.close();
-  });
-
-  it("bounds dormant slots and status projection across hundreds of opens and reopens evicted sessions", async () => {
-    const store = trackedAttachmentStore();
-    const ids = Array.from({ length: 240 }, (_, index) => `session-${index}`);
-    const workers: FakeRpc[] = [];
-    const previewCalls = new Map<string, number>();
-    const runtime = new RuntimeController(
-      catalog(ids.map((id) => record(id, "/project"))),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: async (session) => {
-          previewCalls.set(session.id, (previewCalls.get(session.id) ?? 0) + 1);
-          return preview(session);
-        },
-      },
-    );
-    for (const id of ids) await runtime.openSession(id);
-    const slots = (runtime as unknown as { slots: Map<string, unknown> }).slots;
-    await vi.waitFor(() =>
-      expect(slots.size).toBeLessThanOrEqual(MAX_IDLE_WORKERS + 1),
-    );
-    const snapshot = await runtime.snapshot();
-    expect(Object.keys(snapshot.sessionStatuses ?? {})).toHaveLength(
-      slots.size,
-    );
-    expect(workers.filter((worker) => worker.stops === 0)).toHaveLength(
-      MAX_IDLE_WORKERS + 1,
-    );
-
-    expect(slots.has(ids[0]!)).toBe(false);
-    const workerCount = workers.length;
-    const restored = await runtime.snapshot(ids[0]!);
-    expect(restored.active?.sessionId).toBe(ids[0]);
-    expect(workers).toHaveLength(workerCount);
-    expect(previewCalls.get(ids[0]!)).toBe(2);
-    expect((await runtime.snapshot()).active?.sessionId).toBe(ids.at(-1));
-
-    const reopened = await runtime.openSession(ids[0]!);
-    expect(reopened.active?.sessionId).toBe(ids[0]);
-    await vi.waitFor(() =>
-      expect(
-        workers.filter((worker) => worker.sessionId === ids[0]),
-      ).toHaveLength(2),
-    );
-    await vi.waitFor(() =>
-      expect(slots.size).toBeLessThanOrEqual(MAX_IDLE_WORKERS + 1),
-    );
-    await runtime.close();
-  }, 30_000);
-
-  it("reclaims processless failed projections while retaining lightweight status across hundreds of exits", async () => {
-    const store = trackedAttachmentStore();
-    const ids = Array.from({ length: 220 }, (_, index) => `failed-${index}`);
-    const workers: FakeRpc[] = [];
     const errors = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
-    const runtime = new RuntimeController(
-      catalog(ids.map((id) => record(id, "/tmp"))),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
+    const { runtime, workers } = schedulingRuntime({
+      sessions: ids.map((id) => record(id, "/tmp")),
+    });
     try {
       type ReclaimSlot = {
         projection: { close(): Promise<void> } | null;
@@ -410,20 +260,9 @@ describe("worker and projection retention", () => {
   }, 30_000);
 
   it("reloads a reclaimed conflicted projection without starting a writer until abort clears policy", async () => {
-    const store = trackedAttachmentStore();
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp"), record("b", "/tmp")]),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
+    const { runtime, workers } = schedulingRuntime({
+      sessions: [record("a", "/tmp"), record("b", "/tmp")],
+    });
     type InternalSlot = {
       projection: unknown;
       conflict: {
@@ -437,40 +276,37 @@ describe("worker and projection retention", () => {
     };
     const slots = (runtime as unknown as { slots: Map<string, InternalSlot> })
       .slots;
-    try {
-      await runtime.openSession("a");
-      await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
-      workers[0]!.emit("exit", new Error("conflicted exit"));
-      const a = slots.get("a")!;
-      a.conflict = {
-        kind: "projection-failure",
-        message: "retained conflict",
-        revision: 1,
-      };
-      a.runState = "conflict";
-      a.attention = "failed";
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
+    workers[0]!.emit("exit", new Error("conflicted exit"));
+    const a = slots.get("a")!;
+    a.conflict = {
+      kind: "projection-failure",
+      message: "retained conflict",
+      revision: 1,
+    };
+    a.runState = "conflict";
+    a.attention = "failed";
 
-      await runtime.openSession("b");
-      await vi.waitFor(() => expect(a.projection).toBeNull());
-      await runtime.openSession("a");
-      await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-      expect(a.projection).toBeTruthy();
-      expect(a.conflict?.message).toBe("retained conflict");
+    await runtime.openSession("b");
+    await vi.waitFor(() => expect(a.projection).toBeNull());
+    await runtime.openSession("a");
+    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    expect(a.projection).toBeTruthy();
+    expect(a.conflict?.message).toBe("retained conflict");
+    expect(workers.filter((worker) => worker.sessionId === "a")).toHaveLength(
+      1,
+    );
+
+    await runtime.abort("a");
+    expect(a.conflict).toBeNull();
+    await runtime.prompt({ sessionId: "a", message: "after recovery" });
+    await vi.waitFor(() =>
       expect(workers.filter((worker) => worker.sessionId === "a")).toHaveLength(
-        1,
-      );
-
-      await runtime.abort("a");
-      expect(a.conflict).toBeNull();
-      await runtime.prompt({ sessionId: "a", message: "after recovery" });
-      await vi.waitFor(() =>
-        expect(
-          workers.filter((worker) => worker.sessionId === "a"),
-        ).toHaveLength(2),
-      );
-    } finally {
-      await runtime.close();
-    }
+        2,
+      ),
+    );
   });
 
   it("keeps a reconciliation conflict sticky across agent settlement", async () => {
@@ -498,30 +334,27 @@ describe("worker and projection retention", () => {
     };
     const slots = (runtime as unknown as { slots: Map<string, InternalSlot> })
       .slots;
-    try {
-      await runtime.openSession("a");
-      await vi.waitFor(() => expect(worker?.starts).toBe(1));
-      const slot = slots.get("a")!;
-      slot.conflict = {
-        kind: "external-change",
-        message: "Session changed on disk",
-        revision: 2,
-      };
-      slot.runState = "conflict";
-      worker!.emit("event", { type: "agent_settled" });
-      await vi.waitFor(() => expect(worker?.stops).toBe(1));
-      expect(slot.conflict).toEqual({
-        kind: "external-change",
-        message: "Session changed on disk",
-        revision: 2,
-      });
-      expect(slot.runState).toBe("conflict");
-      await expect(
-        runtime.prompt({ sessionId: "a", message: "must not restart" }),
-      ).rejects.toThrow("Session changed on disk");
-      expect(worker?.starts).toBe(1);
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(worker?.starts).toBe(1));
+    const slot = slots.get("a")!;
+    slot.conflict = {
+      kind: "external-change",
+      message: "Session changed on disk",
+      revision: 2,
+    };
+    slot.runState = "conflict";
+    worker!.emit("event", { type: "agent_settled" });
+    await vi.waitFor(() => expect(worker?.stops).toBe(1));
+    expect(slot.conflict).toEqual({
+      kind: "external-change",
+      message: "Session changed on disk",
+      revision: 2,
+    });
+    expect(slot.runState).toBe("conflict");
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "must not restart" }),
+    ).rejects.toThrow("Session changed on disk");
+    expect(worker?.starts).toBe(1);
   });
 });

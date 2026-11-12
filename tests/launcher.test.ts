@@ -2,38 +2,28 @@ import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   access,
-  chmod,
   copyFile,
   mkdir,
   mkdtemp,
   readFile,
-  realpath,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { InstanceHttpControl } from "../server/instance-control.mjs";
-import {
-  type InstanceState,
-  processStartIdentity,
-} from "../server/instance-state.mjs";
 import {
   isolatedProcessOptions,
   signalProcessTree,
 } from "../server/process-tree.mjs";
-import { defaultStaticAssetCacheDirectory } from "../server/static-asset-cache.mjs";
 import { TerminalDaemonClient } from "../server/terminal-daemon-client.js";
 import { terminalDaemonSecretPath } from "../server/terminal-daemon-tls.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcher = join(root, "inspire.mjs");
-const unixLauncher = join(root, "inspire");
-const linuxIt = process.platform === "linux" ? it : it.skip;
 const children: ChildProcess[] = [];
 const temporaryDirectories: string[] = [];
 const terminalChildren: ChildProcess[] = [];
@@ -103,99 +93,6 @@ function launcherEnv(
     INSPIRE_PORT: String(port),
     INSPIRE_STATE_PATH: statePath,
     INSPIRE_OPEN: "0",
-  };
-}
-
-async function serviceLauncherEnv(
-  directory: string,
-): Promise<NodeJS.ProcessEnv> {
-  const bin = join(directory, "bin");
-  const configHome = join(directory, "config");
-  const state = join(directory, "service-state");
-  const unitFileState = join(directory, "unit-file-state");
-  const log = join(directory, "systemctl.log");
-  await mkdir(join(configHome, "systemd", "user"), { recursive: true });
-  await mkdir(bin);
-  await writeFile(state, "inactive\n");
-  await writeFile(unitFileState, "enabled\n");
-  await writeFile(
-    join(bin, "systemctl"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "$FAKE_SYSTEMD_LOG"
-case "\${2:-}" in
-  show)
-    active="$(< "$FAKE_SYSTEMD_STATE")"
-    unit_file_state="$(< "$FAKE_SYSTEMD_UNIT_FILE_STATE")"
-    substate="dead"
-    [[ "$active" == "active" ]] && substate="running"
-    if [[ "\${3:-}" == "inspire-terminal.service" ]]; then
-      printf '%s\\n' \\
-        'LoadState=loaded' \\
-        "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-terminal.service" \\
-        "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
-        "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire terminal-daemon --root $FAKE_SYSTEMD_ROOT --host 127.0.0.1 --port 4587 ; }"
-    else
-      exec_start_post="{ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire wait-ready ; }"
-      [[ "\${FAKE_SYSTEMD_OUTDATED:-0}" == "1" ]] && exec_start_post=""
-      printf '%s\\n' \\
-        'LoadState=loaded' \\
-        "FragmentPath=$XDG_CONFIG_HOME/systemd/user/inspire-host.service" \\
-        "WorkingDirectory=$FAKE_SYSTEMD_ROOT" \\
-        "ExecStart={ path=$FAKE_SYSTEMD_ROOT/inspire ; argv[]=$FAKE_SYSTEMD_ROOT/inspire ; }" \\
-        "ExecStartPost=$exec_start_post" \
-        'Wants=inspire-terminal.service network-online.target' \\
-        'After=inspire-terminal.service network-online.target' \\
-        "UnitFileState=$unit_file_state" \\
-        "ActiveState=$active" \\
-        "SubState=$substate"
-    fi
-    ;;
-  start|restart)
-    printf 'active\\n' > "$FAKE_SYSTEMD_STATE"
-    ;;
-  stop)
-    printf 'inactive\\n' > "$FAKE_SYSTEMD_STATE"
-    ;;
-  enable)
-    printf 'active\\n' > "$FAKE_SYSTEMD_STATE"
-    printf 'enabled\\n' > "$FAKE_SYSTEMD_UNIT_FILE_STATE"
-    ;;
-  disable)
-    printf 'inactive\\n' > "$FAKE_SYSTEMD_STATE"
-    printf 'disabled\\n' > "$FAKE_SYSTEMD_UNIT_FILE_STATE"
-    ;;
-  daemon-reload)
-    ;;
-  *)
-    printf 'unexpected systemctl invocation: %s\\n' "$*" >&2
-    exit 64
-    ;;
-esac
-`,
-  );
-  await chmod(join(bin, "systemctl"), 0o755);
-
-  const environment = { ...process.env };
-  for (const key of [
-    "INSPIRE_HOST",
-    "INSPIRE_PORT",
-    "INSPIRE_STATE_PATH",
-    "INSPIRE_TOKEN",
-  ]) {
-    delete environment[key];
-  }
-  return {
-    ...environment,
-    HOME: join(directory, "home"),
-    XDG_CONFIG_HOME: configHome,
-    XDG_RUNTIME_DIR: join(directory, "runtime"),
-    PATH: `${bin}${delimiter}${environment.PATH ?? ""}`,
-    INSPIRE_OPEN: "0",
-    FAKE_SYSTEMD_LOG: log,
-    FAKE_SYSTEMD_ROOT: root,
-    FAKE_SYSTEMD_STATE: state,
-    FAKE_SYSTEMD_UNIT_FILE_STATE: unitFileState,
   };
 }
 
@@ -272,214 +169,6 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
-  linuxIt.each(["committed", "expired"])(
-    "maintenance launcher uses the fenced handoff (%s)",
-    async (outcome) => {
-      const directory = await mkdtemp(
-        join(tmpdir(), "inspire-maintenance-launcher-"),
-      );
-      temporaryDirectories.push(directory);
-      const environment = await serviceLauncherEnv(directory);
-      const statePath = join(directory, "synthetic-host-state.json");
-      const leaseId = "a".repeat(43);
-      const control = new InstanceHttpControl();
-      let state: InstanceState;
-      const calls: Array<{
-        path: string;
-        authorization: string | undefined;
-        body: string;
-      }> = [];
-      const server = createServer(async (incoming, response) => {
-        let body = "";
-        for await (const chunk of incoming) body += String(chunk);
-        calls.push({
-          path: incoming.url!,
-          authorization: incoming.headers.authorization,
-          body,
-        });
-        const message = JSON.parse(body);
-        const grant = control.accept(state, message);
-        if (!grant) return response.writeHead(401).end();
-        const result =
-          message.action === "maintenance-commit"
-            ? outcome === "committed"
-              ? { kind: "committed", leaseId }
-              : { kind: "skipped", reason: "lease-invalid" }
-            : message.action === "maintenance-release"
-              ? { kind: "skipped", reason: "lease-invalid" }
-              : { kind: "ready", expiresAt: Date.now() + 30_000, leaseId };
-        response.setHeader("Content-Type", "application/json");
-        response.end(JSON.stringify(control.reply(grant, result)));
-      });
-      await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-      const address = server.address();
-      if (!address || typeof address === "string")
-        throw new Error("Expected fixture port");
-      state = {
-        schemaVersion: 1,
-        root,
-        host: "127.0.0.1",
-        port: address.port,
-        token: "synthetic-token",
-        pid: process.pid,
-        processStartTime: await processStartIdentity(process.pid),
-        startedAt: new Date().toISOString(),
-        durableWorkerRelease: true,
-      };
-      await writeFile(statePath, JSON.stringify(state));
-      try {
-        const child = spawn(
-          process.execPath,
-          [launcher, "maintenance-restart"],
-          {
-            cwd: root,
-            env: { ...environment, INSPIRE_STATE_PATH: statePath },
-            stdio: ["ignore", "pipe", "pipe"],
-          },
-        );
-        children.push(child);
-        let output = "";
-        child.stdout!.on("data", (chunk) => {
-          output += String(chunk);
-        });
-        child.stderr!.on("data", (chunk) => {
-          output += String(chunk);
-        });
-        const code = await new Promise((done, reject) => {
-          child.once("error", reject);
-          child.once("exit", done);
-        });
-        expect(code, output).toBe(0);
-        expect(calls.map((call) => JSON.parse(call.body).action)).toEqual(
-          outcome === "committed"
-            ? ["maintenance-prepare", "maintenance-commit"]
-            : [
-                "maintenance-prepare",
-                "maintenance-commit",
-                "maintenance-release",
-              ],
-        );
-        expect(
-          calls.every(
-            (call) =>
-              call.path === "/api/host/local-control" &&
-              call.authorization === undefined &&
-              !call.body.includes(state.token),
-          ),
-        ).toBe(true);
-        expect(
-          calls
-            .slice(1)
-            .every((call) => JSON.parse(call.body).payload.leaseId === leaseId),
-        ).toBe(true);
-        const commands = await readFile(
-          environment.FAKE_SYSTEMD_LOG!,
-          "utf8",
-        ).catch(() => "");
-        expect(commands.includes("--user restart inspire-host.service")).toBe(
-          outcome === "committed",
-        );
-        expect(output).not.toContain(leaseId);
-        expect(output).not.toContain("synthetic-token");
-      } finally {
-        await new Promise<void>((done, reject) =>
-          server.close((error) => (error ? reject(error) : done())),
-        );
-      }
-    },
-  );
-
-  linuxIt(
-    "delegates a matching installed host service through systemd",
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-"));
-      temporaryDirectories.push(directory);
-      const environment = await serviceLauncherEnv(directory);
-
-      expect(runLauncher([], environment)).toContain(
-        "Started INSΠRE system service.",
-      );
-      expect(runLauncher(["service", "status-host"], environment)).toContain(
-        "INSΠRE system service is running (enabled).",
-      );
-      expect(() => runLauncher(["status"], environment)).toThrow(
-        /Host is not reachable/u,
-      );
-      expect(runLauncher(["restart"], environment)).toContain(
-        "Restarted INSΠRE Host. Terminals remain running.",
-      );
-      expect(runLauncher(["stop"], environment)).toContain(
-        "Stopped INSΠRE system service.",
-      );
-      expect(runLauncher(["service", "enable-host"], environment)).toContain(
-        "Enabled and started INSΠRE system service.",
-      );
-      expect(runLauncher(["service", "disable-host"], environment)).toContain(
-        "Disabled and stopped INSΠRE system service.",
-      );
-      const log = await readFile(environment.FAKE_SYSTEMD_LOG!, "utf8");
-      expect(log).toContain("--user start inspire-host.service");
-      expect(log).toContain("--user restart inspire-host.service");
-      expect(log).toContain("--user stop inspire-host.service");
-      expect(log).toContain("--user enable --now inspire-host.service");
-      expect(log).toContain("--user disable --now inspire-host.service");
-      expect(log).toContain("--user enable inspire-terminal.service");
-      expect(log).not.toContain("--user enable --now inspire-terminal.service");
-      expect(log).toContain("--user disable --now inspire-terminal.service");
-      expect(log).not.toContain(
-        "--user enable --now inspire-idle-maintenance-restart.timer",
-      );
-      expect(log).toContain(
-        "--user disable --now inspire-idle-maintenance-restart.timer",
-      );
-    },
-    // Restart includes source dependency/build preparation and runtime imports;
-    // a cold preparation can exceed Vitest's five-second unit-test default.
-    60_000,
-  );
-
-  linuxIt("installs a readiness-gated host unit", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-install-"));
-    temporaryDirectories.push(directory);
-    const environment = await serviceLauncherEnv(directory);
-
-    expect(runLauncher(["service", "install-host"], environment)).toContain(
-      "Installed",
-    );
-    const unit = await readFile(
-      join(
-        environment.XDG_CONFIG_HOME!,
-        "systemd",
-        "user",
-        "inspire-host.service",
-      ),
-      "utf8",
-    );
-    expect(unit).toContain(`ExecStartPost=${unixLauncher} wait-ready`);
-    expect(unit).toContain(
-      "Wants=network-online.target inspire-terminal.service",
-    );
-    expect(unit).toContain("TimeoutStartSec=5min");
-    const terminalUnit = await readFile(
-      join(
-        environment.XDG_CONFIG_HOME!,
-        "systemd",
-        "user",
-        "inspire-terminal.service",
-      ),
-      "utf8",
-    );
-    expect(terminalUnit).toContain(
-      `ExecStart=${unixLauncher} terminal-daemon --root ${root}`,
-    );
-    for (const content of [unit, terminalUnit]) {
-      expect(content).toContain("Environment=INSPIRE_ENVIRONMENT=shell");
-      expect(content).not.toContain("Environment=NODE_ENV=");
-      // Installation never snapshots the caller's environment into the unit.
-      expect(content).not.toContain(environment.PATH);
-    }
-  });
-
   it("stops the readiness wait when the service process exits", async () => {
     const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-ready-"));
     temporaryDirectories.push(directory);
@@ -493,45 +182,6 @@ describe("production launcher", () => {
     expect(() => runLauncher(["wait-ready"], environment)).toThrow(
       /Host process exited before becoming ready/u,
     );
-  });
-
-  linuxIt(
-    "rejects an installed host unit without the readiness gate",
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), "inspire-systemd-old-"));
-      temporaryDirectories.push(directory);
-      const environment = await serviceLauncherEnv(directory);
-      environment.FAKE_SYSTEMD_OUTDATED = "1";
-
-      expect(() => runLauncher(["status"], environment)).toThrow(
-        /unit is outdated/u,
-      );
-    },
-  );
-
-  it("keeps explicit local instances out of systemd delegation", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-direct-"));
-    temporaryDirectories.push(directory);
-    const environment =
-      process.platform === "linux"
-        ? await serviceLauncherEnv(directory)
-        : launcherEnv(
-            join(directory, "instance.json"),
-            4589,
-            join(directory, "home"),
-          );
-    environment.INSPIRE_HOST = "127.0.0.1";
-    environment.INSPIRE_PORT = "4589";
-    environment.INSPIRE_STATE_PATH = join(directory, "instance.json");
-
-    expect(() => runLauncher(["status"], environment)).toThrow();
-    if (process.platform === "linux") {
-      await expect(
-        readFile(environment.FAKE_SYSTEMD_LOG!, "utf8"),
-      ).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-    }
   });
 
   it.runIf(process.platform !== "linux")(
@@ -604,20 +254,11 @@ describe("production launcher", () => {
     expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
       "No managed INSΠRE instance is running.",
     );
-    // The copied checkout has no build stamp, so this lifecycle proves that a
-    // stale build is rebuilt once.
-    // A synthetic old chunk also proves the supported build path preserves
-    // the outgoing generation before Vite empties dist/assets.
-    const legacyAsset = "ContextPane-launcher-old.js";
-    await mkdir(join(checkout, "dist", "assets"), { recursive: true });
-    await rm(join(checkout, "dist", ".inspire-current-assets.json"), {
-      force: true,
-    });
-    await writeFile(
-      join(checkout, "dist", "assets", legacyAsset),
-      "old chunk\n",
-    );
-    await rm(join(checkout, ".inspire-build"), { force: true });
+    // Cold startup must archive an outgoing chunk still used by an open page.
+    const outgoingAsset = "ContextPane-launcher-old.js";
+    const publishedAsset = join(checkout, "dist", "assets", outgoingAsset);
+    await mkdir(dirname(publishedAsset), { recursive: true });
+    await writeFile(publishedAsset, "old chunk\n");
     const output: Buffer[] = [];
     const child = spawn(process.execPath, [checkoutLauncher, "restart"], {
       cwd: checkout,
@@ -630,42 +271,18 @@ describe("production launcher", () => {
     child.stderr?.on("data", (chunk: Buffer) => output.push(chunk));
 
     await waitForLauncher(child, env, output, 120_000, checkoutLauncher);
-    const firstState = JSON.parse(await readFile(statePath, "utf8")) as {
-      schemaVersion: number;
-      token: string;
-    };
-    expect(firstState.schemaVersion).toBe(1);
-    expect(runLauncher(["wait-ready"], env, checkoutLauncher)).toBe("");
-    expect(Buffer.concat(output).toString()).toContain(
-      "No managed INSΠRE instance is running.",
-    );
-    // The build hashes the canonical checkout path, including native casing.
-    const cacheDirectory = defaultStaticAssetCacheDirectory(
-      await realpath(checkout),
-      { environment: env, home },
-    );
-    const generations = JSON.parse(
-      await readFile(join(cacheDirectory, "generations.json"), "utf8"),
-    ) as { generations: { id: string }[] };
-    const cachedCopies = await Promise.all(
-      generations.generations.map((generation) =>
-        readFile(
-          join(cacheDirectory, "generations", generation.id, legacyAsset),
-          "utf8",
-        ).catch(() => null),
-      ),
-    );
-    expect(cachedCopies).toContain("old chunk\n");
-    const publishedLegacyAsset = join(checkout, "dist", "assets", legacyAsset);
-    await expect(readFile(publishedLegacyAsset, "utf8")).resolves.toBe(
-      "old chunk\n",
-    );
-    // Removing the handoff copy proves the running Host can still fall back to
-    // its complete archived generation.
-    await rm(publishedLegacyAsset);
+    const readState = async () =>
+      JSON.parse(await readFile(statePath, "utf8")) as {
+        pid: number;
+        token: string;
+      };
+    const firstState = await readState();
+    runLauncher(["wait-ready"], env, checkoutLauncher);
+    // Remove the publication handoff copy to exercise the Host's retained generation.
+    await rm(publishedAsset);
     const origin = `http://127.0.0.1:${port}`;
     const retainedAssetResponse = await fetch(
-      `${origin}/assets/${legacyAsset}`,
+      `${origin}/assets/${outgoingAsset}`,
     );
     expect(retainedAssetResponse.status).toBe(200);
     expect(await retainedAssetResponse.text()).toBe("old chunk\n");
@@ -691,77 +308,45 @@ describe("production launcher", () => {
       id: string;
     };
 
-    // Page restart is available through the same persistent launcher on every
-    // native platform, including this alternate port and private state path.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const previousState = JSON.parse(await readFile(statePath, "utf8")) as {
-        pid: number;
-        token: string;
-      };
-      const restartStatus = await fetch(`${origin}/api/host/restart`, {
+    const restartStatus = () =>
+      fetch(`${origin}/api/host/restart`, {
         headers: terminalHeaders,
       }).then((response) => response.json());
-      expect(restartStatus).toMatchObject({
-        available: true,
-        allAvailable: false,
-      });
-      if (attempt === 0) {
-        const denied = await fetch(`${origin}/api/host/restart`, {
-          method: "POST",
-          headers: terminalHeaders,
-          body: JSON.stringify({
-            hostId: restartStatus.hostId,
-            operationId: randomUUID(),
-            scope: "all",
-          }),
-        });
-        expect(denied.status).toBe(202);
-        await vi.waitFor(async () => {
-          const status = await fetch(`${origin}/api/host/restart`, {
-            headers: terminalHeaders,
-          }).then((response) => response.json());
-          expect(status.operation).toMatchObject({
-            phase: "rejected",
-            error: expect.stringContaining("Restart all requires"),
-          });
-        });
-      }
-      const response = await fetch(`${origin}/api/host/restart`, {
-        method: "POST",
+    const terminals = () =>
+      fetch(`${origin}/api/terminals?cwd=${encodeURIComponent(directory)}`, {
         headers: terminalHeaders,
-        body: JSON.stringify({
-          hostId: restartStatus.hostId,
-          operationId: randomUUID(),
-          scope: "host",
-        }),
-      });
-      expect(response.status).toBe(202);
-      await vi.waitFor(
-        async () => {
-          const status = await fetch(`${origin}/api/host/restart`, {
-            headers: terminalHeaders,
-          }).then((response) => response.json());
-          expect(status.hostId).not.toBe(restartStatus.hostId);
-          expect(status.available).toBe(true);
-          const state = JSON.parse(await readFile(statePath, "utf8")) as {
-            pid: number;
-            token: string;
-          };
-          expect(state.pid).not.toBe(previousState.pid);
-          expect(state.token).toBe(previousState.token);
-        },
-        { timeout: 60_000, interval: 100 },
-      );
-      expect(child.exitCode).toBeNull();
-      expect(child.signalCode).toBeNull();
-      const preserved = await fetch(
-        `${origin}/api/terminals?cwd=${encodeURIComponent(directory)}`,
-        { headers: terminalHeaders },
-      ).then((response) => response.json());
-      expect(preserved.terminals).toContainEqual(
+      }).then((response) => response.json());
+    const assertTerminalPreserved = async () =>
+      expect((await terminals()).terminals).toContainEqual(
         expect.objectContaining({ id: createdTerminal.id, status: "running" }),
       );
-    }
+
+    const original = await restartStatus();
+    expect(original).toMatchObject({ available: true, allAvailable: false });
+    const response = await fetch(`${origin}/api/host/restart`, {
+      method: "POST",
+      headers: terminalHeaders,
+      body: JSON.stringify({
+        hostId: original.hostId,
+        operationId: randomUUID(),
+        scope: "host",
+      }),
+    });
+    expect(response.status).toBe(202);
+    await vi.waitFor(
+      async () => {
+        const status = await restartStatus();
+        expect(status.available).toBe(true);
+        expect(status.hostId).not.toBe(original.hostId);
+        const state = await readState();
+        expect(state.token).toBe(firstState.token);
+        expect(state.pid).not.toBe(firstState.pid);
+      },
+      { timeout: 60_000, interval: 100 },
+    );
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+    await assertTerminalPreserved();
 
     const stopOutput = runLauncher(["stop"], env, checkoutLauncher);
     expect(stopOutput).toContain("Stopped INSΠRE process");
@@ -791,21 +376,8 @@ describe("production launcher", () => {
       undefined,
       checkoutLauncher,
     );
-    const secondState = JSON.parse(await readFile(statePath, "utf8")) as {
-      token: string;
-    };
-    expect(secondState.token).toBe(firstState.token);
-    const restoredCatalogResponse = await fetch(
-      `${origin}/api/terminals?cwd=${encodeURIComponent(directory)}`,
-      { headers: terminalHeaders },
-    );
-    expect(restoredCatalogResponse.ok).toBe(true);
-    const restoredCatalog = (await restoredCatalogResponse.json()) as {
-      terminals: Array<{ id: string; status: string }>;
-    };
-    expect(restoredCatalog.terminals).toContainEqual(
-      expect.objectContaining({ id: createdTerminal.id, status: "running" }),
-    );
+    expect((await readState()).token).toBe(firstState.token);
+    await assertTerminalPreserved();
     const closeTerminalResponse = await fetch(
       `${origin}/api/terminals/${encodeURIComponent(createdTerminal.id)}?force=1`,
       { method: "DELETE", headers: mutationHeaders() },

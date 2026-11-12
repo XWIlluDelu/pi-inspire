@@ -279,17 +279,26 @@ async function livePi(
   return { pi, registry, id, sessionFile, root };
 }
 
+async function soleReceiver({
+  registry,
+  id,
+  sessionFile,
+}: Awaited<ReturnType<typeof livePi>>) {
+  return vi.waitFor(
+    async () => {
+      const records = await registry.forSession(id, sessionFile);
+      expect(records).toHaveLength(1);
+      expect(records[0]?.endpoint).toBeTruthy();
+      return records[0]!;
+    },
+    { timeout: 15_000 },
+  );
+}
+
 async function promptFixture() {
   const fixture = await livePi({}, [ATTACH_PROMPT]);
-  const { registry, id, sessionFile, root } = fixture;
-  const record = await vi.waitFor(
-    async () => {
-      const [found] = await registry.forSession(id, sessionFile);
-      expect(found?.endpoint).toBeTruthy();
-      return found!;
-    },
-    { timeout: 5_000 },
-  );
+  const { registry, root } = fixture;
+  const record = await soleReceiver(fixture);
   const enter = async (name: string) => {
     const release = () => writeFile(join(root, `${name}.release`), "");
     cleanup.push(release);
@@ -453,29 +462,52 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     expect(sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("publishes presence and controls the live Pi through its socket", async () => {
-    const { pi, registry, id, sessionFile } = await livePi({}, [
+  it("controls one native receiver, refuses remote commands, and follows it across reload", async () => {
+    const fixture = await livePi({}, [
       NAVIGATE,
       RELOAD,
+      "docs/examples/session-activity.ts",
     ]);
-    const [record] = await vi.waitFor(
-      async () => {
-        const found = await registry.forSession(id, sessionFile);
-        expect(found).toHaveLength(1);
-        return found;
-      },
-      { timeout: 15_000 },
-    );
+    const { pi, registry, id, sessionFile } = fixture;
+    const record = await soleReceiver(fixture);
     // Pi records its startup model selection after the saved entries.
     expect(record).toMatchObject({ activity: "idle" });
-    const startLeaf = record!.leafId;
+    const startLeaf = record.leafId;
     expect(typeof startLeaf).toBe("string");
-    const connection = new AttachControlConnection(registry, record!);
+    const connection = new AttachControlConnection(registry, record);
 
+    expect(
+      await requestAttachControl(record.endpoint, {
+        op: "state",
+        token: "wrong",
+      }),
+    ).toMatchObject({ ok: false, code: "UNAUTHORIZED" });
     expect(await connection.read()).toMatchObject({
       activity: "idle",
       leafId: startLeaf,
     });
+
+    const before = await readFile(sessionFile, "utf8");
+
+    // Even at the prompt size limit, escaping must preserve input validation.
+    for (const message of [
+      " /attach-control old-id",
+      `!!${"\u0000".repeat(499_998)}`,
+    ]) {
+      await expect(
+        requestAttachControl(record.endpoint, {
+          op: "prompt",
+          token: record.token,
+          sessionFile,
+          message,
+        }),
+      ).resolves.toMatchObject({ ok: false, code: "NATIVE_INPUT_UNSUPPORTED" });
+    }
+
+    await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
+      isStreaming: false,
+    });
+    expect(await readFile(sessionFile, "utf8")).toBe(before);
 
     await connection.rename("Attached name");
     await vi.waitFor(
@@ -528,46 +560,11 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       async () => {
         const [next] = await registry.forSession(id, sessionFile);
         expect(next?.instanceId).toBeDefined();
-        expect(next?.instanceId).not.toBe(record!.instanceId);
+        expect(next?.instanceId).not.toBe(record.instanceId);
       },
       { timeout: 15_000 },
     );
     expect(await connection.read()).toMatchObject({ activity: "idle" });
-  }, 60_000);
-
-  it("rejects remote native commands without executing them when two copies are loaded", async () => {
-    const { pi, registry, id, sessionFile } = await livePi({}, [
-      "docs/examples/session-activity.ts",
-    ]);
-    const [record] = await vi.waitFor(
-      async () => {
-        const found = await registry.forSession(id, sessionFile);
-        expect(found).toHaveLength(1);
-        return found;
-      },
-      { timeout: 15_000 },
-    );
-    const before = await readFile(sessionFile, "utf8");
-
-    // Even at the prompt size limit, escaping must preserve input validation.
-    for (const message of [
-      " /attach-control old-id",
-      `!!${"\u0000".repeat(499_998)}`,
-    ]) {
-      await expect(
-        requestAttachControl(record!.endpoint, {
-          op: "prompt",
-          token: record!.token,
-          sessionFile,
-          message,
-        }),
-      ).resolves.toMatchObject({ ok: false, code: "NATIVE_INPUT_UNSUPPORTED" });
-    }
-
-    await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
-      isStreaming: false,
-    });
-    expect(await readFile(sessionFile, "utf8")).toBe(before);
   }, 60_000);
 
   it("automatically attaches to an idle detached worker in a replacement Host", async () => {
@@ -575,27 +572,20 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       PI_ATTACH_CONTROL_TAG: "worker-one",
     });
     const { pi, registry, id, sessionFile } = fixture;
-    const [record] = await vi.waitFor(
-      async () => {
-        const found = await registry.forSession(id, sessionFile);
-        expect(found).toHaveLength(1);
-        return found;
-      },
-      { timeout: 15_000 },
-    );
-    expect(record!.tag).toBe("worker-one");
+    const record = await soleReceiver(fixture);
+    expect(record.tag).toBe("worker-one");
     cleanup.push(async () => {
       // A detached Pi is no longer the test's child: wait for it to exit
       // before its temporary folder is removed.
       const alive = () => {
         try {
-          process.kill(record!.pid, 0);
+          process.kill(record.pid, 0);
           return true;
         } catch {
           return false;
         }
       };
-      if (alive()) process.kill(record!.pid, "SIGTERM");
+      if (alive()) process.kill(record.pid, "SIGTERM");
       for (let tries = 0; alive() && tries < 50; tries += 1)
         await new Promise((resolve) => setTimeout(resolve, 100));
     });
@@ -612,6 +602,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       },
       { timeout: 10_000 },
     );
+    expect(runtime.activeSessionId).toBeNull();
     await runtime.rename(id, "Survived the Host");
     await vi.waitFor(
       async () =>
@@ -622,7 +613,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     );
     expect(spawn).not.toHaveBeenCalled();
     expect((await registry.forSession(id, sessionFile))[0]?.pid).toBe(
-      record!.pid,
+      record.pid,
     );
   }, 60_000);
 
@@ -637,14 +628,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
           backend,
         );
         const { pi, registry, id, sessionFile, root } = fixture;
-        const record = await vi.waitFor(
-          async () => {
-            const [found] = await registry.forSession(id, sessionFile);
-            expect(found).toBeDefined();
-            return found!;
-          },
-          { timeout: 15_000 },
-        );
+        const record = await soleReceiver(fixture);
         cleanup.push(async () => {
           try {
             process.kill(record.pid, "SIGTERM");
@@ -734,7 +718,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     );
   }
 
-  it("ends every branch instance before trashing an unopened session, leaving other sessions running", async () => {
+  it("Clear Hidden ends every branch instance before trashing an unopened session and leaves other sessions running", async () => {
     const first = await livePi({}, ["docs/examples/native-ui.ts"]);
     const environment =
       process.platform === "darwin"
@@ -803,66 +787,34 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     };
     const attachments = new AttachmentStore(join(first.root, "uploads"));
     const trash = join(first.root, "trashed.jsonl");
-    const runtime = new RuntimeController(
-      {
-        get: async (id) => (id === first.id ? session : undefined),
-        refresh: async () => [session],
-        list: async () => ({ sessions: [], total: 0, offset: 0, limit: 40 }),
-        listByIds: async () => [],
-        listByCwds: async () => [],
-        invalidate() {},
-      },
-      attachments,
-      {
-        deleteSessionRecord: (target, version) =>
-          deleteSessionFile(
-            target,
-            async (payload) => {
-              expect(
-                await first.registry.forSession(first.id, first.sessionFile),
-              ).toEqual([]);
-              expect(
-                await first.registry.forSession(
-                  unrelated.id,
-                  unrelated.sessionFile,
-                ),
-              ).toHaveLength(1);
-              await rename(payload, trash);
-            },
-            undefined,
-            version,
-          ),
-      },
-    ).setExternalSessionTerminator((id, path) =>
+    const runtime = new RuntimeController(catalog([session]), attachments, {
+      deleteSessionRecord: (target) =>
+        deleteSessionFile(target, async (payload) => {
+          expect(
+            await first.registry.forSession(first.id, first.sessionFile),
+          ).toEqual([]);
+          expect(
+            await first.registry.forSession(
+              unrelated.id,
+              unrelated.sessionFile,
+            ),
+          ).toHaveLength(1);
+          await rename(payload, trash);
+        }),
+    }).setExternalSessionTerminator((id, path) =>
       first.registry.stopSession(id, path),
     );
     cleanup.push(() => attachments.close());
     cleanup.push(() => runtime.close());
-    await expect(runtime.deleteSession(first.id)).resolves.toMatchObject({
-      disposition: "trashed",
+    await expect(
+      runtime.clearHiddenSessions([first.id], [first.id], []),
+    ).resolves.toEqual({
+      deleted: [{ sessionId: first.id, disposition: "trashed" }],
     });
     await asking;
     expect(await readFile(trash, "utf8")).toContain(first.id);
     await expect(readFile(first.sessionFile)).rejects.toMatchObject({
       code: "ENOENT",
     });
-  }, 60_000);
-
-  it("rejects requests without the record's token", async () => {
-    const { registry, id, sessionFile } = await livePi();
-    const [record] = await vi.waitFor(
-      async () => {
-        const found = await registry.forSession(id, sessionFile);
-        expect(found).toHaveLength(1);
-        return found;
-      },
-      { timeout: 15_000 },
-    );
-    expect(
-      await requestAttachControl(record!.endpoint, {
-        op: "state",
-        token: "wrong",
-      }),
-    ).toMatchObject({ ok: false, code: "UNAUTHORIZED" });
   }, 60_000);
 });

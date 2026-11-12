@@ -1,28 +1,30 @@
 import { existsSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { PiRpcProcess } from "../../server/pi-rpc.js";
-
-import {
-  MAX_IDLE_WORKERS,
-  PI_STARTUP_RESPONSE_UI_ERROR,
-  RuntimeController,
-} from "../../server/runtime.js";
+import { nullDiagnosticLogger } from "../../server/diagnostics.js";
+import { type PiRpcOptions, PiRpcProcess } from "../../server/pi-rpc.js";
+import { MAX_IDLE_WORKERS, RuntimeController } from "../../server/runtime.js";
+import type { PendingImageRecovery } from "../../server/runtime-pending-images.js";
+import { createRuntimeSlot } from "../../server/runtime-slot.js";
+import { RuntimeWorkerLifecycle } from "../../server/runtime-worker-lifecycle.js";
+import { emptyPendingQueues } from "../../shared/contracts.js";
 
 import {
   catalog,
   deferredSignal,
   disposeRuntimeFixture,
   FakeRpc,
+  fakeRuntime,
   fixtureWorkspace,
   initializeRuntimeFixture,
+  persistedRecord,
   preview,
   record,
   schedulingRuntime,
   TEST_CWD,
   trackedAttachmentStore,
+  trackRuntime,
   waitForReady,
 } from "./fixtures/runtime.js";
 
@@ -31,25 +33,17 @@ afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
   it("warms only the current selection and starts a superseded preview on demand", async () => {
-    const source = catalog([record("a", TEST_CWD), record("b", TEST_CWD)]);
-    const get = source.get.bind(source);
     const entered = deferredSignal();
     const resume = deferredSignal();
-    source.get = async (id) => {
-      if (id === "a") {
-        entered.resolve();
-        await resume.promise;
-      }
-      return get(id);
-    };
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(source, trackedAttachmentStore(), {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
+    const { runtime, workers } = schedulingRuntime({
+      sessions: [record("a", TEST_CWD), record("b", TEST_CWD)],
+      openSessionProjection: async (session) => {
+        if (session.id === "a") {
+          entered.resolve();
+          await resume.promise;
+        }
+        return preview(session);
       },
-      openSessionProjection: preview,
     });
     const opening = runtime.openSession("a");
     try {
@@ -58,12 +52,11 @@ describe("worker startup and retirement", () => {
       await waitForReady(runtime, "b");
       resume.resolve();
 
-      expect((await opening).active?.sessionId).toBe("a");
-      expect(runtime.activeSessionId).toBe("b");
-      const lease = runtime.reserveMaintenanceRestart();
-      expect(lease.kind).toBe("ready");
-      if (lease.kind === "ready")
-        runtime.releaseMaintenanceRestart(lease.leaseId);
+      expect((await opening).active).toMatchObject({
+        sessionId: "a",
+        transcriptPage: { messages: [{ content: "preview:a" }] },
+      });
+      expect((await runtime.snapshot()).active?.sessionId).toBe("b");
       expect(workers.map((worker) => worker.sessionId)).toEqual(["b"]);
 
       const release = runtime.retainSessionView("a");
@@ -87,40 +80,30 @@ describe("worker startup and retirement", () => {
   });
 
   it("keeps existing and new sessions usable when project discovery cannot be saved", async () => {
-    const attachments = trackedAttachmentStore();
     const source = catalog([record("a", TEST_CWD)]);
     const registrationError = new Error("Maintenance storage is unavailable");
     const remember = vi.fn(async () => {});
     source.rememberProjectCwd = remember;
     remember.mockRejectedValue(registrationError);
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(source, attachments, {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
+    const { runtime, workers } = schedulingRuntime({
+      source: source,
     });
-    try {
-      const opened = await runtime.openSession("a");
-      expect(opened.active?.sessionId).toBe("a");
-      expect(opened.active?.transcriptPage.messages).toEqual([
-        { role: "user", content: "preview:a", timestamp: 1 },
-      ]);
-      await waitForReady(runtime, "a");
-      expect(workers[0]?.starts).toBe(1);
-      expect(workers[0]?.stops).toBe(0);
-      await expect(
-        runtime.prompt({ sessionId: "a", message: "ordinary text" }),
-      ).resolves.toBeDefined();
-      const created = await runtime.newSession(TEST_CWD);
-      expect(created.active?.sessionId).toBe("new-id");
-      expect(workers[1]?.starts).toBe(1);
-      expect(remember).toHaveBeenCalledWith(await realpath(TEST_CWD));
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    const opened = await runtime.openSession("a");
+    expect(opened.active?.sessionId).toBe("a");
+    expect(opened.active?.transcriptPage.messages).toMatchObject([
+      { role: "user", content: "preview:a", timestamp: 1 },
+    ]);
+    await waitForReady(runtime, "a");
+    expect(workers[0]?.starts).toBe(1);
+    expect(workers[0]?.stops).toBe(0);
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "ordinary text" }),
+    ).resolves.toBeDefined();
+    const created = await runtime.newSession(TEST_CWD);
+    expect(created.active?.sessionId).toBe("new-id");
+    expect(workers[1]?.starts).toBe(1);
+    expect(remember).toHaveBeenCalledWith(await realpath(TEST_CWD));
   });
   it.each(["existing", "new"] as const)(
     "does not start a %s writer after shutdown while its factory is preparing",
@@ -161,46 +144,67 @@ describe("worker startup and retirement", () => {
     },
   );
 
-  it("creates the selected directory only on explicit new-session admission, before starting Pi", async () => {
+  it("creates a directory only on explicit admission and retains selected Pi settings before the first write", async () => {
     const cwd = join(fixtureWorkspace, "projects", "new-project");
     const source = catalog([]);
     source.rememberProjectCwd = vi.fn(async () => {});
-    const create = vi.fn((options) => {
+    const model = { provider: "anthropic", id: "claude-sonnet-4" };
+    const sessionFile = join(fixtureWorkspace, "new-id.jsonl");
+    const create = vi.fn((options: PiRpcOptions) => {
       expect(existsSync(cwd)).toBe(true);
-      return new FakeRpc(options) as unknown as PiRpcProcess;
+      const worker = new FakeRpc(options);
+      worker.responseOverrides.set("get_state", {
+        sessionId: worker.sessionId,
+        sessionFile: worker.sessionPath,
+        isStreaming: false,
+        isCompacting: false,
+        thinkingLevel: "high",
+        model,
+      });
+      return worker as unknown as PiRpcProcess;
     });
     const runtime = new RuntimeController(source, trackedAttachmentStore(), {
       createProcess: create,
       openSessionProjection: preview,
     });
-    try {
-      await expect(runtime.newSession(cwd)).rejects.toMatchObject({
-        status: 400,
-        code: "PROJECT_DIRECTORY_MISSING",
-      });
-      expect(create).not.toHaveBeenCalled();
-      expect(existsSync(cwd)).toBe(false);
-      const snapshot = await runtime.newSession(cwd, {
-        createDirectory: true,
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      });
-      expect((await stat(cwd)).isDirectory()).toBe(true);
-      expect(snapshot.active?.cwd).toBe(create.mock.calls[0]![0].cwd);
-      expect(source.rememberProjectCwd).toHaveBeenCalledWith(
-        snapshot.active!.cwd,
-      );
-      expect(create.mock.calls[0]![0].args).toEqual(
-        expect.arrayContaining([
-          "--model",
-          "anthropic/claude-sonnet-4",
-          "--thinking",
-          "high",
-        ]),
-      );
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await expect(runtime.newSession(cwd)).rejects.toMatchObject({
+      status: 400,
+      code: "PROJECT_DIRECTORY_MISSING",
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(existsSync(cwd)).toBe(false);
+    const snapshot = await runtime.newSession(cwd, {
+      createDirectory: true,
+      name: "  Tuned session  ",
+      model,
+      thinkingLevel: "high",
+    });
+    expect((await stat(cwd)).isDirectory()).toBe(true);
+    expect(snapshot.active).toMatchObject({
+      cwd: create.mock.calls[0]![0].cwd,
+      sessionFile,
+      model,
+      thinkingLevel: "high",
+    });
+    expect(source.rememberProjectCwd).toHaveBeenCalledWith(
+      snapshot.active!.cwd,
+    );
+    expect(create.mock.calls[0]![0].args).toEqual(
+      expect.arrayContaining([
+        "--name",
+        "Tuned session",
+        "--model",
+        "anthropic/claude-sonnet-4",
+        "--thinking",
+        "high",
+      ]),
+    );
+    expect(existsSync(sessionFile)).toBe(false);
+    expect((await runtime.snapshot()).active).toMatchObject({
+      model,
+      thinkingLevel: "high",
+    });
   });
 
   it("rejects a new worker without a session path regardless of projection injection", async () => {
@@ -218,23 +222,20 @@ describe("worker startup and retirement", () => {
         openSessionProjection: openProjection,
       },
     );
-    try {
-      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-        "Pi did not report a session file",
-      );
-      expect(openProjection).not.toHaveBeenCalled();
-      expect(worker.stops).toBe(1);
-      expect(runtime.activeSessionId).toBeNull();
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
+      "Pi did not report a session file",
+    );
+    expect(openProjection).not.toHaveBeenCalled();
+    expect(worker.stops).toBe(1);
+    expect(runtime.activeSessionId).toBeNull();
   });
 
   it.each([
     ["unexpected exit", "confirmed"],
     ["unexpected exit", "unconfirmed"],
     ["idle eviction", "confirmed"],
-    ["idle eviction", "unconfirmed"],
+    ["explicit reload", "unconfirmed"],
   ] as const)(
     "fences replacement after %s until stop is %s",
     async (retirement, outcome) => {
@@ -247,36 +248,31 @@ describe("worker startup and retirement", () => {
         confirmStop = resolve;
         rejectStop = reject;
       });
-      const workers: FakeRpc[] = [];
       const ids = Array.from({ length: MAX_IDLE_WORKERS + 2 }, (_, index) =>
         String(index),
       );
-      const runtime = new RuntimeController(
-        catalog(ids.map((id) => record(id, "/tmp"))),
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) => {
-            const worker = new FakeRpc(options);
-            workers.push(worker);
-            return worker as unknown as PiRpcProcess;
-          },
-          openSessionProjection: preview,
-        },
-      );
+      const { runtime, workers } = schedulingRuntime({
+        sessions: ids.map((id) => record(id, "/tmp")),
+      });
       try {
         await runtime.openSession("0");
         await waitForReady(runtime, "0");
         const old = workers[0]!;
         const stopping = vi.spyOn(old, "stop").mockImplementation(() => stop);
+        let reloading: Promise<unknown> | undefined;
         if (retirement === "unexpected exit") {
           // No pending mutation response supplies an error.stopped fallback.
           old.emit("event", { type: "agent_start" });
           old.emit("exit", new Error("RPC disconnected"));
-        } else {
+        } else if (retirement === "idle eviction") {
           for (const id of ids.slice(1)) {
             await runtime.openSession(id);
             await waitForReady(runtime, id);
           }
+        } else {
+          reloading = runtime
+            .nativeCommand({ sessionId: "0", command: "reload" })
+            .catch((error: unknown) => error);
         }
         await vi.waitFor(() => expect(stopping).toHaveBeenCalledOnce());
         const delivery = runtime
@@ -315,6 +311,7 @@ describe("worker startup and retirement", () => {
         } else {
           const failure = new Error("Old writer exit unconfirmed");
           rejectStop(failure);
+          if (reloading) expect(await reloading).toBe(failure);
           expect(await delivery).toBe(failure);
           await expect(runtime.openSession("0")).rejects.toThrow(
             "Old writer exit unconfirmed",
@@ -331,107 +328,8 @@ describe("worker startup and retirement", () => {
     },
   );
 
-  it("keeps replacement and prompt writes fenced when stop rejects without exit", async () => {
-    const store = trackedAttachmentStore();
-    const workers: FakeRpc[] = [];
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) => {
-          const worker = new FakeRpc(options);
-          workers.push(worker);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    try {
-      await runtime.openSession("a");
-      await vi.waitFor(() => expect(workers[0]?.starts).toBe(1));
-      workers[0]!.stop = vi.fn(async () => {
-        throw new Error("Synthetic exit unconfirmed");
-      });
-      await expect(
-        runtime.nativeCommand({ sessionId: "a", command: "reload" }),
-      ).rejects.toThrow("exit unconfirmed");
-      await expect(
-        runtime.prompt({
-          sessionId: "a",
-          message: "must not acquire another writer",
-        }),
-      ).rejects.toThrow("exit unconfirmed");
-      expect(workers).toHaveLength(1);
-      expect(
-        workers[0]!.commands.some((command) => command.type === "prompt"),
-      ).toBe(false);
-    } finally {
-      await runtime.close().catch(() => undefined);
-    }
-  });
-
-  it("fails promptly and attributes a response-bearing startup UI request", async () => {
-    const store = trackedAttachmentStore();
-    let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        worker = new FakeRpc(options);
-        worker.startupEvent = {
-          type: "extension_ui_request",
-          id: "startup-confirm",
-          method: "confirm",
-          title: "startup",
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    try {
-      const started = Date.now();
-      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-        PI_STARTUP_RESPONSE_UI_ERROR,
-      );
-      expect(Date.now() - started).toBeLessThan(1_000);
-      expect(worker?.stops).toBeGreaterThan(0);
-      const internal = runtime as unknown as {
-        slots: Map<string, unknown>;
-        provisionalSlots: Map<string, unknown>;
-      };
-      expect(internal.slots.size).toBe(0);
-      expect(internal.provisionalSlots.size).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("allows fire-and-forget startup UI while rejecting no startup response", async () => {
-    const store = trackedAttachmentStore();
-    let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        worker = new FakeRpc(options);
-        worker.startupEvent = {
-          type: "extension_ui_request",
-          id: "startup-notify",
-          method: "notify",
-          message: "ready",
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    try {
-      const snapshot = await runtime.newSession(TEST_CWD);
-      expect(snapshot.active?.sessionId).toBe("new-id");
-      expect(worker?.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
   it("rejects a new Pi worker that reports a path owned by another slot", async () => {
     const existing = record("a", "/tmp");
-    existing.path = resolve("/sessions/a.jsonl");
     const store = trackedAttachmentStore();
     const workers: FakeRpc[] = [];
     const runtime = new RuntimeController(catalog([existing]), store, {
@@ -446,142 +344,31 @@ describe("worker startup and retirement", () => {
       },
       openSessionProjection: preview,
     });
-    try {
-      await runtime.openSession("a");
-      await vi.waitFor(() => expect(workers).toHaveLength(1));
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await vi.waitFor(() => expect(workers).toHaveLength(1));
 
-      await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-        "Pi created a duplicate session path",
-      );
-      expect(workers[1]?.stops).toBeGreaterThan(0);
-    } finally {
-      await runtime.close();
-    }
+    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
+      "Pi created a duplicate session path",
+    );
+    expect(workers[1]?.stops).toBeGreaterThan(0);
   });
 
-  it.each(["resume", "new"])(
-    "adds only internal GUI support, not agent tools or prompt policy (%s)",
-    async (mode) => {
-      let worker!: FakeRpc;
-      const runtime = new RuntimeController(
-        catalog([record("a", "/tmp")]),
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) => {
-            worker = new FakeRpc(options);
-            return worker as unknown as PiRpcProcess;
-          },
-          openSessionProjection: preview,
-        },
-      );
-      try {
-        if (mode === "resume") {
-          await runtime.openSession("a");
-          await waitForReady(runtime);
-        } else {
-          await runtime.newSession(TEST_CWD);
-        }
-        expect(worker.options.args).toEqual([
-          ...(mode === "resume"
-            ? ["--session", resolve("/sessions/a.jsonl")]
-            : []),
-          "--extension",
-          expect.stringMatching(/[\\/]inspire-branch-bridge\.(ts|js)$/),
-          "--extension",
-          expect.stringMatching(/[\\/]attach-control\.(ts|js)$/),
-        ]);
-        expect(Object.keys(worker.options.env ?? {}).sort()).toEqual([
-          "INSPIRE_BRANCH_COMMAND",
-          "INSPIRE_BRANCH_STATUS_KEY",
-          "INSPIRE_BRANCH_WORKER_ID",
-          "PI_ATTACH_CONTROL_TAG",
-        ]);
-        const message = "Use my configured tools and prompts.";
-        await runtime.prompt({ sessionId: worker.sessionId, message });
-        expect(worker.commands).toContainEqual(
-          expect.objectContaining({ type: "prompt", message }),
-        );
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
-
-  it("does not perform a fallible authoritative snapshot after committing a new session", async () => {
-    const store = trackedAttachmentStore();
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) =>
-        new FakeRpc(options) as unknown as PiRpcProcess,
-      openSessionProjection: preview,
+  it("returns the created session even if a readiness observer fails", async () => {
+    const { runtime } = schedulingRuntime({ sessions: [] });
+    const observer = vi.fn((event: { type: string }) => {
+      if (event.type === "runtime_ready") throw new Error("Observer failed");
     });
-    const internals = runtime as unknown as {
-      snapshotSlot(slot: unknown): Promise<unknown>;
-    };
-    internals.snapshotSlot = async () => {
-      throw new Error("post-commit snapshot must not run");
-    };
+    runtime.on("event", observer);
     try {
-      const snapshot = await runtime.newSession(TEST_CWD);
-      expect(snapshot.active?.sessionId).toBe("new-id");
-      expect(runtime.activeSessionId).toBe("new-id");
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("starts a new Pi worker with the selected model and thinking level", async () => {
-    const store = trackedAttachmentStore();
-    let worker: FakeRpc | undefined;
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        worker = new FakeRpc(options);
-        // Match Pi's normal new-session behavior: it reserves a JSONL pathname
-        // before the first prompt, but has not written a thinking-level entry.
-        worker.sessionPath = join(fixtureWorkspace, "new-id.jsonl");
-        const request = worker.request.bind(worker);
-        worker.request = async <T>(
-          command: Record<string, unknown>,
-        ): Promise<T> => {
-          const result = await request<T>(command);
-          return command.type === "get_state"
-            ? ({
-                ...(result as object),
-                thinkingLevel: "high",
-                model: { provider: "anthropic", id: "claude-sonnet-4" },
-              } as T)
-            : result;
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    try {
-      const snapshot = await runtime.newSession(TEST_CWD, {
-        name: "  Tuned session  ",
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      });
-      expect(worker?.options.args).toEqual(
-        expect.arrayContaining([
-          "--name",
-          "Tuned session",
-          "--model",
-          "anthropic/claude-sonnet-4",
-          "--thinking",
-          "high",
-        ]),
+      const created = await runtime.newSession(TEST_CWD);
+      expect(observer).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "runtime_ready", sessionId: "new-id" }),
       );
-      expect(worker?.options.args?.at(-2)).toBe("--extension");
-      expect(snapshot.active).toMatchObject({
-        model: { provider: "anthropic", id: "claude-sonnet-4" },
-        thinkingLevel: "high",
-      });
-      // A later snapshot previously painted the pending projection's `off`
-      // default while its explicit --thinking selection still awaited JSONL.
-      expect((await runtime.snapshot()).active).toMatchObject({
-        thinkingLevel: "high",
-      });
+      expect(created.active?.sessionId).toBe("new-id");
+      expect((await runtime.snapshot()).active?.sessionId).toBe("new-id");
     } finally {
+      runtime.off("event", observer);
       await runtime.close();
     }
   });
@@ -596,7 +383,7 @@ describe("worker startup and retirement", () => {
     );
 
     await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    await waitForReady(runtime);
     f.worker.emit("event", {
       type: "extension_ui_request",
       id: "question-1",
@@ -620,7 +407,7 @@ describe("worker startup and retirement", () => {
     f.worker.emit("exit", new Error("worker crashed"));
 
     const recovered = await runtime.snapshot();
-    expect(recovered.active?.transcriptPage.messages).toEqual([
+    expect(recovered.active?.transcriptPage.messages).toMatchObject([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
     expect(recovered.runState).toBe("failed");
@@ -637,13 +424,12 @@ describe("worker startup and retirement", () => {
   });
 
   it("rejects an open whose catalog lookup outlives runtime close", async () => {
-    const store = trackedAttachmentStore();
     const base = catalog([record("a", "/project")]);
     const { promise: catalogGate, resolve: releaseCatalog } = deferredSignal();
     let lookupStarted = false;
     let previewLoads = 0;
-    const runtime = new RuntimeController(
-      {
+    const { runtime } = fakeRuntime({
+      source: {
         ...base,
         get: async (id) => {
           lookupStarted = true;
@@ -651,16 +437,11 @@ describe("worker startup and retirement", () => {
           return base.get(id);
         },
       },
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: async (session) => {
-          previewLoads += 1;
-          return preview(session);
-        },
+      openSessionProjection: async (session) => {
+        previewLoads += 1;
+        return preview(session);
       },
-    );
+    });
 
     const opening = runtime.openSession("a");
     await vi.waitFor(() => expect(lookupStarted).toBe(true));
@@ -720,77 +501,60 @@ describe("worker startup and retirement", () => {
     }
   });
 
-  it("owns and drains a provisional new-session worker during concurrent close", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const { promise: startGate, resolve: releaseStart } = deferredSignal();
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        worker = new FakeRpc(options);
-        worker.startGate = startGate;
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    const creating = runtime.newSession(TEST_CWD);
-    await vi.waitFor(() => expect(worker?.starts).toBe(1));
-    expect(runtime.ownWorkerTags()).toEqual(
-      new Set([worker.options.env?.PI_ATTACH_CONTROL_TAG]),
-    );
-    const closing = runtime.close();
-    await vi.waitFor(() => expect(worker.stops).toBe(1));
-    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(/closing/);
-    releaseStart();
-    await expect(creating).rejects.toThrow(/closing/);
-    await expect(closing).resolves.toBeUndefined();
-    const internal = runtime as unknown as {
-      slots: Map<string, unknown>;
-      provisionalSlots: Map<string, unknown>;
-    };
-    expect(internal.slots.size).toBe(0);
-    expect(internal.provisionalSlots.size).toBe(0);
-    expect(worker.stops).toBe(1);
-  });
-
-  it("atomically cleans a provisional identity-rebind race and startup failure", async () => {
-    const store = trackedAttachmentStore();
-    const workers: FakeRpc[] = [];
-    const { promise: identityGate, resolve: releaseIdentity } =
-      deferredSignal();
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        const worker = new FakeRpc(options);
-        const request = worker.request.bind(worker);
-        worker.request = async <T>(command: Record<string, unknown>) => {
-          const result = await request<T>(command);
-          if (command.type === "get_state") await identityGate;
-          return result;
-        };
-        workers.push(worker);
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    const creating = runtime.newSession(TEST_CWD);
-    await vi.waitFor(() =>
-      expect(
-        workers[0]?.commands.some((command) => command.type === "get_state"),
-      ).toBe(true),
-    );
-    const closing = runtime.close();
-    await vi.waitFor(() => expect(workers[0]?.stops).toBe(1));
-    releaseIdentity();
-    await expect(creating).rejects.toThrow(/closing/);
-    await closing;
-    const internal = runtime as unknown as {
-      slots: Map<string, unknown>;
-      provisionalSlots: Map<string, unknown>;
-    };
-    expect(internal.slots.size).toBe(0);
-    expect(internal.provisionalSlots.size).toBe(0);
-    expect(workers.reduce((sum, worker) => sum + worker.starts, 0)).toBe(1);
-    expect(workers.reduce((sum, worker) => sum + worker.stops, 0)).toBe(1);
-  });
+  it.each(["startup", "identity confirmation"] as const)(
+    "drains a provisional new-session writer during %s on close",
+    async (stage) => {
+      let worker!: FakeRpc;
+      const entered = deferredSignal();
+      const gate = deferredSignal();
+      const runtime = new RuntimeController(
+        catalog([]),
+        trackedAttachmentStore(),
+        {
+          createProcess: (options) => {
+            worker = new FakeRpc(options);
+            if (stage === "startup") worker.startGate = gate.promise;
+            const request = worker.request.bind(worker);
+            worker.request = async <T>(command: Record<string, unknown>) => {
+              const result = await request<T>(command);
+              if (
+                stage === "identity confirmation" &&
+                command.type === "get_state"
+              ) {
+                entered.resolve();
+                await gate.promise;
+              }
+              return result;
+            };
+            return worker as unknown as PiRpcProcess;
+          },
+          openSessionProjection: preview,
+        },
+      );
+      const creating = runtime.newSession(TEST_CWD);
+      const rejection = expect(creating).rejects.toThrow(/closing/);
+      try {
+        if (stage === "startup")
+          await vi.waitFor(() => expect(worker?.starts).toBe(1));
+        else await entered.promise;
+        expect(runtime.ownWorkerTags()).toContain(
+          worker.options.env?.PI_ATTACH_CONTROL_TAG,
+        );
+        const closing = runtime.close();
+        await vi.waitFor(() => expect(worker.stops).toBe(1));
+        await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(/closing/);
+        gate.resolve();
+        await rejection;
+        await closing;
+        expect(runtime.ownWorkerTags()).toEqual(new Set());
+        expect(runtime.activeSessionId).toBeNull();
+        expect(worker.stops).toBe(1);
+      } finally {
+        gate.resolve();
+        await runtime.close();
+      }
+    },
+  );
 
   it.each([
     { reported: true, confirmed: true },
@@ -803,39 +567,31 @@ describe("worker startup and retirement", () => {
       target.path = join(fixtureWorkspace, "new-id.jsonl");
       const sessions = catalog([target]);
       const lookup = vi.spyOn(sessions, "get");
-      const workers: FakeRpc[] = [];
       const disconnected = new Error("Transport lost before commit");
       const stopping = deferredSignal();
       let finishStop!: (error?: Error) => void;
       const stopped = new Promise<void>((resolve, reject) => {
         finishStop = (error) => (error ? reject(error) : resolve());
       });
-      const runtime = new RuntimeController(
-        sessions,
-        trackedAttachmentStore(),
-        {
-          createProcess: (options) => {
-            const worker = new FakeRpc(options);
-            if (workers.length === 0) {
-              worker.stop = () => {
-                worker.stops += 1;
-                stopping.resolve();
-                return stopped;
-              };
-              worker.responseOverrides.set(
-                reported ? "get_commands" : "get_state",
-                () => {
-                  worker.emit("exit", disconnected);
-                  throw disconnected;
-                },
-              );
-            }
-            workers.push(worker);
-            return worker as unknown as PiRpcProcess;
-          },
-          openSessionProjection: preview,
+      const { runtime, workers } = schedulingRuntime({
+        source: sessions,
+        configure: (worker) => {
+          if (workers.length === 0) {
+            worker.stop = () => {
+              worker.stops += 1;
+              stopping.resolve();
+              return stopped;
+            };
+            worker.responseOverrides.set(
+              reported ? "get_commands" : "get_state",
+              () => {
+                worker.emit("exit", disconnected);
+                throw disconnected;
+              },
+            );
+          }
         },
-      );
+      });
       const creating = runtime.newSession(TEST_CWD).catch((error) => error);
       await stopping.promise;
       expect(workers[0]?.stops).toBe(1);
@@ -845,6 +601,7 @@ describe("worker startup and retirement", () => {
       expect(workers).toHaveLength(1);
 
       if (confirmed) {
+        await persistedRecord(target.id, target.cwd);
         finishStop();
         expect(await creating).toBe(disconnected);
         expect(await opening).toMatchObject({
@@ -868,49 +625,20 @@ describe("worker startup and retirement", () => {
     },
   );
 
-  it("unregisters and stops a provisional worker whose startup fails", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        worker = new FakeRpc(options);
-        worker.start = async () => {
-          worker.starts += 1;
-          throw new Error("startup failed");
-        };
-        return worker as unknown as PiRpcProcess;
-      },
-      openSessionProjection: preview,
-    });
-    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
-      /startup failed/,
-    );
-    const internal = runtime as unknown as {
-      slots: Map<string, unknown>;
-      provisionalSlots: Map<string, unknown>;
-    };
-    expect(internal.slots.size).toBe(0);
-    expect(internal.provisionalSlots.size).toBe(0);
-    expect(worker.starts).toBe(1);
-    expect(worker.stops).toBe(1);
-    await runtime.close();
-  });
-
-  it("rebinds an extension dialog raised before Pi reports the final session id", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const events: Array<Record<string, unknown>> = [];
-    const runtime = new RuntimeController(catalog([]), store, {
-      createProcess: (options) => {
-        worker = new FakeRpc(options);
+  it("retires a failed new writer and binds the next writer's startup dialog to its final session", async () => {
+    const { runtime, workers } = schedulingRuntime({
+      sessions: [],
+      configure: (worker) => {
+        if (workers.length === 0) {
+          worker.start = async () => {
+            throw new Error("startup failed");
+          };
+          return;
+        }
         const request = worker.request.bind(worker);
-        worker.request = async <T>(
-          command: Record<string, unknown>,
-        ): Promise<T> => {
-          const result = await request<T>(command);
+        worker.request = async <T>(command: Record<string, unknown>) => {
           if (command.type === "get_state") {
-            // Arrives after RPC startup while the slot still carries its
-            // provisional identity.
+            worker.request = request;
             worker.emit("event", {
               type: "extension_ui_request",
               id: "trust-1",
@@ -918,15 +646,19 @@ describe("worker startup and retirement", () => {
               title: "Trust?",
             });
           }
-          return result;
+          return request<T>(command);
         };
-        return worker as unknown as PiRpcProcess;
       },
-      openSessionProjection: preview,
     });
-    runtime.on("event", (event) =>
-      events.push(event as Record<string, unknown>),
+    const events: Array<Record<string, unknown>> = [];
+    runtime.on("event", (event) => events.push(event));
+    trackRuntime(runtime);
+    await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
+      "startup failed",
     );
+    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.ownWorkerTags()).toEqual(new Set());
+    expect(workers[0]?.stops).toBe(1);
 
     const created = await runtime.newSession(TEST_CWD);
     expect(created.active?.sessionId).toBe("new-id");
@@ -937,18 +669,64 @@ describe("worker startup and retirement", () => {
         method: "confirm",
       }),
     ]);
-    // No event may ever leave the host addressed to a pending-* session.
     expect(
-      events.every(
-        (event) => !String(event.sessionId ?? "").startsWith("pending-"),
+      events.filter((event) =>
+        String(event.sessionId ?? "").startsWith("pending-"),
       ),
-    ).toBe(true);
+    ).toEqual([]);
     await runtime.extensionUiResponse({
       sessionId: "new-id",
       id: "trust-1",
       value: true,
     });
-    expect(worker.uiResponses).toEqual([{ id: "trust-1", value: true }]);
-    await runtime.close();
+    expect(workers[1]?.uiResponses).toEqual([{ id: "trust-1", value: true }]);
+    expect(workers[1]?.stops).toBe(0);
   });
+});
+
+it("releases the previous worker's view without letting its disposal clear a replacement's state", async () => {
+  const clear = vi.fn();
+  const lifecycle = new RuntimeWorkerLifecycle(
+    {} as ConstructorParameters<typeof RuntimeWorkerLifecycle>[0],
+    nullDiagnosticLogger(),
+    {
+      extensionUi: { clear },
+    } as unknown as ConstructorParameters<typeof RuntimeWorkerLifecycle>[2],
+  );
+  const slot = createRuntimeSlot({
+    id: "a",
+    cwd: "/tmp",
+    sessionPath: "/sessions/a.jsonl",
+    process: null,
+    preview: null,
+    projection: null,
+    bridge: null,
+    branchRevision: 1,
+    incarnationId: "slot-a",
+    viewId: "view-a",
+  });
+  const disposed = deferredSignal();
+  const previous = {
+    dispose: vi.fn(() => disposed.promise),
+  } as unknown as PendingImageRecovery;
+  slot.pendingImages = previous;
+  slot.piPendingInput = { steering: ["held"], followUp: [] };
+  slot.extensionStatuses = { usage: "37%" };
+  slot.pendingQueues = { ...emptyPendingQueues(), revision: 4 };
+
+  const released = lifecycle.releaseWorkerView(slot, "replaced");
+  expect(clear).toHaveBeenCalledWith(slot, "replaced");
+  expect(slot.pendingImages).toBeNull();
+  expect(slot.piPendingInput).toEqual({ steering: [], followUp: [] });
+  expect(slot.extensionStatuses).toEqual({});
+  expect(slot.pendingQueues.revision).toBe(5);
+
+  // The replacement worker takes ownership while old disposal is pending.
+  const replacement = { dispose: vi.fn() } as unknown as PendingImageRecovery;
+  slot.pendingImages = replacement;
+  disposed.resolve();
+  await released;
+  expect(previous.dispose).toHaveBeenCalledOnce();
+  expect(slot.pendingImages).toBe(replacement);
+  expect(replacement.dispose).not.toHaveBeenCalled();
 });

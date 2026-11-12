@@ -5,9 +5,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export default function (pi: ExtensionAPI) {
   let compactionCount = 0;
   let suspendAfterCompaction = false;
-  pi.on("session_start", (_event, ctx) => {
-    ctx.ui.setStatus("pi-operation-node", process.version);
-  });
 
   pi.on("user_bash", async (event, ctx) => {
     if (event.command === "fixture-await-bash") {

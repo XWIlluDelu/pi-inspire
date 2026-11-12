@@ -22,242 +22,144 @@ afterEach(async () => {
   );
 });
 
-describe("PiRpcProcess", () => {
-  it("preserves user exports through Pi and an extension-style subprocess", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-environment-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `
-import { createInterface } from 'node:readline';
-import { execFileSync } from 'node:child_process';
-createInterface({ input: process.stdin }).on('line', line => {
-  const command = JSON.parse(line);
-  const data = JSON.parse(execFileSync(process.execPath, ['-p',
-    'JSON.stringify({ nodeEnv: process.env.NODE_ENV ?? null, custom: process.env.USER_EXPORT, path: process.env.PATH })'
-  ], { encoding: 'utf8' }));
-  console.log(JSON.stringify({ type: 'response', id: command.id, command: command.type, success: true, data }));
-});
-`,
-    );
-    for (const nodeEnv of [undefined, "", "test", "production"]) {
-      const rpc = new PiRpcProcess({
-        cwd: directory,
-        cliPath,
-        env: {
+// Use a real child and pipes. Each case supplies only the wire behavior that
+// differs from an ordinary reply; the production client owns the input parser.
+async function rpcFixture(
+  receive: string,
+  setup = "",
+  environment: (directory: string) => NodeJS.ProcessEnv = () => ({}),
+) {
+  const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-"));
+  directories.push(directory);
+  const cliPath = join(directory, "fake-pi.mjs");
+  await writeFile(
+    cliPath,
+    [
+      'import { createInterface } from "node:readline";',
+      setup,
+      'const send = frame => process.stdout.write(JSON.stringify(frame) + "\\n");',
+      "const response = (command, data = { isStreaming: false }) => ({",
+      '  type: "response", id: command.id, command: command.type, success: true, data,',
+      "});",
+      "const input = createInterface({ input: process.stdin });",
+      'input.on("line", line => {',
+      "  const command = JSON.parse(line);",
+      receive,
+      "  send(response(command));",
+      "});",
+    ].join("\n"),
+  );
+  const rpc = new PiRpcProcess({
+    cwd: directory,
+    cliPath,
+    env: environment(directory),
+  });
+  processes.push(rpc);
+  return { rpc, directory };
+}
+
+const nextExit = (rpc: PiRpcProcess) =>
+  new Promise<Error>((resolve) => rpc.once("exit", resolve));
+
+describe("Pi RPC over real child-process pipes", () => {
+  it.each([undefined, "", "test"])(
+    "preserves the caller's exports through a Pi subprocess (NODE_ENV %j)",
+    async (nodeEnv) => {
+      const { rpc, directory } = await rpcFixture(
+        'send(response(command, JSON.parse(execFileSync(process.execPath, ["-p", expression], { encoding: "utf8" })))); return;',
+        [
+          'import { execFileSync } from "node:child_process";',
+          'const expression = "JSON.stringify({ nodeEnv: process.env.NODE_ENV ?? null, custom: process.env.USER_EXPORT, path: process.env.PATH })";',
+        ].join("\n"),
+        (directory) => ({
           NODE_ENV: nodeEnv,
           USER_EXPORT: "caller-value",
           PATH: directory,
-        },
-      });
-      processes.push(rpc);
+        }),
+      );
       await rpc.start();
       await expect(rpc.request({ type: "get_state" })).resolves.toEqual({
         nodeEnv: nodeEnv ?? null,
         custom: "caller-value",
         path: directory,
       });
-      await rpc.stop();
-    }
-  });
+    },
+  );
 
-  it("marks an explicitly stopped compact request as cancelled, not outcome-unknown", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    if (command.type === "get_state") {
-      process.stdout.write(JSON.stringify({
-        type: "response",
-        id: command.id,
-        command: command.type,
-        success: true,
-        data: { isStreaming: false }
-      }) + "\\n");
-    }
-  }
-});
-`,
-      "utf8",
-    );
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
+  it("cancels a stopped compaction with a pending response", async () => {
+    const { rpc } = await rpcFixture('if (command.type === "compact") return;');
     await rpc.start();
-    const result = rpc
-      .request({ type: "compact" }, null)
-      .catch((error: Error) => error);
-    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    const pending = rpc.request({ type: "compact" }, null);
+    const cancelled =
+      expect(pending).rejects.toBeInstanceOf(PiRpcCancelledError);
+    // Fence the write without relying on an arbitrary sleep.
+    await rpc.request({ type: "get_state" });
     await rpc.stop("compact");
-    const failure = await result;
-    expect(failure).toBeInstanceOf(PiRpcCancelledError);
-    expect(failure).not.toBeInstanceOf(PiRpcOutcomeUnknownError);
+    await cancelled;
   });
 
-  it("uses LF-only JSONL framing and correlates responses", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const line = buffer.slice(0, index).replace(/\\r$/, "");
-    buffer = buffer.slice(index + 1);
-    const command = JSON.parse(line);
-    if (command.type === "echo") {
-      process.stdout.write(JSON.stringify({type:"notice", value:"left\\u2028right"}) + "\\n");
-      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:"echo", success:true, data:{value:command.value}}) + "\\n");
-    } else {
-      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
-    }
-  }
-});
-`,
-      "utf8",
+  it("correlates replies, preserves Unicode line separators, and rejects oversized input without stopping Pi", async () => {
+    const { rpc } = await rpcFixture(
+      [
+        'if (command.type === "echo") {',
+        '  send({ type: "notice", value: "left\\u2028right" });',
+        "  send(response(command, { value: command.value }));",
+        "  return;",
+        "}",
+      ].join("\n"),
     );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    const events: unknown[] = [];
-    rpc.on("event", (event) => events.push(event));
+    const notice = new Promise<unknown>((resolve) =>
+      rpc.once("event", resolve),
+    );
     await rpc.start();
-    const result = await rpc.request<{ value: string }>({
-      type: "echo",
+    await expect(rpc.request({ type: "echo", value: "ok" })).resolves.toEqual({
       value: "ok",
     });
-    expect(result).toEqual({ value: "ok" });
-    expect(events).toEqual([{ type: "notice", value: "left right" }]);
-    expect(MAX_RPC_LINE_BYTES).toBeGreaterThan(MAX_RPC_OUTBOUND_LINE_BYTES);
+    await expect(notice).resolves.toEqual({
+      type: "notice",
+      value: "left\u2028right",
+    });
 
     await expect(
       rpc.request({
         type: "oversized",
         value: "x".repeat(MAX_RPC_OUTBOUND_LINE_BYTES),
       }),
-    ).rejects.toThrow(
-      `Pi RPC stdin line exceeded ${MAX_RPC_OUTBOUND_LINE_BYTES} bytes`,
-    );
-    await expect(rpc.request({ type: "ping" })).resolves.toEqual({
+    ).rejects.toThrow(/Pi RPC stdin line exceeded/);
+    await expect(rpc.request({ type: "get_state" })).resolves.toEqual({
       isStreaming: false,
     });
   });
 
-  it("flips a response fence before dispatching a following event frame", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-fence-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    const response = JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}});
-    const event = JSON.stringify({type:"after_response"});
-    process.stdout.write(response + "\\n" + event + "\\n");
-  }
-});
-`,
-      "utf8",
+  it("flips a response fence before dispatching the next frame in the same chunk", async () => {
+    const { rpc } = await rpcFixture(
+      [
+        'if (command.type === "fenced") {',
+        '  process.stdout.write(JSON.stringify(response(command)) + "\\n" + JSON.stringify({ type: "after_response" }) + "\\n");',
+        "  return;",
+        "}",
+      ].join("\n"),
     );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
     await rpc.start();
     const fence = { received: false };
-    const observed = new Promise<boolean>((resolveEvent) =>
-      rpc.once("event", () => resolveEvent(fence.received)),
+    const observed = new Promise<boolean>((resolve) =>
+      rpc.once("event", () => resolve(fence.received)),
     );
     await rpc.request({ type: "fenced" }, 30_000, fence);
-    expect(fence.received).toBe(true);
     expect(await observed).toBe(true);
   });
 
-  it("retires a worker whose response does not match the pending command", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-mismatch-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    process.stdout.write(JSON.stringify({
-      type:"response",
-      id:command.id,
-      command:command.type === "get_state" ? command.type : "another-command",
-      success:true,
-      data:{isStreaming:false}
-    }) + "\\n");
-  }
-});
-`,
-      "utf8",
-    );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    await rpc.start();
-    await expect(rpc.request({ type: "mismatched" })).rejects.toBeInstanceOf(
-      PiRpcOutcomeUnknownError,
-    );
-  });
-
-  it("accepts a bounded Pi message echo above the former image-line ceiling", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-image-echo-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
+  it("accepts a Pi message echo larger than the outbound budget", async () => {
     const imageBytes = 9 * 1024 * 1024;
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    process.stdout.write(JSON.stringify({
-      type:"message_start",
-      message:{role:"user", content:[{type:"image", data:"A".repeat(${imageBytes}), mimeType:"image/png"}]}
-    }) + "\\n");
-    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
-  }
-});
-`,
-      "utf8",
-    );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    const event = new Promise<Record<string, unknown>>((resolveEvent) =>
-      rpc.once("event", resolveEvent),
+    const { rpc } = await rpcFixture(
+      'if (command.type === "echo-image") send({ type: "message_start", message: { role: "user", content: [{ type: "image", data: "A".repeat(' +
+        imageBytes +
+        '), mimeType: "image/png" }] } });',
     );
     await rpc.start();
+    const event = new Promise<Record<string, unknown>>((resolve) =>
+      rpc.once("event", resolve),
+    );
     await rpc.request({ type: "echo-image" });
     const message = (await event).message as {
       content: Array<{ data: string }>;
@@ -265,224 +167,108 @@ process.stdin.on("data", chunk => {
     expect(message.content[0]?.data).toHaveLength(imageBytes);
   });
 
-  it("keeps stderr out of error messages, carrying it as host-side detail", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-stderr-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const line = buffer.slice(0, index);
-    buffer = buffer.slice(index + 1);
-    const command = JSON.parse(line);
-    if (command.type === "die") {
-      process.stderr.write("token=super-secret-credential\\n");
-      process.exit(1);
-    }
-    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
-  }
-});
-`,
-      "utf8",
+  it("keeps stderr out of exposed error messages and carries it as Host detail", async () => {
+    const { rpc } = await rpcFixture(
+      [
+        'if (command.type === "die") {',
+        '  process.stderr.write("token=synthetic-secret\\n", () => process.exit(1));',
+        "  return;",
+        "}",
+      ].join("\n"),
     );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    const exits: Error[] = [];
-    rpc.on("exit", (error: Error) => exits.push(error));
+    const exited = nextExit(rpc);
     await rpc.start();
-    await rpc.request({ type: "ping" });
-
     const failure = (await rpc
       .request({ type: "die" })
-      .catch((error: Error) => error)) as Error & {
-      detail?: string;
-    };
-    expect(failure).toBeInstanceOf(Error);
-    // The browser-visible message stays clean; diagnostics ride in `detail`.
-    expect(failure.message).not.toContain("super-secret-credential");
-    expect(failure.detail).toContain("super-secret-credential");
-    expect(exits[0]?.message ?? "").not.toContain("super-secret-credential");
+      .catch((error) => error)) as Error & { detail?: string };
+    expect(failure.message).not.toContain("synthetic-secret");
+    expect(failure.detail).toContain("synthetic-secret");
+    expect((await exited).message).not.toContain("synthetic-secret");
   });
 
-  it("times out a backpressured extension response and retires the worker", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-ui-stall-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-const consume = chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
-    process.stdin.off("data", consume);
-    process.stdin.pause();
-    setInterval(() => undefined, 1_000);
-  }
-};
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", consume);
-`,
-      "utf8",
+  it("retires the writer after an extension response cannot drain stdin", async () => {
+    const { rpc } = await rpcFixture(
+      [
+        "send(response(command));",
+        "input.close();",
+        "process.stdin.pause();",
+        "setInterval(() => {}, 1000);",
+        "return;",
+      ].join("\n"),
     );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
     await rpc.start();
-    const exited = new Promise<Error>((resolveExit) =>
-      rpc.once("exit", resolveExit),
-    );
-
-    let failure: unknown;
-    try {
-      await rpc.sendExtensionUiResponse(
+    const exited = nextExit(rpc);
+    const failure = await rpc
+      .sendExtensionUiResponse(
         { id: "blocked", value: "x".repeat(8 * 1024 * 1024) },
         80,
-      );
-    } catch (error) {
-      failure = error;
-    }
-    expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
+      )
+      .catch((error: unknown) => error);
     if (!(failure instanceof PiRpcOutcomeUnknownError)) {
-      throw new Error("Expected the extension response outcome to be unknown");
+      throw new Error("Expected unknown extension response outcome", {
+        cause: failure,
+      });
     }
     expect(failure.message).toMatch(/stdin write timed out/);
     await failure.stopped;
     expect(await exited).toBe(failure);
-    await expect(rpc.request({ type: "second" })).rejects.toThrow(
-      /not available/,
-    );
+    expect(rpc.available).toBe(false);
   });
 
-  it("marks a bounded mutation timeout unknown without stopping its writer", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-unknown-"));
-    directories.push(directory);
-    const marker = join(directory, "persisted.txt");
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `import { writeFileSync } from "node:fs";
-let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    if (command.type === "late") {
-      setTimeout(() => writeFileSync(${JSON.stringify(marker)}, "committed"), 10);
-    } else {
-      process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{}}) + "\\n");
-    }
-  }
-});`,
-      "utf8",
+  it("keeps real writes and later reads usable across retired response waits", async () => {
+    const { rpc, directory } = await rpcFixture(
+      [
+        'if (command.type === "prompt" || command.type === "get_tree") {',
+        '  if (command.type === "prompt") writeFileSync("persisted.txt", "committed");',
+        "  delayed.push(response(command));",
+        "  return;",
+        "}",
+        "for (const frame of delayed.splice(0)) send(frame);",
+      ].join("\n"),
+      'import { writeFileSync } from "node:fs"; const delayed = [];',
     );
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
     await rpc.start();
-    const exits: Error[] = [];
-    rpc.on("exit", (error) => exits.push(error));
-    const failure = await rpc
-      .request({ type: "late" }, 80)
-      .catch((error: Error) => error);
-    expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
-    expect((failure as PiRpcOutcomeUnknownError).stopped).toBeNull();
-    expect(rpc.available).toBe(true);
-    expect(rpc.hasPendingRequest("late")).toBe(true);
-    expect(exits).toEqual([]);
-    expect(
-      await import("node:fs/promises").then(({ readFile }) =>
-        readFile(marker, "utf8"),
-      ),
-    ).toBe("committed");
-    await expect(rpc.request({ type: "second" })).resolves.toEqual({});
-  });
-
-  it("discards a valid late read response and keeps the worker usable", async () => {
-    const directory = await mkdtemp(
-      join(tmpdir(), "inspire-rpc-read-timeout-"),
+    const fence = { received: false };
+    const [mutation, read] = await Promise.allSettled([
+      rpc.request({ type: "prompt" }, 80, fence),
+      rpc.request({ type: "get_tree" }, 80),
+    ]);
+    expect(mutation).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ stopped: null }),
+    });
+    expect(mutation.status === "rejected" && mutation.reason).toBeInstanceOf(
+      PiRpcOutcomeUnknownError,
     );
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-let reads = 0;
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    reads += 1;
-    const reply = () => process.stdout.write(JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n");
-    if (reads === 2) setTimeout(reply, 120);
-    else reply();
-  }
-});`,
-      "utf8",
-    );
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    await rpc.start();
-    const exits: Error[] = [];
-    rpc.on("exit", (error) => exits.push(error));
+    expect(read).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({
+        message: "Pi command get_tree response timed out",
+      }),
+    });
+    expect(fence.received).toBe(false);
 
-    const failure = await rpc
-      .request({ type: "get_state" }, 80)
-      .catch((error: Error) => error);
-    expect(failure).toBeInstanceOf(Error);
-    expect(failure).not.toBeInstanceOf(PiRpcOutcomeUnknownError);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(exits).toEqual([]);
-    expect(rpc.hasPendingRequest("get_state")).toBe(false);
-    await expect(rpc.request({ type: "second" })).resolves.toEqual({
+    await expect(rpc.request({ type: "get_state" })).resolves.toEqual({
       isStreaming: false,
     });
+    expect(fence.received).toBe(true);
+    expect(await readFile(join(directory, "persisted.txt"), "utf8")).toBe(
+      "committed",
+    );
   });
 
-  it("accepts a complete final response when stdout closes without a newline", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-final-line-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    const response = JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}});
-    if (command.type === "final") {
-      process.stdout.end(response, () => process.exit(0));
-    } else {
-      process.stdout.write(response + "\\n");
-    }
-  }
-});
-`,
-      "utf8",
+  it("accepts a complete final response when stdout closes without LF", async () => {
+    const { rpc } = await rpcFixture(
+      [
+        'if (command.type === "final") {',
+        "  process.stdout.end(JSON.stringify(response(command)), () => process.exit(0));",
+        "  return;",
+        "}",
+      ].join("\n"),
     );
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    const exited = new Promise<Error>((resolve) => rpc.once("exit", resolve));
+    const exited = nextExit(rpc);
     await rpc.start();
-
-    await expect(rpc.request({ type: "final" }, 10_000)).resolves.toEqual({
+    await expect(rpc.request({ type: "final" })).resolves.toEqual({
       isStreaming: false,
     });
     await expect(exited).resolves.toMatchObject({
@@ -493,126 +279,100 @@ process.stdin.on("data", (chunk) => {
   it.each([
     [
       "malformed JSON",
-      JSON.stringify("{broken\n"),
-      "Pi RPC stdout contained a malformed frame",
+      'process.stdout.write("{broken\\n");',
+      /malformed frame/,
     ],
     [
       "invalid UTF-8",
-      "Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d, 0x0a])",
-      "Pi RPC stdout was not valid UTF-8",
+      "process.stdout.write(Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc3, 0x28, 0x22, 0x7d, 0x0a]));",
+      /not valid UTF-8/,
     ],
     [
       "oversized unterminated line",
-      `"x".repeat(${MAX_RPC_LINE_BYTES + 1})`,
-      `Pi RPC stdout line exceeded ${MAX_RPC_LINE_BYTES} bytes`,
+      'process.stdout.write("x".repeat(' + (MAX_RPC_LINE_BYTES + 1) + "));",
+      /stdout line exceeded/,
     ],
-  ])("terminates a child that emits %s", async (_name, output, message) => {
-    const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-bad-frame-"));
-    directories.push(directory);
-    const cliPath = join(directory, "fake-pi.mjs");
-    await writeFile(
-      cliPath,
-      `import { createInterface } from "node:readline";
-createInterface({input: process.stdin}).on("line", line => {
-  const { id, type } = JSON.parse(line);
-  if (type === "break_protocol") process.stdout.write(${output});
-  else process.stdout.write(JSON.stringify({ type: "response", id, command: type, success: true, data: {} }) + "\\n");
-});`,
+    [
+      "mismatched command",
+      'send({ ...response(command), command: "wrong" });',
+      /malformed frame/,
+    ],
+  ])("retires the writer on %s", async (_name, output, message) => {
+    const { rpc } = await rpcFixture(
+      'if (command.type === "break_protocol") { ' + output + " return; }",
     );
-
-    const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-    processes.push(rpc);
-    const exits: Error[] = [];
-    const exited = new Promise<Error>((resolve) =>
-      rpc.on("exit", (error: Error) => {
-        exits.push(error);
-        resolve(error);
-      }),
-    );
+    const exited = nextExit(rpc);
     await rpc.start();
     await expect(
-      rpc.request({ type: "break_protocol" }, 10_000),
+      rpc.request({ type: "break_protocol" }),
     ).rejects.toBeInstanceOf(PiRpcOutcomeUnknownError);
-    await expect(exited).resolves.toMatchObject({ message });
-    expect(exits).toHaveLength(1);
+    await expect(exited).resolves.toMatchObject({
+      message: expect.stringMatching(message),
+    });
     await expect(rpc.request({ type: "get_state" })).rejects.toThrow(
       /not available/,
     );
   });
 
   it.each(["graceful", "protocol-failure"])(
-    "terminates a SIGTERM-resistant synthetic worker tree after %s",
+    "terminates a SIGTERM-resistant worker tree after %s",
     async (mode) => {
-      const directory = await mkdtemp(join(tmpdir(), "inspire-rpc-tree-"));
-      directories.push(directory);
-      const marker = join(directory, "child.pid");
-      const cliPath = join(directory, "fake-pi.mjs");
-      await writeFile(
-        cliPath,
-        `import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
-process.on("SIGTERM", () => {});
-const tool = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "ignore"] });
-const ready = new Promise(resolve => tool.stdout.once("data", resolve));
-writeFileSync(${JSON.stringify(marker)}, String(tool.pid));
-let buffer = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
-  buffer += chunk;
-  let index;
-  while ((index = buffer.indexOf("\\n")) >= 0) {
-    const command = JSON.parse(buffer.slice(0, index));
-    buffer = buffer.slice(index + 1);
-    ready.then(() => process.stdout.write(command.type === "break_protocol" ? "{malformed\\n" : JSON.stringify({type:"response", id:command.id, command:command.type, success:true, data:{isStreaming:false}}) + "\\n"));
-  }
-});`,
-        "utf8",
+      const { rpc, directory } = await rpcFixture(
+        [
+          "void ready.then(() => {",
+          '  if (command.type === "break_protocol") process.stdout.write("{malformed\\n");',
+          "  else send(response(command));",
+          "});",
+          "return;",
+        ].join("\n"),
+        [
+          'import { spawn } from "node:child_process";',
+          'import { writeFileSync } from "node:fs";',
+          'process.on("SIGTERM", () => {});',
+          'const tool = spawn(process.execPath, ["-e", "process.on(\\\"SIGTERM\\\", () => {}); process.stdout.write(\\\"ready\\\"); setInterval(() => {}, 1000)"], { stdio: ["ignore", "pipe", "ignore"] });',
+          'const ready = new Promise(resolve => tool.stdout.once("data", resolve));',
+          'writeFileSync("child.pid", String(tool.pid));',
+        ].join("\n"),
       );
-      const rpc = new PiRpcProcess({ cwd: directory, cliPath });
-      processes.push(rpc);
       await rpc.start();
-      const childPid = Number(await readFile(marker, "utf8"));
+      const childPid = Number(
+        await readFile(join(directory, "child.pid"), "utf8"),
+      );
       const leaderPid = rpc.pid!;
 
       if (mode === "protocol-failure") {
         const failure = await rpc
           .request({ type: "break_protocol" })
           .catch((error: unknown) => error);
-        expect(failure).toBeInstanceOf(PiRpcOutcomeUnknownError);
         if (!(failure instanceof PiRpcOutcomeUnknownError) || !failure.stopped)
-          throw new Error("Expected confirmed-exit fence");
+          throw new Error("Expected confirmed-exit fence", { cause: failure });
         await failure.stopped;
       } else {
         await rpc.stop();
       }
       expect(() => process.kill(leaderPid, 0)).toThrow();
-      let alive = true;
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        try {
-          process.kill(childPid, 0);
-          // Container init may retain an orphan zombie after the whole group
-          // exits. A zombie cannot execute; PID existence is not liveness.
-          if (
-            process.platform === "linux" &&
-            /\) Z /u.test(await readFile(`/proc/${childPid}/stat`, "utf8"))
-          ) {
-            alive = false;
-            break;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        } catch (error) {
-          if (
-            ["ESRCH", "ENOENT"].includes(
-              (error as NodeJS.ErrnoException).code ?? "",
+      await expect
+        .poll(async () => {
+          try {
+            process.kill(childPid, 0);
+            // A Linux container can retain a zombie PID after process exit.
+            return (
+              process.platform !== "linux" ||
+              !/\) Z /u.test(
+                await readFile("/proc/" + childPid + "/stat", "utf8"),
+              )
+            );
+          } catch (error) {
+            if (
+              ["ESRCH", "ENOENT"].includes(
+                (error as NodeJS.ErrnoException).code ?? "",
+              )
             )
-          ) {
-            alive = false;
-            break;
+              return false;
+            throw error;
           }
-          throw error;
-        }
-      }
-      expect(alive).toBe(false);
+        })
+        .toBe(false);
     },
   );
 });

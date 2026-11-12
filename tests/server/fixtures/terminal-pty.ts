@@ -1,4 +1,8 @@
-import type { TerminalPty } from "../../../server/terminal-session-manager.js";
+import {
+  type TerminalPty,
+  type TerminalPtySpawnOptions,
+  TerminalSessionManager,
+} from "../../../server/terminal-session-manager.js";
 
 export class FakePty implements TerminalPty {
   readonly process = "bash";
@@ -45,4 +49,34 @@ export class FakePty implements TerminalPty {
     this.exited = true;
     for (const listener of this.exitListeners) listener({ exitCode, signal });
   }
+}
+
+export function terminalManagerWithFakePty(
+  options: ConstructorParameters<typeof TerminalSessionManager>[0] = {},
+) {
+  const spawns: Array<{
+    shell: string;
+    args: string[];
+    options: TerminalPtySpawnOptions;
+    pty: FakePty;
+  }> = [];
+  const manager = new TerminalSessionManager({
+    profiles: [
+      {
+        id: "bash",
+        label: "Bash",
+        shell: "/bin/bash",
+        args: ["-l"],
+        available: true,
+        isDefault: true,
+      },
+    ],
+    ...options,
+    ptyFactory: (shell, args, spawnOptions) => {
+      const pty = new FakePty();
+      spawns.push({ shell, args, options: spawnOptions, pty });
+      return pty;
+    },
+  });
+  return { manager, spawns };
 }

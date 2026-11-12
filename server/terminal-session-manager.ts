@@ -99,7 +99,7 @@ export interface TerminalPtySpawnOptions {
   env: Record<string, string>;
 }
 
-export type TerminalPtyFactory = (
+type TerminalPtyFactory = (
   shell: string,
   args: string[],
   options: TerminalPtySpawnOptions,

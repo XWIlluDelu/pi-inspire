@@ -73,7 +73,7 @@ function isSystemMessage(value: unknown): boolean {
   );
 }
 
-export const PI_STARTUP_RESPONSE_UI_ERROR =
+const PI_STARTUP_RESPONSE_UI_ERROR =
   "Pi startup cannot accept a response-bearing extension UI request before RPC startup completes";
 
 interface RuntimeEventControllerHost {

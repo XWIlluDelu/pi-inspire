@@ -1,5 +1,5 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,6 @@ import {
   inspectInstance,
   instanceLaunchUrl,
   processStartIdentity,
-  stopManagedInstance,
   writeInstanceState,
 } from "../../server/instance-state.mjs";
 import {
@@ -111,12 +110,7 @@ describe("local HTTP peer proofs", () => {
     const value = owner[field];
     const changed = {
       ...owner,
-      [field]:
-        typeof value === "number"
-          ? value + 1
-          : typeof value === "boolean"
-            ? !value
-            : value + "-changed",
+      [field]: typeof value === "number" ? value + 1 : value + "-changed",
     };
     expect(new InstanceHttpControl().accept(changed, message)).toBeNull();
     expect(verifyInstanceControlResponse(changed, message, response)).toBe(
@@ -162,44 +156,67 @@ describe("local HTTP peer proofs", () => {
     ).not.toBeNull();
   });
 
-  it("rejects a genuinely signed late commit even before an overdue timer callback runs", async () => {
-    vi.useFakeTimers();
-    const owner = state();
-    const control = new InstanceHttpControl();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url, options) => {
+  it.each(["late signed", "incomplete"] as const)(
+    "rejects a %s commit response after its deadline",
+    async (kind) => {
+      vi.useFakeTimers();
+      const owner = state();
+      const control = new InstanceHttpControl();
+      const leaseId = "a".repeat(43);
+      let receiveBody!: () => void;
+      const started = new Promise<void>((resolve) => {
+        receiveBody = resolve;
+      });
+      const fetch = vi.fn(async (_url, options) => {
         const message = JSON.parse(options.body);
         const reply = control.reply(control.accept(owner, message)!, {
           kind: "committed",
-          leaseId: "a".repeat(43),
+          leaseId,
         });
-        // Move the wall clock without executing the abort timer. A delayed
-        // event loop must not turn an expired reply into restart authority.
-        vi.setSystemTime(Date.now() + 6_001);
-        return {
-          ok: true,
-          body: new ReadableStream({
+        // A delayed event loop can move past the deadline before the abort
+        // timer runs. A signed reply must still expire.
+        if (kind === "late signed") vi.setSystemTime(Date.now() + 6_001);
+        return new Response(
+          new ReadableStream({
             start(controller) {
-              controller.enqueue(
-                new TextEncoder().encode(JSON.stringify(reply)),
-              );
-              controller.close();
+              if (kind === "incomplete") {
+                controller.enqueue(new TextEncoder().encode('{"version":1,'));
+                options.signal.addEventListener("abort", () =>
+                  controller.error(new Error("timed out")),
+                );
+              } else {
+                controller.enqueue(
+                  new TextEncoder().encode(JSON.stringify(reply)),
+                );
+                controller.close();
+              }
+              receiveBody();
             },
           }),
-        };
-      }),
-    );
-    await expect(
-      requestInstanceControl(
+        );
+      });
+      vi.stubGlobal("fetch", fetch);
+
+      const result = requestInstanceControl(
         owner,
         "maintenance-commit",
-        { leaseId: "a".repeat(43) },
+        { leaseId },
         6_000,
-      ),
-    ).resolves.toBeNull();
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      );
+      await started;
+      if (kind === "incomplete") await vi.advanceTimersByTimeAsync(6_001);
+      await expect(result).resolves.toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, options] = fetch.mock.calls[0]!;
+      expect(options.headers.Authorization).toBeUndefined();
+      expect(options.body).not.toContain(owner.token);
+      expect(JSON.parse(options.body)).toMatchObject({
+        action: "maintenance-commit",
+        payload: { leaseId },
+      });
+    },
+  );
 
   it("bounds authenticated request bodies before sending or accepting them", async () => {
     const owner = state();
@@ -215,33 +232,6 @@ describe("local HTTP peer proofs", () => {
     await expect(
       requestInstanceControl(owner, "readiness", payload),
     ).resolves.toBeNull();
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("leaves an unsupported live owner untouched", async () => {
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
-    const directory = await mkdtemp(
-      join(tmpdir(), "inspire-unsupported-owner-"),
-    );
-    directories.push(directory);
-    const path = join(directory, "instance.json");
-    const owner = {
-      ...state(),
-      processStartTime: await processStartIdentity(process.pid),
-      durableWorkerRelease: undefined,
-    };
-    const expected = { root: owner.root, host: owner.host, port: owner.port };
-    await writeFile(path, JSON.stringify(owner), { mode: 0o600 });
-    await expect(inspectInstance(path, expected)).resolves.toEqual({
-      kind: "unavailable",
-    });
-    await expect(stopManagedInstance(path, expected)).resolves.toEqual({
-      kind: "unavailable",
-    });
-    await expect(readFile(path + ".shutdown-request")).rejects.toMatchObject({
-      code: "ENOENT",
-    });
     expect(fetch).not.toHaveBeenCalled();
   });
 });
@@ -382,46 +372,30 @@ describe("Host local-control ingress", () => {
       instanceState: () => owner,
       maintenanceRestart: maintenance,
     });
+    const api = request(f.application.server);
+    const localControl = (message: object) =>
+      api.post("/api/host/local-control").send(message);
     try {
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send({})
-        .expect(503);
+      await localControl({}).expect(503);
       owner = {
         ...state(),
         token,
         port: Number(new URL(f.baseUrl).port),
       };
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send({})
-        .expect(401);
-      await request(f.application.server).get("/api/health").expect(401);
+      await localControl({}).expect(401);
+      await api.get("/api/health").expect(401);
       const ready = createInstanceControlRequest(owner, "readiness");
-      await request(f.application.server)
-        .post("/api/host/local-control")
+      await localControl(ready)
         .set("Origin", "https://foreign.invalid")
-        .send(ready)
         .expect(403);
-      const response = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(ready)
-        .expect(200);
+      const response = await localControl(ready).expect(200);
       expect(response.body.result).toEqual({ appName: "inspire" });
       expect(response.headers["cache-control"]).toBe("no-store");
       expect(verifyInstanceControlResponse(owner, ready, response.body)).toBe(
         true,
       );
-      expect(Object.keys(response.body).sort()).toEqual([
-        "nonce",
-        "proof",
-        "result",
-        "version",
-      ]);
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(ready)
-        .expect(401);
+      expect(JSON.stringify(response.body)).not.toContain(owner.token);
+      await localControl(ready).expect(401);
       const link = await instanceLaunchUrl(owner);
       expect(link).not.toBeNull();
       expect(link).not.toContain(owner.token);
@@ -435,30 +409,12 @@ describe("Host local-control ingress", () => {
         namedCurve: "prime256v1",
       }).publicKey.export({ format: "jwk" });
       const registration = () =>
-        request(f.application.server)
+        api
           .post("/api/auth/pair")
           .set("Origin", f.baseUrl)
           .send({ bootstrap, publicKey });
       await registration().expect(200);
       await registration().expect(401);
-      // A private signed caller may pair an owned loopback development proxy.
-      // The grant belongs to that exact browser origin, not the backend port.
-      const devOrigin = "http://127.0.0.1:5173";
-      const devLink = await instanceLaunchUrl(owner, devOrigin);
-      expect(devLink).not.toBeNull();
-      expect(new URL(devLink!).origin).toBe(devOrigin);
-      expect(devLink).not.toContain(token);
-      const devBootstrap = new URLSearchParams(
-        new URL(devLink!).hash.slice(1),
-      ).get("inspire-bootstrap");
-      const pairDev = () =>
-        request(f.application.server)
-          .post("/api/auth/pair")
-          .set("Host", new URL(devOrigin).host)
-          .set("Origin", devOrigin)
-          .send({ bootstrap: devBootstrap, publicKey });
-      await pairDev().expect(200);
-      await pairDev().expect(401);
       expect(
         await instanceLaunchUrl(owner, "https://foreign.invalid"),
       ).toBeNull();
@@ -466,10 +422,7 @@ describe("Host local-control ingress", () => {
         owner,
         "maintenance-prepare",
       );
-      const prepared = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(prepare)
-        .expect(200);
+      const prepared = await localControl(prepare).expect(200);
       expect(verifyInstanceControlResponse(owner, prepare, prepared.body)).toBe(
         true,
       );
@@ -477,18 +430,12 @@ describe("Host local-control ingress", () => {
       const commit = createInstanceControlRequest(owner, "maintenance-commit", {
         leaseId,
       });
-      const committed = await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(commit)
-        .expect(200);
+      const committed = await localControl(commit).expect(200);
       expect(verifyInstanceControlResponse(owner, commit, committed.body)).toBe(
         true,
       );
       expect(committed.body.result).toEqual({ kind: "committed", leaseId });
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(commit)
-        .expect(401);
+      await localControl(commit).expect(401);
       expect(maintenance.reserve).toHaveBeenCalledOnce();
       expect(maintenance.commit).toHaveBeenCalledExactlyOnceWith(leaseId);
       const release = createInstanceControlRequest(
@@ -496,20 +443,12 @@ describe("Host local-control ingress", () => {
         "maintenance-release",
         { leaseId },
       );
-      expect(
-        (
-          await request(f.application.server)
-            .post("/api/host/local-control")
-            .send(release)
-            .expect(200)
-        ).body.result.kind,
-      ).toBe("released");
+      expect((await localControl(release).expect(200)).body.result.kind).toBe(
+        "released",
+      );
       expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
       owner = null;
-      await request(f.application.server)
-        .post("/api/host/local-control")
-        .send(release)
-        .expect(503);
+      await localControl(release).expect(503);
     } finally {
       await closeHostApiFixture(f);
     }

@@ -9,13 +9,31 @@ import {
   type PiRpcProcess,
 } from "../../../server/pi-rpc.js";
 import { RuntimeController } from "../../../server/runtime.js";
+import type { RuntimePersistenceOwnershipController } from "../../../server/runtime-persistence-ownership.js";
+import type { RuntimeSlot } from "../../../server/runtime-slot.js";
 import type { SessionRecord } from "../../../server/session-catalog.js";
 import { RETRY_STATE_SUFFIX } from "../../../shared/branch-bridge-protocol.js";
 
 import { catalog, FakeRpc, workerAttachmentStore } from "./runtime.js";
+import { jsonl } from "./session-jsonl.js";
 
 export const directories: string[] = [];
 export const stores: AttachmentStore[] = [];
+const runtimes: RuntimeController[] = [];
+
+export function runtimeProjection(runtime: RuntimeController) {
+  const internals = runtime as unknown as {
+    slots: Map<string, RuntimeSlot>;
+    reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
+    persistenceOwnership: RuntimePersistenceOwnershipController;
+  };
+  const slot = internals.slots.get("session-a")!;
+  return {
+    slot,
+    reconcile: () => internals.reconcileSlot(slot, true),
+    ownership: internals.persistenceOwnership,
+  };
+}
 
 export class ProjectionRpc extends FakeRpc {
   declare readonly sessionPath: string;
@@ -299,7 +317,8 @@ export async function setup(
   };
   await writeFile(
     path,
-    `${[header, ...(includeUser ? [user] : []), ...extraEntries].map((entry) => JSON.stringify(entry)).join("\n")}\n${trailingBytes}`,
+    jsonl(header, ...(includeUser ? [user] : []), ...extraEntries) +
+      trailingBytes,
   );
   const record: SessionRecord = {
     id: "session-a",
@@ -325,16 +344,21 @@ export async function setup(
     },
     diagnostics,
   });
+  runtimes.push(runtime);
   const opened = await runtime.openSession("session-a");
   if (expectWorker) await vi.waitFor(() => expect(workers).toHaveLength(1));
   return { runtime, workers, sequence, path, opened };
 }
 
 export async function disposeProjectionFixture() {
-  await Promise.all(stores.splice(0).map((store) => store.close()));
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((directory) => rm(directory, { recursive: true, force: true })),
-  );
+  try {
+    await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
+  } finally {
+    await Promise.all(stores.splice(0).map((store) => store.close()));
+    await Promise.all(
+      directories
+        .splice(0)
+        .map((directory) => rm(directory, { recursive: true, force: true })),
+    );
+  }
 }
