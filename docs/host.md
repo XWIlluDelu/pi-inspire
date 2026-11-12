@@ -175,8 +175,8 @@ that Pi to apply the update.
 
 | Action | Effect |
 | --- | --- |
-| **Restart Host** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
-| **Restart all** | Like Restart Host, and also restarts the installed Linux terminal service, closing its project terminals. |
+| **Restart** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
+| **Restart all** | Like Restart, and also restarts the installed Linux terminal service, closing its project terminals. |
 
 Both scopes check for unfinished work, including work in a taken-over Pi. After a workload refusal,
 the same row offers **Stop work and restart** or **Stop work and restart all**. If the Host cannot
@@ -206,7 +206,7 @@ then start Inspire after shutdown. Stopping an installed service also ends its p
 
 ### Terminal-service maintenance
 
-**Restart Host** and `inspire restart --host-only` keep the existing terminal daemon. Manage it from an
+**Restart** and `inspire restart --host-only` keep the existing terminal daemon. Manage it from an
 **external terminal**, not from an Inspire project terminal (stopping the daemon would end the
 command; it refuses to run there, while `status` is allowed):
 

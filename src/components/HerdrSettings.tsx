@@ -98,7 +98,7 @@ export function HerdrSettings({
               aria-label="Review Host restart"
               onClick={onNavigateRestart}
             >
-              Restart Host…
+              Restart…
             </button>
           </div>
         ) : null}

@@ -45,7 +45,13 @@ describe("Settings restart controls", () => {
   it("keeps restart controls quiet until Host availability is known", () => {
     fixture.state.status = null;
     const { rerender } = render(<HostRestartSettings />);
-    const host = screen.getByRole("button", { name: "Restart Host" });
+    const host = screen.getByRole("button", { name: "Restart" });
+    expect(
+      screen.getByText(
+        "Restart Inspire and its Pi workers. Keep project terminals running.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Also close project terminals.")).toBeVisible();
     const all = screen.getByRole("button", { name: "Restart all" });
     expect(host).toBeDisabled();
     expect(all).toBeDisabled();
@@ -77,7 +83,7 @@ describe("Settings restart controls", () => {
     const restartAll = screen.getByRole("button", { name: "Restart all" });
     fireEvent.click(restartAll);
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "This Host's project terminals will close.",
+      "Project terminals will close.",
     );
     rerender(<HostRestartSettings suspended />);
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -125,9 +131,7 @@ describe("Settings restart controls", () => {
     };
     render(<HostRestartSettings />);
     expect(screen.getByRole("alert")).toHaveTextContent("session A");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Restart Host anyway" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Restart anyway" }));
     expect(fixture.start).toHaveBeenCalledExactlyOnceWith(
       "host",
       available.hostId,
@@ -145,7 +149,7 @@ describe("Settings restart controls", () => {
     };
     fixture.state.notice = "Host reconnected.";
     const { rerender } = render(<HostRestartSettings />);
-    const restart = screen.getByRole("button", { name: "Restart Host" });
+    const restart = screen.getByRole("button", { name: "Restart" });
     expect(screen.getByRole("status")).toHaveTextContent(
       "Restart request not confirmed.",
     );
@@ -198,6 +202,6 @@ describe("Settings restart controls", () => {
     expect(confirm).toHaveBeenCalledWith(
       expect.stringContaining("Any restart already requested can still run."),
     );
-    expect(screen.getByRole("button", { name: "Restart Host" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
   });
 });

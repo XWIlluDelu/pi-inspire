@@ -332,8 +332,8 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   can report the result.
   Unsupported or foreign services are refused before stopping anything. Connection services are
   outside the scope, and a failed full restart cannot fall back to Host-only.
-- **Restart Host** and **Restart all** live in Settings → System → Host, with concise confirmation
-  for each scope. Restart Host supports launcher-owned native Windows, macOS, and Linux instances,
+- **Restart** and **Restart all** live in Settings → System → Host, with concise confirmation
+  for each scope. Restart supports launcher-owned native Windows, macOS, and Linux instances,
   including custom loopback addresses, ports, and state paths. Installed Linux services retain their
   exact running systemd invocation as authority. A raw Host entrypoint without either owner cannot
   restart itself.
@@ -366,7 +366,7 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   Inspire-owned and taken-over Pi work in that scope without a second confirmation. It bypasses
   workload checks while keeping preparation, service ownership, lease exclusivity and final commit.
   Automatic maintenance keeps its update and idle checks and restarts only the Host service.
-- **Restart Host** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
+- **Restart** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
   loaded settings. Pi exposes reload in its command context, so a terminal Pi reloads through its
   own `/reload` command. **Restart all** also restarts the terminal service. A busy taken-over Pi
   counts as active work for both scopes. Before submission, the Host reads the attached Pi

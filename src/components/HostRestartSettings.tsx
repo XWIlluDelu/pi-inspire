@@ -8,7 +8,7 @@ import { SettingsConfirmation } from "./SettingsDialog";
 type SettingsRestartScope = Exclude<HostRestartScope, "host-only">;
 
 const RESTART_NAMES: Record<SettingsRestartScope, string> = {
-  host: "Restart Host",
+  host: "Restart",
   all: "Restart all",
 };
 
@@ -104,7 +104,6 @@ export function HostRestartSettings({
       {(["host", "all"] as const).map((scope) => {
         const host = scope === "host";
         const name = RESTART_NAMES[scope];
-        const caption = host ? "Restart" : name;
         const unconfirmed = unconfirmedScope === scope;
         const busy = busyScope === scope;
         const available = host
@@ -116,10 +115,10 @@ export function HostRestartSettings({
             label={name}
             description={
               host
-                ? "Restart Inspire and its Pi workers. Project terminals keep running."
+                ? "Restart Inspire and its Pi workers. Keep project terminals running."
                 : state.status && !available
                   ? state.status.allReason
-                  : "Also close this Host's project terminals."
+                  : "Also close project terminals."
             }
           >
             <button
@@ -129,20 +128,20 @@ export function HostRestartSettings({
                 unconfirmed
                   ? `${name} anyway`
                   : busy
-                    ? `Stop work and restart ${host ? "Host" : "all"}`
+                    ? `Stop work and ${name.toLowerCase()}`
                     : name
               }
               disabled={disabled || !available}
               onClick={() => requestRestart(scope)}
             >
               {unconfirmed ? (
-                `${caption} anyway`
+                `${name} anyway`
               ) : busy ? (
-                `Stop work and ${caption.toLowerCase()}`
+                `Stop work and ${name.toLowerCase()}`
               ) : (
                 <>
                   <RefreshCw size={13} aria-hidden />
-                  {caption}
+                  {name}
                 </>
               )}
             </button>
@@ -208,7 +207,7 @@ export function HostRestartSettings({
           title={`${RESTART_NAMES[confirmation.scope]}?`}
           description={
             confirmation.scope === "all"
-              ? "This Host's project terminals will close. The page will briefly disconnect."
+              ? "Project terminals will close. The page will briefly disconnect."
               : "Inspire's Pi workers will restart. Project terminals keep running. The page will briefly disconnect."
           }
           confirmLabel={RESTART_NAMES[confirmation.scope]}
