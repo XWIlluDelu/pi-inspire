@@ -16,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import {
   instanceIdentity,

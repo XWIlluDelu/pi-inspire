@@ -12,7 +12,7 @@
       "playwright.config.ts",
       "scripts/**/*.{ts,mjs}",
       "src/**/*.{ts,tsx}",
-      "server/**/*.ts",
+      "server/**/*.{ts,mjs}",
       "extensions/**/*.ts",
       "docs/examples/**/*.{ts,tsx}",
       "shared/**/*.ts",
@@ -23,6 +23,7 @@
   },
   "formatter": {
     "enabled": true,
+    "includes": ["**", "!server/**/*.mjs"],
     "indentStyle": "space"
   },
   "linter": {
@@ -49,6 +50,76 @@
       }
     }
   },
+  // Keep architecture directional: shared protocol code never learns product
+  // or runtime details, the Host never depends on browser code, and browser
+  // controllers stay below components so they can be tested without UI.
+  "overrides": [
+    {
+      "includes": ["shared/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [{ "group": ["**/server/**", "**/src/**"] }]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["server/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": { "patterns": [{ "group": ["**/src/**"] }] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/controllers/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": { "patterns": [{ "group": ["**/components/**"] }] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/resource-preview.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "./components/**",
+                      "./store",
+                      "./store.js",
+                      "./store.ts"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double"

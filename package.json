@@ -132,7 +132,7 @@
     "test:watch": "vitest",
     "format": "npx biome format --write",
     "format:check": "biome format",
-    "lint": "biome lint --error-on-warnings && node scripts/check-import-boundaries.mjs",
+    "lint": "biome lint --error-on-warnings",
     "check:unused": "knip",
     "typecheck": "tsc -b",
     "test:browser": "playwright test",
