@@ -8,12 +8,12 @@ import {
 } from "./mcp-config.js";
 import { resolveUserPath } from "./paths.js";
 import { requestError } from "./request-error.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { RuntimeController } from "./runtime.js";
 
 export function registerMcpConfigRoutes(
   app: Express,
   deps: {
-    runtime: RuntimeLike;
+    runtime: Pick<RuntimeController, "sessionCwd">;
     mcpConfig?: McpConfigService;
   },
 ) {

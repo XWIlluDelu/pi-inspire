@@ -27,7 +27,10 @@ import {
   userMessageSearchText,
 } from "../events";
 import { messageCopyLoader } from "../message-copy";
-import { usePresentationAdapters } from "../presentation-adapters";
+import {
+  checkpointPresentation,
+  usePresentationAdapters,
+} from "../presentation-adapters";
 import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
@@ -50,7 +53,6 @@ import {
   type AssistantActivityContent,
   AssistantResponse,
   ContextCheckpointRow,
-  contextCheckpointContent,
   UnknownRoleRow,
   UnpairedToolResultRow,
   UserBubble,
@@ -544,7 +546,7 @@ export function useTranscriptRows({
         message.role === "branchSummary"
       ) {
         flushActivity(true);
-        const { displaySummary } = contextCheckpointContent(message);
+        const { displaySummary } = checkpointPresentation(message);
         built.push({
           key,
           node: <ContextCheckpointRow message={message} />,

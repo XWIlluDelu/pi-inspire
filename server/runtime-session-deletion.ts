@@ -6,7 +6,10 @@ import {
 import { requestError } from "./request-error.js";
 import type { RuntimeSlot } from "./runtime-slot.js";
 import type { SessionRecord } from "./session-catalog.js";
-import type { DeleteSessionRecord } from "./session-delete.js";
+import {
+  type DeleteSessionRecord,
+  validateSessionFile,
+} from "./session-delete.js";
 
 interface RuntimeSessionDeletionHost {
   assertNotClosing(): void;
@@ -28,7 +31,6 @@ interface RuntimeSessionDeletionHost {
   catalogGet(sessionId: string): Promise<SessionRecord | undefined>;
   catalogRefresh(force?: boolean): Promise<readonly SessionRecord[]>;
   invalidateCatalog(): void;
-  validateSessionRecord(session: SessionRecord): Promise<void>;
   deleteSessionRecord: DeleteSessionRecord;
 }
 
@@ -269,8 +271,7 @@ export class RuntimeSessionDeletionController {
       // Validate the complete reviewed set before moving the first file. Each
       // delete validates again at its commit boundary because files may still
       // change after this all-or-nothing admission witness.
-      for (const session of records)
-        await this.host.validateSessionRecord(session);
+      for (const session of records) await validateSessionFile(session);
       for (const session of records) {
         try {
           deleted.push(await this.deleteSessionInside(session.id, session));

@@ -10,11 +10,11 @@ import {
   type UpdateCheckResponse,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
-import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
+import type { PiUpdateChecker } from "./pi-update-checker.js";
 import { inspireStateDirectory } from "./platform-paths.mjs";
 import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
-import type { UpdateCheckerLike } from "./update-checker.js";
+import type { GitHubReleaseUpdateChecker } from "./update-checker.js";
 
 const AUTOMATIC_UPDATE_CHECK_HOUR = 8;
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -54,20 +54,10 @@ type PersistedUpdateState = z.infer<typeof persistedUpdateStateSchema>;
 type UpdateStatusListener = (status: HostUpdateStatus) => void;
 type UpdateSource = "inspire" | "pi";
 
-export interface UpdateCoordinatorLike {
-  status(): Promise<HostUpdateStatus>;
-  checkInspire(force?: boolean): Promise<HostUpdateStatus>;
-  checkPi(force?: boolean): Promise<HostUpdateStatus>;
-  dismiss(identity: string): Promise<HostUpdateStatus>;
-  promptAccepted(): Promise<void>;
-  subscribe(listener: UpdateStatusListener): () => void;
-  close(): Promise<void>;
-}
-
 interface UpdateCoordinatorOptions {
   currentPiVersion: string;
-  inspireChecker?: UpdateCheckerLike;
-  piChecker?: PiUpdateCheckerLike;
+  inspireChecker?: Pick<GitHubReleaseUpdateChecker, "check">;
+  piChecker?: Pick<PiUpdateChecker, "check">;
   statePath?: string;
   now?: () => number;
   diagnostics?: DiagnosticLogger;
@@ -160,7 +150,7 @@ function httpConflict(message: string): Error {
  * Owns update observations, daily prompt-triggering, and acknowledgement for
  * every authenticated view of one Host deployment.
  */
-export class UpdateCoordinator implements UpdateCoordinatorLike {
+export class UpdateCoordinator {
   private readonly now: () => number;
   private readonly listeners = new Set<UpdateStatusListener>();
   private readonly ready: Promise<void>;

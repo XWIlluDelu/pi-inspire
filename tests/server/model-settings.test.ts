@@ -19,7 +19,6 @@ import { ModelSettingsService } from "../../server/model-settings.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, ProjectTrustStore } from "../../server/pi-runtime.js";
 import { ProviderAuthService } from "../../server/provider-auth.js";
-import type { RuntimeLike } from "../../server/runtime.js";
 import type { ModelOption } from "../../shared/contracts.js";
 import type { ModelConfigEdit } from "../../shared/model-settings.js";
 import {
@@ -122,7 +121,9 @@ function routes(
   const app = express();
   app.use(express.json());
   registerModelSettingsRoutes(app, {
-    runtime: runtime as unknown as RuntimeLike,
+    runtime: runtime as unknown as Parameters<
+      typeof registerModelSettingsRoutes
+    >[1]["runtime"],
     modelSettings: service,
     modelMetadata,
     invalidateModels,

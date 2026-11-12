@@ -70,14 +70,13 @@ export class RuntimeBashController {
       timestamp: Date.now(),
       __inspireBashRunning: true,
     };
-    let finish!: () => void;
+    const { promise: finished, resolve: finish } =
+      Promise.withResolvers<void>();
     const execution: NativeBashExecution = {
       worker,
       fence: { received: false },
       message,
-      finished: new Promise<void>((resolve) => {
-        finish = resolve;
-      }),
+      finished,
     };
     slot.nativeBash = execution;
     this.publish(slot, execution, "start");

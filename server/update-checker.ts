@@ -22,10 +22,6 @@ interface GitHubRepository {
   name: string;
 }
 
-export interface UpdateCheckerLike {
-  check(force?: boolean): Promise<UpdateCheckResponse>;
-}
-
 interface UpdateCheckerOptions {
   currentVersion: string;
   repositoryUrl: string | undefined;
@@ -58,7 +54,7 @@ function githubRepository(
  * access in the browser. Results and failures are bounded and shared by every
  * authenticated client of this host process.
  */
-export class GitHubReleaseUpdateChecker implements UpdateCheckerLike {
+export class GitHubReleaseUpdateChecker {
   private readonly repository: GitHubRepository | null;
   private readonly current: ReturnType<typeof parseSemanticVersion>;
   private readonly fetchLatest: FetchLatest;

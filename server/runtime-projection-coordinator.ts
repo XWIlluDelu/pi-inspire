@@ -272,11 +272,7 @@ export class RuntimeProjectionCoordinator {
       if (!strictPhysicalProgress) {
         lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
       } else if (!result.changed) {
-        lastOwnership = {
-          owned: true,
-          source: "expectation",
-          expectationsConsumed: 0,
-        };
+        lastOwnership = { owned: true, source: "expectation" };
       } else if (result.kind !== "append") {
         lastOwnership = { owned: false, reason: "not-append" };
       } else {

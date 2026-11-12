@@ -678,12 +678,6 @@ export class AttachmentStore {
    * Message-wide send limits apply at submission so users can trim a large draft. */
   async stageImages(
     images: readonly { data: string; mimeType: string }[],
-  ): Promise<UploadedAttachment[]> {
-    return this.stageImageCopies(images);
-  }
-
-  private async stageImageCopies(
-    images: readonly { data: string; mimeType: string }[],
     expiresAt?: number,
   ): Promise<UploadedAttachment[]> {
     const sizes = images.map((image) => {
@@ -722,7 +716,7 @@ export class AttachmentStore {
   async prepareTransportImages(
     images: readonly { data: string; mimeType: string }[],
   ): Promise<(UploadedAttachment & { path: string })[]> {
-    const copies = await this.stageImageCopies(
+    const copies = await this.stageImages(
       images,
       Date.now() + TRANSPORT_IMAGE_RETENTION_MS,
     );

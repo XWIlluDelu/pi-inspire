@@ -87,7 +87,6 @@ type TrashSessionPath = (
 export type DeleteSessionRecord = (
   session: SessionRecord,
 ) => Promise<SessionDeleteDisposition>;
-export type ValidateSessionRecord = (session: SessionRecord) => Promise<void>;
 
 async function readFirstLine(handle: FileHandle): Promise<string> {
   const chunks: Buffer[] = [];

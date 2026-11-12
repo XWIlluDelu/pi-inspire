@@ -52,7 +52,7 @@ function nativeState(
   return {
     activity: "idle",
     leafId: null,
-    taskRuns: { instanceId: "receiver", activeRunId: null, settled: [] },
+    taskRuns: { instanceId: "receiver", settled: [] },
     modelSelection: { model: null, thinkingLevel: "off" },
     ...patch,
   };
@@ -159,7 +159,7 @@ async function nativeModelFixture() {
   };
   const state = nativeState({
     modelSelection: selection,
-    taskRuns: { instanceId: "receiver-one", activeRunId: null, settled: [] },
+    taskRuns: { instanceId: "receiver-one", settled: [] },
   });
   f.setState(state);
   f.native.models = vi.fn(async () => ({
@@ -539,7 +539,7 @@ describe("continue an externally owned Pi", () => {
       outcome: "completed" as const,
       settledAt: Date.now(),
     };
-    const runs = { instanceId: "receiver", activeRunId: null, settled: [old] };
+    const runs = { instanceId: "receiver", settled: [old] };
     f.setState({ activity: "idle", taskRuns: runs });
     const runtime = attachedRuntime(async () => f.native);
     const events: Record<string, unknown>[] = [];

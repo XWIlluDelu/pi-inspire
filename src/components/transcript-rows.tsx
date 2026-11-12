@@ -430,9 +430,6 @@ export const UnpairedToolResultRow = memo(function UnpairedToolResultRow({
   );
 });
 
-/** Shared display content, so search does not index the elided event prefix. */
-export const contextCheckpointContent = checkpointPresentation;
-
 export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   message,
 }: {
@@ -446,7 +443,7 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
     title,
     tokensLabel,
     tokensDescription,
-  } = contextCheckpointContent(message);
+  } = checkpointPresentation(message);
   const tokens =
     compacted &&
     typeof message.tokensBefore === "number" &&

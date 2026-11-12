@@ -223,10 +223,7 @@ export class HerdrEnhancement {
   async prepareOwnershipRelease(): Promise<void> {
     const transports = [...this.transports];
     const leases = transports.map((worker) => worker.leaseForRelease());
-    let finish!: () => void;
-    const pending = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
+    const { promise: pending, resolve: finish } = Promise.withResolvers<void>();
     for (const transport of transports) transport.holdForRelease(pending);
     let released = false;
     try {

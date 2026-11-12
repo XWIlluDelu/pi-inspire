@@ -45,7 +45,6 @@ export interface PersistenceMessageIdentity {
 export interface PersistenceExpectation extends PersistenceMessageIdentity {
   readonly token: symbol;
   matcher: PersistenceMatcher | null;
-  readonly exactEntry: SessionEntry | null;
   readonly ready: Promise<void>;
   settle(matcher: PersistenceMatcher | null): void;
 }
@@ -71,7 +70,6 @@ export interface OwnershipDecision {
   owned: boolean;
   source?: "expectation" | "worker-entries" | "initial-materialization";
   reason?: OwnershipRejectionReason;
-  expectationsConsumed?: number;
   workerWitness?: {
     observedEntries: number;
     workerEntries: number;
@@ -96,7 +94,6 @@ export interface PendingBranchBridge {
   reject: (error: Error) => void;
   result: Promise<BranchBridgeResult>;
   navigationParentId?: string | null;
-  beforeLeafId?: string | null;
   summarize?: boolean;
   /** The stock command response fences the completed branch handler. */
   finished?: Promise<void>;
@@ -111,13 +108,9 @@ export interface PendingPartialPersistence {
   observedBytes: number;
 }
 
+/** A worker's own leaf, distinct from the durable default; null is the root. */
 interface NavigationLease {
-  workerId: string;
-  sourceRevision: number;
-  durableLeafId: string | null;
   effectiveLeafId: string | null;
-  targetId: string;
-  mode: "switch" | "edit";
 }
 
 export interface CustomActivityOwnership {
@@ -256,7 +249,6 @@ export interface RuntimeSlot {
   overlay: unknown[];
   /** Exact serialized bytes for each bounded overlay item. */
   overlayItemBytes: number[];
-  overlayBytes: number;
   nextOverlayId: number;
   /** Fallback correlation of the assistant message whose tool batch is live.
    * It survives live-overlay absorption without treating an older assistant
@@ -347,7 +339,6 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     writerBaseline: emptyWriterBaseline(),
     overlay: [],
     overlayItemBytes: [],
-    overlayBytes: 2,
     nextOverlayId: 0,
     activeAssistantCorrelation: null,
     activeOverlayIds: new Map(),

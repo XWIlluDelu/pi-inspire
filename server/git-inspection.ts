@@ -565,16 +565,7 @@ interface InspectionRepository extends ParsedRepository {
   untrackedHeadPaths?: Set<string>;
 }
 
-export interface GitInspectionLike {
-  status(cwd: string, signal?: AbortSignal): Promise<GitStatusResponse>;
-  diff(
-    cwd: string,
-    pathId: string,
-    signal?: AbortSignal,
-  ): Promise<GitDiffResponse>;
-}
-
-export class GitInspectionService implements GitInspectionLike {
+export class GitInspectionService {
   constructor(private readonly runner?: GitRunner) {}
 
   private async withRunner<T>(

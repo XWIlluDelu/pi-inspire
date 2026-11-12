@@ -163,7 +163,6 @@ export interface TaskResult {
 }
 export interface TaskRuns {
   instanceId: string;
-  activeRunId: string | null;
   settled: TaskResult[];
 }
 
@@ -511,7 +510,6 @@ export default function attachControl(pi: ExtensionAPI) {
     activity: activity(ctx),
     taskRuns: {
       instanceId: record?.instanceId ?? "",
-      activeRunId,
       settled: settledTasks,
     },
     modelSelection: selection(ctx),
@@ -940,7 +938,7 @@ export default function attachControl(pi: ExtensionAPI) {
       ...(ownerTag ? { tag: ownerTag.slice(0, 200) } : {}),
       endpoint: server ? endpoint : "",
       token: randomBytes(24).toString("base64url"),
-      taskRuns: { instanceId, activeRunId, settled: [] },
+      taskRuns: { instanceId, settled: [] },
       modelSelection: selection(ctx),
     };
     await publish();

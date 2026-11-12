@@ -9,7 +9,7 @@ import type { ModelSettingsService } from "./model-settings.js";
 import { resolveProjectDirectory } from "./paths.js";
 import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { RuntimeController } from "./runtime.js";
 
 const token = z.string().min(1).max(256);
 const querySchema = z.object({
@@ -90,7 +90,14 @@ const authOperation = z.discriminatedUnion("operation", [
 export function registerModelSettingsRoutes(
   app: Express,
   deps: {
-    runtime: RuntimeLike;
+    runtime: Pick<
+      RuntimeController,
+      | "sessionCwd"
+      | "refreshModels"
+      | "snapshot"
+      | "providerAuth"
+      | "providerAuthOwner"
+    >;
     modelSettings?: ModelSettingsService;
     providerAuth?: ProviderAuthService;
     invalidateModels?: () => void;
@@ -208,21 +215,15 @@ export function registerModelSettingsRoutes(
     operation: ProviderAuthOperation,
     workerId?: string,
   ) {
-    if (owner.sessionId) {
-      if (!deps.runtime.providerAuth)
-        throw requestError(
-          "This session cannot manage provider credentials",
-          503,
-        );
+    if (owner.sessionId)
       return deps.runtime.providerAuth(owner.sessionId, operation, workerId);
-    }
     if (!deps.providerAuth)
       throw requestError("Provider authentication is unavailable", 503);
     return deps.providerAuth.request(operation);
   }
   function endpoint(owner: { sessionId?: string }): AuthEndpoint {
     const lease = owner.sessionId
-      ? deps.runtime.providerAuthOwner?.(owner.sessionId)
+      ? deps.runtime.providerAuthOwner(owner.sessionId)
       : null;
     if (!owner.sessionId || !lease)
       return {
@@ -236,7 +237,7 @@ export function registerModelSettingsRoutes(
     return {
       request: (operation) => dispatchAuth({ sessionId }, operation, lease.id),
       isCurrent: () =>
-        deps.runtime.providerAuthOwner?.(sessionId)?.id === lease.id,
+        deps.runtime.providerAuthOwner(sessionId)?.id === lease.id,
       stopLogin: lease.cancelLogin,
     };
   }

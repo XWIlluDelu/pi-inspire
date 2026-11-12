@@ -22,8 +22,6 @@ import {
 } from "./pi-native";
 
 interface ToolPresentationRegistryOptions {
-  builtInRules?: readonly ToolPresentationRule[];
-  builtInMappings?: ToolPresentationMappings;
   userRules?: readonly ToolPresentationRule[];
   userMappings?: ToolPresentationMappings;
 }
@@ -41,20 +39,19 @@ interface ThinkingPresentationRegistry {
  * a missing, failing, or incompatible rule falls directly through to generic
  * raw presentation rather than trying a second semantic interpretation. */
 export function createToolPresentationRegistry({
-  builtInRules = PI_NATIVE_TOOL_PRESENTATION_RULES,
-  builtInMappings = PI_NATIVE_TOOL_PRESENTATION_MAPPINGS,
   userRules = [],
   userMappings = {},
 }: ToolPresentationRegistryOptions = {}): ToolPresentationRegistry {
   const rules = new Map<string, ToolPresentationRule>();
-  for (const rule of builtInRules) rules.set(rule.id, rule);
+  for (const rule of PI_NATIVE_TOOL_PRESENTATION_RULES)
+    rules.set(rule.id, rule);
   // A user rule can replace a name binding, never the shipped rule definition
   // behind an INSΠRE-owned id.
   for (const rule of userRules) {
     if (!rules.has(rule.id)) rules.set(rule.id, rule);
   }
   const mappings = new Map<string, string>([
-    ...Object.entries(builtInMappings),
+    ...Object.entries(PI_NATIVE_TOOL_PRESENTATION_MAPPINGS),
     ...Object.entries(userMappings),
   ]);
 

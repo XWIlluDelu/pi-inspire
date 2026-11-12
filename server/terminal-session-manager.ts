@@ -60,7 +60,7 @@ const nodePty =
 
 const DEFAULT_COLS = 100;
 const DEFAULT_ROWS = 30;
-const DEFAULT_RING_BYTES = 8 * 1024 * 1024;
+const RING_BYTES = 8 * 1024 * 1024;
 const DEFAULT_SCROLLBACK_ROWS = 20_000;
 const DEFAULT_OWNER_RECONNECT_GRACE_MS = 30_000;
 const TERMINATE_GRACE_MS = 2_000;
@@ -194,7 +194,6 @@ interface TerminalSessionManagerOptions {
   profiles?: ResolvedTerminalProfile[];
   ptyFactory?: TerminalPtyFactory;
   env?: NodeJS.ProcessEnv;
-  ringBytes?: number;
   scrollbackRows?: number;
   ownerReconnectGraceMs?: number;
   catalogEpoch?: string;
@@ -316,7 +315,6 @@ export class TerminalSessionManager implements TerminalService {
   private readonly profiles: ResolvedTerminalProfile[];
   private readonly ptyFactory: TerminalPtyFactory;
   private readonly env: NodeJS.ProcessEnv;
-  private readonly ringBytes: number;
   private readonly scrollbackRows: number;
   private readonly ownerReconnectGraceMs: number;
   private readonly catalogEpoch: string;
@@ -336,7 +334,6 @@ export class TerminalSessionManager implements TerminalService {
       ...(options.profiles ?? discoverTerminalProfiles(this.env)),
     ];
     this.ptyFactory = options.ptyFactory ?? defaultPtyFactory;
-    this.ringBytes = options.ringBytes ?? DEFAULT_RING_BYTES;
     this.scrollbackRows = options.scrollbackRows ?? DEFAULT_SCROLLBACK_ROWS;
     this.ownerReconnectGraceMs =
       options.ownerReconnectGraceMs ?? DEFAULT_OWNER_RECONNECT_GRACE_MS;
@@ -1008,7 +1005,7 @@ export class TerminalSessionManager implements TerminalService {
       signal: null,
       resizeRevision: 0,
       outputEpoch: this.uuid(),
-      ring: new TerminalRingBuffer(this.ringBytes),
+      ring: new TerminalRingBuffer(RING_BYTES),
       emulator,
       serializer,
       emulatorTail: Promise.resolve(),
