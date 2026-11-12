@@ -124,7 +124,7 @@ describe("attachment presentation", () => {
           viewId: "history-view",
           incarnation: null,
           effectiveLeafId: null,
-          reference: `pi-file://${fileKind}`,
+          reference: `pi-history-file://${fileKind}/0`,
           fileKind,
         },
       })),
@@ -221,7 +221,7 @@ describe("attachment presentation", () => {
         viewId: "history-view",
         incarnation: null,
         effectiveLeafId: null,
-        reference: "pi-embedded://4/0",
+        reference: "pi-history-image://entry-4/0",
         preview: true,
       },
     };
@@ -239,7 +239,7 @@ describe("attachment presentation", () => {
           "session-a",
           "history-view",
           "history-view\u0000",
-          "pi-embedded://4/0",
+          "pi-history-image://entry-4/0",
           expect.any(AbortSignal),
         ),
       );

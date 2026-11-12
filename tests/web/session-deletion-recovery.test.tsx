@@ -73,7 +73,7 @@ async function setup() {
     return baseRoutes(url, init);
   });
   store.clearSessionDeleteError();
-  await store.init("token");
+  await store.init();
   FakeWebSocket.instances.at(-1)!.open();
   await vi.waitFor(() => {
     expect(store.getState().sessions).toHaveLength(2);

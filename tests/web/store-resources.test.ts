@@ -20,7 +20,7 @@ import {
   type RouteResponse,
   TEST_SNAPSHOT_DIGEST,
 } from "./helpers";
-import { baseRoutes, initStore, requestToken } from "./store-fixture";
+import { baseRoutes, initStore } from "./store-fixture";
 
 describe("resource previews", () => {
   const nativeUrl = globalThis.URL;
@@ -395,12 +395,12 @@ describe("resource previews", () => {
     const { promise: probeStarted, resolve: markProbeStarted } =
       deferred<void>();
     let probeRequests = 0;
+    let version = "old-host";
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
-        const token = requestToken(init);
         return {
           body: bootstrapPayload({
-            version: `host-${token}`,
+            version,
             snapshot: activeSnapshot(),
           }),
         };
@@ -427,12 +427,13 @@ describe("resource previews", () => {
       return resourceRoutes()(url, init);
     });
     const store = new AppStore();
-    await store.init("old-token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open();
 
     const oldRequest = store.probeResources(["stale.md"]);
     await probeStarted;
-    await store.init("fresh-token");
+    version = "fresh-host";
+    await store.init();
     const freshSocket = FakeWebSocket.instances.at(-1)!;
     freshSocket.open();
 
@@ -440,7 +441,7 @@ describe("resource previews", () => {
     await oldRequest;
 
     expect(store.getState()).toMatchObject({
-      version: "host-fresh-token",
+      version: "fresh-host",
       sessionId: "s1",
       needsToken: false,
       connection: "open",
@@ -877,7 +878,7 @@ describe("resource previews", () => {
       new AbortController().signal,
     );
     await started;
-    await store.init("fresh");
+    await store.init();
     oldContent.resolve({ status: 401, body: { error: "expired token" } });
 
     await expect(loading).rejects.toMatchObject({ name: "AbortError" });

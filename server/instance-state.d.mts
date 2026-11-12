@@ -9,11 +9,8 @@ export interface InstanceState {
   token: string;
   startedAt: string;
   processStartTime: string;
-  shutdownControlVersion?: 1;
-  scopedShutdown?: true;
-  durableWorkerRelease?: true;
+  durableWorkerRelease: true;
   systemdInvocationId?: string;
-  httpControlVersion?: 1;
 }
 
 export interface ExpectedInstance {
@@ -23,13 +20,12 @@ export interface ExpectedInstance {
 }
 
 export type InspectionResult =
-  | { kind: "absent" | "stale" }
-  | { kind: "unavailable"; state: InstanceState }
+  | { kind: "absent" | "stale" | "unavailable" }
   | { kind: "healthy"; state: InstanceState; url: string };
 
 export type StopResult =
-  | { kind: "absent" | "stale" }
-  | { kind: "unavailable" | "timeout" | "stopped" | "cleanup-failed"; state: InstanceState };
+  | { kind: "absent" | "stale" | "unavailable" }
+  | { kind: "timeout" | "stopped" | "cleanup-failed"; state: InstanceState };
 
 export function instanceUrl(state: InstanceState): string;
 export function instanceLaunchUrl(state: InstanceState, origin?: string): Promise<string | null>;
@@ -54,20 +50,16 @@ export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown
 export function inspectInstance(
   path: string,
   expected: ExpectedInstance,
-  options?: { processMarker?: string; healthTimeoutMs?: number },
+  options?: { healthTimeoutMs?: number },
 ): Promise<InspectionResult>;
 export function prepareInstanceRestart(
   path: string,
-  expected: { root: string; host: string; port: number },
-  scope: "host" | "host-only",
-  options?: { processMarker?: string },
+  expected: ExpectedInstance,
 ): Promise<unknown>;
 export function stopManagedInstance(
   path: string,
   expected: ExpectedInstance,
   options?: {
-    processMarker?: string;
-    healthTimeoutMs?: number;
     timeoutMs?: number;
     scopedOwner?: InstanceState;
   },

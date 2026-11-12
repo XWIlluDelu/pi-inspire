@@ -34,7 +34,7 @@ describe("model catalog ownership", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     await expect(store.refreshModels()).rejects.toThrow("catalog offline");
     expect(store.getState().availableModels).toEqual([]);
   });
@@ -50,7 +50,7 @@ describe("model catalog ownership", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     const before = store.getState();
     await store.refreshModels();
     expect(store.getState().availableModels).toEqual([
@@ -77,7 +77,7 @@ describe("model catalog ownership", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     const before = store.getState();
     await store.editModelConfig(
       { sessionId: before.sessionId! },
@@ -114,7 +114,7 @@ describe("model catalog ownership", () => {
         return undefined;
       });
       const store = new AppStore();
-      await store.init("token");
+      await store.init();
       const owner = { sessionId: store.getState().sessionId! };
       const older =
         read === "settings"
@@ -174,7 +174,7 @@ describe("model catalog ownership", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     const before = store.getState();
     const owner = { cwd: "/prospective" };
     expect(await store.readModelSettings(owner)).toEqual(snapshot);
@@ -215,7 +215,7 @@ describe("model catalog ownership", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     const request = store.refreshModels();
     await store.deselectSession();
     const cached = store.getState().availableModels;
@@ -369,7 +369,7 @@ describe("native model controls", () => {
       return baseRoutes(url, init);
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     await store.refreshModels();
     await store.cycleThinking();
     expect(levels).toEqual(["xhigh"]);
@@ -385,7 +385,7 @@ describe("native model controls", () => {
   it("cycles cached native scope in configured order, serializes rapid model/thinking keys, and adopts committed scope without changing the current model", async () => {
     const host = controlHost(),
       store = new AppStore();
-    await store.init("token");
+    await store.init();
     await Promise.all([
       store.cycleModel(1),
       store.cycleModel(1),
@@ -420,7 +420,7 @@ describe("native model controls", () => {
     const host = controlHost(),
       store = new AppStore(),
       gate = deferred<void>();
-    await store.init("token");
+    await store.init();
     host.gateModels(gate.promise);
     const old = store.cycleModel(1),
       queued = store.cycleThinking();
@@ -487,7 +487,7 @@ describe("recent model preference", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open();
 
     await expect(store.setModel("openai", "gpt-5")).resolves.toBe(true);
@@ -546,7 +546,7 @@ describe("recent model preference", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     await store.setModel("a\u0000b", "c");
     await store.setModel("a", "b\u0000c");
     await vi.waitFor(() => expect(patches).toHaveLength(2));
@@ -571,7 +571,7 @@ describe("recent model preference", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     await store.setModel("openai", "missing");
     expect(patches).toEqual([]);
     expect(store.getState().prefs.recentModelIds).toEqual([]);

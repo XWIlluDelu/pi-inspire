@@ -23,7 +23,13 @@ async function openLaunchLink(page: Page, link: string) {
 
 test("pairing opens the workbench without external requests, cookies, or persistent bearers", {
   tag: "@cross-browser",
-}, async ({ page, context }) => {
+}, async ({ page, context, baseURL }) => {
+  await context.addCookies([
+    { name: "fixture_cookie", value: "present", url: baseURL },
+  ]);
+  const bootstrap = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === "/api/bootstrap",
+  );
   const externalRequests: string[] = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
@@ -31,6 +37,11 @@ test("pairing opens the workbench without external requests, cookies, or persist
       externalRequests.push(url.href);
   });
   await pairedPage(page);
+  const request = await bootstrap;
+  expect(await request.headerValue("cookie")).toBeNull();
+  expect(await request.headerValue("authorization")).toMatch(
+    /^Bearer ib1\.access\./u,
+  );
   await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await expect(
@@ -51,7 +62,6 @@ test("pairing opens the workbench without external requests, cookies, or persist
     const identity = await new Promise<{
       privateKey: CryptoKey;
       certificate: string;
-      taskAlertsVersion?: number;
     }>((resolve) => {
       const request = database
         .transaction("identity")
@@ -68,7 +78,6 @@ test("pairing opens the workbench without external requests, cookies, or persist
     }
     return {
       keys: Object.keys(identity).sort(),
-      taskAlertsVersion: identity.taskAlertsVersion,
       extractable: identity.privateKey.extractable,
       exportRejected,
       local: JSON.stringify(localStorage),
@@ -76,12 +85,7 @@ test("pairing opens the workbench without external requests, cookies, or persist
       certificate: identity.certificate,
     };
   });
-  expect(stored.keys).toEqual([
-    "certificate",
-    "privateKey",
-    "taskAlertsVersion",
-  ]);
-  expect(stored.taskAlertsVersion).toBe(1);
+  expect(stored.keys).toEqual(["certificate", "privateKey"]);
   expect(stored.extractable).toBe(false);
   expect(stored.exportRejected).toBe(true);
   expect(JSON.stringify(stored)).not.toContain(token);
@@ -129,43 +133,6 @@ test("a second localhost port receives no usable credential and cannot read the 
   } finally {
     await new Promise<void>((resolve) => foreign.close(() => resolve()));
   }
-});
-
-test("expires only current Host legacy names, and ignores cookie authentication", {
-  tag: "@cross-browser",
-}, async ({ page, context }) => {
-  await page.goto("/");
-  const origin = new URL(page.url()).origin;
-  // Seed the exact legacy qualified name to exercise migration across engines.
-  const { createHash } = await import("node:crypto");
-  const suffix = createHash("sha256")
-    .update(new URL(origin).host)
-    .digest("base64url")
-    .slice(0, 12);
-  const name = `inspire_access_${suffix}`;
-  await context.addCookies([
-    { name, value: "legacy", url: origin, httpOnly: true },
-    { name: "inspire_access", value: "legacy", url: origin, httpOnly: true },
-    { name: "inspire_access_other", value: "preserved", url: origin },
-    { name: "unrelated_browser_cookie", value: "preserved", url: origin },
-  ]);
-  await page.reload();
-  await expect(page.getByLabel("Access token")).toBeVisible();
-  const cookies = await context.cookies(origin);
-  expect(
-    cookies.some(
-      (cookie) => cookie.name === name || cookie.name === "inspire_access",
-    ),
-  ).toBe(false);
-  expect(
-    cookies.find((cookie) => cookie.name === "inspire_access_other")?.value,
-  ).toBe("preserved");
-  expect(
-    cookies.find((cookie) => cookie.name === "unrelated_browser_cookie")?.value,
-  ).toBe("preserved");
-  await page.getByLabel("Access token").fill(token);
-  await page.getByRole("button", { name: "Pair" }).click();
-  await expect(page.getByRole("main")).toBeVisible();
 });
 
 test("local one-use launch links preserve existing pairing and repair rotated authority", {
@@ -220,18 +187,13 @@ test("local one-use launch links preserve existing pairing and repair rotated au
   }
 });
 
-test("direct launch bootstrap is stripped before application requests, one-use, and reloadable", {
+test("a token in the URL leaves the browser unpaired", {
   tag: "@cross-browser",
 }, async ({ page }) => {
-  const requests: string[] = [];
-  page.on("request", (request) => requests.push(request.url()));
-  await openLaunchLink(page, `/?token=${encodeURIComponent(token)}`);
+  await page.goto(`/?token=${encodeURIComponent(token)}`);
+  await expect(page.getByLabel("Access token")).toBeVisible();
+  await expect(page.getByRole("main")).toHaveCount(0);
   expect(new URL(page.url()).search).toBe("");
-  expect(new URL(page.url()).hash).toBe("");
-  expect(requests.slice(1).join("\n")).not.toContain(token);
-  expect(requests.join("\n")).not.toContain("inspire-bootstrap");
-  await page.reload();
-  await expect(page.getByRole("main")).toBeVisible();
 });
 
 test("socket tickets are exact-origin, audience-bound and single-use", {

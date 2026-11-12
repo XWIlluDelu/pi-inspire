@@ -57,7 +57,7 @@ beforeAll(async () => {
     if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
     return undefined;
   });
-  await store.init("token");
+  await store.init();
   socket().open();
 });
 

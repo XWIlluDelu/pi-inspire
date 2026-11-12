@@ -106,17 +106,7 @@ export interface ProjectFileResult {
   workspaceCwd?: string;
 }
 
-import {
-  authenticatedFetch,
-  BrowserPairingError,
-  captureBrowserBootstrap,
-  pairBrowser,
-} from "./browser-auth";
-
-export function resolveToken(): string | null {
-  captureBrowserBootstrap();
-  return null;
-}
+import { authenticatedFetch, BrowserPairingError } from "./browser-auth";
 
 export class ApiError extends Error {
   constructor(
@@ -260,10 +250,6 @@ async function ensureOk(response: Response): Promise<void> {
   );
 }
 
-function authorizationHeader(token: string | null): Record<string, string> {
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 /** Cancellation retires an observer, not a Host operation. Keep it distinct
  * from a failed transport, even when the abandoned write may have committed. */
 export class ApiRequestCancelledError extends Error {
@@ -325,7 +311,6 @@ async function observeRequest<T>(
 }
 
 async function request<T>(
-  token: string | null,
   path: string,
   init: RequestInit = {},
   options: ObservationOptions = {},
@@ -337,9 +322,7 @@ async function request<T>(
       const response = await applicationFetch(path, {
         ...init,
         signal,
-        credentials: "same-origin",
         headers: {
-          ...authorizationHeader(token),
           ...(init.body !== undefined
             ? { "Content-Type": "application/json" }
             : {}),
@@ -390,7 +373,6 @@ function transferObservationTimeout(bytes: number): number {
 }
 
 async function fetchResourceContent(
-  token: string | null,
   id: string,
   sessionId: string,
   options: ResourceContentOptions = {},
@@ -403,9 +385,7 @@ async function fetchResourceContent(
         `/api/resources/${encodeURIComponent(id)}/content?sessionId=${encodeURIComponent(sessionId)}`,
         {
           signal,
-          credentials: "same-origin",
           headers: {
-            ...authorizationHeader(token),
             ...(options.byteLimit
               ? { Range: `bytes=0-${Math.max(0, options.byteLimit - 1)}` }
               : {}),
@@ -432,7 +412,6 @@ async function fetchResourceContent(
 }
 
 async function uploadFiles(
-  token: string | null,
   files: File[],
   signal?: AbortSignal,
 ): Promise<{ attachments: UploadedAttachment[] }> {
@@ -447,8 +426,6 @@ async function uploadFiles(
       const response = await applicationFetch("/api/attachments", {
         method: "POST",
         signal,
-        credentials: "same-origin",
-        headers: authorizationHeader(token),
         body: form,
       });
       await ensureOk(response);
@@ -460,7 +437,7 @@ async function uploadFiles(
       if (signal.aborted)
         await Promise.all(
           result.attachments.map((item) =>
-            request(token, `/api/attachments/${encodeURIComponent(item.id)}`, {
+            request(`/api/attachments/${encodeURIComponent(item.id)}`, {
               method: "DELETE",
             }).catch(() => undefined),
           ),
@@ -471,14 +448,12 @@ async function uploadFiles(
 }
 
 function post<T>(
-  token: string | null,
   path: string,
   body?: unknown,
   init: RequestInit = {},
   options: ObservationOptions = {},
 ): Promise<T> {
   return request<T>(
-    token,
     path,
     {
       ...init,
@@ -490,7 +465,6 @@ function post<T>(
 }
 
 async function observePrompt(
-  token: string | null,
   path: string,
   body: PromptDeliveryRequest | undefined,
   signal?: AbortSignal,
@@ -503,8 +477,8 @@ async function observePrompt(
   try {
     const init = { signal: controller.signal };
     return await (body
-      ? post<PromptDeliveryResponse>(token, path, body, init)
-      : request<PromptDeliveryResponse>(token, path, init));
+      ? post<PromptDeliveryResponse>(path, body, init)
+      : request<PromptDeliveryResponse>(path, init));
   } catch (error) {
     // This ends only one browser observation, not the Host/Pi operation.
     if (aborted(error)) throw new ApiTransportError("request");
@@ -530,7 +504,6 @@ function waitForPromptPoll(signal?: AbortSignal): Promise<void> {
 }
 
 async function deliverPrompt(
-  token: string | null,
   body: PromptDeliveryRequest,
   signal?: AbortSignal,
 ): Promise<PromptAcceptedResponse> {
@@ -539,7 +512,6 @@ async function deliverPrompt(
     let response: PromptDeliveryResponse;
     try {
       response = await observePrompt(
-        token,
         first
           ? "/api/prompt"
           : `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`,
@@ -583,11 +555,10 @@ function settingsQuery(owner: { sessionId?: string; cwd?: string }): string {
   }).toString();
 }
 
-export function createApi(token: string | null = null) {
+export function createApi() {
   return {
     taskAlertSettings: () =>
       request<import("../shared/notifications").TaskAlertSettings>(
-        token,
         "/api/notifications",
         { signal: AbortSignal.timeout(10_000) },
       ),
@@ -599,7 +570,6 @@ export function createApi(token: string | null = null) {
       grouping?: import("../shared/notifications").TaskNotificationGrouping,
     ) =>
       request<import("../shared/notifications").TaskAlertSettings>(
-        token,
         "/api/notifications",
         {
           method: "PUT",
@@ -614,70 +584,56 @@ export function createApi(token: string | null = null) {
         },
       ),
     acknowledgeTaskAlert: (id: string) =>
-      request<{ ok: true }>(token, "/api/notifications/ack", {
+      request<{ ok: true }>("/api/notifications/ack", {
         method: "POST",
         body: JSON.stringify({ id }),
         signal: AbortSignal.timeout(10_000),
       }),
     testTaskAlert: () =>
-      request<{ transport: "push" | "page" }>(
-        token,
-        "/api/notifications/test",
-        {
-          method: "POST",
-          body: "{}",
-          signal: AbortSignal.timeout(15_000),
-        },
-      ),
+      request<{ transport: "push" | "page" }>("/api/notifications/test", {
+        method: "POST",
+        body: "{}",
+        signal: AbortSignal.timeout(15_000),
+      }),
     herdrStatus: () =>
-      request<HerdrEnhancementStatus>(token, "/api/host/herdr", {
+      request<HerdrEnhancementStatus>("/api/host/herdr", {
         signal: AbortSignal.timeout(10_000),
       }),
     hostRestartStatus: () =>
-      request<HostRestartStatus>(token, "/api/host/restart", {
+      request<HostRestartStatus>("/api/host/restart", {
         signal: AbortSignal.timeout(10_000),
       }),
     restartHost: (intent: HostRestartRequest) =>
-      request<HostRestartOperation>(token, "/api/host/restart", {
+      request<HostRestartOperation>("/api/host/restart", {
         method: "POST",
         body: JSON.stringify(intent),
         signal: AbortSignal.timeout(10_000),
       }),
-    /** Retire any explicit one-shot client credential. Browser credentials
-     * are managed separately by the origin-key authentication transport. */
-    retireBearer: () => {
-      token = null;
-    },
     bootstrap: (signal?: AbortSignal, sessionId?: string | null) =>
       withTransportMeasure("bootstrap-confirmation", () =>
-        request<BootstrapResponse>(
-          token,
-          `/api/bootstrap${detailQuery(sessionId)}`,
-          { signal },
-        ),
+        request<BootstrapResponse>(`/api/bootstrap${detailQuery(sessionId)}`, {
+          signal,
+        }),
       ),
     update: (refresh = false) =>
       request<InspireUpdateCheckResult>(
-        token,
         `/api/update${refresh ? "?refresh=1" : ""}`,
       ),
     piUpdate: (refresh = false) =>
       request<PiUpdateCheckResult>(
-        token,
         `/api/pi-update${refresh ? "?refresh=1" : ""}`,
       ),
     snoozeUpdate: (identity: string) =>
-      post<HostUpdateStatus>(token, "/api/update/snooze", { identity }),
+      post<HostUpdateStatus>("/api/update/snooze", { identity }),
     snapshot: (sessionId?: string | null) =>
-      request<ActiveSnapshot>(token, `/api/snapshot${detailQuery(sessionId)}`),
+      request<ActiveSnapshot>(`/api/snapshot${detailQuery(sessionId)}`),
     olderTranscript: (
       sessionId: string,
       cursor: string,
       signal?: AbortSignal,
     ) =>
       request<TranscriptPage>(
-        token,
-        `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}&deferActivity=1`,
+        `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
         { signal },
       ),
     transcriptActivity: (
@@ -686,7 +642,6 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       request<TranscriptActivityPage>(
-        token,
         `/api/transcript/activity?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
         { signal },
       ),
@@ -696,7 +651,6 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       request<UserTurnIndexPage>(
-        token,
         `/api/transcript/user-turns?sessionId=${encodeURIComponent(sessionId)}${start === undefined ? "" : `&start=${start}`}`,
         { signal },
       ),
@@ -707,7 +661,6 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       request<UserTurnTranscriptPage>(
-        token,
         `/api/transcript/user-turn?sessionId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(id)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
         { signal },
       ),
@@ -717,13 +670,11 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       request<{ text: string | null }>(
-        token,
         `/api/transcript/assistant-text?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
         { signal },
       ),
     composerHistory: (sessionId: string, start = 0) =>
       request<ComposerHistoryPage>(
-        token,
         `/api/composer/history?sessionId=${encodeURIComponent(sessionId)}&start=${start}`,
       ),
     branchTree: (
@@ -732,13 +683,11 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       request<BranchTreeResponse>(
-        token,
         `/api/branches/tree?${new URLSearchParams({ sessionId, ...query }).toString()}`,
         { signal },
       ),
     branchEntry: (body: BranchEntryRequest, signal?: AbortSignal) =>
       request<BranchEntryResponse>(
-        token,
         `/api/branches/entry?${new URLSearchParams({
           sessionId: body.sessionId,
           viewId: body.viewId,
@@ -763,8 +712,6 @@ export function createApi(token: string | null = null) {
           }).toString()}`,
           {
             signal,
-            credentials: "same-origin",
-            headers: authorizationHeader(token),
           },
         );
         await ensureOk(response);
@@ -772,7 +719,6 @@ export function createApi(token: string | null = null) {
       }),
     cloneBranch: (body: BranchCloneRequest) =>
       post<BranchForkResponse>(
-        token,
         "/api/branches/clone",
         body,
         {},
@@ -780,7 +726,6 @@ export function createApi(token: string | null = null) {
       ),
     navigateBranch: (body: BranchNavigateRequest, signal?: AbortSignal) =>
       post<BranchNavigateResponse>(
-        token,
         "/api/branches/navigate",
         body,
         { signal },
@@ -788,7 +733,6 @@ export function createApi(token: string | null = null) {
       ),
     forkBranch: (body: BranchForkRequest) =>
       post<BranchForkResponse>(
-        token,
         "/api/branches/fork",
         body,
         {},
@@ -798,15 +742,12 @@ export function createApi(token: string | null = null) {
       ),
     sessions: (query: string, offset = 0, limit = 40, signal?: AbortSignal) =>
       request<SessionListResponse>(
-        token,
         `/api/sessions?q=${encodeURIComponent(query)}&offset=${offset}&limit=${limit}`,
         { signal },
       ),
-    refreshSessions: () =>
-      post<{ ok: boolean }>(token, "/api/sessions/refresh"),
+    refreshSessions: () => post<{ ok: boolean }>("/api/sessions/refresh"),
     sessionsByIds: (ids: string[]) =>
       post<{ sessions: SessionListResponse["sessions"] }>(
-        token,
         "/api/sessions/by-id",
         { ids },
         {},
@@ -814,38 +755,30 @@ export function createApi(token: string | null = null) {
       ),
     sessionsByCwds: (cwds: string[]) =>
       post<{ sessions: SessionListResponse["sessions"] }>(
-        token,
         "/api/sessions/by-cwd",
         { cwds },
         {},
         { mutation: false },
       ),
     openSession: (id: string, signal?: AbortSignal) =>
-      post<SessionOpenResponse>(
-        token,
-        "/api/sessions/open",
-        { id },
-        { signal },
-      ),
+      post<SessionOpenResponse>("/api/sessions/open", { id }, { signal }),
     branchLeaves: (sessionId: string) =>
       request<BranchLeavesResponse>(
-        token,
         `/api/branches/leaves?sessionId=${encodeURIComponent(sessionId)}`,
       ),
     selectBranch: (sessionId: string, leafId: string) =>
-      post<ActiveSnapshot>(token, "/api/branches/select", {
+      post<ActiveSnapshot>("/api/branches/select", {
         sessionId,
         leafId,
       }),
     takeOverSession: (sessionId: string) =>
-      post<ActiveSnapshot>(token, "/api/sessions/takeover", { sessionId }),
+      post<ActiveSnapshot>("/api/sessions/takeover", { sessionId }),
     resumeCommand: (sessionId: string) =>
       request<{ command: string; projectDirectoryMissing?: boolean }>(
-        token,
         `/api/sessions/resume-command?sessionId=${encodeURIComponent(sessionId)}`,
       ),
     deselectSession: (signal?: AbortSignal) =>
-      post<ActiveSnapshot>(token, "/api/sessions/deselect", undefined, {
+      post<ActiveSnapshot>("/api/sessions/deselect", undefined, {
         signal,
       }),
     newSession: (
@@ -854,7 +787,6 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       post<ActiveSnapshot>(
-        token,
         "/api/sessions/new",
         { cwd, ...options },
         { signal },
@@ -864,7 +796,6 @@ export function createApi(token: string | null = null) {
       ),
     refreshModels: (sessionId?: string, cwd?: string, inherit = false) =>
       request<ModelCatalogResponse>(
-        token,
         `/api/models?${new URLSearchParams({
           ...(sessionId ? { sessionId } : {}),
           ...(cwd ? { cwd } : {}),
@@ -872,16 +803,12 @@ export function createApi(token: string | null = null) {
         })}`,
       ),
     mcpConfig: (owner: { sessionId?: string; cwd?: string }) =>
-      request<McpConfigSnapshot>(
-        token,
-        `/api/mcp-config?${settingsQuery(owner)}`,
-      ),
+      request<McpConfigSnapshot>(`/api/mcp-config?${settingsQuery(owner)}`),
     mcpConnection: (
       owner: { sessionId?: string; cwd?: string },
       input: McpConnectionRead,
     ) =>
       request<McpConnectionValues>(
-        token,
         `/api/mcp-config/connection?${settingsQuery(owner)}`,
         { method: "POST", body: JSON.stringify(input) },
       ),
@@ -890,14 +817,12 @@ export function createApi(token: string | null = null) {
       edit: McpConfigEdit,
     ) =>
       request<McpConfigWriteResult>(
-        token,
         `/api/mcp-config?${settingsQuery(owner)}`,
         { method: "PATCH", body: JSON.stringify(edit) },
         { mutation: true },
       ),
     modelSettings: (owner: { sessionId?: string; cwd?: string }) =>
       request<ModelSettingsSnapshot>(
-        token,
         `/api/model-settings?${settingsQuery(owner)}`,
       ),
     saveModelPreferences: (
@@ -906,7 +831,6 @@ export function createApi(token: string | null = null) {
       patch: ModelPreferencesPatch,
     ) =>
       request<ModelSettingsWriteResult>(
-        token,
         `/api/model-settings?${settingsQuery(owner)}`,
         { method: "PATCH", body: JSON.stringify({ revision, patch }) },
         { mutation: true },
@@ -917,7 +841,6 @@ export function createApi(token: string | null = null) {
       edit: ModelConfigEdit,
     ) =>
       request<ModelSettingsWriteResult>(
-        token,
         `/api/model-settings/config?${settingsQuery(owner)}`,
         { method: "PATCH", body: JSON.stringify({ revision, edit }) },
         { mutation: true },
@@ -927,7 +850,6 @@ export function createApi(token: string | null = null) {
       operation: ProviderAuthOperation,
     ) =>
       post<{ result: ProviderAuthResult }>(
-        token,
         `/api/provider-auth?${settingsQuery(owner)}`,
         operation,
         {},
@@ -944,7 +866,6 @@ export function createApi(token: string | null = null) {
       current: ThinkingLevel,
     ) =>
       request<{ level: ThinkingLevel }>(
-        token,
         `/api/new-session/thinking?${new URLSearchParams({ cwd, provider, modelId, current })}`,
       ),
     searchNewSessionFiles: (
@@ -954,107 +875,88 @@ export function createApi(token: string | null = null) {
       showHidden = false,
     ) =>
       request<ProjectFileSearchResult & { cwd: string }>(
-        token,
         `/api/new-session/files?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}&limit=${limit}${showHidden ? "&showHidden=1" : ""}`,
       ),
     renameSession: (sessionId: string, name: string) =>
-      post<{ ok: boolean }>(token, "/api/sessions/rename", { sessionId, name }),
+      post<{ ok: boolean }>("/api/sessions/rename", { sessionId, name }),
     deleteSession: (sessionId: string) =>
       request<SessionDeleteResponse>(
-        token,
         `/api/sessions/${encodeURIComponent(sessionId)}`,
         { method: "DELETE" },
       ),
     clearHiddenSessions: (sessionIds: string[], projectCwd?: string) =>
-      post<HiddenClearResponse>(token, "/api/sessions/clear-hidden", {
+      post<HiddenClearResponse>("/api/sessions/clear-hidden", {
         sessionIds,
         projectCwd,
       }),
     terminals: (cwd?: string) =>
       request<TerminalCatalogResponse>(
-        token,
         cwd
           ? `/api/terminals?cwd=${encodeURIComponent(cwd)}`
           : "/api/terminals",
       ),
-    retryTerminalOperation: (key: string) =>
-      terminalOperations.retry(token, key),
+    retryTerminalOperation: (key: string) => terminalOperations.retry(key),
     createTerminal: (body: TerminalCreateRequest) =>
       terminalOperations.run<TerminalDescriptor>(
-        token,
         "/api/terminals",
         "POST",
         body,
       ),
     renameTerminal: (id: string, body: TerminalRenameRequest) =>
       terminalOperations.run<TerminalDescriptor>(
-        token,
         `/api/terminals/${encodeURIComponent(id)}`,
         "PATCH",
         body,
       ),
     reorderTerminals: (body: TerminalReorderRequest) =>
       terminalOperations.run<TerminalCatalogResponse>(
-        token,
         "/api/terminals/reorder",
         "POST",
         body,
       ),
     restartTerminal: (id: string) =>
       terminalOperations.run<TerminalDescriptor>(
-        token,
         `/api/terminals/${encodeURIComponent(id)}/restart`,
         "POST",
       ),
     removeTerminal: (id: string, force = false) =>
       terminalOperations.run<TerminalRemoveResponse>(
-        token,
         `/api/terminals/${encodeURIComponent(id)}${force ? "?force=1" : ""}`,
         "DELETE",
       ),
     terminalAttachTicket: (id: string, signal?: AbortSignal) =>
       post<TerminalAttachTicketResponse>(
-        token,
         `/api/terminals/${encodeURIComponent(id)}/attach-ticket`,
         undefined,
         { signal },
       ),
     terminalSettings: () =>
-      request<TerminalServiceSettings>(token, "/api/terminal-settings"),
+      request<TerminalServiceSettings>("/api/terminal-settings"),
     updateTerminalSettings: (body: TerminalServiceSettingsPatch) =>
       terminalOperations.run<TerminalServiceSettings>(
-        token,
         "/api/terminal-settings",
         "PATCH",
         body,
       ),
     clearTerminalHistory: () =>
-      terminalOperations.run<void>(token, "/api/terminal-history", "DELETE"),
+      terminalOperations.run<void>("/api/terminal-history", "DELETE"),
     prompt: (body: PromptDeliveryRequest, signal?: AbortSignal) =>
       withTransportMeasure("prompt-confirmation", () =>
-        deliverPrompt(token, body, signal),
+        deliverPrompt(body, signal),
       ),
     nativeCommand: (body: HostNativeCommandRequest, signal?: AbortSignal) =>
       post<HostNativeCommandResponse>(
-        token,
         "/api/control/native-command",
         body,
         { signal },
         { timeoutMs: null },
       ),
     piChangelog: () =>
-      request<{ version: string; markdown: string }>(
-        token,
-        "/api/pi/changelog",
-      ),
+      request<{ version: string; markdown: string }>("/api/pi/changelog"),
     exportSession: (body: SessionExportRequest) =>
-      post<SessionExportResponse>(
-        token,
-        "/api/sessions/export",
-        body,
-        undefined,
-        { timeoutMs: null },
-      ),
+      post<SessionExportResponse>("/api/sessions/export", body, undefined, {
+        timeoutMs: null,
+      }),
     exportDownload: (sessionId: string, id: string) =>
       observeRequest(
         undefined,
@@ -1064,8 +966,6 @@ export function createApi(token: string | null = null) {
             `/api/sessions/${encodeURIComponent(sessionId)}/exports/${encodeURIComponent(id)}`,
             {
               signal,
-              credentials: "same-origin",
-              headers: authorizationHeader(token),
             },
           );
           await ensureOk(response);
@@ -1074,7 +974,6 @@ export function createApi(token: string | null = null) {
       ),
     abort: (sessionId: string, identity: PendingOperationIdentity) =>
       post<PendingRecovery>(
-        token,
         "/api/control/abort",
         {
           sessionId,
@@ -1087,7 +986,6 @@ export function createApi(token: string | null = null) {
       ),
     recoverPending: (sessionId: string, identity: PendingOperationIdentity) =>
       post<PendingRecovery>(
-        token,
         "/api/pending/recover",
         {
           sessionId,
@@ -1100,76 +998,70 @@ export function createApi(token: string | null = null) {
       ),
     pendingOperation: ({ operationId, ...query }: PendingOperationRequest) =>
       request<PendingRecovery>(
-        token,
         `/api/pending/operations/${encodeURIComponent(operationId)}?${new URLSearchParams(query)}`,
       ),
     pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
       post<PendingCopyContent>(
-        token,
         "/api/pending/text",
         body,
         { signal },
         { mutation: false },
       ),
     clearPending: (sessionId: string) =>
-      post<{ ok: boolean }>(token, "/api/pending/clear", { sessionId }),
+      post<{ ok: boolean }>("/api/pending/clear", { sessionId }),
     cycleModel: (sessionId: string, direction: 1 | -1) =>
-      post<unknown>(token, "/api/control/model-cycle", {
+      post<unknown>("/api/control/model-cycle", {
         sessionId,
         direction,
       }),
     setModel: (sessionId: string, provider: string, modelId: string) =>
-      post<ModelSelectionResponse>(token, "/api/control/model", {
+      post<ModelSelectionResponse>("/api/control/model", {
         sessionId,
         provider,
         modelId,
       }),
     setThinkingLevel: (sessionId: string, level: string) =>
-      post<ModelSelectionResponse>(token, "/api/control/thinking", {
+      post<ModelSelectionResponse>("/api/control/thinking", {
         sessionId,
         level,
       }),
     setAutoCompaction: (sessionId: string, enabled: boolean) =>
-      post<{ ok: boolean }>(token, "/api/control/auto-compaction", {
+      post<{ ok: boolean }>("/api/control/auto-compaction", {
         sessionId,
         enabled,
       }),
     setAutoRetry: (sessionId: string, enabled: boolean) =>
-      post<{ ok: boolean }>(token, "/api/control/auto-retry", {
+      post<{ ok: boolean }>("/api/control/auto-retry", {
         sessionId,
         enabled,
       }),
     setSteeringMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
-      post<{ ok: boolean }>(token, "/api/control/steering-mode", {
+      post<{ ok: boolean }>("/api/control/steering-mode", {
         sessionId,
         mode,
       }),
     setFollowUpMode: (sessionId: string, mode: PiMessageDeliveryMode) =>
-      post<{ ok: boolean }>(token, "/api/control/follow-up-mode", {
+      post<{ ok: boolean }>("/api/control/follow-up-mode", {
         sessionId,
         mode,
       }),
     uploadAttachments: (files: File[], signal?: AbortSignal) =>
-      uploadFiles(token, files, signal),
+      uploadFiles(files, signal),
     attachmentPreview: (id: string, signal?: AbortSignal) =>
       observeRequest(signal, { mutation: false }, async (signal) => {
         const response = await applicationFetch(
           `/api/attachments/${encodeURIComponent(id)}/image`,
           {
             signal,
-            credentials: "same-origin",
-            headers: authorizationHeader(token),
           },
         );
         await ensureOk(response);
         return response.blob();
       }),
     deleteAttachment: (id: string) =>
-      request<{ ok: boolean }>(
-        token,
-        `/api/attachments/${encodeURIComponent(id)}`,
-        { method: "DELETE" },
-      ),
+      request<{ ok: boolean }>(`/api/attachments/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
     searchFiles: (
       sessionId: string,
       query: string,
@@ -1178,7 +1070,6 @@ export function createApi(token: string | null = null) {
       showHidden = false,
     ) =>
       request<ProjectFileSearchResult>(
-        token,
         `/api/files?sessionId=${encodeURIComponent(sessionId)}&q=${encodeURIComponent(query)}&limit=${limit}${showHidden ? "&showHidden=1" : ""}`,
         { signal },
       ),
@@ -1192,31 +1083,27 @@ export function createApi(token: string | null = null) {
       } = {},
     ) =>
       request<{ entries: ProjectDirEntry[]; truncated?: boolean }>(
-        token,
         `/api/files/list?sessionId=${encodeURIComponent(sessionId)}&dir=${encodeURIComponent(dir)}${options.refresh ? "&refresh=1" : ""}${options.showHidden ? "&showHidden=1" : ""}`,
         { signal: options.signal },
       ),
     gitStatus: (sessionId: string, signal?: AbortSignal) =>
       request<GitStatusResponse>(
-        token,
         `/api/git/status?sessionId=${encodeURIComponent(sessionId)}`,
         { signal },
       ),
     gitDiff: (sessionId: string, pathId: string, signal?: AbortSignal) =>
       post<GitDiffResponse>(
-        token,
         "/api/git/diff",
         { sessionId, pathId },
         { signal },
         { mutation: false },
       ),
-    browseHostRoots: () => request<HostRootsResponse>(token, "/api/host/roots"),
+    browseHostRoots: () => request<HostRootsResponse>("/api/host/roots"),
     browseHostDirs: (path?: string, showHidden = false) => {
       const query = new URLSearchParams();
       if (path) query.set("path", path);
       if (showHidden) query.set("showHidden", "1");
       return request<HostDirListing>(
-        token,
         `/api/host/dirs${query.size ? `?${query}` : ""}`,
       );
     },
@@ -1225,7 +1112,6 @@ export function createApi(token: string | null = null) {
       options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
     ) =>
       post<SessionResourceListResponse>(
-        token,
         "/api/resources/list",
         {
           sessionId,
@@ -1241,7 +1127,6 @@ export function createApi(token: string | null = null) {
       signal?: AbortSignal,
     ) =>
       post<ResourceProbeResponse>(
-        token,
         "/api/resources/probe",
         { sessionId, references },
         { signal },
@@ -1254,7 +1139,6 @@ export function createApi(token: string | null = null) {
       workspacePath?: string,
     ) =>
       post<ResourceDescriptor>(
-        token,
         "/api/resources/resolve",
         {
           sessionId,
@@ -1270,7 +1154,7 @@ export function createApi(token: string | null = null) {
       workspacePath?: string,
       directory = false,
     ) =>
-      post<{ ok: true }>(token, "/api/resources/show-in-file-manager", {
+      post<{ ok: true }>("/api/resources/show-in-file-manager", {
         sessionId,
         reference,
         ...(workspacePath !== undefined ? { workspacePath } : {}),
@@ -1278,13 +1162,11 @@ export function createApi(token: string | null = null) {
       }),
     createHtmlPreview: (id: string, sessionId: string, html: string) =>
       post<HtmlPreviewResponse>(
-        token,
         `/api/resources/${encodeURIComponent(id)}/interactive`,
         { sessionId, html },
       ),
     deleteHtmlPreview: (id: string, sessionId: string) =>
       request<void>(
-        token,
         `/api/html-previews/${encodeURIComponent(id)}?sessionId=${encodeURIComponent(sessionId)}`,
         { method: "DELETE" },
       ),
@@ -1294,7 +1176,6 @@ export function createApi(token: string | null = null) {
       signal: AbortSignal,
     ) =>
       post<{ ticket: string; expiresAt: number }>(
-        token,
         `/api/resources/${encodeURIComponent(id)}/download-ticket`,
         { sessionId },
         { signal },
@@ -1304,22 +1185,22 @@ export function createApi(token: string | null = null) {
       id: string,
       sessionId: string,
       options?: ResourceContentOptions,
-    ) => fetchResourceContent(token, id, sessionId, options),
+    ) => fetchResourceContent(id, sessionId, options),
     respondExtensionUi: (payload: Record<string, unknown>) =>
-      post<{ ok: boolean }>(token, "/api/extension-ui", payload),
+      post<{ ok: boolean }>("/api/extension-ui", payload),
     setPresentationAdapterEnabled: (id: string, enabled: boolean) =>
       request<{
         configuration: ToolPresentationConfiguration;
         adapters?: PresentationAdapterInfo[];
         warning?: string;
         preferences: InspirePreferences;
-      }>(token, "/api/presentation-adapters/" + encodeURIComponent(id), {
+      }>("/api/presentation-adapters/" + encodeURIComponent(id), {
         method: "PATCH",
         body: JSON.stringify({ enabled }),
       }),
-    preferences: () => request<InspirePreferences>(token, "/api/preferences"),
+    preferences: () => request<InspirePreferences>("/api/preferences"),
     savePreferences: (patch: Partial<InspirePreferences>) =>
-      request<InspirePreferences>(token, "/api/preferences", {
+      request<InspirePreferences>("/api/preferences", {
         method: "PATCH",
         body: JSON.stringify(patch),
       }),
@@ -1327,16 +1208,6 @@ export function createApi(token: string | null = null) {
 }
 
 export type Api = ReturnType<typeof createApi>;
-
-export async function pairHost(token: string): Promise<void> {
-  try {
-    await pairBrowser(token);
-  } catch (error) {
-    if (error instanceof BrowserPairingError)
-      throw new ApiError(401, error.message);
-    throw error;
-  }
-}
 
 export function terminalUrl(ticket: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -1350,15 +1221,13 @@ function detailQuery(sessionId: string | null | undefined): string {
 }
 
 export function eventsUrl(
-  ticket: string | null = null,
-  snapshotDigest: string | null = null,
-  sessionId?: string | null,
+  ticket: string,
+  snapshotDigest: string | null,
+  sessionId: string | null,
 ): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const query = new URLSearchParams();
-  if (ticket) query.set("ticket", ticket);
+  const query = new URLSearchParams({ ticket });
   if (snapshotDigest) query.set("snapshot", snapshotDigest);
-  if (sessionId !== undefined) query.set("detail", sessionId ?? "");
-  const suffix = query.size > 0 ? `?${query}` : "";
-  return `${protocol}//${window.location.host}/events${suffix}`;
+  query.set("detail", sessionId ?? "");
+  return `${protocol}//${window.location.host}/events?${query}`;
 }

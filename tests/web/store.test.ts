@@ -15,18 +15,18 @@ import {
   TEST_SNAPSHOT_DIGEST,
 } from "./helpers";
 import { pendingQueues } from "./pending-fixtures";
-import { baseRoutes, initStore, requestToken } from "./store-fixture";
+import { baseRoutes, initStore } from "./store-fixture";
 
-function installDeferredBootstrapRoutes(...tokens: string[]) {
-  const responses = new Map(
-    tokens.map((token) => [token, deferred<RouteResponse>()] as const),
-  );
+function installDeferredBootstrapRoutes() {
+  const responses = [
+    deferred<RouteResponse>(),
+    deferred<RouteResponse>(),
+  ] as const;
+  let next = 0;
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap")) {
-      const token = requestToken(init);
-      const response = token ? responses.get(token) : undefined;
-      if (!response)
-        throw new Error("Unexpected bootstrap token in deferred test");
+      const response = responses[next++];
+      if (!response) throw new Error("Unexpected bootstrap in deferred test");
       return response.promise;
     }
     return baseRoutes(url, init);
@@ -157,7 +157,7 @@ describe("websocket lifecycle", () => {
       sessionStatus: { runState: "idle" },
     });
     await vi.waitFor(() => expect(reads).toContain("/api/snapshot?detail=s2"));
-    await store.init(null);
+    await store.init();
     expect(reads).toContain("/api/bootstrap?detail=s2");
     expect(
       new URL(FakeWebSocket.instances.at(-1)!.url).searchParams.get("detail"),
@@ -169,50 +169,28 @@ describe("websocket lifecycle", () => {
   it("delegates browser authentication to the transport and opens only ticketed sockets", async () => {
     const fetch = installFetch(baseRoutes);
     const store = new AppStore();
-    await store.init(null);
+    await store.init();
     const socket = FakeWebSocket.instances.at(-1)!;
 
     const bootstrapCall = fetch.mock.calls.find(([url]) =>
       String(url).startsWith("/api/bootstrap"),
     );
-    expect(bootstrapCall?.[1]).toMatchObject({ credentials: "same-origin" });
-    expect(bootstrapCall?.[1]?.headers).not.toHaveProperty("Authorization");
+    expect(bootstrapCall).toBeDefined();
+    expect(new Headers(bootstrapCall?.[1]?.headers).has("Authorization")).toBe(
+      false,
+    );
     expect(socket.url).toBe(
       `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
     );
   });
 
-  it("retires an explicit one-shot credential after bootstrap", async () => {
-    const fetch = installFetch(baseRoutes);
-    const store = new AppStore();
-    await store.init("launch-token");
-    await store.refreshSessions();
-
-    const bootstrapCall = fetch.mock.calls.find(([url]) =>
-      String(url).startsWith("/api/bootstrap"),
-    );
-    expect(bootstrapCall?.[1]?.headers).toMatchObject({
-      Authorization: "Bearer launch-token",
-    });
-    const sessionCalls = fetch.mock.calls.filter(([url]) =>
-      String(url).startsWith("/api/sessions"),
-    );
-    expect(sessionCalls.length).toBeGreaterThan(0);
-    expect(
-      sessionCalls.every(([, init]) => requestToken(init ?? {}) === null),
-    ).toBe(true);
-    expect(FakeWebSocket.instances.at(-1)?.url).toBe(
-      `ws://localhost:3000/events?ticket=fixture-socket-ticket&snapshot=${TEST_SNAPSHOT_DIGEST}&detail=s1`,
-    );
-  });
-
   it("keeps only the latest concurrent bootstrap's state, preferences and socket", async () => {
-    const bootstraps = installDeferredBootstrapRoutes("old", "new");
+    const [oldBootstrap, newBootstrap] = installDeferredBootstrapRoutes();
     const store = new AppStore();
-    const oldInit = store.init("old");
-    const newInit = store.init("new");
+    const oldInit = store.init();
+    const newInit = store.init();
 
-    bootstraps.get("new")!.resolve({
+    newBootstrap.resolve({
       body: bootstrapPayload({
         version: "new-host",
         preferences: { ...DEFAULT_PREFS, theme: "dark" },
@@ -221,7 +199,7 @@ describe("websocket lifecycle", () => {
     });
     await newInit;
     const currentSocket = FakeWebSocket.instances[0];
-    bootstraps.get("old")!.resolve({
+    oldBootstrap.resolve({
       body: bootstrapPayload({
         version: "old-host",
         preferences: { ...DEFAULT_PREFS, theme: "light" },
@@ -243,19 +221,19 @@ describe("websocket lifecycle", () => {
   });
 
   it("ignores a superseded bootstrap authorization failure", async () => {
-    const bootstraps = installDeferredBootstrapRoutes("expired", "fresh");
+    const [expiredBootstrap, freshBootstrap] = installDeferredBootstrapRoutes();
     const store = new AppStore();
-    const expiredInit = store.init("expired");
-    const freshInit = store.init("fresh");
+    const expiredInit = store.init();
+    const freshInit = store.init();
 
-    bootstraps.get("fresh")!.resolve({
+    freshBootstrap.resolve({
       body: bootstrapPayload({
         version: "fresh-host",
         snapshot: activeSnapshot({ sessionId: "fresh-session" }),
       }),
     });
     await freshInit;
-    bootstraps.get("expired")!.resolve({
+    expiredBootstrap.resolve({
       status: 401,
       body: { error: "expired token" },
     });
@@ -279,7 +257,7 @@ describe("websocket lifecycle", () => {
         throw new TypeError("Failed to fetch");
       });
       const store = new AppStore();
-      await store.init(null);
+      await store.init();
       expect(store.getState()).toMatchObject({
         needsToken: false,
         bootstrapped: false,
@@ -307,7 +285,7 @@ describe("websocket lifecycle", () => {
         ),
       );
       const store = new AppStore();
-      await store.init(null);
+      await store.init();
       expect(store.getState()).toMatchObject({
         needsToken: false,
         bootstrapped: false,
@@ -347,7 +325,7 @@ describe("websocket lifecycle", () => {
     });
     const { store } = await initStore();
     missing = true;
-    await store.init(null);
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open(empty);
     expect(reads.slice(-2)).toEqual([
       "/api/bootstrap?detail=s1",
@@ -391,7 +369,7 @@ describe("websocket lifecycle", () => {
       });
       const { store } = await initStore();
       missing = true;
-      const reconnecting = store.init(null);
+      const reconnecting = store.init();
       await vi.waitFor(() => expect(recovering).toBe(true));
       const selecting = store.openSession("s2");
       if (phase === "committed") {
@@ -446,7 +424,7 @@ describe("websocket lifecycle", () => {
         });
         const { store } = await initStore();
         refused = true;
-        await store.init(null);
+        await store.init();
         expect(reads).toEqual(["/api/bootstrap?detail=s1"]);
         expect(store.getState()).toMatchObject({
           sessionId: "s1",
@@ -508,9 +486,9 @@ describe("websocket lifecycle", () => {
           return baseRoutes(url, init);
         });
         const store = new AppStore();
-        if (!slow) await store.init(null);
+        if (!slow) await store.init();
         slow = true;
-        const initializing = store.init(null);
+        const initializing = store.init();
         await vi.advanceTimersByTimeAsync(35_000);
         expect(signal?.aborted).toBe(false);
         pending.resolve({
@@ -550,7 +528,7 @@ describe("websocket lifecycle", () => {
           return baseRoutes(url, init);
         });
         const store = new AppStore();
-        const first = store.init(null);
+        const first = store.init();
         await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS);
         await first;
         expect(fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
@@ -560,7 +538,7 @@ describe("websocket lifecycle", () => {
           needsToken: false,
           connectionProblem: { kind: "address-unreachable" },
         });
-        await store.init(null);
+        await store.init();
         const socket = FakeWebSocket.instances.at(-1)!;
         socket.open(activeSnapshot());
         late.resolve(
@@ -604,9 +582,9 @@ describe("websocket lifecycle", () => {
         return baseRoutes(url, init);
       });
       const store = new AppStore();
-      await store.init(null);
+      await store.init();
       recovering = true;
-      const reconnecting = store.init(null);
+      const reconnecting = store.init();
       await vi.advanceTimersByTimeAsync(35_000);
       missing.resolve({
         status: 404,

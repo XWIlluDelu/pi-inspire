@@ -24,9 +24,7 @@ it("stops a second native Pi run after both HTTP observations of the first Stop 
       loseGet = true;
     const ids: string[] = [];
     vi.stubGlobal("fetch", (async (input, init) => {
-      const headers = new Headers(init?.headers);
-      headers.set("Authorization", "Bearer pi-operation-synthetic-local-token");
-      const response = await bridge(input, { ...init, headers });
+      const response = await bridge(input, init);
       const url = String(input);
       if (url.startsWith("/api/bootstrap"))
         bootstrap = await response.clone().json();
@@ -44,7 +42,7 @@ it("stops a second native Pi run after both HTTP observations of the first Stop 
       return response;
     }) satisfies typeof fetch);
     store = new AppStore();
-    await store.init("pi-operation-synthetic-local-token");
+    await store.init();
     const socket = FakeWebSocket.instances.at(-1)!;
     socket.readyState = 1;
     socket.onopen?.({});

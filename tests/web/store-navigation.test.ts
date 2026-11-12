@@ -55,7 +55,7 @@ describe("session switching guard", () => {
   it("clears the pending state and surfaces the error when the open fails", async () => {
     installFetch(baseRoutes);
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open();
 
     vi.stubGlobal(
@@ -444,14 +444,14 @@ describe("navigation curation", () => {
   it("keeps a pending preference visible across transport replacement and rolls back to the new host baseline", async () => {
     const pendingPatch = deferred<RouteResponse>();
     const { promise: started, resolve: patchStarted } = deferred<void>();
+    let theme: "light" | "system" = "system";
     installFetch((url, init) => {
       if (url.startsWith("/api/bootstrap")) {
-        const token = new Headers(init.headers).get("authorization");
         return {
           body: bootstrapPayload({
             preferences: {
               ...DEFAULT_PREFS,
-              theme: token === "Bearer fresh" ? "light" : "system",
+              theme,
             },
           }),
         };
@@ -466,7 +466,8 @@ describe("navigation curation", () => {
 
     store.setTheme("dark");
     await started;
-    await store.init("fresh");
+    theme = "light";
+    await store.init();
     expect(store.getState().prefs.theme).toBe("dark");
 
     pendingPatch.resolve({

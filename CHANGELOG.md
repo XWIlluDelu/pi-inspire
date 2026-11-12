@@ -52,7 +52,7 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
   `INSPIRE_HERDR_ENV_EXCLUDE` can keep selected extension environment prefixes out of the shared
   Herdr server.
 - See the [package installation guide](docs/host.md#build-and-install-a-package) and the
-  [one-time upgrade steps for a running 0.6.5 Host](docs/host.md#older-hosts-and-restart-preparation).
+  [update instructions](docs/host.md#updating-inspire).
 
 ## 0.6.5 — 2026-10-26
 

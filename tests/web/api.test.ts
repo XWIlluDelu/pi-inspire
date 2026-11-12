@@ -618,11 +618,13 @@ describe("attachment upload observation", () => {
     const attachments = [
       { id: "uploaded", fileName: "attachment.txt", kind: "file" },
     ];
-    const fetch = vi.fn(async () => Response.json({ attachments }));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ attachments }),
+    );
     vi.stubGlobal("fetch", fetch);
-    await expect(
-      createApi("token").uploadAttachments(files()),
-    ).resolves.toEqual({ attachments });
+    await expect(createApi().uploadAttachments(files())).resolves.toEqual({
+      attachments,
+    });
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0]).toEqual([
       "/api/attachments",
@@ -630,9 +632,11 @@ describe("attachment upload observation", () => {
         method: "POST",
         body: expect.any(FormData),
         signal: expect.any(AbortSignal),
-        headers: { Authorization: "Bearer token" },
       }),
     ]);
+    expect(
+      new Headers(fetch.mock.calls[0]?.[1]?.headers).has("Content-Type"),
+    ).toBe(false);
   });
 
   it.each(["headers", "error body", "result body"] as const)(
@@ -740,7 +744,7 @@ describe("host directory browsing", () => {
       Response.json({ path: "C:\\", parent: null, dirs: [] }),
     );
     vi.stubGlobal("fetch", fetch);
-    const api = createApi("token");
+    const api = createApi();
     await api.browseHostDirs();
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/host/dirs");
     const path = "C:\\Users\\中文 & demo\\.project";
@@ -766,7 +770,7 @@ describe("settings scope", () => {
   it("omits absent owners across configuration reads and writes", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({}));
     vi.stubGlobal("fetch", fetch);
-    const api = createApi("token");
+    const api = createApi();
     const owner = { sessionId: undefined, cwd: undefined };
     await Promise.all([
       api.mcpConfig(owner),
@@ -792,7 +796,7 @@ describe("settings scope", () => {
   it("preserves explicit host-native paths and session identities", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => Response.json({}));
     vi.stubGlobal("fetch", fetch);
-    const api = createApi("token");
+    const api = createApi();
     const cwd = "C:\\Users\\中文 & demo\\project";
     await api.mcpConfig({ cwd, sessionId: undefined });
     await api.modelSettings({ sessionId: "session & one", cwd: undefined });

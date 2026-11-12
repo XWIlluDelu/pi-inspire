@@ -173,6 +173,7 @@ export async function hostApiFixture(
     piUpdateChecker: {
       check: async () => ({
         currentVersion: "0.80.10",
+        installedVersion: "0.80.10",
         pi: {
           kind: "available",
           latestVersion: "0.84.3",

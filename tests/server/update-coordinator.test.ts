@@ -28,6 +28,7 @@ describe("Host update coordinator", () => {
     const inspireCheck = vi.fn(async () => ({ kind: "current" as const }));
     const piCheck = vi.fn(async () => ({
       currentVersion: "0.84.2",
+      installedVersion: "0.84.2",
       pi: { kind: "current" as const, latestVersion: "0.84.2" },
       extensions: { kind: "none" as const },
     }));
@@ -54,6 +55,7 @@ describe("Host update coordinator", () => {
     }));
     const reloadedPiCheck = vi.fn(async () => ({
       currentVersion: "0.84.2",
+      installedVersion: "0.84.2",
       pi: { kind: "current" as const, latestVersion: "0.84.2" },
       extensions: { kind: "none" as const },
     }));
@@ -95,6 +97,7 @@ describe("Host update coordinator", () => {
       piChecker: {
         check: async () => ({
           currentVersion: "0.84.2",
+          installedVersion: "0.84.2",
           pi: {
             kind: "available" as const,
             latestVersion: "0.84.3",

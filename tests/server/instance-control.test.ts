@@ -1,5 +1,5 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type RequestListener, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +56,7 @@ function state(): InstanceState {
     processStartTime: "fixture-birth",
     startedAt: "2026-10-19T00:00:00.000Z",
     token: randomBytes(64).toString("base64url"),
-    httpControlVersion: 1,
+    durableWorkerRelease: true,
   };
 }
 
@@ -218,14 +218,30 @@ describe("local HTTP peer proofs", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("refuses legacy HTTP without sending even an initial probe", async () => {
+  it("leaves an unsupported live owner untouched", async () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
-    const owner = state();
-    delete owner.httpControlVersion;
-    await expect(
-      requestInstanceControl(owner, "readiness"),
-    ).resolves.toBeNull();
+    const directory = await mkdtemp(
+      join(tmpdir(), "inspire-unsupported-owner-"),
+    );
+    directories.push(directory);
+    const path = join(directory, "instance.json");
+    const owner = {
+      ...state(),
+      processStartTime: await processStartIdentity(process.pid),
+      durableWorkerRelease: undefined,
+    };
+    const expected = { root: owner.root, host: owner.host, port: owner.port };
+    await writeFile(path, JSON.stringify(owner), { mode: 0o600 });
+    await expect(inspectInstance(path, expected)).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(stopManagedInstance(path, expected)).resolves.toEqual({
+      kind: "unavailable",
+    });
+    await expect(readFile(path + ".shutdown-request")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(fetch).not.toHaveBeenCalled();
   });
 });
@@ -262,19 +278,13 @@ describe("readiness at an untrusted port", () => {
     };
     const expected = { root: owner.root, host: owner.host, port };
     await writeInstanceState(path, owner);
-    await expect(
-      inspectInstance(path, expected, { processMarker: process.argv[0] }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(inspectInstance(path, expected)).resolves.toMatchObject({
+      kind: "unavailable",
+    });
     expect(received).toHaveLength(1);
     expect(received[0]!.authorization).toBeUndefined();
     expect(received[0]!.body).not.toContain(owner.token);
     expect(JSON.parse(received[0]!.body).action).toBe("readiness");
-    await expect(
-      stopManagedInstance(path, expected, {
-        processMarker: "never-signal-the-fixture-parent",
-      }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
-    expect(received).toHaveLength(1);
     // The largest signed PID is not allocated on any supported test platform.
     await writeInstanceState(path, { ...owner, pid: 2_147_483_647 });
     await expect(inspectInstance(path, expected)).resolves.toEqual({
@@ -495,25 +505,20 @@ describe("Host local-control ingress", () => {
         ).body.result.kind,
       ).toBe("released");
       expect(maintenance.release).toHaveBeenCalledExactlyOnceWith(leaseId);
-      // Ordinary CLI preparation is compatible with older launchers. The old
-      // Host-only prepare cannot authorize a later unscoped signal.
       const stopAttachedWork = vi.spyOn(f.runtime, "stopAttachedPiWork");
-      for (const scope of ["host", "host-only"] as const) {
-        const prepareRestart = createInstanceControlRequest(
-          owner,
-          "restart-prepare",
-          { scope },
-        );
-        const prepared = await request(f.application.server)
-          .post("/api/host/local-control")
-          .send(prepareRestart)
-          .expect(200);
-        expect(prepared.body.result).toEqual(
-          scope === "host"
-            ? { kind: "prepared", scope }
-            : { kind: "skipped", reason: "scoped-shutdown-required" },
-        );
-      }
+      const prepareRestart = createInstanceControlRequest(
+        owner,
+        "restart-prepare",
+        { scope: "host" },
+      );
+      const restartPrepared = await request(f.application.server)
+        .post("/api/host/local-control")
+        .send(prepareRestart)
+        .expect(200);
+      expect(restartPrepared.body.result).toEqual({
+        kind: "prepared",
+        scope: "host",
+      });
       expect(stopAttachedWork).not.toHaveBeenCalled();
       owner = null;
       await request(f.application.server)

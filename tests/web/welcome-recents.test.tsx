@@ -20,7 +20,7 @@ beforeEach(async () => {
       return { body: sessionPage([sessionSummary()], 1) };
     return undefined;
   });
-  await store.init("token");
+  await store.init();
   await store.loadSessions("");
   await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(1));
 });

@@ -19,6 +19,11 @@ const actions = new Set([
 ]);
 const encodedSecret = /^[A-Za-z0-9_-]{43}$/u;
 
+// The managed control contract includes a shutdown that preserves Pi workers.
+export function supportsInstanceControl(state) {
+  return state?.durableWorkerRelease === true;
+}
+
 /** The state owner, never a caller-supplied PID/root, supplies this binding.
  * Keep the encoding shared with the existing local shutdown mailbox. */
 export function instanceIdentity(state) {
@@ -74,7 +79,7 @@ export function createInstanceControlRequest(
   payload = {},
   timeoutMs = TTL_MS,
 ) {
-  if (state.httpControlVersion !== 1 || !actions.has(action))
+  if (!supportsInstanceControl(state) || !actions.has(action))
     throw new Error("This Host does not support authenticated local HTTP control");
   const message = {
     version: 1,
@@ -102,7 +107,7 @@ export class InstanceHttpControl {
   accept(state, value) {
     const now = this.#now();
     if (
-      state?.httpControlVersion !== 1 ||
+      !supportsInstanceControl(state) ||
       !value ||
       value.version !== 1 ||
       typeof value.nonce !== "string" ||
@@ -162,7 +167,6 @@ export async function requestInstanceControl(
   payload = {},
   timeoutMs = 1_500,
 ) {
-  if (state.httpControlVersion !== 1) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   timeout.unref();

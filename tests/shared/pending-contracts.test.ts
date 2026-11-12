@@ -76,7 +76,7 @@ describe("Pending wire contracts", () => {
     },
   );
 
-  it("rejects invalid format counts without requiring new metadata from older Hosts", () => {
+  it("rejects invalid image counts and accepts unknown totals", () => {
     const base = {
       revision: 1,
       totalCount: 1,

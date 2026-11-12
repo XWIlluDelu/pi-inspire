@@ -347,10 +347,10 @@ captions. Display, full copy and recovery share that unconsumed view across runs
   images. Copy all includes omitted rows, numbered with Steer before Queue and order preserved within
   each group. Image formats, clipboard ordering and plain-text alternatives follow [[design-system]].
   Neither action stops/removes input, recovers attachment ownership, or changes the draft. The queue
-  reports an exact all-row image total, including omitted rows, so gesture-bound Copy can declare
-  formats before the full-content read; older snapshots without this metadata use the prior
-  read-first path. Missing/stale full content fails instead of copying a preview; queue revision
-  changes retire delayed image reads and writes.
+  reports an all-row image total, including omitted rows, so gesture-bound Copy can declare formats
+  before the full-content read. An unavailable deferred upload leaves that total unknown and Copy
+  reads full content first. Missing or stale full content fails instead of copying a preview.
+  Queue revision changes retire delayed image reads and writes.
 - **Return all:** dequeue unconsumed Pi and Host-held input without stopping the task. Join Steer,
   then Queue, then the latest original-session draft with blank lines into one editable draft;
   message boundaries/modes are not kept, and resending uses the newly selected mode. A delayed

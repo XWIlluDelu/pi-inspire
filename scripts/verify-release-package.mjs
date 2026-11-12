@@ -634,7 +634,7 @@ try {
   await new Promise((resolve) => impostor.listen(0, "127.0.0.1", resolve));
   try {
     const fakeState = {
-      schemaVersion: 1,
+      schemaVersion: instanceModule.INSTANCE_STATE_VERSION,
       root: installedRoot,
       host: "127.0.0.1",
       port: impostor.address().port,
@@ -642,7 +642,7 @@ try {
       pid: process.pid,
       processStartTime: await instanceModule.processStartIdentity(process.pid),
       startedAt: new Date().toISOString(),
-      httpControlVersion: 1,
+      durableWorkerRelease: true,
     };
     const fakePath = join(stateDirectory, "impostor.json");
     await instanceModule.writeInstanceState(fakePath, fakeState);
@@ -758,7 +758,6 @@ try {
   await waitForHealth(`${hostOrigin}/api/health`, token);
   const hostState = await waitForInstanceState(environment.INSPIRE_STATE_PATH);
   if (
-    hostState.httpControlVersion !== 1 ||
     (
       await instanceModule.inspectInstance(environment.INSPIRE_STATE_PATH, {
         root: installedRoot,

@@ -94,7 +94,7 @@ it.each(["workspace-unavailable", "external-active"] as const)(
         return { body: { kind: "not-repository" } };
       return undefined;
     });
-    await act(async () => store.init("token"));
+    await act(async () => store.init());
     FakeWebSocket.instances.at(-1)?.open();
     render(<App />);
 
@@ -258,7 +258,7 @@ it("keeps session settings readable while another Pi runs it, until Take over", 
       return { body: sessionPage([sessionSummary()], 1) };
     return undefined;
   });
-  await act(async () => store.init("token"));
+  await act(async () => store.init());
   FakeWebSocket.instances.at(-1)?.open();
   render(<App />);
 
@@ -294,7 +294,7 @@ it("does not substitute a catalog model when read-only selection is unknown", as
       return { body: sessionPage([sessionSummary()], 1) };
     return undefined;
   });
-  await act(async () => store.init("token"));
+  await act(async () => store.init());
   FakeWebSocket.instances.at(-1)?.open();
   render(<App />);
 

@@ -535,7 +535,7 @@ describe("live and durable transcript reconciliation", () => {
     }
   });
 
-  it("reconstructs Pi 0.84 delta-only assistant updates in events and snapshots", async () => {
+  it("reconstructs assistant updates from Pi deltas in events and snapshots", async () => {
     const { runtime, workers } = await setup();
     try {
       const forwarded: Array<Record<string, unknown>> = [];
@@ -577,12 +577,13 @@ describe("live and durable transcript reconciliation", () => {
           delta: "live answer",
         },
       });
-      // Legacy Pi <0.84.3 starts lacked identity/name; retain end-only support.
       workers[0]!.emit("event", {
         type: "message_update",
         assistantMessageEvent: {
           type: "toolcall_start",
           contentIndex: 2,
+          id: "tool-1",
+          toolName: "read",
         },
       });
       workers[0]!.emit("event", {
@@ -608,20 +609,20 @@ describe("live and durable transcript reconciliation", () => {
       });
 
       const snapshot = await runtime.snapshot();
-      expect(forwarded).toHaveLength(5);
+      expect(forwarded).toHaveLength(6);
       expect(
-        forwarded.slice(0, 4).every((event) => event.streamDelta === true),
+        forwarded.slice(0, -1).every((event) => event.streamDelta === true),
       ).toBe(true);
       expect(forwarded.at(-1)).not.toHaveProperty("assistantMessageEvent");
       expect(forwarded.at(-1)).not.toHaveProperty("streamDelta");
       expect(
-        new Set(forwarded.slice(0, 4).map((event) => event.streamMessageKey)),
+        new Set(forwarded.slice(0, -1).map((event) => event.streamMessageKey)),
       ).toHaveLength(1);
       expect(
-        forwarded.slice(0, 4).map((event) => event.streamTextLength),
-      ).toEqual([0, 12, 12, 23]);
+        forwarded.slice(0, -1).map((event) => event.streamTextLength),
+      ).toEqual([0, 12, 12, 23, 23]);
       expect(forwarded.map((event) => event.streamRevision)).toEqual([
-        1, 2, 3, 4, 5,
+        1, 2, 3, 4, 5, 6,
       ]);
       const identities = forwarded.map(
         (event) => (event.message as Record<string, unknown>).__inspireLiveId,
@@ -641,7 +642,7 @@ describe("live and durable transcript reconciliation", () => {
       ]);
       expect(snapshot.active?.transcriptPage.messages.at(-1)).toMatchObject({
         role: "assistant",
-        __inspireStreamRevision: 5,
+        __inspireStreamRevision: 6,
         content: [
           { type: "thinking", thinking: "live thought" },
           { type: "text", text: "live answer" },

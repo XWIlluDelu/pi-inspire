@@ -85,9 +85,8 @@ export function interruptAssistantToolCalls(value: unknown): unknown {
 
 /**
  * Apply Pi's public JSON/RPC AssistantMessageEvent delta to an assistant
- * message. Pi 0.84 deliberately strips the mutable `partial` and outer
- * `message` fields from message_update frames, so integrations must rebuild
- * the browser-safe partial from message_start plus this delta protocol.
+ * message. Pi sends deltas in `message_update` frames. Rebuild the
+ * browser-safe partial from `message_start` and those deltas.
  */
 export function applyAssistantMessageDelta(
   message: unknown,
@@ -162,8 +161,6 @@ export function applyAssistantMessageDelta(
       break;
     }
     case "toolcall_start": {
-      // Public Pi >= 0.84.3 supplies identity before the arguments. Earlier
-      // versions remain end-only; never invent or truncate a call identity.
       if (
         typeof event.id !== "string" ||
         !event.id ||

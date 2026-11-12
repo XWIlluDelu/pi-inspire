@@ -175,12 +175,7 @@ export class TerminalOperationController {
     this.publish();
   }
 
-  run<T>(
-    token: string | null,
-    path: string,
-    method: string,
-    body?: unknown,
-  ): Promise<T> {
+  run<T>(path: string, method: string, body?: unknown): Promise<T> {
     let intent: TerminalIntent;
     try {
       this.restore();
@@ -194,13 +189,10 @@ export class TerminalOperationController {
     } catch (error) {
       return Promise.reject(error);
     }
-    return this.dispatch<T>(token, intent);
+    return this.dispatch<T>(intent);
   }
 
-  private dispatch<T>(
-    token: string | null,
-    intent: TerminalIntent,
-  ): Promise<T> {
+  private dispatch<T>(intent: TerminalIntent): Promise<T> {
     const { key } = intent;
     const running = this.running.get(key);
     if (running) return running as Promise<T>;
@@ -214,7 +206,7 @@ export class TerminalOperationController {
         return Promise.reject(error);
       }
     }
-    const task = this.deliver<T>(token, intent).finally(() => {
+    const task = this.deliver<T>(intent).finally(() => {
       this.running.delete(key);
       const pending = this.pending.get(key);
       if (pending) pending.outcome ??= "unknown";
@@ -225,7 +217,7 @@ export class TerminalOperationController {
     return task;
   }
 
-  retry(token: string | null, key: string): Promise<unknown> {
+  retry(key: string): Promise<unknown> {
     let pending: TrackedOperation | undefined;
     try {
       this.restore();
@@ -238,7 +230,7 @@ export class TerminalOperationController {
       return Promise.reject(error);
     }
     if (!pending) return Promise.resolve();
-    return this.dispatch(token, pending.intent);
+    return this.dispatch(pending.intent);
   }
 
   /** Retire a recovery record; never dispatch or claim cancellation. */
@@ -260,14 +252,8 @@ export class TerminalOperationController {
     this.publish();
   }
 
-  private async deliver<T>(
-    token: string | null,
-    intent: TerminalIntent,
-  ): Promise<T> {
+  private async deliver<T>(intent: TerminalIntent): Promise<T> {
     const { key, path, method, body } = intent;
-    const headers: Record<string, string> = token
-      ? { Authorization: `Bearer ${token}` }
-      : {};
     let pending = this.pending.get(key);
     if (!pending) {
       if (this.pending.size >= MAX_PENDING)
@@ -277,8 +263,6 @@ export class TerminalOperationController {
       const response = await authenticatedFetch(
         "/api/terminal-operations",
         {
-          credentials: "same-origin",
-          headers,
           signal: AbortSignal.timeout(10_000),
         },
         this.transport,
@@ -318,9 +302,7 @@ export class TerminalOperationController {
         {
           method,
           body,
-          credentials: "same-origin",
           headers: {
-            ...headers,
             ...(body === undefined
               ? {}
               : { "Content-Type": "application/json" }),

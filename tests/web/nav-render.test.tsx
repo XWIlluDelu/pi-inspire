@@ -199,7 +199,7 @@ describe("session navigation controls", () => {
         return { body: { ...store.getState().prefs, ...jsonBody(init) } };
       return undefined;
     });
-    await store.init("token");
+    await store.init();
     await store.loadSessions("");
     await waitFor(() => expect(store.getState().sessions).toHaveLength(2));
   });

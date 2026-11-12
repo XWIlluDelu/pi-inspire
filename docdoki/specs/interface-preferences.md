@@ -129,8 +129,6 @@ a fresh resource scan and package update results cannot establish current-worker
   reject. Recent models store only provider/ID, accepting extra discovery metadata without retaining it.
 - Malformed JSON or a non-object root uses the full default projection and blocks writes, so
   unreadable settings are never discarded. The warning names the file to repair or remove; reads never rewrite it.
-- The retired `assistantRoundDisplay` field is ignored on read and omitted on the next successful
-  write; no Details/Divider preference or palette action remains.
 
 ## Update observations
 
@@ -204,9 +202,8 @@ The neighboring Notification grouping field selects Session or Project independe
 save/error state and no permission prompt. [[notifications]] owns grouping and member-count semantics.
 
 Notification permission and enrollment are installation-local, unlike ordinary Host preferences.
-Reset preferences also resets alerts on this installation, not other devices. Legacy
-`completionAttention` values supply migration intent; they do not establish permission or push
-enrollment. Page refresh and reconnect preserve a Host-observed run's notification eligibility.
+Reset preferences also resets alerts on this installation. Page refresh and reconnect preserve
+a Host-observed run's notification eligibility.
 
 ## Checks
 

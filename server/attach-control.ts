@@ -529,20 +529,11 @@ export class AttachControlConnection implements ExternalSessionConnection {
       response.state?.sessionId !== record.sessionId ||
       response.state.sessionFile !== record.sessionFile ||
       !response.state.taskRuns ||
-      !response.state.modelSelection
+      !response.state.modelSelection ||
+      ((operation.op === "prompt" || operation.op === "abort") &&
+        response.witnessed !== true)
     )
       throw unknown("Invalid response from the attached Pi.");
-    // Older attach-control receivers acknowledge the void Pi API call,
-    // which proves neither prompt admission nor the disposition of Stop.
-    if (
-      (operation.op === "prompt" || operation.op === "abort") &&
-      response.witnessed !== true
-    )
-      throw unknown(
-        operation.op === "prompt"
-          ? "The attached Pi received the input, but its admission could not be confirmed. Check the conversation before sending again."
-          : "Stop was requested, but the attached Pi could not confirm its outcome.",
-      );
     return response;
   }
 

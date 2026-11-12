@@ -350,8 +350,7 @@ export class RuntimeEventController {
           previousMessage,
           record.assistantMessageEvent,
         );
-        // Suppressed/private/capped fragments and older identity-less starts
-        // do not consume a browser revision or cross the transport boundary.
+        // Suppressed fragments do not consume a browser revision.
         if (!message) return;
         if (delta?.type === "toolcall_start") {
           const streams =

@@ -109,8 +109,8 @@ export async function currentStaticAssetPaths(distDirectory) {
     )
       return parsed.assets.filter(isCacheableAsset);
   } catch {
-    // Builds created before the manifest existed had a clean assets directory,
-    // so scanning it is the correct migration fallback.
+    // Publication can stop after switching index.html and before committing its
+    // manifest. Preserve the on-disk assets when the published set is unknown.
   }
   try {
     return (await cacheableFiles(join(distDirectory, "assets"))).map(

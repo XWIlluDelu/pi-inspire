@@ -49,6 +49,7 @@ function available(latestVersion = "1.1.0"): UpdateCheckResponse {
 function piAvailable(latestVersion = "0.84.3"): PiUpdateCheckResponse {
   return {
     currentVersion: "0.84.2",
+    installedVersion: "0.84.2",
     pi: {
       kind: "available",
       latestVersion,
@@ -87,6 +88,7 @@ function piResult(updateStatus: HostUpdateStatus): PiUpdateCheckResult {
   return {
     ...(updateStatus.piUpdateCheck ?? {
       currentVersion: "0.84.2",
+      installedVersion: null,
       pi: { kind: "unavailable" },
       extensions: { kind: "unavailable" },
     }),
@@ -516,7 +518,7 @@ describe("Host update projection", () => {
     });
 
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     expect(store.getState().piUpdateCheck?.pi.kind).toBe("available");
 
     const socket = FakeWebSocket.instances.at(-1)!;
@@ -529,7 +531,7 @@ describe("Host update projection", () => {
     socket.open(activeSnapshot());
     expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
 
-    await store.init("token");
+    await store.init();
     expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
   });
 });

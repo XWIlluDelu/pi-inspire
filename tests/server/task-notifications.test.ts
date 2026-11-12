@@ -161,6 +161,7 @@ describe("installation-owned notification delivery", () => {
       cwd: "/private/research",
     }));
     expect(await service.settings(principal)).toMatchObject({
+      mode: "off",
       grouping: "session",
       groupingUpdatedAt: 0,
     });

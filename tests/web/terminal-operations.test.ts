@@ -55,7 +55,7 @@ describe("browser terminal operation identity", () => {
       });
     const controller = new TerminalOperationController(transport);
     await expect(
-      controller.run(null, "/api/terminals", "POST", { cwd: "/fixture" }),
+      controller.run("/api/terminals", "POST", { cwd: "/fixture" }),
     ).rejects.toThrow("outcome is unknown");
     const state = controller.snapshot()[0]!;
     expect(state).toMatchObject({
@@ -63,7 +63,7 @@ describe("browser terminal operation identity", () => {
       outcome: "unknown",
       busy: false,
     });
-    const result = controller.retry(null, state.key);
+    const result = controller.retry(state.key);
     expect(controller.snapshot()[0]).toMatchObject({
       outcome: "unknown",
       busy: true,
@@ -97,12 +97,12 @@ describe("browser terminal operation identity", () => {
         method === "POST" ? "/api/terminals" : "/api/terminals/terminal-1";
       const body = method === "POST" ? { cwd: "/fixture" } : undefined;
       const first = new TerminalOperationController(transport);
-      await expect(first.run(null, path, method, body)).rejects.toThrow(
+      await expect(first.run(path, method, body)).rejects.toThrow(
         "outcome is unknown",
       );
       expect(first.snapshot()).toHaveLength(1);
       const reloaded = new TerminalOperationController(transport);
-      expect(await reloaded.run(null, path, method, body)).toEqual({
+      expect(await reloaded.run(path, method, body)).toEqual({
         id: "created",
       });
       expect(identities[0]).toEqual(identities[1]);
@@ -123,11 +123,11 @@ describe("browser terminal operation identity", () => {
         return gate.promise;
       });
     const controller = new TerminalOperationController(transport);
-    const first = controller.run(null, "/api/terminals", "POST", {
+    const first = controller.run("/api/terminals", "POST", {
       cwd: "/fixture",
       profileId: "bash",
     });
-    const second = controller.run(null, "/api/terminals", "POST", {
+    const second = controller.run("/api/terminals", "POST", {
       profileId: "bash",
       cwd: "/fixture",
     });
@@ -159,7 +159,7 @@ describe("browser terminal operation identity", () => {
     const controller = new TerminalOperationController(transport);
     for (let i = 0; i < 3; i++)
       await expect(
-        controller.run(null, "/api/terminals/id/restart", "POST"),
+        controller.run("/api/terminals/id/restart", "POST"),
       ).rejects.toThrow("outcome is unknown");
     expect(
       new Set(identities.map((identity) => JSON.stringify(identity))),
@@ -185,7 +185,7 @@ describe("browser terminal operation identity", () => {
     const entry = saved();
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
     const controller = new TerminalOperationController(transport);
-    await expect(controller.retry(null, entry.key)).rejects.toThrow(
+    await expect(controller.retry(entry.key)).rejects.toThrow(
       "Receipt expired",
     );
     controller.stopTracking(entry.key);
@@ -193,7 +193,7 @@ describe("browser terminal operation identity", () => {
     expect(controller.snapshot()).toEqual([]);
     const reloaded = new TerminalOperationController(transport);
     await expect(
-      reloaded.run(null, entry.path, entry.method, JSON.parse(entry.body!)),
+      reloaded.run(entry.path, entry.method, JSON.parse(entry.body!)),
     ).resolves.toEqual({ id: "created" });
     expect(identities[0]).toEqual(entry.identity);
     expect(identities[1]!.id).not.toBe(entry.identity.id);
@@ -225,7 +225,7 @@ describe("browser terminal operation identity", () => {
     const gate = deferred<Response>();
     transport.mockReturnValue(gate.promise);
     const retrying = new TerminalOperationController(transport);
-    const check = retrying.retry(null, entry.key);
+    const check = retrying.retry(entry.key);
     expect(() => retrying.stopTracking(entry.key)).toThrow("Wait for");
     gate.resolve(
       reply({
@@ -254,14 +254,14 @@ describe("browser terminal operation identity", () => {
         return reply(init);
       });
     const controller = new TerminalOperationController(transport);
-    await expect(
-      controller.run(null, "/api/terminals", "POST", {}),
-    ).rejects.toThrow("Limit");
+    await expect(controller.run("/api/terminals", "POST", {})).rejects.toThrow(
+      "Limit",
+    );
     expect(controller.snapshot()).toEqual([]);
-    await expect(
-      controller.run(null, "/api/terminals", "POST", {}),
-    ).rejects.toThrow("outcome is unknown");
-    await controller.run(null, "/api/terminals", "POST", {});
+    await expect(controller.run("/api/terminals", "POST", {})).rejects.toThrow(
+      "outcome is unknown",
+    );
+    await controller.run("/api/terminals", "POST", {});
     expect(identities[0]).not.toEqual(identities[1]);
     expect(identities[1]).toEqual(identities[2]);
   });
@@ -300,18 +300,18 @@ describe("browser terminal operation identity", () => {
         transport,
         () => storage,
       );
-      const result = controller.run(null, "/api/terminals", "POST", {});
+      const result = controller.run("/api/terminals", "POST", {});
       if (outcome === "completed")
         await expect(result).resolves.toEqual({ id: "created" });
       else await expect(result).rejects.toThrow("Definite refusal");
       expect(controller.snapshot()).toMatchObject([{ outcome }]);
       const key = controller.snapshot()[0]!.key;
-      await expect(controller.retry(null, key)).rejects.toThrow(
+      await expect(controller.retry(key)).rejects.toThrow(
         "Synthetic retirement failure",
       );
       expect(identities).toHaveLength(1);
       storageFailure = false;
-      await controller.retry(null, key);
+      await controller.retry(key);
       expect(identities).toHaveLength(1);
       expect(controller.snapshot()).toEqual([]);
     },
@@ -333,7 +333,7 @@ describe("browser terminal operation identity", () => {
     );
     for (let i = 0; i < 2; i++)
       await expect(
-        controller.run(null, "/api/terminals", "POST", {}),
+        controller.run("/api/terminals", "POST", {}),
       ).rejects.toThrow("Synthetic quota");
     expect(transport).toHaveBeenCalledTimes(1); // read-only epoch lookup only
   });
@@ -349,11 +349,11 @@ describe("terminal operation recovery", () => {
 
     expect(() => controller.restore()).toThrow("storage is invalid");
     expect(controller.snapshot()).toEqual([]);
-    await expect(controller.retry(null, prior.key)).rejects.toThrow(
+    await expect(controller.retry(prior.key)).rejects.toThrow(
       "storage is invalid",
     );
     await expect(
-      controller.run(null, "/api/terminals", "POST", { cwd: "/new-intent" }),
+      controller.run("/api/terminals", "POST", { cwd: "/new-intent" }),
     ).rejects.toThrow("storage is invalid");
     expect(transport).not.toHaveBeenCalled();
     expect(sessionStorage.getItem(STORAGE_KEY)).toBe(raw);
@@ -373,7 +373,7 @@ describe("terminal operation recovery", () => {
     );
     const controller = new TerminalOperationController(transport);
 
-    await controller.retry(null, entry.key);
+    await controller.retry(entry.key);
 
     expect(transport).toHaveBeenCalledExactlyOnceWith(
       entry.path,
@@ -592,7 +592,7 @@ describe("stored terminal request validation", () => {
       const transport = vi.fn<typeof fetch>();
       const controller = new TerminalOperationController(transport);
       await expect(
-        controller.run(null, "/api/terminals", method, body),
+        controller.run("/api/terminals", method, body),
       ).rejects.toThrow("operation is invalid");
       expect(controller.snapshot()).toEqual([]);
       expect(transport).not.toHaveBeenCalled();

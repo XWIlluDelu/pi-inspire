@@ -101,7 +101,7 @@ describe("composer-history artifacts", () => {
                     { type: "image", data: "cGl4ZWxz", mimeType: "image/png" },
                   ]
                 : prompt,
-              __inspireMessageIndex: 0,
+              __inspireHistoryEntryId: "entry-0",
             },
           ],
         },
@@ -118,7 +118,7 @@ describe("composer-history artifacts", () => {
               incarnation: "incarnation-a",
               effectiveLeafId: null,
               imageReferences: [],
-              fileReferences: ["pi-file://0/0"],
+              fileReferences: ["pi-history-file://entry-0/0"],
             },
           },
           {
@@ -161,7 +161,7 @@ describe("prompt project-file revalidation", () => {
           {
             role: "user",
             content: addAttachmentContext("Use", [], expected),
-            __inspireMessageIndex: 0,
+            __inspireHistoryEntryId: "entry-0",
           },
         ],
       },
@@ -177,7 +177,7 @@ describe("prompt project-file revalidation", () => {
             incarnation: "incarnation-a",
             effectiveLeafId: null,
             imageReferences: [],
-            fileReferences: ["pi-file://0/0"],
+            fileReferences: ["pi-history-file://entry-0/0"],
           },
         },
         { ready: async () => {}, ownsPromptFile: () => false },

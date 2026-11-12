@@ -30,7 +30,6 @@ import {
 } from "./helpers";
 
 describe("Files pane", () => {
-  let testToken = 0;
   let gitStatusFails = false;
   let gitStatusGate: Promise<void> | null = null;
   let gitStatusRequests = 0;
@@ -544,7 +543,7 @@ describe("Files pane", () => {
     for (const dir of store.getState().workspaceExpandedDirs)
       store.toggleWorkspaceDirectory(dir);
     store.setWorkspaceShowHidden(false);
-    await store.init(`token-${++testToken}`);
+    await store.init();
     store.setResourcesOpen(false);
     store.setContextMode("files");
   });
@@ -1129,7 +1128,7 @@ describe("Files pane", () => {
     resourceListHead = "replacement.md";
     const requestsBefore = resourceListRequests.length;
     await act(async () => {
-      await store.init(`replacement-${++testToken}`);
+      await store.init();
     });
 
     await waitFor(() =>

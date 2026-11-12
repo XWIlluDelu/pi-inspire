@@ -632,22 +632,7 @@ describe("typed Host API", () => {
       .set("Authorization", `Bearer ${token}`)
       .expect(200);
     expect(response.body).toEqual(page);
-    expect(paging).toHaveBeenCalledWith(
-      "fixture-active",
-      "opaque-cursor",
-      false,
-    );
-    await request(application.server)
-      .get(
-        "/api/transcript/older?sessionId=fixture-active&cursor=opaque-cursor&deferActivity=1",
-      )
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200);
-    expect(paging).toHaveBeenLastCalledWith(
-      "fixture-active",
-      "opaque-cursor",
-      true,
-    );
+    expect(paging).toHaveBeenCalledWith("fixture-active", "opaque-cursor");
 
     await request(application.server)
       .get(

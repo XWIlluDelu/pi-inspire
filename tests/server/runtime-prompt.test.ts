@@ -685,6 +685,7 @@ describe("prompt admission and artifact ownership", () => {
               messages: [
                 {
                   role: "user",
+                  __inspireHistoryEntryId: "original",
                   content: [
                     { type: "text", text: historicalText },
                     { type: "image", data, mimeType: "image/png" },
@@ -701,15 +702,15 @@ describe("prompt admission and artifact ownership", () => {
     await new Promise<void>((resolveTick) => setImmediate(resolveTick));
     const history = await runtime.composerHistory("a", 0);
     const entry = history.entries[0]!;
-    expect(entry.images[0]?.reference).toBe("pi-embedded://0/1");
+    expect(entry.images[0]?.reference).toBe("pi-history-image://original/1");
     expect(entry.files).toEqual([
       {
-        reference: "pi-file://0/0",
+        reference: "pi-history-file://original/0",
         fileName: "source.ts",
         kind: "project",
       },
       {
-        reference: "pi-file://0/1",
+        reference: "pi-history-file://original/1",
         fileName: "report.pdf",
         kind: "attachment",
       },
@@ -787,7 +788,12 @@ describe("prompt admission and artifact ownership", () => {
             transcriptPage: {
               ...value.transcriptPage,
               messages: [
-                { role: "user", content: historicalText, timestamp: 1 },
+                {
+                  role: "user",
+                  __inspireHistoryEntryId: "original",
+                  content: historicalText,
+                  timestamp: 1,
+                },
               ],
             },
           });
@@ -800,7 +806,7 @@ describe("prompt admission and artifact ownership", () => {
     const entry = history.entries[0]!;
     expect(entry.files).toEqual([
       {
-        reference: "pi-file://0/0",
+        reference: "pi-history-file://original/0",
         fileName: "host-secret.txt",
         kind: "attachment",
       },

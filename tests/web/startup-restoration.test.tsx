@@ -53,7 +53,7 @@ describe("initial workbench restoration", () => {
     expectRestoring();
     let startup!: Promise<void>;
     await act(async () => {
-      startup = current.init("token");
+      startup = current.init();
     });
     expectRestoring();
     expect(container.querySelector(".app .center")).not.toBeNull();
@@ -84,7 +84,7 @@ describe("initial workbench restoration", () => {
     };
     render(<App />);
     await act(async () => {
-      await current.init("token");
+      await current.init();
     });
     expectRestoring();
     await act(async () => {
@@ -113,7 +113,7 @@ describe("initial workbench restoration", () => {
       render(<App />);
       let startup!: Promise<void>;
       await act(async () => {
-        startup = current.init("token");
+        startup = current.init();
       });
       expectRestoring();
       await act(async () => {
@@ -147,7 +147,7 @@ describe("initial workbench restoration", () => {
     render(<App />);
     let startup!: Promise<void>;
     await act(async () => {
-      startup = current.init("token");
+      startup = current.init();
     });
     expectRestoring();
     await act(async () => {
@@ -177,7 +177,7 @@ describe("initial workbench restoration", () => {
     };
     render(<App />);
     await act(async () => {
-      await current.init("token");
+      await current.init();
     });
     expect(
       await screen.findByRole("form", { name: "Start a session" }),
@@ -193,7 +193,7 @@ describe("initial workbench restoration", () => {
         : undefined;
     render(<App />);
     await act(async () => {
-      await current.init("token");
+      await current.init();
     });
     expect(
       screen.getByRole("button", { name: "Try again" }),
@@ -209,7 +209,7 @@ describe("initial workbench restoration", () => {
     };
     let startup!: Promise<void>;
     await act(async () => {
-      startup = current.init("token");
+      startup = current.init();
     });
     expect(screen.queryByRole("form", { name: "Start a session" })).toBeNull();
     expect(
@@ -253,7 +253,7 @@ describe("initial workbench restoration", () => {
     };
     render(<App />);
     await act(async () => {
-      await current.init("token");
+      await current.init();
     });
     expectRestoring();
     await act(async () => {

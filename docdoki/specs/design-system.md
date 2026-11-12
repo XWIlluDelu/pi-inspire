@@ -174,11 +174,9 @@ both this glow and wordmark color transitions.
   narrow screens. The botanical palettes come first, then Jade and Amber; Carbon & Silicon is last
   and spans the full picker row. The selected choice has a border and pressed state, not color alone.
 - Saved `amber` migrates to `chimonanthus`; saved `teal` (formerly Jade) migrates to
-  `hydrangea`. The Host accepts these legacy identifiers on read and in API patches. Reads remain
-  observational; the next successful preference write saves canonical identifiers. A browser-local
-  visual cache applies the same migration before React starts; Host preferences are authoritative
-  after bootstrap. Jade and Amber have distinct canonical IDs, so selecting them never changes how
-  legacy saved `teal` or `amber` values are interpreted.
+  `hydrangea`. The next successful preference write saves canonical identifiers. The browser's
+  visual cache applies the same migration before React starts. Host preferences are authoritative
+  after bootstrap.
 - Semantic role mappings stay consistent across palettes while botanical and classic families
   retain their distinct character. Roles may share a color value.
 - Decorative accents and readable ink are separate roles:

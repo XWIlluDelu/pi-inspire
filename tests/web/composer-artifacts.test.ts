@@ -43,7 +43,7 @@ describe("Pending input recovery and copying", () => {
     const { store } = await initStore();
     const stop = store.abort();
     await started.promise;
-    await store.init("replacement-token");
+    await store.init();
     recovery.resolve({
       body: { steering: ["original handoff"], followUp: [] },
     });
@@ -138,7 +138,7 @@ describe("Pending input recovery and copying", () => {
     await store.openSession("s2");
     setSessionDraft("s2", "B draft");
     connected = true;
-    await store.init("token");
+    await store.init();
     const { FakeWebSocket } = await import("./helpers");
     FakeWebSocket.instances.at(-1)!.open();
     await vi.waitFor(() => expect(sessionDraft("s1")).toBe("returned A"));
@@ -169,7 +169,7 @@ describe("Pending input recovery and copying", () => {
     const { store } = await initStore();
     const recovering = store.recoverPending();
     await started.promise;
-    await store.init("replacement-token");
+    await store.init();
     const { FakeWebSocket } = await import("./helpers");
     FakeWebSocket.instances.at(-1)!.open();
     await vi.waitFor(() => expect(sessionDraft("s1")).toBe("retained handoff"));
@@ -666,11 +666,11 @@ describe("composer session partitions", () => {
     });
     const { store } = await initStore();
     await store.addFiles([new File(["notes"], "notes.txt")]);
-    await store.init(null);
+    await store.init();
     expect(store.getState().attachments[0]?.status).toBe("ready");
     expect(uploads).toBe(1);
     authorityId = "22222222-2222-4222-8222-222222222222";
-    await store.init(null);
+    await store.init();
     expect(store.getState().attachments[0]?.status).toBe("uploading");
     FakeWebSocket.instances.at(-1)!.open(activeSnapshot(), authorityId);
     await vi.waitFor(() =>

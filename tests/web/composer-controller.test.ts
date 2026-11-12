@@ -505,19 +505,19 @@ describe("ComposerController", () => {
       text: "recalled",
       images: [
         {
-          reference: "pi-embedded://4/1",
+          reference: "pi-history-image://entry-4/1",
           mimeType: "image/png",
           size: 12,
         },
       ],
       files: [
         {
-          reference: "pi-file://4/0",
+          reference: "pi-history-file://entry-4/0",
           fileName: "report.pdf",
           kind: "attachment" as const,
         },
         {
-          reference: "pi-file://4/1",
+          reference: "pi-history-file://entry-4/1",
           fileName: "source.ts",
           kind: "project" as const,
         },
@@ -531,7 +531,7 @@ describe("ComposerController", () => {
           kind: "image",
           recalledArtifact: {
             type: "image",
-            reference: "pi-embedded://4/1",
+            reference: "pi-history-image://entry-4/1",
             preview: true,
           },
         },
@@ -539,7 +539,7 @@ describe("ComposerController", () => {
           fileName: "report.pdf",
           recalledArtifact: {
             type: "file",
-            reference: "pi-file://4/0",
+            reference: "pi-history-file://entry-4/0",
             fileKind: "attachment",
           },
         },
@@ -547,7 +547,7 @@ describe("ComposerController", () => {
           fileName: "source.ts",
           recalledArtifact: {
             type: "file",
-            reference: "pi-file://4/1",
+            reference: "pi-history-file://entry-4/1",
             fileKind: "project",
           },
         },
@@ -571,8 +571,11 @@ describe("ComposerController", () => {
           viewId: "view-a",
           incarnation: "projection-a",
           effectiveLeafId: "leaf-a",
-          imageReferences: ["pi-embedded://4/1"],
-          fileReferences: ["pi-file://4/0", "pi-file://4/1"],
+          imageReferences: ["pi-history-image://entry-4/1"],
+          fileReferences: [
+            "pi-history-file://entry-4/0",
+            "pi-history-file://entry-4/1",
+          ],
         },
       }),
       expect.any(AbortSignal),
@@ -583,21 +586,21 @@ describe("ComposerController", () => {
         {
           recalledArtifact: {
             type: "image",
-            reference: "pi-embedded://4/1",
+            reference: "pi-history-image://entry-4/1",
             preview: false,
           },
         },
         {
           recalledArtifact: {
             type: "file",
-            reference: "pi-file://4/0",
+            reference: "pi-history-file://entry-4/0",
             preview: false,
           },
         },
         {
           recalledArtifact: {
             type: "file",
-            reference: "pi-file://4/1",
+            reference: "pi-history-file://entry-4/1",
             preview: false,
           },
         },

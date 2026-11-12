@@ -442,7 +442,6 @@ export class AppStore {
     reconcilePreferences: (authoritative, owners) =>
       this.preferences.reconcile(authoritative, owners),
   });
-  private authToken: string | null = null;
   private hostAuthorityId: string | null = null;
   private snapshotDigest: string | null = null;
   /** A bootstrap read cannot replace a snapshot committed while it awaited I/O. */
@@ -543,7 +542,7 @@ export class AppStore {
         externalSessionActivities: {},
       });
     },
-    reconnect: (token) => void this.init(token),
+    reconnect: () => void this.init(),
   });
   private autoContinued = false;
   private selectionGeneration = 0;
@@ -727,7 +726,6 @@ export class AppStore {
 
   private handleAuthFailure(): void {
     this.replaceTransport();
-    this.authToken = null;
     this.hostAuthorityId = null;
     this.snapshotDigest = null;
     this.api = null;
@@ -766,13 +764,12 @@ export class AppStore {
     this.branches.reconcile();
   }
 
-  async init(token: string | null = this.authToken): Promise<void> {
+  async init(): Promise<void> {
     // Bootstrap owns a fresh transport generation before authenticating or
     // publishing any replacement state.
     this.replaceTransport();
     if (!this.state.bootstrapped) this.set({ startupPending: true });
-    const api = createApi(token);
-    let reconnectToken = token;
+    const api = createApi();
     const bootstrapRequest = new AbortController();
     this.bootstrapRequest = bootstrapRequest;
     const bootstrapTimeout = setTimeout(
@@ -780,7 +777,6 @@ export class AppStore {
         bootstrapRequest.abort(new DOMException("Deadline", "TimeoutError")),
       HTTP_OBSERVATION_TIMEOUT_MS,
     );
-    this.authToken = token;
     this.api = api;
     const ownsBootstrap = (): boolean => this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
@@ -824,11 +820,6 @@ export class AppStore {
           undefined,
           "INVALID_BOOTSTRAP_AUTHORITY",
         );
-      // Browser authority now belongs to the origin-key transport. Never retain
-      // an explicit launch credential in the store or a WebSocket URL.
-      api.retireBearer();
-      this.authToken = null;
-      reconnectToken = null;
       const preferences = this.preferences.reconcile(
         boot.preferences,
         preferenceOwners,
@@ -889,8 +880,8 @@ export class AppStore {
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
-      this.notifications.start(preferences.completionAttention);
-      void this.connectionController.connect(reconnectToken);
+      this.notifications.start();
+      void this.connectionController.connect();
       void this.loadSessions(this.state.sessionQuery)
         .then(async () => {
           if (!ownsBootstrap()) return;
@@ -936,7 +927,7 @@ export class AppStore {
           error: null,
           errorSeverity: "error",
         });
-        this.connectionController.scheduleReconnect(reconnectToken);
+        this.connectionController.scheduleReconnect();
       }
     } finally {
       clearTimeout(bootstrapTimeout);
@@ -1322,7 +1313,7 @@ export class AppStore {
 
   // --- Connection lifecycle ---
 
-  retryConnection = (): void => this.connectionController.retry(this.authToken);
+  retryConnection = (): void => this.connectionController.retry();
 
   recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
     this.connectionController.recover(trigger);
@@ -3347,8 +3338,7 @@ export class AppStore {
   setTaskNotificationGrouping = (
     value: TaskNotificationGrouping,
   ): Promise<boolean> => this.notifications.setGrouping(value);
-  refreshTaskAlerts = (): Promise<void> =>
-    this.notifications.initialize(this.state.prefs.completionAttention);
+  refreshTaskAlerts = (): Promise<void> => this.notifications.initialize();
   testTaskNotification = (): Promise<void> => this.notifications.test();
   captureNotificationTarget = (): void => this.notifications.captureTarget();
   setProjectDisplay = (value: ProjectDisplayPreference): void =>

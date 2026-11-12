@@ -3,7 +3,6 @@ import { lstat, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { createPiRpcUiRelay } from "./pi-rpc-ui-relay.mjs";
 import {
-  HERDR_BRIDGE_VERSION,
   herdrLaunchGrantSchema,
   herdrLaunchTicketSchema,
   readHerdrBridgeRecord,
@@ -39,11 +38,6 @@ async function run(): Promise<void> {
   let ui: Awaited<ReturnType<typeof createPiRpcUiRelay>> | null = null;
   let stopping = false;
   let release: Parameters<typeof herdrWorkerWasReleased>[0] | undefined;
-  let legacyDetach = false;
-  if (ticket.version === 1)
-    stderr.on("data", (chunk: Buffer) => {
-      if (chunk.toString("utf8").includes("detach")) legacyDetach = true;
-    });
   const terminate = (graceful: boolean) => {
     void stopHerdrProcessGroup(group, graceful, () => {}).catch(() => {
       process.stderr.write("Inspire worker scope could not be stopped\n");
@@ -66,9 +60,8 @@ async function run(): Promise<void> {
         !!child?.pid && child.exitCode === null && child.signalCode === null;
       if (
         running &&
-        (legacyDetach ||
-          (release &&
-            (await herdrWorkerWasReleased(release, group).catch(() => true))))
+        release &&
+        (await herdrWorkerWasReleased(release, group).catch(() => true))
       )
         return;
       terminate(running);
@@ -83,23 +76,16 @@ async function run(): Promise<void> {
   }
 
   try {
-    writeHerdrBridgeRecord(rpc, {
+    const hello = {
       version: ticket.version,
       token: ticket.token,
-      channel: "rpc",
       pid: process.pid,
-    });
-    writeHerdrBridgeRecord(stderr, {
-      version: ticket.version,
-      token: ticket.token,
-      channel: "stderr",
-      pid: process.pid,
-    });
+    };
+    writeHerdrBridgeRecord(rpc, { ...hello, channel: "rpc" });
+    writeHerdrBridgeRecord(stderr, { ...hello, channel: "stderr" });
     const grant = herdrLaunchGrantSchema.parse(
       await readHerdrBridgeRecord(rpc, AbortSignal.timeout(60_000)),
     );
-    if (ticket.version === HERDR_BRIDGE_VERSION && !grant.release)
-      throw new Error("The Herdr worker has no ownership release binding");
     release = grant.release;
     if (stopping) return;
     const environment: NodeJS.ProcessEnv = { ...grant.env };

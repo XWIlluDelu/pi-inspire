@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { MessageChannel } from "node:worker_threads";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as browserAuth from "../../src/browser-auth";
 import { TaskNotificationController } from "../../src/notifications";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
@@ -121,13 +120,7 @@ async function initialized(
       );
     if (url.startsWith("/api/bootstrap"))
       return {
-        body: bootstrapPayload({
-          snapshot: activeSnapshot(),
-          preferences: {
-            ...bootstrapPayload().preferences,
-            completionAttention: "off",
-          },
-        }),
+        body: bootstrapPayload({ snapshot: activeSnapshot() }),
       };
     if (url.startsWith("/api/sessions/open"))
       return open
@@ -150,7 +143,7 @@ async function initialized(
     return undefined;
   });
   const store = existingStore ?? new AppStore();
-  await store.init("token");
+  await store.init();
   // Most cases begin after a completed device-settings refresh. Startup tests
   // instead supply the real stream settings-before-offer sequence below.
   if (refresh) await store.refreshTaskAlerts();
@@ -272,17 +265,14 @@ describe("device-local task alerts", () => {
     await vi.waitFor(() => expect(workerSettings).not.toHaveLength(0));
   });
 
-  it("migrates stream settings and repairs existing enrollment through its own echoes", async () => {
-    vi.spyOn(browserAuth, "migrateTaskAlertIntent").mockResolvedValue(
-      "desktop",
-    );
+  it("repairs existing enrollment after receiving the saved Desktop setting", async () => {
     const local = browserSubscription();
     const registration = (await navigator.serviceWorker.getRegistration())!;
     vi.spyOn(registration.pushManager, "getSubscription").mockResolvedValue(
       local,
     );
     const { store, socket } = await initialized(
-      "off",
+      "desktop",
       undefined,
       undefined,
       false,
@@ -301,15 +291,11 @@ describe("device-local task alerts", () => {
         return response;
       }),
     );
-    const reconcile = vi.spyOn(
-      TaskNotificationController.prototype,
-      "initialize",
-    );
     socket.emit({
       type: "task_alert_settings",
       settings: {
         installationId: "device-one",
-        mode: null,
+        mode: "desktop",
         subscribed: false,
         endpoint: null,
         publicKey,
@@ -318,99 +304,17 @@ describe("device-local task alerts", () => {
         groupingUpdatedAt: 0,
       },
     });
-    await reconcile.mock.results[0]!.value;
-    expect(store.getState().taskAlerts).toMatchObject({
-      mode: "desktop",
-      subscribed: true,
-      error: null,
-    });
-    expect(mutations).toEqual([
-      { mode: "desktop" },
-      { subscription: local.toJSON() },
-    ]);
+    await vi.waitFor(() =>
+      expect(store.getState().taskAlerts).toMatchObject({
+        mode: "desktop",
+        subscribed: true,
+        error: null,
+      }),
+    );
+    expect(mutations).toEqual([{ subscription: local.toJSON() }]);
     expect(Permission.requestPermission).not.toHaveBeenCalled();
     expect(subscribe).not.toHaveBeenCalled();
   });
-
-  it.each([false, true])(
-    "keeps an explicit Off when legacy migration resolves before pending grouping (%s)",
-    async (groupingPending) => {
-      const migration = deferred<"desktop">();
-      vi.spyOn(browserAuth, "migrateTaskAlertIntent").mockReturnValue(
-        migration.promise,
-      );
-      const { store, socket } = await initialized(
-        "off",
-        undefined,
-        undefined,
-        false,
-      );
-      const reconcile = vi.spyOn(
-        TaskNotificationController.prototype,
-        "initialize",
-      );
-      const settings = {
-        installationId: "device-one",
-        subscribed: false,
-        endpoint: null,
-        publicKey,
-        error: null,
-        grouping: "session",
-        groupingUpdatedAt: 0,
-      };
-      socket.emit({
-        type: "task_alert_settings",
-        settings: { ...settings, mode: null },
-      });
-      const groupingReply = deferred<void>();
-      if (groupingPending) {
-        const transport = fetch;
-        vi.stubGlobal(
-          "fetch",
-          vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const response = await transport(input, init);
-            if (
-              String(input) === "/api/notifications" &&
-              init?.method === "PUT" &&
-              jsonBody(init).grouping !== undefined
-            )
-              await groupingReply.promise;
-            return response;
-          }),
-        );
-      }
-      const changingGrouping = groupingPending
-        ? store.setTaskNotificationGrouping("project")
-        : Promise.resolve();
-      if (groupingPending)
-        await vi.waitFor(() =>
-          expect(mutations).toContainEqual({ grouping: "project" }),
-        );
-      socket.emit({
-        type: "task_alert_settings",
-        settings: { ...settings, mode: "off", grouping, groupingUpdatedAt },
-      });
-      let migrationSettled = false;
-      const migrated = reconcile.mock.results[0]!.value.then(() => {
-        migrationSettled = true;
-      });
-      migration.resolve("desktop");
-      try {
-        // Off must retire migration before a slow grouping response can flush
-        // pending settings; the old intent must never join the queued writes.
-        await vi.waitFor(() => expect(migrationSettled).toBe(true));
-        expect(store.getState().taskAlerts.mode).toBe("off");
-        expect(mutations.filter((value) => value.mode !== undefined)).toEqual(
-          [],
-        );
-        expect(subscribe).not.toHaveBeenCalled();
-      } finally {
-        groupingReply.resolve();
-        await changingGrouping;
-        await migrated;
-      }
-    },
-  );
 
   it("does not rewrite another window's Off after a delayed permission grant", async () => {
     const { store, socket } = await initialized("title");
@@ -429,6 +333,9 @@ describe("device-local task alerts", () => {
         subscribed: false,
         publicKey,
         error: null,
+        grouping,
+        groupingUpdatedAt,
+        endpoint: null,
       },
     });
     mode = "off";
@@ -441,6 +348,9 @@ describe("device-local task alerts", () => {
         subscribed,
         publicKey,
         error: null,
+        grouping,
+        groupingUpdatedAt,
+        endpoint: null,
       },
     });
     permission.resolve("granted");
@@ -648,7 +558,7 @@ describe("device-local task alerts", () => {
       type: "inspire-notification-display",
       notification: { outcome: "failed", project: "research-project" },
     });
-    await store.init("token");
+    await store.init();
     const replacement = FakeWebSocket.instances.at(-1)!;
     replacement.open();
     outcome(replacement, "outcome-two");
@@ -682,7 +592,7 @@ describe("device-local task alerts", () => {
     store.captureNotificationTarget();
     expect(location.hash).toBe("");
     expect(sessionStorage.getItem("inspire-notification-target")).toBe("s1");
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open();
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("s1"));
   });
@@ -720,7 +630,7 @@ describe("device-local task alerts", () => {
     );
     expect(sessionStorage.getItem("inspire-notification-target")).toBe("bg");
     unavailable = false;
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open();
     await vi.waitFor(() => expect(store.getState().sessionId).toBe("bg"));
 
@@ -766,6 +676,9 @@ describe("device-local task alerts", () => {
         subscribed: true,
         publicKey,
         error: null,
+        grouping,
+        groupingUpdatedAt,
+        endpoint: null,
       },
     });
     outcome(socket);
@@ -778,6 +691,9 @@ describe("device-local task alerts", () => {
         subscribed: false,
         publicKey,
         error: null,
+        grouping,
+        groupingUpdatedAt,
+        endpoint: null,
       },
     });
     expect(store.getState().taskAlerts.mode).toBe("off");
@@ -795,7 +711,6 @@ describe("device-local task alerts", () => {
       permission: "denied",
       busy: false,
     });
-    expect(store.getState().prefs.completionAttention).toBe("off");
     expect(mode).toBe("desktop");
     expect(subscribed).toBe(false);
     expect(subscribe).not.toHaveBeenCalled();
@@ -888,6 +803,9 @@ describe("device-local task alerts", () => {
           subscribed,
           publicKey,
           error: null,
+          grouping,
+          groupingUpdatedAt,
+          endpoint: null,
         },
       });
       if (settlement === "resolves") pending.resolve(subscription!);

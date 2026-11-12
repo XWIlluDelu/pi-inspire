@@ -23,9 +23,18 @@ describe("composer history projection", () => {
   it("reproduces Pi's trimmed, newest-first, consecutive-deduplicated history", () => {
     expect(
       composerHistoryEntries([
-        { role: "user", content: "  one  " },
-        { role: "assistant", content: [{ type: "text", text: "ignored" }] },
         {
+          __inspireHistoryEntryId: "one-first",
+          role: "user",
+          content: "  one  ",
+        },
+        {
+          __inspireHistoryEntryId: "answer",
+          role: "assistant",
+          content: [{ type: "text", text: "ignored" }],
+        },
+        {
+          __inspireHistoryEntryId: "two-first",
           role: "user",
           content: [
             { type: "text", text: "two" },
@@ -33,9 +42,13 @@ describe("composer history projection", () => {
             { type: "text", text: " parts" },
           ],
         },
-        { role: "user", content: "two parts" },
-        { role: "user", content: "   " },
-        { role: "user", content: "one" },
+        {
+          __inspireHistoryEntryId: "two-again",
+          role: "user",
+          content: "two parts",
+        },
+        { __inspireHistoryEntryId: "blank", role: "user", content: "   " },
+        { __inspireHistoryEntryId: "one-again", role: "user", content: "one" },
       ]),
     ).toEqual([
       { text: "one", images: [], files: [] },
@@ -45,6 +58,7 @@ describe("composer history projection", () => {
 
     const bounded = composerHistoryEntries(
       Array.from({ length: 105 }, (_, index) => ({
+        __inspireHistoryEntryId: String(index),
         role: "user",
         content: `prompt-${index}`,
       })),
@@ -56,6 +70,7 @@ describe("composer history projection", () => {
 
   it("stops projecting old artifacts after the retained prompt limit", () => {
     const obsolete = {
+      __inspireHistoryEntryId: "obsolete",
       role: "user",
       get content(): string {
         throw new Error("Obsolete artifacts should not be projected");
@@ -64,6 +79,7 @@ describe("composer history projection", () => {
     const recent = Array.from(
       { length: MAX_COMPOSER_HISTORY_ENTRIES + 1 },
       (_, index) => ({
+        __inspireHistoryEntryId: String(index),
         role: "user",
         content: `recent-${index}`,
       }),
@@ -78,6 +94,7 @@ describe("composer history projection", () => {
     expect(
       composerHistoryEntries([
         {
+          __inspireHistoryEntryId: "entry-0",
           role: "user",
           content: [
             { type: "text", text: "look" },
@@ -85,10 +102,12 @@ describe("composer history projection", () => {
           ],
         },
         {
+          __inspireHistoryEntryId: "entry-1",
           role: "user",
           content: [{ type: "image", data, mimeType: "image/webp" }],
         },
         {
+          __inspireHistoryEntryId: "entry-2",
           role: "user",
           content: [{ type: "image", data, mimeType: "image/webp" }],
         },
@@ -98,7 +117,7 @@ describe("composer history projection", () => {
         text: "",
         images: [
           {
-            reference: "pi-embedded://1/0",
+            reference: "pi-history-image://entry-1/0",
             mimeType: "image/webp",
             size: 6,
           },
@@ -109,7 +128,7 @@ describe("composer history projection", () => {
         text: "look",
         images: [
           {
-            reference: "pi-embedded://0/1",
+            reference: "pi-history-image://entry-0/1",
             mimeType: "image/png",
             size: 6,
           },
@@ -123,6 +142,7 @@ describe("composer history projection", () => {
     const sourceText =
       "inspect\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
     const message = {
+      __inspireHistoryEntryId: "entry-0",
       role: "user",
       content: [
         { type: "text", text: sourceText },
@@ -134,7 +154,7 @@ describe("composer history projection", () => {
         text: "inspect",
         images: [
           {
-            reference: "pi-embedded://0/1",
+            reference: "pi-history-image://entry-0/1",
             mimeType: "image/png",
             size: 6,
           },
@@ -151,6 +171,7 @@ describe("composer history projection", () => {
       addAttachmentContext("Inspect", [], [path]) +
       "\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]";
     const message = {
+      __inspireHistoryEntryId: "entry-0",
       role: "user",
       content: [
         { type: "text", text: content },
@@ -160,8 +181,10 @@ describe("composer history projection", () => {
     const history = composerHistoryEntries([message]);
     expect(history[0]?.text).toBe("Inspect");
     expect(history[0]?.files).toHaveLength(1);
-    expect(history[0]?.files[0]?.reference).toBe("pi-file://0/0");
-    expect(history[0]?.images[0]?.reference).toBe("pi-embedded://0/1");
+    expect(history[0]?.files[0]?.reference).toBe("pi-history-file://entry-0/0");
+    expect(history[0]?.images[0]?.reference).toBe(
+      "pi-history-image://entry-0/1",
+    );
     expect(message.content[0]?.text).toBe(content);
   });
 
@@ -170,6 +193,7 @@ describe("composer history projection", () => {
     const attachment = "/cache/uploads/report.pdf";
     const messages = [
       {
+        __inspireHistoryEntryId: "entry-0",
         role: "user",
         content: addAttachmentContext(
           "",
@@ -178,6 +202,7 @@ describe("composer history projection", () => {
         ),
       },
       {
+        __inspireHistoryEntryId: "entry-1",
         role: "user",
         content: addAttachmentContext(
           "same text",
@@ -186,6 +211,7 @@ describe("composer history projection", () => {
         ),
       },
       {
+        __inspireHistoryEntryId: "entry-2",
         role: "user",
         content: addAttachmentContext(
           "same text",
@@ -201,7 +227,7 @@ describe("composer history projection", () => {
         images: [],
         files: [
           {
-            reference: "pi-file://2/0",
+            reference: "pi-history-file://entry-2/0",
             fileName: "second.txt",
             kind: "attachment",
           },
@@ -212,7 +238,7 @@ describe("composer history projection", () => {
         images: [],
         files: [
           {
-            reference: "pi-file://1/0",
+            reference: "pi-history-file://entry-1/0",
             fileName: "first.txt",
             kind: "attachment",
           },
@@ -223,12 +249,12 @@ describe("composer history projection", () => {
         images: [],
         files: [
           {
-            reference: "pi-file://0/0",
+            reference: "pi-history-file://entry-0/0",
             fileName: "source.ts",
             kind: "project",
           },
           {
-            reference: "pi-file://0/1",
+            reference: "pi-history-file://entry-0/1",
             fileName: "report.pdf",
             kind: "attachment",
           },
@@ -241,6 +267,7 @@ describe("composer history projection", () => {
     const workspace = resolve("/workspace");
     const stored = resolve("/cache/uploads/00000000-0000-4000-8000-report.pdf");
     const message = {
+      __inspireHistoryEntryId: "entry-0",
       role: "user",
       content: addAttachmentContext(
         "review",
@@ -255,12 +282,12 @@ describe("composer history projection", () => {
       )[0]?.files,
     ).toEqual([
       {
-        reference: "pi-file://0/0",
+        reference: "pi-history-file://entry-0/0",
         fileName: "source.ts",
         kind: "project",
       },
       {
-        reference: "pi-file://0/1",
+        reference: "pi-history-file://entry-0/1",
         fileName: "report.pdf",
         kind: "attachment",
       },
@@ -269,6 +296,7 @@ describe("composer history projection", () => {
 
   it("pages exact entries under the serialized response bound", () => {
     const messages = Array.from({ length: 100 }, (_, index) => ({
+      __inspireHistoryEntryId: String(index),
       role: "user",
       content: `${index}:${"\0".repeat(10_000)}`,
     }));

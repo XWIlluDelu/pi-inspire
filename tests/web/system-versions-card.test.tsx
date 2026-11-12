@@ -53,6 +53,7 @@ afterEach(() => vi.unstubAllGlobals());
 function availableUpdates() {
   fixture.state.piUpdateCheck = {
     currentVersion: "1.0.0",
+    installedVersion: "1.0.0",
     pi: {
       kind: "available",
       latestVersion: "1.1.0",
@@ -245,6 +246,7 @@ describe("System versions", () => {
     (piKind, inspireKind, extensionsKind, piText, inspireText, extensionsText) => {
       fixture.state.piUpdateCheck = {
         currentVersion: "1.0.0",
+        installedVersion: "1.0.0",
         pi:
           piKind === "current"
             ? { kind: "current", latestVersion: "1.0.0" }

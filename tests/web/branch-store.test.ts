@@ -33,7 +33,7 @@ async function setup(
     return route(url, init);
   });
   const store = new AppStore();
-  await store.init("token");
+  await store.init();
   (store as unknown as { set(value: unknown): void }).set({
     branchTree: branchTree(),
   });
@@ -397,7 +397,7 @@ describe("branch request view ownership", () => {
           : kind === "navigate"
             ? store.navigateBranch("a1", "switch")
             : store.forkBranch("u1");
-      await store.init("replacement-token");
+      await store.init();
       pending.resolve({
         status: 401,
         body: { error: "expired old transport" },

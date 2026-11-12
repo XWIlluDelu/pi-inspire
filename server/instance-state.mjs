@@ -9,7 +9,6 @@ import {
   mkdir,
   open,
   readFile,
-  readlink,
   realpath,
   rename,
   rm,
@@ -19,8 +18,11 @@ import {
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
-import { instanceIdentity, requestInstanceControl } from "./instance-control.mjs";
+import {
+  instanceIdentity,
+  requestInstanceControl,
+  supportsInstanceControl,
+} from "./instance-control.mjs";
 import { windowsPowerShellCommand } from "./platform-environment.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -76,13 +78,9 @@ function validState(value) {
       typeof value.startedAt === "string" &&
       typeof value.processStartTime === "string" &&
       value.processStartTime.length > 0 &&
-      (value.shutdownControlVersion === undefined || value.shutdownControlVersion === 1) &&
-      (value.scopedShutdown === undefined || value.scopedShutdown === true) &&
-      (value.durableWorkerRelease === undefined || value.durableWorkerRelease === true) &&
       (value.systemdInvocationId === undefined ||
         (typeof value.systemdInvocationId === "string" &&
-          /^[a-f0-9]{32}$/u.test(value.systemdInvocationId))) &&
-      (value.httpControlVersion === undefined || value.httpControlVersion === 1),
+          /^[a-f0-9]{32}$/u.test(value.systemdInvocationId))),
   );
 }
 
@@ -114,7 +112,8 @@ async function writePrivateJson(path, state) {
 }
 
 export async function writeInstanceState(path, state) {
-  if (!validState(state)) throw new Error("Invalid Inspire instance state");
+  if (!validState(state) || !supportsInstanceControl(state))
+    throw new Error("Invalid Inspire instance state");
   await writePrivateJson(path, state);
 }
 
@@ -204,8 +203,7 @@ async function readControl(path, state, kind, allowExpired = false) {
       if (
         typeof value.nonce !== "string" ||
         !shutdownNonce.test(value.nonce) ||
-        (value.scope !== undefined &&
-          (value.scope !== "host-only" || state.scopedShutdown !== true)) ||
+        (value.scope !== undefined && value.scope !== "host-only") ||
         !Number.isSafeInteger(value.expiresAt) ||
         (!allowExpired &&
           (value.expiresAt < Date.now() ||
@@ -255,7 +253,7 @@ async function readControl(path, state, kind, allowExpired = false) {
 }
 
 export async function requestInstanceShutdown(path, state, timeoutMs = 15_000, scope) {
-  if (scope !== undefined && (scope !== "host-only" || !state.scopedShutdown))
+  if (scope !== undefined && scope !== "host-only")
     throw new Error("The Host does not support this shutdown scope.");
   const nonce = randomUUID();
   await writeControl(path + ".shutdown-request", state, {
@@ -442,33 +440,12 @@ async function processAlive(pid) {
   }
 }
 
-/** Exact inspection authorizes legacy Linux signal fallback. New managed
- * owners use authenticated local controls; other legacy platforms fail closed
- * rather than sending credentials or killing a merely matching PID. */
-async function verifyManagedProcess(
-  state,
-  processMarker = "server/index.ts",
-) {
+async function instanceProcessMayBeLive(state) {
   if (!(await processAlive(state.pid))) return false;
-  if (process.platform !== "linux") return false;
   try {
-    const [workingDirectory, commandLine, processInfo, processStartTime] =
-      await Promise.all([
-        readlink(`/proc/${state.pid}/cwd`),
-        readFile(`/proc/${state.pid}/cmdline`, "utf8"),
-        stat(`/proc/${state.pid}`),
-        processStartIdentity(state.pid),
-      ]);
-    const ownUid =
-      typeof process.getuid === "function" ? process.getuid() : processInfo.uid;
-    return (
-      processInfo.uid === ownUid &&
-      workingDirectory === state.root &&
-      processStartTime === state.processStartTime &&
-      commandLine.includes(processMarker)
-    );
+    return (await processStartIdentity(state.pid)) === state.processStartTime;
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -524,19 +501,9 @@ export async function inspectInstance(path, expected, options = {}) {
     return { kind: "healthy", state, url: instanceUrl(state) };
   }
 
-  if (!(await processAlive(state.pid))) return { kind: "stale" };
-  try {
-    if ((await processStartIdentity(state.pid)) !== state.processStartTime)
-      return { kind: "stale" };
-  } catch {
-    return { kind: "unavailable", state };
-  }
-  if (
-    process.platform === "linux" &&
-    !(await verifyManagedProcess(state, options.processMarker))
-  )
-    return { kind: "stale" };
-  return { kind: "unavailable", state };
+  return (await instanceProcessMayBeLive(state))
+    ? { kind: "unavailable" }
+    : { kind: "stale" };
 }
 
 async function waitForProcessExit(path, state, timeoutMs, requestNonce) {
@@ -572,19 +539,18 @@ async function waitForProcessExit(path, state, timeoutMs, requestNonce) {
   return "timeout";
 }
 
-/** Ordinary CLI restart preparation remains compatible with older Hosts. */
-export async function prepareInstanceRestart(path, expected, scope, options = {}) {
-  const result = await inspectInstance(path, expected, options);
+export async function prepareInstanceRestart(path, expected) {
+  const result = await inspectInstance(path, expected);
   if (result.kind === "unavailable")
     throw new Error("The running Host could not prepare its Pi instances for restart. The Host was not stopped.");
   if (result.kind !== "healthy") return null;
   const prepared = await requestInstanceControl(
     result.state,
     "restart-prepare",
-    { scope },
+    { scope: "host" },
     60_000,
   );
-  if (prepared?.kind !== "prepared" || prepared.scope !== scope)
+  if (prepared?.kind !== "prepared" || prepared.scope !== "host")
     throw new Error("The running Host did not confirm restart preparation. The Host was not stopped.");
   return prepared;
 }
@@ -597,66 +563,36 @@ export async function stopManagedInstance(path, expected, options = {}) {
   const scoped = options.scopedOwner;
   if (
     scoped &&
-    (state.shutdownControlVersion !== 1 ||
-      state.scopedShutdown !== true ||
-      instanceIdentity(state) !== instanceIdentity(scoped) ||
+    (instanceIdentity(state) !== instanceIdentity(scoped) ||
       state.token !== scoped.token)
   )
-    return { kind: "unavailable", state };
+    return { kind: "unavailable" };
 
-  const timeoutMs = options.timeoutMs ?? 15_000;
-  if (state.shutdownControlVersion === 1) {
-    // An already-crashed owner is stale, not a failed response to this stop.
-    // Preserve ordinary crash recovery without signalling a replacement PID.
-    if (!(await processAlive(state.pid))) {
-      await removeInstanceState(path, state);
-      return { kind: "stale" };
-    }
-    const requestNonce = await requestInstanceShutdown(
-      path,
-      state,
-      timeoutMs,
-      scoped ? "host-only" : undefined,
-    );
-    const exit = await waitForProcessExit(path, state, timeoutMs, scoped ? requestNonce : undefined);
-    if (exit === "failed") return { kind: "cleanup-failed", state };
-    if (exit === "timeout")
-      return { kind: "timeout", state };
-    const result = await readControl(
-      path + ".shutdown-result",
-      state,
-      "result",
-    );
-    if (!result || (scoped && result.requestNonce !== requestNonce))
-      return { kind: "unavailable", state };
-    return { kind: result.clean ? "stopped" : "cleanup-failed", state };
-  }
-  // Legacy HTTP cannot prove its peer before receiving a bearer. Never send
-  // the Host key, even after a separate readiness request (port reuse races).
-  // Only the existing exact-process Linux signal boundary remains available.
-  if (!(await processAlive(state.pid))) {
+  if (!(await instanceProcessMayBeLive(state))) {
     await removeInstanceState(path, state);
     return { kind: "stale" };
   }
-  try {
-    if ((await processStartIdentity(state.pid)) !== state.processStartTime) {
-      await removeInstanceState(path, state);
-      return { kind: "stale" };
-    }
-  } catch {
-    return { kind: "unavailable", state };
-  }
-  if (!(await verifyManagedProcess(state, options.processMarker))) {
-    return { kind: "unavailable", state };
-  }
-  try {
-    process.kill(state.pid, "SIGTERM");
-  } catch {
-    return { kind: "unavailable", state };
-  }
-  return (await waitForProcessExit(path, state, timeoutMs)) === "exited"
-    ? { kind: "stopped", state }
-    : { kind: "timeout", state };
+  if (!supportsInstanceControl(state)) return { kind: "unavailable" };
+
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  const requestNonce = await requestInstanceShutdown(
+    path,
+    state,
+    timeoutMs,
+    scoped ? "host-only" : undefined,
+  );
+  const exit = await waitForProcessExit(
+    path,
+    state,
+    timeoutMs,
+    scoped ? requestNonce : undefined,
+  );
+  if (exit === "failed") return { kind: "cleanup-failed", state };
+  if (exit === "timeout") return { kind: "timeout", state };
+  const result = await readControl(path + ".shutdown-result", state, "result");
+  if (!result || (scoped && result.requestNonce !== requestNonce))
+    return { kind: "unavailable" };
+  return { kind: result.clean ? "stopped" : "cleanup-failed", state };
 }
 
 export async function portAvailable(host, port) {
@@ -678,53 +614,4 @@ export async function portAvailable(host, port) {
     probe.once("error", () => finish(false));
     probe.listen(port, host, () => probe.close(() => finish(true)));
   });
-}
-
-async function cli() {
-  const [command, path, root, host, portText] = process.argv.slice(2);
-  if (!command || !path || !root || !host || !portText) process.exit(64);
-  const port = Number.parseInt(portText, 10);
-  const expected = {
-    root,
-    host,
-    port,
-  };
-  const processMarker = fileURLToPath(import.meta.url).includes(
-    `${join("build", "server")}`,
-  )
-    ? "build/server/index.js"
-    : "server/index.ts";
-
-  if (command === "inspect") {
-    const result = await inspectInstance(path, expected, { processMarker });
-    if (result.kind === "healthy") {
-      console.log(result.url);
-      return;
-    }
-    // Inspect is observational. A launcher that owns the instance lock may
-    // replace a stale publication; this standalone probe must not race it.
-    if (result.kind === "unavailable") process.exitCode = 4;
-    else process.exitCode = 3;
-    return;
-  }
-  if (command === "stop") {
-    const result = await stopManagedInstance(path, expected, { processMarker });
-    if (result.kind === "stopped") {
-      console.log(`Stopped INSΠRE process ${result.state.pid}.`);
-      return;
-    }
-    if (result.kind === "timeout") process.exitCode = 6;
-    else if (result.kind === "unavailable") process.exitCode = 4;
-    else process.exitCode = 3;
-    return;
-  }
-  if (command === "port") {
-    process.exitCode = (await portAvailable(host, port)) ? 0 : 7;
-    return;
-  }
-  process.exitCode = 64;
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  await cli();
 }

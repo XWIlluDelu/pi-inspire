@@ -93,7 +93,6 @@ async function fixture() {
         );
       }
       expect(state.pid).toBe(child.pid);
-      expect(state.shutdownControlVersion).toBe(1);
     },
     { timeout: 30_000, interval: 100 },
   );

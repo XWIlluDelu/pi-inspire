@@ -40,7 +40,7 @@ describe("System installation and loaded-version status", () => {
       if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
       return undefined;
     });
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open();
   }
 

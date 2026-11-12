@@ -422,10 +422,6 @@ history keep one result per native execution. [[pi-integration]] owns execution 
   per-message and per-page transport bounds and accept an append-only continuation of their owning
   branch, never a sibling view.
 
-  The browser explicitly opts into deferred older pages. A tab running the previous bundle across a
-  Host restart keeps the complete legacy page response instead of silently dropping activity
-  descriptors it cannot interpret.
-
 - Refresh reconstructs settled conversation state from Pi, then resumes live updates. Activity timing,
   viewport geometry and view-local search share one canonical message projection; they do not retain
   competing transcript copies or change Host pagination authority.

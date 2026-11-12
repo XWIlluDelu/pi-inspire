@@ -6,7 +6,6 @@ import { brotliCompressSync, gzipSync } from "node:zlib";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { accessCookieName } from "../../server/app.js";
 import {
   closeHostApiFixture,
   hostApiFixture,
@@ -73,7 +72,7 @@ describe("Host browser authentication and asset access", () => {
       .send({ grouping: "invalid" })
       .expect(400);
     expect((await settings(first.bearer).expect(200)).body.mode).toBe("title");
-    expect((await settings(second.bearer).expect(200)).body.mode).toBeNull();
+    expect((await settings(second.bearer).expect(200)).body.mode).toBe("off");
     await request(application.server)
       .put("/api/notifications")
       .set("Origin", baseUrl)
@@ -169,19 +168,15 @@ describe("Host browser authentication and asset access", () => {
       .set("Origin", baseUrl)
       .send({ token })
       .expect(400);
-    const cookieName = accessCookieName(new URL(baseUrl).host);
-    const legacy = await request(application.server)
+    const cookie = `inspire_access=${token}`;
+    await request(application.server)
       .get("/api/bootstrap")
-      .set(
-        "Cookie",
-        `${cookieName}=${token}; inspire_access=${token}; unrelated=preserved; inspire_access_other=other`,
-      )
+      .set("Cookie", cookie)
       .expect(401);
-    const cookies = String(legacy.headers["set-cookie"]);
-    expect(cookies).toContain(`${cookieName}=;`);
-    expect(cookies).toContain("inspire_access=;");
-    expect(cookies).not.toContain("unrelated");
-    expect(cookies).not.toContain("inspire_access_other");
+    await request(application.server)
+      .get("/api/bootstrap")
+      .query({ token })
+      .expect(401);
     expect(
       await rejectedSocket(
         `${baseUrl.replace("http", "ws")}/events?token=${token}`,
@@ -189,7 +184,7 @@ describe("Host browser authentication and asset access", () => {
     ).toBe(401);
     expect(
       await rejectedSocket(`${baseUrl.replace("http", "ws")}/events`, {
-        headers: { Cookie: `${cookieName}=${token}` },
+        headers: { Cookie: cookie },
         origin: baseUrl,
       }),
     ).toBe(401);
@@ -425,7 +420,7 @@ describe("Host browser authentication and asset access", () => {
     }
   });
 
-  it("serves current/retained assets and exchanges only direct launch URLs for one-use fragments", async () => {
+  it("serves current and retained assets and keeps API errors out of the app shell", async () => {
     const dist = await mkdtemp(join(tmpdir(), "inspire-auth-assets-"));
     const retained = await mkdtemp(join(tmpdir(), "inspire-auth-retained-"));
     await mkdir(join(dist, "assets"));
@@ -460,55 +455,13 @@ describe("Host browser authentication and asset access", () => {
         .expect(200);
       expect(theme.headers["cache-control"]).not.toContain("immutable");
       expect(theme.headers["cache-control"]).toContain("max-age=0");
-      for (const path of ["/", "/deep/route"]) {
+      for (const path of ["/", `/?token=${token}`, "/deep/route"]) {
         const shell = await request(served.application.server)
           .get(path)
           .expect(200);
         expect(shell.text).toContain("INSΠRE");
         expect(shell.headers["cache-control"]).toBe("no-cache");
       }
-      const launch = await request(served.application.server)
-        .get(`/?token=${token}`)
-        .expect(303);
-      expect(launch.headers.location).toMatch(
-        /^\/#inspire-bootstrap=[A-Za-z0-9_-]+$/,
-      );
-      expect(launch.headers.location).not.toContain(token);
-      expect(launch.headers["set-cookie"]).toBeUndefined();
-      expect(launch.headers["referrer-policy"]).toBe("no-referrer");
-      expect(launch.headers["cache-control"]).toBe("no-store");
-      const bootstrap = new URL(
-        launch.headers.location as string,
-        served.baseUrl,
-      ).hash.split("=")[1];
-      const { publicKey } = generateKeyPairSync("ec", {
-        namedCurve: "prime256v1",
-      });
-      const jwk = publicKey.export({ format: "jwk" });
-      const body = {
-        bootstrap,
-        publicKey: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y },
-      };
-      await request(served.application.server)
-        .post("/api/auth/pair")
-        .set("Origin", served.baseUrl)
-        .send(body)
-        .expect(200);
-      await request(served.application.server)
-        .post("/api/auth/pair")
-        .set("Origin", served.baseUrl)
-        .send(body)
-        .expect(401);
-      const forwarded = await request(served.application.server)
-        .get(`/?token=${token}`)
-        .set("X-Forwarded-Proto", "https")
-        .expect(303);
-      expect(forwarded.headers.location).toBe("/");
-      expect(forwarded.headers["set-cookie"]).toBeUndefined();
-      const invalid = await request(served.application.server)
-        .get("/?token=invalid")
-        .expect(303);
-      expect(invalid.headers.location).toBe("/");
       await request(served.application.server)
         .get("/api/not-a-route")
         .set("Authorization", `Bearer ${token}`)

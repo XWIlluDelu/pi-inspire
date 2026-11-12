@@ -14,7 +14,7 @@ import {
 import { flushSync } from "react-dom";
 import { isAbortableRunState, type ThemePreference } from "../shared/contracts";
 import type { ModelSettingsDestination } from "../shared/model-settings";
-import { pairHost } from "./api";
+import { pairBrowser } from "./browser-auth";
 import { ActivityBar } from "./components/ActivityBar";
 import { AppTopbar } from "./components/AppTopbar";
 import { CommandActivity } from "./components/CommandActivity";
@@ -180,8 +180,8 @@ function TokenGate() {
             if (!token || pairing) return;
             setPairing(true);
             setError(null);
-            void pairHost(token)
-              .then(() => store.init(null))
+            void pairBrowser(token)
+              .then(() => store.init())
               .catch((reason: unknown) => {
                 setError(
                   reason instanceof Error

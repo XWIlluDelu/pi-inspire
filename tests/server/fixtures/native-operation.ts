@@ -38,6 +38,13 @@ import type {
 
 import { isolatedTestEnvironment } from "./isolated-environment.js";
 
+// These tests run the browser API against a native Host without browser storage.
+vi.mock("../../../src/browser-auth", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  authenticatedFetch: (...args: Parameters<typeof fetch>) => fetch(...args),
+  socketTicket: async () => "fixture-socket-ticket",
+}));
+
 const PROVIDER = "pi-operation-offline";
 const MODEL = "tiny-context-fixture";
 const TOKEN = "pi-operation-synthetic-local-token";
@@ -454,7 +461,9 @@ export async function fixture(
       startedAt: performance.now(),
     };
     observations.push(observation);
-    const response = await nativeFetch(url, init);
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${TOKEN}`);
+    const response = await nativeFetch(url, { ...init, headers });
     observation.status = response.status;
     observation.authorityId = response.headers.get("X-Inspire-Authority");
     if (response.headers.get("Content-Type")?.includes("application/json"))
@@ -469,9 +478,9 @@ export async function fixture(
   // graph to the server composite project; the narrow test interface is typed.
   const browserModulePath = resolve("src/api.ts");
   const { createApi } = (await import(browserModulePath)) as {
-    createApi(token: string): BrowserClient;
+    createApi(): BrowserClient;
   };
-  const client = createApi(TOKEN);
+  const client = createApi();
   const operation = () => ({
     operationId: randomUUID(),
     authorityId: application.authorityId,

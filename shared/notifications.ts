@@ -22,7 +22,7 @@ export interface NotificationSubscription {
 }
 export interface TaskAlertSettings {
   installationId: string;
-  mode: CompletionAttentionPreference | null;
+  mode: CompletionAttentionPreference;
   grouping: TaskNotificationGrouping;
   groupingUpdatedAt: number;
   publicKey: string;

@@ -37,6 +37,7 @@ import { userMessageContent } from "../shared/user-message.js";
 import { userTurnSummary } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
+  type ComposerHistoryMessage,
   projectComposerHistoryPage,
 } from "./composer-history.js";
 import { samePersistedJson } from "./persisted-json.js";
@@ -210,11 +211,6 @@ export interface SessionProjectionView {
     effectiveLeafId?: string | null,
     viewId?: string,
   ): TranscriptPage;
-  page(
-    cursor: string,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-  ): TranscriptPage;
   visiblePage(
     cursor: string,
     effectiveLeafId?: string | null,
@@ -263,7 +259,9 @@ export interface SessionProjectionView {
   userImages(id: string): Array<{ data: string; mimeType: string }>;
   viewMessages(effectiveLeafId?: string | null): readonly unknown[];
   /** Retained USER entries on this branch, independent of model compaction. */
-  composerHistoryMessages(effectiveLeafId?: string | null): readonly unknown[];
+  composerHistoryMessages(
+    effectiveLeafId?: string | null,
+  ): readonly ComposerHistoryMessage[];
   reconcile(force?: boolean): Promise<ProjectionReconcileResult>;
   /** Host startup attestation only: reconcile while ordinary readers are suspended. */
   reconcileSuspended(force?: boolean): Promise<ProjectionReconcileResult>;
@@ -1466,13 +1464,13 @@ export class SessionProjection
 
   composerHistoryMessages(
     effectiveLeafId: string | null = this.currentLeafId,
-  ): readonly unknown[] {
+  ): readonly ComposerHistoryMessage[] {
     if (
       effectiveLeafId !== null &&
       !this.currentEntriesById.has(effectiveLeafId)
     )
       throw requestError("Effective branch leaf does not exist", 409);
-    const messages: unknown[] = [];
+    const messages: ComposerHistoryMessage[] = [];
     let id = effectiveLeafId;
     while (id !== null) {
       const entry = this.currentEntriesById.get(id)!;
@@ -2212,7 +2210,6 @@ export class SessionProjection
       return this.buildPage(
         persisted,
         persisted.length,
-        persisted.length,
         effectiveLeafId,
         viewId,
       );
@@ -2262,13 +2259,7 @@ export class SessionProjection
       // Correlation and even equal content cannot establish durable identity.
       combined.push(item);
     }
-    return this.buildPage(
-      combined,
-      combined.length,
-      persisted.length,
-      effectiveLeafId,
-      viewId,
-    );
+    return this.buildPage(combined, persisted.length, effectiveLeafId, viewId);
   }
 
   private validatedCursor(
@@ -2329,26 +2320,6 @@ export class SessionProjection
       throw requestError("Transcript cursor is invalid", 400);
     }
     return { decoded, messages };
-  }
-
-  page(
-    cursor: string,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-  ): TranscriptPage {
-    const { decoded, messages } = this.validatedCursor(
-      cursor,
-      "page",
-      effectiveLeafId,
-      viewId,
-    );
-    return this.buildPage(
-      messages,
-      decoded.before,
-      messages.length,
-      effectiveLeafId,
-      viewId,
-    );
   }
 
   visiblePage(
@@ -2692,12 +2663,11 @@ export class SessionProjection
 
   private buildPage(
     source: readonly unknown[],
-    before: number,
     persistedLength: number,
     effectiveLeafId: string | null,
     viewId: string,
   ): TranscriptPage {
-    let start = before;
+    let start = source.length;
     const reversed: unknown[] = [];
     let messagesBytes = 2; // JSON array brackets; commas are added per accepted item.
     const shell = (
@@ -2754,7 +2724,7 @@ export class SessionProjection
       messagesBytes = candidateMessagesBytes;
       start = index;
     }
-    if (reversed.length === 0 && before > 0) oversizedTranscriptItem();
+    if (reversed.length === 0 && source.length > 0) oversizedTranscriptItem();
     return withinTranscriptPageBudget(shell(start, reversed.reverse()));
   }
 

@@ -82,14 +82,6 @@ export const PALETTE_PREFERENCES = [
 ] as const;
 export type PalettePreference = (typeof PALETTE_PREFERENCES)[number];
 
-/** Legacy persisted/API identifiers normalize at the Host boundary. */
-export function migratePalettePreference(
-  value: PalettePreference | "amber" | "teal",
-): PalettePreference {
-  if (value === "amber") return "chimonanthus";
-  if (value === "teal") return "hydrangea";
-  return value;
-}
 export type LaunchPreference = "welcome" | "continue";
 export type ProjectDisplayPreference = "folder" | "path";
 export type CompletionAttentionPreference = "off" | "title" | "desktop";
@@ -264,8 +256,6 @@ export interface InspirePreferences {
   projectDisplay: ProjectDisplayPreference;
   /** Session title menu order, including actions revealed by More actions. */
   sessionActionOrder: SessionActionId[];
-  /** Opt-in attention for terminal transitions that were not visible. */
-  completionAttention: CompletionAttentionPreference;
   /** Successful model choices, newest first. This is ordering metadata only. */
   recentModelIds: ModelIdentity[];
   pinnedSessionIds: string[];
@@ -279,7 +269,6 @@ export interface InspirePreferences {
    * only: nothing in Pi's session storage changes. */
   hiddenSessionIds: string[];
   navCollapsedGroups: string[];
-  /** Explicit terminal handoffs; ordinary selection must not reacquire these writers. */
 }
 
 /** The complete user-facing Settings surface. Navigation curation and MRU
@@ -298,7 +287,6 @@ export const defaultInterfaceSettings = {
   activityFoldVisibility: "dynamic",
   projectDisplay: "folder",
   sessionActionOrder: [...SESSION_ACTION_IDS],
-  completionAttention: "off",
 } satisfies Pick<
   InspirePreferences,
   | "herdrEnabled"
@@ -314,7 +302,6 @@ export const defaultInterfaceSettings = {
   | "activityFoldVisibility"
   | "projectDisplay"
   | "sessionActionOrder"
-  | "completionAttention"
 >;
 
 export const defaultPreferences: InspirePreferences = {
@@ -1369,8 +1356,8 @@ export type PiExtensionUpdateStatus =
 export interface PiUpdateCheckResponse {
   /** Pi version loaded when this Host started, not every session's runtime. */
   currentVersion: string;
-  /** Fresh installation identity. Null means unreadable; absent on older Hosts. */
-  installedVersion?: string | null;
+  /** Fresh installation identity. Null means unreadable. */
+  installedVersion: string | null;
   pi: PiVersionUpdateStatus;
   extensions: PiExtensionUpdateStatus;
 }

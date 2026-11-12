@@ -57,7 +57,7 @@ async function workspaceHarness() {
     if (url.startsWith("/api/files")) return search();
     return undefined;
   });
-  await store.init("token");
+  await store.init();
   const socket = FakeWebSocket.instances.at(-1)!;
   socket.open();
   return { directory, search, socket };
@@ -219,7 +219,7 @@ it("decorates workspace rows by exact path without basename guessing", async () 
 
     return undefined;
   });
-  await store.init("token");
+  await store.init();
   await store.refreshGitStatus();
   render(<WorkspaceTree />);
   const rootFile = await screen.findByRole("button", { name: "changed.ts" });

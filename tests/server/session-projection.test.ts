@@ -1220,7 +1220,7 @@ describe("SessionProjection bounded paging", () => {
       const firstRevision = page.revision;
       let received = page.messages.length;
       while (page.hasOlder) {
-        page = projection.page(page.olderCursor!);
+        page = projection.visiblePage(page.olderCursor!);
         expect(page.revision).toBe(firstRevision);
         expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
           TRANSCRIPT_PAGE_MAX_BYTES,
@@ -1378,7 +1378,9 @@ describe("SessionProjection bounded paging", () => {
       expect((materialized.at(-1) as { content?: unknown }).content).toBe(
         "tool result 19",
       );
-      expect(() => projection.page(range.cursor)).toThrow(/wrong purpose/);
+      expect(() => projection.visiblePage(range.cursor)).toThrow(
+        /wrong purpose/,
+      );
     } finally {
       await projection.close();
     }
@@ -1615,8 +1617,8 @@ describe("SessionProjection bounded paging", () => {
       expect(page.hasOlder).toBe(true);
       expect(page.olderCursor).toBeTruthy();
       expect(
-        projection.page(page.olderCursor!, projection.leafId, "view-a").messages
-          .length,
+        projection.visiblePage(page.olderCursor!, projection.leafId, "view-a")
+          .messages.length,
       ).toBeGreaterThan(0);
       expect(
         page.messages.some((value) =>
@@ -1634,7 +1636,7 @@ describe("SessionProjection bounded paging", () => {
       );
       expect(continuation.rangeStart).toBe(page.rangeStart);
       expect(continuation.rangeEnd).toBeGreaterThan(page.rangeEnd);
-      expect(() => projection.page(page.continuationCursor!)).toThrow(
+      expect(() => projection.visiblePage(page.continuationCursor!)).toThrow(
         /wrong purpose/,
       );
       const annotatedUser = page.messages.find(
@@ -1726,7 +1728,8 @@ describe("SessionProjection bounded paging", () => {
         messageChange: "append",
       });
       expect(
-        projection.page(cursor, projection.leafId, "view-a").messages.length,
+        projection.visiblePage(cursor, projection.leafId, "view-a").messages
+          .length,
       ).toBeGreaterThan(0);
       expect(projection.latestPage().composerHistoryVersion).toBe(
         latest.composerHistoryVersion,
@@ -1752,7 +1755,7 @@ describe("SessionProjection bounded paging", () => {
         messageChange: "replace",
       });
       expect(() =>
-        projection.page(cursor, projection.leafId, "view-a"),
+        projection.visiblePage(cursor, projection.leafId, "view-a"),
       ).toThrow(/stale/);
       expect(projection.latestPage().composerHistoryVersion).toBe(
         latest.composerHistoryVersion,
@@ -1781,7 +1784,7 @@ describe("SessionProjection bounded paging", () => {
     await projection.close();
     const reopened = await SessionProjection.open(record);
     try {
-      expect(() => reopened.page(cursor)).toThrow(
+      expect(() => reopened.visiblePage(cursor)).toThrow(
         /expired projection incarnation/,
       );
     } finally {
@@ -1812,18 +1815,27 @@ describe("SessionProjection bounded paging", () => {
       const entryIds: string[] = [];
       let page = projection.latestPage();
       while (true) {
+        const messages = [...page.messages];
+        for (const range of page.activityRanges ?? []) {
+          let cursor: string | null = range.cursor;
+          while (cursor) {
+            const activity = projection.activityPage(cursor);
+            messages.push(...activity.messages);
+            cursor = activity.cursor;
+          }
+        }
         ids.push(
-          ...page.messages.map((value) =>
+          ...messages.map((value) =>
             String((value as Record<string, unknown>).__inspireMessageId),
           ),
         );
         entryIds.push(
-          ...page.messages.map((value) =>
+          ...messages.map((value) =>
             String((value as Record<string, unknown>).__inspireEntryId),
           ),
         );
         if (!page.hasOlder) break;
-        page = projection.page(page.olderCursor!);
+        page = projection.visiblePage(page.olderCursor!);
       }
       expect(ids).toHaveLength(120);
       expect(new Set(ids).size).toBe(120);
@@ -1853,10 +1865,11 @@ describe("SessionProjection bounded paging", () => {
       const viewBound = projection.latestPage([], projection.leafId, "view-a")
         .olderCursor!;
       expect(() =>
-        projection.page(viewBound, projection.leafId, "view-b"),
+        projection.visiblePage(viewBound, projection.leafId, "view-b"),
       ).toThrow(/another branch view/);
       let oldest = latest;
-      while (oldest.hasOlder) oldest = projection.page(oldest.olderCursor!);
+      while (oldest.hasOlder)
+        oldest = projection.visiblePage(oldest.olderCursor!);
       expect(
         collectSessionResourceReferences(oldest.messages)[0]?.reference,
       ).toBe("pi-embedded://0/0");
@@ -1870,14 +1883,14 @@ describe("SessionProjection bounded paging", () => {
         timeout: 2_000,
       });
       expect(projection.messages.at(-1)).toMatchObject({ role: "assistant" });
-      expect(projection.page(cursor).revision).toBe(latest.revision + 1);
+      expect(projection.visiblePage(cursor).revision).toBe(latest.revision + 1);
 
       await writeFile(
         path,
         `${JSON.stringify(header())}\n${JSON.stringify(message("replacement", null, "user", "rewrite", 300))}\n`,
       );
       await projection.reconcile(true);
-      expect(() => projection.page(cursor)).toThrow(/stale/);
+      expect(() => projection.visiblePage(cursor)).toThrow(/stale/);
     } finally {
       await projection.close();
     }

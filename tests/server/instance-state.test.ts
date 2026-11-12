@@ -62,6 +62,7 @@ function state(port = 4587): InstanceState {
     token: "test-token-with-sufficient-entropy",
     startedAt: new Date().toISOString(),
     processStartTime: "test-process-start",
+    durableWorkerRelease: true,
   };
 }
 
@@ -185,38 +186,26 @@ describe("Inspire instance state", () => {
       throw new Error("Expected a TCP test server");
     const value = state(address.port);
     value.processStartTime = await processStartIdentity(process.pid);
-    value.httpControlVersion = 1;
     owner = { ...value };
     await writeInstanceState(path, value);
-    const processMarker = process.argv[0] as string;
+    const expected = { root: value.root, host: value.host, port: value.port };
 
-    await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port },
-        { processMarker },
-      ),
-    ).resolves.toMatchObject({ kind: "healthy", state: value });
+    await expect(inspectInstance(path, expected)).resolves.toMatchObject({
+      kind: "healthy",
+      state: value,
+    });
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
     servers.splice(servers.indexOf(server), 1);
     await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port },
-        { processMarker, healthTimeoutMs: 50 },
-      ),
+      inspectInstance(path, expected, { healthTimeoutMs: 50 }),
     ).resolves.toMatchObject({ kind: "unavailable" });
 
     value.processStartTime = `${value.processStartTime}-reused`;
     await writeInstanceState(path, value);
-    await expect(
-      inspectInstance(
-        path,
-        { root: value.root, host: value.host, port: value.port },
-        { processMarker },
-      ),
-    ).resolves.toEqual({ kind: "stale" });
+    await expect(inspectInstance(path, expected)).resolves.toEqual({
+      kind: "stale",
+    });
   }, 45_000);
 
   it("does not merge distinct case-sensitive roots even under Windows rules", async (context) => {
@@ -276,15 +265,11 @@ describe("Inspire instance state", () => {
     // A live non-Host test process is unavailable, not a mismatched-root stale
     // publication, when the native filesystem confirms that both names alias.
     await expect(
-      inspectInstance(
-        path,
-        {
-          root: upper,
-          host: owner.host,
-          port: owner.port,
-        },
-        { processMarker: process.argv[0] },
-      ),
+      inspectInstance(path, {
+        root: upper,
+        host: owner.host,
+        port: owner.port,
+      }),
     ).resolves.toMatchObject({ kind: "unavailable" });
   }, 30_000);
 

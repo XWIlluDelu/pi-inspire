@@ -3,10 +3,7 @@ import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
 import { basename, extname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  COMPOSER_HISTORY_IMAGE_REFERENCE,
-  composerArtifactReference,
-} from "../shared/composer-artifact-references.js";
+import { composerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
   MAX_PROMPT_IMAGE_BYTES,
   type ResourceDescriptor,
@@ -16,6 +13,7 @@ import {
 import {
   collectSessionResourceReferences,
   fileResourceReference,
+  isEmbeddedImageReference,
   isTextFileName,
   MAX_RESOURCE_LIST_PAGE_SIZE,
   MAX_RESOURCE_PATH_LENGTH,
@@ -442,6 +440,10 @@ function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
     if (!message || typeof message !== "object") return;
     const record = message as Record<string, unknown>;
     if (record.display === false || !Array.isArray(record.content)) return;
+    const entryId = record.__inspireHistoryEntryId;
+    const contextIndex = Number.isSafeInteger(record.__inspireMessageIndex)
+      ? Number(record.__inspireMessageIndex)
+      : messageIndex;
     record.content.forEach((part, partIndex) => {
       if (!part || typeof part !== "object") return;
       const image = part as Record<string, unknown>;
@@ -455,7 +457,9 @@ function embeddedCitations(messages: unknown[]): Map<string, EmbeddedCitation> {
       const size = canonicalBase64DecodedSize(image.data);
       if (size === null || size === 0 || size > MAX_PROMPT_IMAGE_BYTES) return;
       embedded.set(
-        composerArtifactReference("image", record, messageIndex, partIndex),
+        typeof entryId === "string"
+          ? composerArtifactReference("image", entryId, partIndex)
+          : `pi-embedded://${contextIndex}/${partIndex}`,
         {
           messageIndex,
           partIndex,
@@ -701,7 +705,7 @@ export class ResourceStore {
     getIndex: () => Promise<ResourceCitationIndex>,
     workspacePath?: string,
   ): Promise<ResourceDescriptor> {
-    if (COMPOSER_HISTORY_IMAGE_REFERENCE.test(reference)) {
+    if (isEmbeddedImageReference(reference)) {
       const embedded = (await getIndex()).embedded.get(reference);
       if (!embedded) {
         throw requestError("The embedded image is no longer available", 404);

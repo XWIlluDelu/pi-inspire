@@ -211,21 +211,6 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
         )
       ).data.toString(),
     ).toBe("different image");
-    await expect(
-      resolveComposerHistoryArtifacts(
-        slot,
-        {
-          ...request(recalled),
-          historyArtifacts: {
-            ...request(recalled).historyArtifacts,
-            imageReferences: ["pi-embedded://0/1"],
-            fileReferences: [],
-          },
-        },
-        { ready: async () => {}, ownsPromptFile: () => true },
-      ),
-    ).rejects.toMatchObject({ status: 409 });
-
     const oldAuthority = request(page().entries[0]!);
     const alternate = user("alternate", "a1", "other branch", "branch image");
     await appendFile(path, JSON.stringify(alternate) + "\n");

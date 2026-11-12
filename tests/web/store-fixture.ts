@@ -17,18 +17,12 @@ export const baseRoutes: RouteHandler = (url) => {
   return undefined;
 };
 
-export function requestToken(init: RequestInit): string | null {
-  const authorization = (init.headers as Record<string, string> | undefined)
-    ?.Authorization;
-  return authorization?.replace(/^Bearer /u, "") ?? null;
-}
-
 export async function initStore(): Promise<{
   store: AppStore;
   socket: FakeWebSocket;
 }> {
   const store = new AppStore();
-  await store.init("token");
+  await store.init();
   const socket = FakeWebSocket.instances.at(-1)!;
   socket.open(FakeWebSocket.bootstrapSnapshot ?? activeSnapshot());
   return { store, socket };

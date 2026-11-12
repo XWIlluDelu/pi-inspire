@@ -214,7 +214,7 @@ beforeAll(async () => {
       return { body: { ...bootstrapPayload().preferences, ...jsonBody(init) } };
     return undefined;
   });
-  await store.init("token");
+  await store.init();
   FakeWebSocket.instances.at(-1)?.open();
 });
 

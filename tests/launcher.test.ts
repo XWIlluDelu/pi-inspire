@@ -272,7 +272,7 @@ afterEach(async () => {
 });
 
 describe("production launcher", () => {
-  linuxIt.each(["committed", "expired", "legacy"])(
+  linuxIt.each(["committed", "expired"])(
     "maintenance launcher uses the fenced handoff (%s)",
     async (outcome) => {
       const directory = await mkdtemp(
@@ -324,7 +324,7 @@ describe("production launcher", () => {
         pid: process.pid,
         processStartTime: await processStartIdentity(process.pid),
         startedAt: new Date().toISOString(),
-        ...(outcome === "legacy" ? {} : { httpControlVersion: 1 as const }),
+        durableWorkerRelease: true,
       };
       await writeFile(statePath, JSON.stringify(state));
       try {
@@ -351,15 +351,13 @@ describe("production launcher", () => {
         });
         expect(code, output).toBe(0);
         expect(calls.map((call) => JSON.parse(call.body).action)).toEqual(
-          outcome === "legacy"
-            ? []
-            : outcome === "committed"
-              ? ["maintenance-prepare", "maintenance-commit"]
-              : [
-                  "maintenance-prepare",
-                  "maintenance-commit",
-                  "maintenance-release",
-                ],
+          outcome === "committed"
+            ? ["maintenance-prepare", "maintenance-commit"]
+            : [
+                "maintenance-prepare",
+                "maintenance-commit",
+                "maintenance-release",
+              ],
         );
         expect(
           calls.every(

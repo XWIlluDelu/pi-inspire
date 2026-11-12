@@ -1,6 +1,6 @@
-import { COMPOSER_HISTORY_IMAGE_REFERENCE } from "../../shared/composer-artifact-references";
 import type { ResourceProbeResult } from "../../shared/contracts";
 import {
+  isEmbeddedImageReference,
   MAX_RESOURCE_PROBE_REFERENCES,
   type SessionResourceListResponse,
 } from "../../shared/resource-references";
@@ -416,7 +416,7 @@ export class ResourceController {
     signal: AbortSignal,
   ): Promise<Blob> {
     const api = this.host.api();
-    if (!api || !COMPOSER_HISTORY_IMAGE_REFERENCE.test(reference)) {
+    if (!api || !isEmbeddedImageReference(reference)) {
       throw new Error("The embedded image reference is invalid");
     }
     const stale = () => {
