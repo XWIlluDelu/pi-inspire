@@ -135,19 +135,19 @@ describe("Composer editing and keyboard behavior", () => {
           text: "",
           images: [
             {
-              reference: "pi-embedded://4/1",
+              reference: "pi-history-image://entry-4/1",
               mimeType: "image/png",
               size: 7,
             },
           ],
           files: [
             {
-              reference: "pi-file://4/0",
+              reference: "pi-history-file://entry-4/0",
               fileName: "report.pdf",
               kind: "attachment",
             },
             {
-              reference: "pi-file://4/1",
+              reference: "pi-history-file://entry-4/1",
               fileName: "source.ts",
               kind: "project",
             },
@@ -225,8 +225,11 @@ describe("Composer editing and keyboard behavior", () => {
             viewId: "image-history-view",
             incarnation: "image-history-projection",
             effectiveLeafId: "assistant-leaf-20",
-            imageReferences: ["pi-embedded://4/1"],
-            fileReferences: ["pi-file://4/0", "pi-file://4/1"],
+            imageReferences: ["pi-history-image://entry-4/1"],
+            fileReferences: [
+              "pi-history-file://entry-4/0",
+              "pi-history-file://entry-4/1",
+            ],
           },
         }),
       );

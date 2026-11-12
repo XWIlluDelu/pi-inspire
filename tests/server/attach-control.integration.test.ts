@@ -19,7 +19,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import attachControl, {
-  type AttachControlRequest,
   attachControlDirectory,
   requestAttachControl,
 } from "../../extensions/attach-control.js";
@@ -536,7 +535,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     expect(await connection.read()).toMatchObject({ status: "idle" });
   }, 60_000);
 
-  it("rejects legacy remote reload without sending a prompt when two copies are loaded", async () => {
+  it("rejects remote native commands without executing them when two copies are loaded", async () => {
     const { pi, registry, id, sessionFile } = await livePi({}, [
       "docs/examples/session-activity.ts",
     ]);
@@ -550,17 +549,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     );
     const before = await readFile(sessionFile, "utf8");
 
-    // An old Host sends an operation outside today's typed protocol.
-    await expect(
-      requestAttachControl(record!.endpoint, {
-        op: "reload",
-        token: record!.token,
-        sessionFile,
-      } as unknown as AttachControlRequest),
-    ).resolves.toMatchObject({ ok: false, code: "UNSUPPORTED" });
-
-    // Escaping can grow a prompt far past the old 64 KiB wire limit. The
-    // complete request reaches validation without executing the command.
+    // Even at the prompt size limit, escaping must preserve input validation.
     for (const message of [
       " /attach-control old-id",
       `!!${"\u0000".repeat(499_998)}`,

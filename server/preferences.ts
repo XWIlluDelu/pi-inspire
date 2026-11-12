@@ -7,7 +7,6 @@ import {
   defaultPreferences,
   type InspirePreferences,
   MAX_SESSION_ID_CHARS,
-  migratePalettePreference,
   PALETTE_PREFERENCES,
   READING_WIDTHS,
   SESSION_ACTION_IDS,
@@ -29,9 +28,7 @@ const preferenceFields = {
     .optional(),
   herdrEnabled: z.boolean(),
   theme: z.enum(["system", "light", "dark"]),
-  palette: z
-    .enum([...PALETTE_PREFERENCES, "amber", "teal"])
-    .transform(migratePalettePreference),
+  palette: z.enum(PALETTE_PREFERENCES),
   titlebarNeedles: z.boolean(),
   contentTextSize: z.enum(CONTENT_TEXT_SIZES),
   readingWidth: z.enum(READING_WIDTHS),
@@ -63,7 +60,6 @@ const preferenceFields = {
       ...order,
       ...SESSION_ACTION_IDS.filter((id) => !order.includes(id)),
     ]),
-  completionAttention: z.enum(["off", "title", "desktop"]),
   recentModelIds: z
     .array(
       z.object({
@@ -113,9 +109,8 @@ function projectPreferences(value: unknown): DiskPreferences {
   }
 
   const source = { ...(value as Record<string, unknown>) };
-  // Retired preferences; unlike unknown fields, these have known migrations.
-  delete source.assistantRoundDisplay;
-  delete source.terminalSessionIds;
+  if (source.palette === "amber") source.palette = "chimonanthus";
+  else if (source.palette === "teal") source.palette = "hydrangea";
   if (Array.isArray(source.sessionActionOrder))
     source.sessionActionOrder = source.sessionActionOrder.map((id) =>
       id === "resume-command" || id === "terminal" ? "switch-branch" : id,

@@ -120,7 +120,7 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
           {
             role: "user",
             content: addAttachmentContext("Use", [], [outside]),
-            __inspireMessageIndex: 0,
+            __inspireHistoryEntryId: "entry-0",
           },
         ],
       },
@@ -136,7 +136,7 @@ describe("workspace boundaries under a Windows case-sensitive directory contract
             incarnation: "incarnation",
             effectiveLeafId: null,
             imageReferences: [],
-            fileReferences: ["pi-file://0/0"],
+            fileReferences: ["pi-history-file://entry-0/0"],
           },
         },
         { ready: async () => {}, ownsPromptFile: () => false },

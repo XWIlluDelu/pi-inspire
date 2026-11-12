@@ -197,9 +197,9 @@ explains explicit delivered-file removal and mixed-version stores.
 
 WebKit accepts short async reads but rejects a clipboard request first issued six seconds after the
 click. Start one promise-backed ClipboardItem from the gesture, then resolve its declared formats
-after every source and conversion validates. Visible source metadata includes omitted Pending rows;
-older snapshots without it retain the read-first compatibility path. Explicit background-write
-permission allows the existing reverse multi-image history writes. A newer clipboard action retires
+after every source and conversion validates. Pending includes omitted rows in its image total and
+reads full content first if an unavailable deferred upload makes that total unknown. Explicit
+background-write permission allows reverse multi-image history writes. A newer clipboard action retires
 pending reads globally; unmount/session/view/transport retirement retains its own cancellation.
 `tests/browser/clipboard-gesture.spec.ts` exercises real text/PNG writes, delayed last-response Copy,
 and retirement in Chromium, Firefox and WebKit.

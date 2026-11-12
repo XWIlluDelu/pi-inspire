@@ -1,3 +1,5 @@
+import { COMPOSER_HISTORY_IMAGE_REFERENCE } from "./composer-artifact-references.js";
+
 const FILE_ARGUMENT_KEYS = new Set([
   "archivePath",
   "file",
@@ -15,6 +17,13 @@ const FILE_ARGUMENT_KEYS = new Set([
 /** File references need valid Unicode text and cannot contain a native NUL. */
 export function isResourceReferenceText(value: string): boolean {
   return !/\p{Surrogate}/u.test(value) && !value.includes("\0");
+}
+
+export function isEmbeddedImageReference(reference: string): boolean {
+  return (
+    /^pi-embedded:\/\/\d+\/\d+$/.test(reference) ||
+    COMPOSER_HISTORY_IMAGE_REFERENCE.test(reference)
+  );
 }
 
 export function isToolResourceArgumentKey(key: string): boolean {

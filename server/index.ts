@@ -446,14 +446,7 @@ async function announceStarted(): Promise<void> {
     token,
     startedAt: new Date().toISOString(),
     processStartTime: await processStartIdentity(process.pid),
-    ...(statePath
-      ? {
-          shutdownControlVersion: 1 as const,
-          scopedShutdown: true as const,
-          durableWorkerRelease: true as const,
-          httpControlVersion: 1 as const,
-        }
-      : {}),
+    durableWorkerRelease: true,
     ...(/^[a-f0-9]{32}$/u.test(process.env.INVOCATION_ID ?? "")
       ? { systemdInvocationId: process.env.INVOCATION_ID }
       : {}),

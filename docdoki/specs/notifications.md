@@ -92,8 +92,8 @@ notification.
   delayed local offer is acknowledged without display; a delayed or duplicate push silently redraws
   the latest known result instead of restoring older content.
 - Stable tags and handled outcome identities keep display replacement separate from delivery
-  deduplication. Retire a session's legacy per-run slots only after its replacement displays
-  successfully.
+  deduplication. When a result moves from a session slot into a project slot, close the session
+  notification after the project notification displays.
 - Grouping policy is Host/installation-owned and revisioned: late pushes cannot revert a newer
   choice, and a newly paired Host can restore its own defaults. Changing grouping clears existing
   task notifications without replaying old results or clearing test notifications.
@@ -122,7 +122,7 @@ feedback and retry are independent of alert mode, permission and enrollment. Res
 on this installation. Existing installations without a choice keep Session.
 
 Only a user gesture requests permission or creates a subscription. Selecting System notification
-starts enrollment from that gesture; Enable supports migrated or interrupted enrollment. Explain that
+starts enrollment from that gesture; Enable retries interrupted enrollment. Explain that
 push uses the browser's service without requiring another account. Permission is observed from the
 browser, independently of saved intent; OS notification policy is outside that observation. Do not
 prompt again after denial.
@@ -146,8 +146,7 @@ Save the gesture's mode choice without waiting for browser permission. Later per
 subscription results fill in delivery capability without rewriting that choice. Late completion
 cannot re-enable alerts, overwrite another window's choice or restore stale errors.
 Disabling alerts cancels pending sends; re-enabling does not revive them. Reset affects this device
-only. New installations default to Off. Migration preserves the old choice and any usable page
-delivery while showing enrollment as a separate step.
+only. New installations default to Off.
 
 ## Host and native-session integration
 

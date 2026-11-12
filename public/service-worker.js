@@ -70,21 +70,18 @@ async function readNotificationState(store, key, pushed) {
 }
 
 function taskNotification(notification) {
-  return !notification.data?.notification?.test &&
-    typeof notification.data?.sessionId === "string" &&
-    /^inspire-(task|session|project):/.test(notification.tag);
+  return /^inspire-(session|project):/.test(notification.tag);
 }
 
 function notificationMembers(notification) {
   const members = notification.data?.members;
-  if (Array.isArray(members)) return members.filter((item) => typeof item?.sessionId === "string");
-  const current = notification.data?.notification;
-  return current && !current.test && typeof current.sessionId === "string" ? [current] : [];
+  return Array.isArray(members) ? members : [];
 }
 
 function validPolicy(value) {
   return value && ["session", "project"].includes(value.grouping) &&
-    Number.isSafeInteger(value.updatedAt) && value.updatedAt >= 0;
+    Number.isSafeInteger(value.updatedAt) && value.updatedAt >= 0 &&
+    typeof value.owner === "string" && value.owner.length > 0;
 }
 
 async function notificationPolicy(incoming, displayed, pushed, authoritative = false) {
@@ -95,14 +92,10 @@ async function notificationPolicy(incoming, displayed, pushed, authoritative = f
     if (validPolicy(policy) && (!known ||
         policy.owner === known.owner && policy.updatedAt > known.updatedAt)) known = policy;
   }
-  const accepted = validPolicy(incoming) && (!known || !known.owner && incoming.owner ||
-    authoritative && incoming.owner !== known.owner ||
-    incoming.owner === known.owner && incoming.updatedAt > known.updatedAt);
-  const policy = accepted ? incoming : known || { grouping: "session", updatedAt: 0, owner: "" };
-  const changed = accepted && (known
-    ? policy.grouping !== known.grouping || known.owner && policy.owner !== known.owner ||
-      policy.updatedAt > known.updatedAt
-    : policy.grouping !== "session");
+  const accepted = !known || (incoming.owner !== known.owner
+    ? authoritative : incoming.updatedAt > known.updatedAt);
+  const policy = accepted ? incoming : known;
+  const changed = accepted && (known !== null || policy.grouping !== "session");
   if (!saved || policy.owner !== saved.owner || policy.updatedAt !== saved.updatedAt) {
     try { await notificationState("settings", "grouping", policy); }
     catch (error) { if (!pushed) throw error; }
@@ -125,8 +118,9 @@ function displayTaskNotification(data, pushed) {
         (data.sessionId !== null && (typeof data.sessionId !== "string" || data.sessionId.length > 4096)))
       throw new Error("Invalid task notification");
     if (!pushed && data.createdAt + NOTIFICATION_LIFETIME <= Date.now()) return;
-    const incoming = data.grouping ? { grouping: data.grouping,
-      updatedAt: data.groupingUpdatedAt ?? 0, owner: data.notificationOwner ?? "" } : null;
+    const incoming = { grouping: data.grouping,
+      updatedAt: data.groupingUpdatedAt, owner: data.notificationOwner };
+    if (!validPolicy(incoming)) throw new Error("Invalid notification grouping");
     const { policy, displayed: all } = await notificationPolicy(
       incoming, await self.registration.getNotifications(), pushed,
     );
@@ -207,9 +201,9 @@ function displayTaskNotification(data, pushed) {
       icon: "/app-icon-192.png",
       badge: "/app-icon-192.png",
       data: { sessionId: current.sessionId, url: notificationTarget(current),
-        notification: current, members: [...members.values()], policy },
+        members: [...members.values()], policy },
     });
-    // Retire legacy/fallback slots only after their replacement was accepted.
+    // Close a session slot only after its project replacement displays.
     for (const notification of displayed) if (notification.tag !== tag) notification.close();
     await remember();
     if (data.test) for (const client of windows)
@@ -226,7 +220,7 @@ self.addEventListener("message", (event) => {
     work = notificationWork(async () => {
       if (!validPolicy(event.data)) throw new Error("Invalid notification grouping");
       await notificationPolicy({ grouping: event.data.grouping,
-        updatedAt: event.data.updatedAt, owner: event.data.owner ?? "" },
+        updatedAt: event.data.updatedAt, owner: event.data.owner },
         await self.registration.getNotifications(), false, true);
     });
   else return;

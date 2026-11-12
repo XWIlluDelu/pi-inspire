@@ -438,7 +438,7 @@ describe("transcript paging", () => {
               },
             }),
           });
-        else await store.init("replacement-token");
+        else await store.init();
         await vi.advanceTimersByTimeAsync(2_000);
         await expect(loading).resolves.toBe(false);
         expect(read).toHaveBeenCalledTimes(1);

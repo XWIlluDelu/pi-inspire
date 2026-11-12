@@ -32,7 +32,7 @@ const accessSchema = z
     origin: z.string().max(512),
     expiresAt: z.number().int(),
     nonce: z.string(),
-    browserId: z.string().optional(),
+    browserId: z.string(),
   })
   .strict();
 export const registrationSchema = z
@@ -301,7 +301,7 @@ export class BrowserAuth {
   verifyAccess(
     bearer: string | undefined,
     origin: string,
-  ): { browserId?: string } | null {
+  ): { browserId: string } | null {
     if (!bearer) return null;
     try {
       const access = accessSchema.parse(this.unseal("access", bearer));

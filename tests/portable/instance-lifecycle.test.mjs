@@ -44,7 +44,7 @@ function childServer(path, token, scopeResult) {
         schemaVersion: 1, pid: process.pid, root: process.cwd(), host: "127.0.0.1",
         port: server.address().port, token, startedAt: new Date().toISOString(),
         processStartTime: await processStartIdentity(process.pid),
-        shutdownControlVersion: 1, scopedShutdown: true, httpControlVersion: 1,
+        durableWorkerRelease: true,
       };
       await writeInstanceState(path, state);
       const close = watchInstanceShutdown(path, state, async (request) => {

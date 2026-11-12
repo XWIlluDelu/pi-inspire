@@ -29,6 +29,7 @@ export interface InstanceControlResponse {
   proof: string;
 }
 
+export function supportsInstanceControl(state: unknown): boolean;
 export function instanceIdentity(state: InstanceState): string;
 export function createInstanceControlRequest(
   state: InstanceState,

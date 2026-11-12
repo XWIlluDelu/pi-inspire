@@ -63,6 +63,8 @@ Extensions keep their Pi RPC compatibility requirements.
 - Authenticate each launch over current-user-private IPC. Credentials and launch capabilities stay
   out of command text, terminal history, browser state, and diagnostics. Forwarding preserves RPC
   order, payload limits, and backpressure.
+- The Host and worker use the current bridge protocol. The launch grant carries the identity
+  the bridge uses to verify a later ownership release.
 
 ## Worker lifecycle
 

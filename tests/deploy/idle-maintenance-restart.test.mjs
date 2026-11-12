@@ -125,7 +125,7 @@ describe.runIf(process.platform !== "win32")(
       { kind: "ready", expiresAt: Date.now() + 30_000 },
       { kind: "skipped", reason: "busy" },
     ])(
-      "skips unavailable, legacy, and busy preparation without systemctl: %j",
+      "skips unavailable or busy preparation without systemctl: %j",
       async (response) => {
         const test = fixture({ request: async () => response });
         expect((await test.execute()).kind).toBe("skipped");
@@ -165,7 +165,7 @@ describe.runIf(process.platform !== "win32")(
             root,
             processStartTime: "fixture-birth",
             startedAt: "fixture-start",
-            httpControlVersion: 1,
+            durableWorkerRelease: true,
           },
           "commit",
           leaseId,

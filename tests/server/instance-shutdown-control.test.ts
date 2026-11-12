@@ -34,7 +34,7 @@ async function fixture() {
     token: "private-owner-token",
     startedAt: "2026-10-19T00:00:00Z",
     processStartTime: "original-process-birth",
-    shutdownControlVersion: 1,
+    durableWorkerRelease: true,
   };
   return { root, path, state };
 }
@@ -130,23 +130,21 @@ describe("authenticated local Host shutdown", () => {
 
   it("authenticates the Host-only scope and passes its request identity to shutdown", async () => {
     const f = await fixture();
-    const state = { ...f.state, scopedShutdown: true as const };
     const nonce = await requestInstanceShutdown(
       f.path,
-      state,
+      f.state,
       15_000,
       "host-only",
     );
     const original = await readFile(f.path + ".shutdown-request", "utf8");
     const { scope, ...unscoped } = JSON.parse(original);
     expect(scope).toBe("host-only");
-    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
     await writeFile(f.path + ".shutdown-request", JSON.stringify(unscoped));
-    expect(await instanceShutdownRequested(f.path, state)).toBe(false);
+    expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
     await writeFile(f.path + ".shutdown-request", original);
 
     const shutdown = vi.fn(async () => {});
-    controls.push(watchInstanceShutdown(f.path, state, shutdown));
+    controls.push(watchInstanceShutdown(f.path, f.state, shutdown));
     await vi.waitFor(() =>
       expect(shutdown).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ nonce, scope: "host-only" }),

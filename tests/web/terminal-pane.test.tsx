@@ -1001,10 +1001,10 @@ describe("terminal project ownership", () => {
       }),
     );
     api.createTerminal.mockImplementation((body) =>
-      terminalOperations.run(null, "/api/terminals", "POST", body),
+      terminalOperations.run("/api/terminals", "POST", body),
     );
     api.retryTerminalOperation.mockImplementation((key) =>
-      terminalOperations.retry(null, key),
+      terminalOperations.retry(key),
     );
     const view = render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });

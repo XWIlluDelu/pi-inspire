@@ -3,7 +3,6 @@
 interface BrowserIdentity {
   privateKey: CryptoKey;
   certificate: string;
-  taskAlertsVersion?: 1;
 }
 interface Access {
   bearer: string;
@@ -126,7 +125,6 @@ export async function pairBrowser(token?: string): Promise<void> {
   await identityStorage({
     privateKey: keys.privateKey,
     certificate,
-    taskAlertsVersion: 1,
   });
 }
 
@@ -165,13 +163,6 @@ async function exchange(identity: BrowserIdentity): Promise<Access> {
   });
 }
 
-export async function migrateTaskAlertIntent(
-  legacy: import("../shared/contracts").CompletionAttentionPreference,
-) {
-  const identity = await identityStorage();
-  return identity?.taskAlertsVersion === 1 ? ("off" as const) : legacy;
-}
-
 async function renew(): Promise<Access> {
   let identity = await identityStorage();
   if (bootstrap) {
@@ -198,18 +189,17 @@ async function renew(): Promise<Access> {
   return exchange(identity);
 }
 
-async function browserAuthorization(): Promise<Record<string, string>> {
+async function browserBearer(): Promise<string> {
   if (!access || access.expiresAt <= Date.now() + 30_000) {
     renewal ??= renew().finally(() => {
       renewal = null;
     });
     access = await renewal;
   }
-  return { Authorization: `Bearer ${access.bearer}` };
+  return access.bearer;
 }
 
-/** Refresh before dispatch, never replay after a 401 or an uncertain outcome.
- * Explicit headers are reserved for trusted programmatic clients. */
+/** Refresh before dispatch, never replay after a 401 or an uncertain outcome. */
 export async function authenticatedFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
@@ -229,14 +219,11 @@ export async function authenticatedFetch(
     target.password
   )
     throw new Error("Refusing to send Host credentials outside this origin");
+  if (init.signal?.aborted) throw init.signal.reason;
   const headers = new Headers(
     init.headers ?? (input instanceof Request ? input.headers : undefined),
   );
-  if (!headers.has("Authorization")) {
-    const authorization = await browserAuthorization();
-    for (const [name, value] of Object.entries(authorization))
-      headers.set(name, value);
-  }
+  headers.set("Authorization", `Bearer ${await browserBearer()}`);
   if (init.signal?.aborted) throw init.signal.reason;
   const response = await transport(input, {
     ...init,

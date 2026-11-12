@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   type ComposerHistoryFileNameResolver,
+  type ComposerHistoryMessage,
   projectComposerHistoryPage,
 } from "../../../server/composer-history.js";
 import { requestError } from "../../../server/request-error.js";
@@ -135,20 +136,12 @@ export class PreviewProjection
     };
   }
 
-  page(
+  visiblePage(
     _cursor: string,
     _effectiveLeafId?: string | null,
     _viewId?: string,
   ): TranscriptPage {
     throw requestError("This transcript has no older page", 409);
-  }
-
-  visiblePage(
-    cursor: string,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-  ): TranscriptPage {
-    return this.page(cursor, effectiveLeafId, viewId);
   }
 
   activityPage(
@@ -209,7 +202,7 @@ export class PreviewProjection
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): ComposerHistoryPage {
     return projectComposerHistoryPage(
-      this.preview.transcriptPage.messages,
+      this.composerHistoryMessages(),
       {
         sessionId: this.sessionId,
         revision: this.revision,
@@ -277,12 +270,10 @@ export class PreviewProjection
     throw requestError("Branch history is unavailable for this preview", 503);
   }
 
-  composerHistoryMessages(): readonly unknown[] {
+  composerHistoryMessages(): readonly ComposerHistoryMessage[] {
     return this.preview.transcriptPage.messages.filter(
-      (value) =>
-        value &&
-        typeof value === "object" &&
-        (value as Record<string, unknown>).role === "user",
+      (value): value is ComposerHistoryMessage =>
+        typeof jsonRecord(value)?.__inspireHistoryEntryId === "string",
     );
   }
 

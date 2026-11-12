@@ -10,7 +10,6 @@ import {
   connectExistingTerminalDaemon,
   launchTerminalDaemon,
 } from "../../server/terminal-daemon-launcher.js";
-import { TERMINAL_DAEMON_PROTOCOL_VERSION } from "../../server/terminal-daemon-protocol.js";
 import {
   resolveTerminalDaemonSecret,
   terminalDaemonTlsOptions,
@@ -117,20 +116,15 @@ it("reconnects without creating authority or launching a missing daemon", async 
   }
 });
 
-it("keeps compatible data usable without lifecycle support and retries a disconnected read", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "terminal-data-compat-"));
+it("reconnects on demand after startup and read failures", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "terminal-reconnect-"));
   const address =
     process.platform === "win32"
-      ? `\\\\.\\pipe\\terminal-data-compat-${randomUUID()}`
+      ? `\\\\.\\pipe\\terminal-reconnect-${randomUUID()}`
       : join(directory, "terminal.sock");
   const tokenPath = join(directory, "token");
   const token = await resolveTerminalDaemonSecret(tokenPath);
   const sockets = new Set<Socket>();
-  const requests: Array<{
-    method: string;
-    mode: string;
-    protocolVersion?: number;
-  }> = [];
   let failNextRead = false;
   const catalog = {
     catalogEpoch: "fixture",
@@ -148,36 +142,21 @@ it("keeps compatible data usable without lifecycle support and retries a disconn
         const request = decodeTerminalIpcJson(frame.payload) as {
           requestId: string;
           method: string;
-          mode: string;
-          protocolVersion?: number;
         };
-        requests.push(request);
         if (request.method === "getCatalog" && failNextRead) {
           failNextRead = false;
           socket.destroy();
           return;
         }
         socket.end(
-          encodeTerminalIpcJson(
-            request.mode === "lifecycle"
-              ? {
-                  requestId: request.requestId,
-                  ok: false,
-                  error: {
-                    code: "unsupported_lifecycle",
-                    status: 400,
-                    message: "Lifecycle unsupported",
-                  },
-                }
-              : {
-                  requestId: request.requestId,
-                  ok: true,
-                  result:
-                    request.method === "ping"
-                      ? { operationEpoch: "fixture" }
-                      : catalog,
-                },
-          ),
+          encodeTerminalIpcJson({
+            requestId: request.requestId,
+            ok: true,
+            result:
+              request.method === "ping"
+                ? { operationEpoch: "fixture" }
+                : catalog,
+          }),
         );
       }
     });
@@ -206,20 +185,6 @@ it("keeps compatible data usable without lifecycle support and retries a disconn
       server.listen(address, resolve);
     });
     client = await launchTerminalDaemon(options);
-    await expect(client.list("/workspace")).resolves.toEqual(catalog);
-    expect(requests.map(({ method }) => method)).toEqual([
-      "ping",
-      "getCatalog",
-    ]);
-    expect(
-      requests.every(
-        ({ protocolVersion }) =>
-          protocolVersion === TERMINAL_DAEMON_PROTOCOL_VERSION,
-      ),
-    ).toBe(true);
-    await expect(client.daemonInfo()).rejects.toMatchObject({
-      code: "unsupported_lifecycle",
-    });
     await expect(client.list("/workspace")).resolves.toEqual(catalog);
     failNextRead = true;
     await expect(client.list("/workspace")).rejects.toMatchObject({

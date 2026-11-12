@@ -62,6 +62,7 @@ describe("right-corner notices", () => {
     updateResponse = { kind: "current" };
     piUpdateResponse = {
       currentVersion: "0.84.2",
+      installedVersion: "0.84.2",
       pi: { kind: "current", latestVersion: "0.84.2" },
       extensions: { kind: "none" },
     };
@@ -107,7 +108,7 @@ describe("right-corner notices", () => {
   });
 
   async function initialize(): Promise<void> {
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)?.open();
   }
 
@@ -298,6 +299,7 @@ describe("right-corner notices", () => {
   it("opens the combined Pi and extension notice directly at Updates", async () => {
     piUpdateResponse = {
       currentVersion: "0.84.2",
+      installedVersion: "0.84.2",
       pi: {
         kind: "available",
         latestVersion: "0.84.3",

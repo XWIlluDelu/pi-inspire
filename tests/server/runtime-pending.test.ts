@@ -150,6 +150,7 @@ describe("RuntimeController Pending input and recovery", () => {
           snapshot.transcriptPage.messages = [
             {
               role: "user",
+              __inspireHistoryEntryId: "original",
               timestamp: 1,
               content: [
                 {
@@ -183,7 +184,7 @@ describe("RuntimeController Pending input and recovery", () => {
             viewId: snapshot.active!.transcriptPage.viewId,
             incarnation: snapshot.active!.transcriptPage.incarnation ?? null,
             effectiveLeafId: null,
-            imageReferences: ["pi-embedded://0/0"],
+            imageReferences: ["pi-history-image://original/0"],
             fileReferences: [],
           },
         })
@@ -395,6 +396,7 @@ describe("RuntimeController Pending input and recovery", () => {
               messages: [
                 {
                   role: "user",
+                  __inspireHistoryEntryId: "original",
                   content: [{ type: "image", ...saved }],
                   timestamp: 1,
                 },

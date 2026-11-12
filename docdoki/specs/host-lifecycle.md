@@ -125,9 +125,9 @@ capture mechanism and service handoff.
   URL, browser opener arguments or navigation request. The bundle removes the fragment from history
   before registration. Readiness does not allocate pairing transfers. An explicit `inspire token` command
   verifies the matching Host before printing its token for manual remote pairing; ordinary lifecycle
-  commands do not print it. Legacy direct loopback token queries still redirect into a one-use
-  transfer; HTTPS proxies strip token queries without pairing. Valid stored pairing takes precedence
-  over an expired/spent transfer; after authority rotation a fresh transfer can register a new key.
+  commands do not print it. Pairing uses the form or a bootstrap fragment. Valid stored pairing
+  takes precedence over an expired/spent transfer. After authority rotation a fresh transfer can
+  register a new key.
 
 - A valid certificate admits a random, origin-bound 30-second challenge, consumed once before
   signature verification. A successful SHA-256 signature yields a five-minute API bearer held only
@@ -168,15 +168,9 @@ capture mechanism and service handoff.
   `.token` file keyed by installation/host/port. Existing non-private POSIX parent directories are
   refused without changing their permissions; new parents are created private. All cookie-era
   generated lengths, including 64 characters, rotate once on the next Host start; later starts
-  reuse the new generation. Explicit
-  configured tokens are never silently rewritten: operators must rotate a formerly cookie-paired
-  configured token to revoke leaked explicit-bearer authority. See
-  [migration guidance](../../docs/host.md#migration-from-cookie-pairing).
-
-- Responses expire only the current Host's qualified legacy cookie and the old unqualified
-  `inspire_access` cookie when present, leaving unrelated data/other qualified Host cookies alone.
-  Old bundles fail safely and must reload/pair; there is no insecure compatibility path. Noninteractive Host
-  services suppress token-bearing startup output so it cannot enter their journal.
+  reuse the new generation. Operators must rotate an explicitly configured token that was
+  previously shared through cookies. Noninteractive Host services suppress token-bearing startup
+  output so it cannot enter their journal.
 
 ## Development launch
 
@@ -202,10 +196,10 @@ local requests, never by sending the reusable Host token.
   diagnosed but never terminates the already-listening Host. Optional [[connection-modules]] own
   only their local companion-process lifecycle and ingress path; they never become Pi/data authority
   or own host shutdown. Forwarded protocol is trusted only from a loopback hop.
-- Production launch is single-instance and idempotent per checkout/host/port. Reuse requires matching private state and
-  a fresh authenticated HTTP readiness result. Case aliases are verified against the actual native
-  directory identity, not an OS-wide lowercase assumption; distinct case-sensitive roots remain
-  distinct even on Windows.
+- Production launch is single-instance per checkout, host and port. Reuse requires matching private
+  state, support for worker-preserving shutdown, and a fresh authenticated HTTP readiness result.
+  An unsupported live owner blocks takeover. Case aliases are verified against the native
+  directory identity, so distinct case-sensitive roots remain distinct on Windows.
 - The local HTTP control protocol binds each request and response to the published installation,
   address, mode, process birth and startup incarnation. Domain-separated HMACs authenticate a fresh
   nonce, action, deadline and payload without sending the reusable Host token. Readiness,
@@ -214,7 +208,6 @@ local requests, never by sending the reusable Host token.
   bodies are bounded at 2 KiB. The client
   rejects unsigned/mismatched replies, redirects, oversized bodies and expired results even when an
   overdue abort timer has not yet run. Only the Host's own ready publication can sign replies.
-  Older unprovable Hosts are not silently treated as healthy.
 - Launcher lock ownership is explicit and scoped: `restart` retains exactly one lock from its stop
   boundary through the replacement start, including when no managed instance existed, while
   standalone `stop` releases any lock before every return.
@@ -242,13 +235,9 @@ local requests, never by sending the reusable Host token.
   so a missing browser acknowledgement cannot hold Host exit until the library handshake timeout.
   Endpoint close callbacks, including terminal detach, precede service-client close; owned-worker
   and PTY exit still require separate confirmation.
-- A stop racing dependency installation or build cancels that pending start. Hosts predating the
-  HTTP protocol can still use their advertised authenticated shutdown mailbox. No automatic CLI
-  path falls back to sending the Host bearer over HTTP, even after a separate readiness proof:
-  another connection can reach a replacement listener. Legacy Linux may stop only after `/proc`
-  verifies exact birth, cwd and command line. Other legacy Hosts without cooperative controls need
-  their existing service/inspected process controls for the one-time upgrade and otherwise fail
-  closed. An unknown port occupant is never killed automatically.
+- A stop racing dependency installation or build cancels that pending start. The CLI stops a
+  published Host through authenticated shutdown. Stop an older Host without that control through
+  its original launcher or service manager before upgrading.
 
 ## Worker processes
 
@@ -397,8 +386,6 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   shutdown request for that exact process. Start the replacement only after the old Host exits
   with a clean signed receipt for that request. For an active installed service, verify the service
   invocation and wait for it to exit, then start the Host unit. The terminal unit stays running.
-  A running Host that predates scoped shutdown with durable worker release requires one ordinary
-  restart before `--host-only`.
 
 ### Submission and recovery
 

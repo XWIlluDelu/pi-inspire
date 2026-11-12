@@ -16,6 +16,7 @@ import {
   resolveProjectFiles,
 } from "./attachments.js";
 import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
+import type { ComposerHistoryMessage } from "./composer-history.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
@@ -24,7 +25,7 @@ import { effectiveRuntimeLeaf, type RuntimeSlot } from "./runtime-slot.js";
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
 type UserMessage = Record<string, unknown>;
-type UserMessageLookup = (entry: string | number) => UserMessage;
+type UserMessageLookup = (entryId: string) => UserMessage;
 
 interface ResolvedComposerHistoryArtifacts {
   images: RecalledImage[];
@@ -56,47 +57,38 @@ function historyProjection(
   return { projection, effectiveLeafId };
 }
 
-function userMessageLookup(messages: readonly unknown[]): UserMessageLookup {
-  const byPersistedIndex = new Map<string | number, unknown>();
-  messages.forEach((message, messageIndex) => {
-    if (!message || typeof message !== "object") return;
-    const record = message as UserMessage;
-    const persistedIndex =
-      typeof record.__inspireHistoryEntryId === "string"
-        ? record.__inspireHistoryEntryId
-        : Number.isSafeInteger(record.__inspireMessageIndex)
-          ? Number(record.__inspireMessageIndex)
-          : messageIndex;
-    if (byPersistedIndex.has(persistedIndex)) {
+function userMessageLookup(
+  messages: readonly ComposerHistoryMessage[],
+): UserMessageLookup {
+  const byEntryId = new Map<string, ComposerHistoryMessage>();
+  for (const message of messages) {
+    const id = message.__inspireHistoryEntryId;
+    if (byEntryId.has(id)) {
       throw requestError(
         "The conversation contains ambiguous attachment references",
         409,
       );
     }
-    byPersistedIndex.set(persistedIndex, message);
-  });
+    byEntryId.set(id, message);
+  }
 
-  return (messageIndex) => {
-    const message = byPersistedIndex.get(messageIndex);
-    if (
-      !message ||
-      typeof message !== "object" ||
-      (message as UserMessage).role !== "user"
-    ) {
+  return (entryId) => {
+    const message = byEntryId.get(entryId);
+    if (message?.role !== "user") {
       throw requestError("A recalled attachment is no longer available", 409);
     }
-    return message as UserMessage;
+    return message;
   };
 }
 
-function referenceIndexes(
+function recalledReference(
   reference: string,
   label: "image" | "file",
-): [entry: string | number, itemIndex: number] {
-  const indexes = parseComposerArtifactReference(label, reference);
-  if (!indexes)
+): [entryId: string, itemIndex: number] {
+  const target = parseComposerArtifactReference(label, reference);
+  if (!target)
     throw requestError(`A recalled ${label} reference is invalid`, 400);
-  return indexes;
+  return target;
 }
 
 function recalledImages(
@@ -104,8 +96,8 @@ function recalledImages(
   userMessage: UserMessageLookup,
 ): RecalledImage[] {
   return references.map((reference) => {
-    const [messageIndex, partIndex] = referenceIndexes(reference, "image");
-    const record = userMessage(messageIndex);
+    const [entryId, partIndex] = recalledReference(reference, "image");
+    const record = userMessage(entryId);
     const part = Array.isArray(record.content)
       ? record.content[partIndex]
       : null;
@@ -160,8 +152,8 @@ function recalledFilePaths(
   userMessage: UserMessageLookup,
 ): string[] {
   return references.map((reference) => {
-    const [messageIndex, referenceIndex] = referenceIndexes(reference, "file");
-    const message = userMessage(messageIndex);
+    const [entryId, referenceIndex] = recalledReference(reference, "file");
+    const message = userMessage(entryId);
     const imageCount = Array.isArray(message.content)
       ? message.content.filter(
           (part) =>

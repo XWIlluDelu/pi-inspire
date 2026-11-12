@@ -194,7 +194,7 @@ describe("detail snapshots and selection intent", () => {
     const first = store.openSession("s2");
     socket.onclose?.();
     expect(signal?.aborted).toBe(false);
-    await store.init(null);
+    await store.init();
     await first;
     expect(signal?.aborted).toBe(true);
     pending.resolve({ status: 401, body: { error: "Old API" } });
@@ -310,7 +310,7 @@ describe("detail snapshots and selection intent", () => {
     );
     const { store } = await initStore();
     const selecting = store.openSession("s2");
-    await store.init(null);
+    await store.init();
     pending.resolve({ body: activeSnapshot({ sessionId: "s2" }) });
     await selecting;
     expect(store.getState()).toMatchObject({
@@ -349,7 +349,7 @@ describe("bootstrap snapshot ownership", () => {
     });
     const { store } = await initStore();
     reconnecting = true;
-    const initializing = store.init(null);
+    const initializing = store.init();
     await store.setModel("provider", "new-model");
     bootstrap.resolve({
       body: bootstrapPayload({ snapshot: activeSnapshot() }),
@@ -379,7 +379,7 @@ describe("bootstrap snapshot ownership", () => {
       });
       const { store } = await initStore();
       reconnecting = true;
-      const initializing = store.init(null);
+      const initializing = store.init();
       if (operation === "open") await store.openSession("s2");
       else if (operation === "new") await store.newSession("/proj");
       else await store.deselectSession();

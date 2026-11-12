@@ -121,10 +121,9 @@ export function SystemVersionsCard() {
   const updates = availableUpdates(state);
   const details = updates ? updateDetailsText(updates) : null;
   const piCheck = state.piUpdateCheck;
-  const installedPiVersion =
-    piCheck?.installedVersion === undefined
-      ? piCheck?.currentVersion || state.piVersion
-      : piCheck.installedVersion;
+  const installedPiVersion = piCheck
+    ? piCheck.installedVersion
+    : state.piVersion;
   const piRestartRequired =
     Boolean(installedPiVersion) &&
     Boolean(piCheck) &&

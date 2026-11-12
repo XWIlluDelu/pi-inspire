@@ -43,23 +43,21 @@ Windows machine-wide pipe names include the OS account and state-directory ident
 installation. Unix socket addresses stay within the native byte limit, including long and Unicode
 temporary roots; shortening does not relax current-user ownership or private-directory checks.
 A still-listening legacy address blocks automatic replacement rather than stranding its PTYs.
-Wire/authentication compatibility gates data access; implementation version and optional lifecycle
-support do not. A failed startup connection stays recoverable through subsequent requests, with one shared
-initialization at a time. There is no idle retry loop, automatic daemon creation/replacement, or
-replay of dispatched controls or terminal input. Closing fences late initialization and closes its
-client without reviving the retired service. Only the owner that bound a socket removes it; late
-cleanup must not unlink a successor.
+The daemon wire protocol gates data access. On-demand recovery only reconnects and shares one
+initialization across requests. It leaves dispatched controls and input untouched. Closing fences
+late initialization and releases the client. Only the owner that bound a socket removes it.
 An existing non-private POSIX parent is rejected rather than chmodded, so a custom socket, token or
 state address cannot change permissions on a shared or system directory.
 
 `inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
 restarting the Host/Pi or expanding Restart all. Stop/restart run from an external OS terminal; a
 managed-terminal environment is refused before stopping work, so the command cannot kill its own
-coordinator midway through replacement. Status stays available there. An independent lifecycle-v1
-envelope over the same authenticated TLS transport survives terminal-data protocol changes. The caller verifies root, Host,
-port, configured IPC/state/token paths, process birth and daemon incarnation before requesting stop.
-Shutdown targets that incarnation; an old target cannot stop a replacement. Status never creates or
-rotates authority and reports missing listeners without claiming OS-process exit.
+coordinator midway through replacement. Status stays available there. Maintenance has a stable
+authenticated protocol so the launcher can still control a detached daemon across a Host update.
+The caller verifies root, Host, port, configured IPC/state/token paths, process birth and daemon
+incarnation before requesting stop. Shutdown targets that incarnation; an old target cannot stop a
+replacement. Status never creates or rotates authority and reports missing listeners without
+claiming OS-process exit.
 
 Running project terminals require explicit `--force`; it confirms ending work, not a bypass for
 authentication or unknown-PID killing. Admission fences pending creates before shutdown. Failed PTY

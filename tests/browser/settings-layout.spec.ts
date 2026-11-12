@@ -129,6 +129,7 @@ test("update checks keep button geometry stable throughout checking and results"
           piUpdateChecking: false,
           piUpdateCheck: {
             currentVersion: "1.0.0",
+            installedVersion: "1.0.0",
             pi: {
               kind: "available",
               latestVersion: "1.1.0",
@@ -149,6 +150,7 @@ test("update checks keep button geometry stable throughout checking and results"
         publish({
           piUpdateCheck: {
             currentVersion: "1.0.0",
+            installedVersion: "1.0.0",
             pi: { kind: "unavailable" },
             extensions: { kind: "unavailable" },
           },
@@ -1457,6 +1459,7 @@ for (const hasTouch of [false, true]) {
           revision: 999,
           piUpdateCheck: {
             currentVersion: "1.3.0",
+            installedVersion: "1.3.0",
             pi: { kind: "current" },
             extensions: { kind: "none" },
           },
@@ -1638,6 +1641,7 @@ test("System copies update details and native commands while the notice is snooz
       revision: 999,
       piUpdateCheck: {
         currentVersion: "1.0.0",
+        installedVersion: "1.0.0",
         pi: {
           kind: "available",
           latestVersion: "1.0.2",

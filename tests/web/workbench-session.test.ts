@@ -102,7 +102,7 @@ describe("browser workbench restoration", () => {
 
   async function reload() {
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     FakeWebSocket.instances.at(-1)!.open(undefined, authorityId);
     return store;
   }
@@ -255,7 +255,7 @@ describe("browser workbench restoration", () => {
     await store.openResource("old.txt");
     const pending = deferred<void>();
     bootstrapWait = pending.promise;
-    const reconnect = store.init("token");
+    const reconnect = store.init();
     await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
     await store.openResource("new.txt");
     pending.resolve();
@@ -284,7 +284,7 @@ describe("browser workbench restoration", () => {
       );
       const pending = deferred<void>();
       bootstrapWait = pending.promise;
-      const reconnect = store.init("token");
+      const reconnect = store.init();
       await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
       expect(store.getState()).toMatchObject({
         resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
@@ -327,7 +327,7 @@ describe("browser workbench restoration", () => {
     const store = await reload();
     await store.openResource("one.txt");
     bootstrapFailure = true;
-    await store.init("token");
+    await store.init();
     expect(store.getState().connection).toBe("offline");
     expect(store.getState().resourcePreview).toEqual({
       status: "loading",
@@ -335,7 +335,7 @@ describe("browser workbench restoration", () => {
     });
     store.setContextMode("terminal");
     bootstrapFailure = false;
-    await store.init("token");
+    await store.init();
     expect(store.getState()).toMatchObject({
       contextMode: "terminal",
       resourceTabs: [{ reference: "one.txt" }],
@@ -350,7 +350,7 @@ describe("browser workbench restoration", () => {
     await store.openResource("old.txt");
     const pending = deferred<void>();
     bootstrapWait = pending.promise;
-    const reconnect = store.init("token");
+    const reconnect = store.init();
     await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
     await store.openSession("s2");
     expect(store.getState()).toMatchObject({

@@ -86,7 +86,7 @@ beforeEach(async () => {
       return { body: { steering: [], followUp: [] } };
     return undefined;
   });
-  await act(async () => store.init("token"));
+  await act(async () => store.init());
   FakeWebSocket.instances.at(-1)?.open();
   await waitFor(() => expect(store.getState().sessionId).toBe("s1"));
 });

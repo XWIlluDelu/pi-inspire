@@ -10,7 +10,7 @@ first session. This guide covers Host configuration, pairing, daily commands and
 | Start or configure the Host | [Run and reopen](#run-and-reopen), [Shell environment](#shell-environment) |
 | Connect a browser or install the app | [Browser pairing](#browser-pairing), [Installed browser apps](#installed-browser-apps), [Remote access](ssh-reverse.md) |
 | Use a running Host | [Lifecycle commands](#lifecycle), [Task notifications](#task-notifications) |
-| Maintain or upgrade | [Host and terminal maintenance](#host-and-terminal-maintenance), [Linux user services](#linux-user-services), [Upgrading from older versions](#upgrading-from-older-versions) |
+| Maintain or upgrade | [Host and terminal maintenance](#host-and-terminal-maintenance), [Linux user services](#linux-user-services), [Updating Inspire](#updating-inspire) |
 | Recover data or investigate errors | [Session recovery](#recover-a-deleted-session), [Uploaded files](#uploaded-file-retention-and-cleanup), [Diagnostics](#diagnostics) |
 | Work from source or distribute a build | [Development checkout](#development-checkout), [Build and install a package](#build-and-install-a-package) |
 
@@ -203,7 +203,6 @@ before it shows the result. Settings shows the availability of both restart scop
 
 If the listener is down, use `inspire stop` with the running Host's port and state-path overrides,
 then start Inspire after shutdown. Stopping an installed service also ends its project terminals.
-For earlier releases, see [Older Hosts and restart preparation](#older-hosts-and-restart-preparation).
 
 ### Terminal-service maintenance
 
@@ -233,19 +232,16 @@ defines the handoff.
 
 ### Connection recovery and upgrades
 
-A compatible terminal service reconnects without a Host restart. If the first connection fails,
-later terminal requests retry on demand; there is no background restart loop and no replay of
-terminal input or controls. Missing optional maintenance controls do not disable a compatible
-connection, and a failed check alone does not mean the protocols differ: inspect
-`inspire terminal status` and the owning service first. The error card keeps the connection detail
-for copying.
+The terminal service reconnects on demand after a connection failure. It does not replay terminal
+input or controls. Inspect `inspire terminal status` and the owning service. The error card keeps
+the connection detail for copying.
 
 After enabling the Linux units, a compatible terminal daemon retained from a direct launch keeps
 serving the Host. **Restart all** affects the installed terminal service. The retained daemon keeps
 running, and the installed daemon can exit with code 78 when it finds that owner. To move terminal
 ownership to the installed service, finish terminal work, run `inspire terminal stop` from an
 external OS terminal, then run `systemctl --user start inspire-terminal.service`. See
-[Older terminal daemons](#older-terminal-daemons) for daemons without authenticated lifecycle controls.
+[Updating Inspire](#updating-inspire) to replace an older daemon.
 
 Custom token or socket paths on POSIX need a parent directory private to the current user, or one
 Inspire can create with mode `0700`; Inspire refuses shared parents and does not change their
@@ -385,73 +381,13 @@ without a model call. CI exercises the packaged lifecycle on Linux, macOS and Wi
 [platform evidence](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/notes/platform-compatibility.md#verified-native-baseline)
 records the checked versions.
 
-In an updated source checkout, `npm run inspire -- restart` rebuilds changed client inputs before
-replacing a Host that supports signed restart preparation. For a Host from before that change,
-follow the [one-time upgrade steps](#older-hosts-and-restart-preparation). Pi extension changes
-need only [`/reload`](pi-commands.md#compaction-and-reload).
+## Updating Inspire
 
-## Upgrading from older versions
+Finish active work and stop an older Host through its original launcher or service manager before
+replacing its files. If the terminal daemon also needs an update, finish terminal work and stop it
+through its original owner. Stop all old Hosts that share the same upload store.
 
-These steps apply once, when upgrading an installation that predates the named change.
-
-### Migration from cookie pairing
-
-Generated cookie-era tokens rotate once on the next Host start; reopen the launcher URL or pair with
-the new token. Visiting the Host expires its old pairing cookies without touching other site data;
-cookies no longer authenticate.
-
-**If you set `INSPIRE_TOKEN` yourself and paired a browser with cookies, rotate that token before
-relying on per-port isolation.** Inspire cannot replace an operator-supplied secret, and an old
-cookie may contain a copy of it that still works as an explicit bearer. Replace the value in your
-secret configuration and restart the Host. Old browser bundles must reload and pair again.
-
-### Older Hosts and restart preparation
-
-Hosts that predate durable worker release need one ordinary restart before `--host-only` can
-preserve their workers.
-
-An older Host such as the v0.6.5 release can authenticate readiness without supporting signed
-restart preparation. After updating that installation in place, open **Settings → System → Host**
-on the still-running Host and choose **Restart Host**. The running Host prepares and starts the
-replacement through its existing launcher or service while keeping project terminals running.
-
-If page restart is unavailable, stop the old Host through its launcher or service manager and
-start the updated installation once shutdown completes. For legacy Linux instances, `inspire stop`
-can use the verified process fallback. On Windows and macOS, a Host without authenticated shutdown
-must be stopped through its service manager or inspected process controls. See the
-[ownership contract](https://github.com/XWIlluDelu/pi-inspire/blob/main/docdoki/specs/host-lifecycle.md#instances-and-local-control).
-
-### Older terminal daemons
-
-Terminal units that set `NODE_ENV=production` need reinstallation when terminal processes can end.
-Run these commands from an external OS terminal.
-
-```bash
-inspire service install-host
-inspire restart --all
-```
-
-The authenticated terminal IPC needs a terminal-service restart, not only a Host restart; finish
-terminal work first. A Host never kills or silently replaces a still-listening old daemon. New
-daemons use a fresh private TLS secret at `<terminal-token-path>.tls-v3`, keeping the configured
-token-path stem compatible with existing service arguments.
-
-Daemons from before lifecycle controls need a one-time manual upgrade through their owner. For the
-installed Linux terminal service, use **System → Host → Restart all** after finishing terminal work.
-For older direct launches, stop the Host, find the current user's exact terminal daemon and stop
-its process tree once:
-
-- macOS: inspect `ps -axo user,pid,command` (the title may be `inspire-terminal`) and use `lsof` to
-  confirm its socket and working directory, then `kill -TERM <pid>`.
-- Windows: inspect Process ID and CommandLine in Task Manager or `Get-CimInstance Win32_Process`,
-  then `taskkill /PID <pid> /T /F` for the verified tree.
-
-Do not stop unrelated Node processes or trust a listener's claimed PID. Later upgrades use
-`inspire terminal` commands.
-
-### Upload storage
-
-Older session-directory registries, continuity markers and volume anchors are no longer used and
-need no migration. Hosts that share an upload store must all be upgraded to get the durable-asset
-policy, because older versions still collect delivered uploads automatically; leave the legacy
-metadata in place until they are stopped or upgraded.
+Start the updated Host and reload the browser. Use the launcher link or Pair form if pairing is
+needed. Rotate any explicitly configured token that was previously shared through cookies.
+In a source checkout, `npm run inspire -- restart` rebuilds changed client inputs when restarting a
+current Host. Pi extension changes use [`/reload`](pi-commands.md#compaction-and-reload).

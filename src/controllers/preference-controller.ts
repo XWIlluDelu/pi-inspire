@@ -343,9 +343,7 @@ export class PreferenceController {
 
   restoreDefaults(): void {
     this.host.clearCompletionAttention();
-    const { completionAttention: _legacy, ...defaults } =
-      defaultInterfaceSettings;
-    this.save(defaults);
+    this.save(defaultInterfaceSettings);
   }
 
   toggleNavGroup(cwd: string): void {

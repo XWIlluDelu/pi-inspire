@@ -48,11 +48,7 @@ const controlModule = existsSync(sourceControl)
 let control;
 
 export async function requestMaintenance(state, action = "", leaseId) {
-  if (
-    state.httpControlVersion !== 1 ||
-    !["", "commit", "release"].includes(action)
-  )
-    return null;
+  if (!["", "commit", "release"].includes(action)) return null;
   const { requestInstanceControl } = await (control ??= import(controlModule.href));
   return requestInstanceControl(
     state,

@@ -68,7 +68,7 @@ describe("Git inspection ownership and freshness", () => {
         };
       return baseRoutes(url, init);
     });
-    await act(async () => appStore.init("token"));
+    await act(async () => appStore.init());
     const noop = () => {};
     render(
       createElement(AppTopbar, {
@@ -268,7 +268,7 @@ describe("Git inspection ownership and freshness", () => {
       result: { lines: [{ text: "+transport-1" }] },
     });
 
-    await store.init("replacement-token");
+    await store.init();
     await vi.waitFor(() =>
       expect(store.getState().gitDiff).toMatchObject({
         status: "ready",
@@ -306,7 +306,7 @@ describe("Git inspection ownership and freshness", () => {
     store.setGitSurfaceVisible("resources-pane", true);
     await vi.waitFor(() => expect(statusCalls).toBe(1));
 
-    await store.init("replacement-token");
+    await store.init();
 
     await vi.waitFor(() => {
       expect(statusCalls).toBe(2);

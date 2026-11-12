@@ -44,7 +44,7 @@ describe("preference persistence", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     expect(store.getState().notices).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -57,7 +57,7 @@ describe("preference persistence", () => {
 
   it("setTheme updates local state and persists a field-scoped PATCH", async () => {
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     store.setTheme("dark");
     expect(store.getState().prefs.theme).toBe("dark");
     await vi.waitFor(() => expect(saved.length).toBeGreaterThan(0));
@@ -76,7 +76,7 @@ describe("preference persistence", () => {
     "setPalette persists %s with a field-scoped patch",
     async (palette) => {
       const store = new AppStore();
-      await store.init("token");
+      await store.init();
       store.setPalette(palette);
       expect(store.getState().prefs.palette).toBe(palette);
       await vi.waitFor(() => expect(saved.at(-1)).toEqual({ palette }));
@@ -85,7 +85,7 @@ describe("preference persistence", () => {
 
   it("persists session action order as its own preference field", async () => {
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     const order = [
       "copy-id",
       "export",
@@ -102,7 +102,7 @@ describe("preference persistence", () => {
 
   it("queues rapid changes in order, each patch carrying only its own field", async () => {
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     store.setTheme("dark");
     store.setToolVisibility("hidden");
     expect(store.getState().prefs).toMatchObject({
@@ -132,7 +132,6 @@ describe("settings reset", () => {
       toolVisibility: "hidden" as const,
       activityFoldVisibility: "expanded" as const,
       projectDisplay: "path" as const,
-      completionAttention: "title" as const,
       recentModelIds: [{ provider: "provider", id: "model" }],
       navCollapsedGroups: ["/kept"],
     };
@@ -153,17 +152,14 @@ describe("settings reset", () => {
       return undefined;
     });
     const appStore = new AppStore();
-    await appStore.init("token");
+    await appStore.init();
 
     appStore.restoreDefaultSettings();
     await vi.waitFor(() => expect(patches).toHaveLength(1));
-    const { completionAttention: _legacy, ...hostDefaults } =
-      defaultInterfaceSettings;
-    expect(patches[0]).toEqual(hostDefaults);
+    expect(patches[0]).toEqual(defaultInterfaceSettings);
     expect(appStore.getState().taskAlerts.mode).toBe("off");
     expect(appStore.getState().prefs).toMatchObject({
-      ...hostDefaults,
-      completionAttention: "title",
+      ...defaultInterfaceSettings,
       recentModelIds: [{ provider: "provider", id: "model" }],
       navCollapsedGroups: ["/kept"],
     });
@@ -195,7 +191,7 @@ describe("launch behavior", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     await vi.waitFor(() => expect(store.getState().sessionId).toBe(summary.id));
   });
 
@@ -235,7 +231,7 @@ describe("launch behavior", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     const creating = store.newSession("/work/new");
     expect(store.getState().sessionSelectionPending).toBe(true);
 
@@ -276,7 +272,7 @@ describe("launch behavior", () => {
       return undefined;
     });
     const store = new AppStore();
-    await store.init("token");
+    await store.init();
     await vi.waitFor(() =>
       expect(store.getState()).toMatchObject({
         sessions: [recent],

@@ -122,7 +122,7 @@ export async function createComposerFixture() {
     if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
     return baseRoutes(url, init);
   });
-  await store.init("token");
+  await store.init();
   FakeWebSocket.instances.at(-1)?.open();
 
   clearComposer();

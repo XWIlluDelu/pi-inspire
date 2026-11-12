@@ -170,8 +170,8 @@ describe.runIf(process.platform === "linux")(
       await writeFile(
         path,
         original.replace(
-          "export async function prepareInstanceRestart(path, expected, scope, options = {}) {",
-          'export async function prepareInstanceRestart(path, expected, scope, options = {}) { throw new Error("Pi restart preparation failed");',
+          "export async function prepareInstanceRestart(path, expected) {",
+          'export async function prepareInstanceRestart(path, expected) { throw new Error("Pi restart preparation failed");',
         ),
       );
       expect(() => f.run(["restart"])).toThrow(/Pi restart preparation failed/);
@@ -190,43 +190,23 @@ describe.runIf(process.platform === "linux")(
     });
     it.each([
       {
-        case: "legacy Host",
-        scopedShutdown: false,
-        durableWorkerRelease: undefined,
-        invocation: "a",
-        error: /predates scoped shutdown/,
-      },
-      {
-        case: "legacy scoped Host",
-        scopedShutdown: true,
-        durableWorkerRelease: undefined,
-        invocation: "a",
-        error: /predates scoped shutdown with durable worker release/,
-      },
-      {
         case: "different invocation",
-        scopedShutdown: true,
-        durableWorkerRelease: true,
         invocation: "b",
         error: /does not match the requested service/,
       },
       {
         case: "matching invocation",
-        scopedShutdown: true,
-        durableWorkerRelease: true,
         invocation: "a",
         error: null,
       },
     ])(
       "binds Host-only restart to the service owner ($case)",
-      async ({ scopedShutdown, durableWorkerRelease, invocation, error }) => {
+      async ({ invocation, error }) => {
         const f = await fixture(false);
         const path = join(f.root, "build/server", "instance-state.mjs");
         const original = await readFile(path, "utf8");
         const owner = {
           pid: 321,
-          scopedShutdown,
-          durableWorkerRelease,
           systemdInvocationId: invocation.repeat(32),
         };
         await writeFile(

@@ -250,7 +250,7 @@ beforeEach(async () => {
       );
     }),
   );
-  await store.init("token");
+  await store.init();
   for (const path of store.getState().projectFiles)
     store.removeProjectFile(path);
   await store.loadBranchTree();
@@ -667,7 +667,7 @@ describe("History reading restoration", () => {
       branchTreeStale: false,
       branchTreeError: null,
     });
-    await store.init("token");
+    await store.init();
     expect(store.getState().branchTree).toBeNull();
     requests.length = 0;
     const reading = readHistoryReading(readingKey());
@@ -883,7 +883,7 @@ describe("explicit History actions", () => {
     "allows inspection and independent copying during %s work, but not same-session continuation",
     async (activity) => {
       fixture.activity = activity;
-      await store.init("token");
+      await store.init();
       await store.loadBranchTree();
       render(<BranchTree />);
       await previewAnswer();
@@ -1084,7 +1084,7 @@ describe("explicit History actions", () => {
 
   it("shows restore progress even when continuing before the first message", async () => {
     fixture.effective = null;
-    await store.init("token");
+    await store.init();
     await store.loadBranchTree();
     const pending = deferred<void>();
     fixture.navigateGate = pending.promise;
@@ -1109,7 +1109,7 @@ describe("explicit History actions", () => {
 
   it("does not mislabel a background history refresh as a restore action", async () => {
     fixture.effective = "a1";
-    await store.init("token");
+    await store.init();
     await store.loadBranchTree();
     const refresh = deferred<void>();
     fixture.treeGate = refresh.promise;
@@ -1146,7 +1146,7 @@ describe("explicit History actions", () => {
 
   it("dismisses the notice without moving the continuation", async () => {
     fixture.effective = "a1";
-    await store.init("token");
+    await store.init();
     render(<EarlierBranchBanner />);
     fireEvent.click(
       screen.getByRole("button", {
@@ -1165,7 +1165,7 @@ describe("explicit History actions", () => {
   it("keeps the notice hidden for an attached Pi with a different observed leaf", async () => {
     fixture.effective = "a1";
     fixture.navigationLeased = false;
-    await store.init("token");
+    await store.init();
     render(<EarlierBranchBanner />);
     expect(
       screen.queryByRole("region", { name: "Earlier continuation" }),

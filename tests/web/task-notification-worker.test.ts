@@ -16,6 +16,9 @@ const notification = (id = "run-one"): TaskNotification => ({
   sessionId: "session / one",
   outcome: "completed",
   sessionName: "Review results",
+  grouping: "session",
+  groupingUpdatedAt: 0,
+  notificationOwner: "current-host",
   createdAt: Date.now(),
 });
 function windowClient(sessionId: string, focused = true) {
@@ -140,7 +143,7 @@ function fixture(
     configure: async (
       grouping: "session" | "project",
       updatedAt = 1,
-      owner = "",
+      owner = "current-host",
     ) => {
       const reply = vi.fn();
       await dispatch("message", {
@@ -178,13 +181,6 @@ function projectNotification(
 }
 
 describe("project notification grouping", () => {
-  it("binds legacy session notifications to this Host without discarding them", async () => {
-    const worker = fixture();
-    await worker.local(notification());
-    await worker.configure("session", 0, "current-host");
-    expect(worker.visible.has("inspire-session:session / one")).toBe(true);
-  });
-
   it("counts distinct sessions, keeps the latest target and separates same-named projects", async () => {
     const worker = fixture();
     const first = projectNotification(1);
@@ -472,27 +468,15 @@ describe("task notification service worker", () => {
     );
   });
 
-  it("retires this session's legacy notification only after replacement succeeds and keeps tests separate", async () => {
+  it("keeps the session notification until its project replacement displays", async () => {
     const worker = fixture();
-    await worker.show("Old notification", {
-      tag: "inspire-task:legacy",
-      data: { sessionId: "session / one" },
-    });
+    await worker.local({ ...projectNotification(1), projectId: undefined });
+    const next = projectNotification(2);
     worker.show.mockRejectedValueOnce(new Error("OS refused"));
-    expect(await worker.local(notification())).toHaveProperty("error");
-    expect(worker.visible.has("inspire-task:legacy")).toBe(true);
-    await worker.local(notification());
-    expect(worker.visible.has("inspire-task:legacy")).toBe(false);
-    await worker.local({
-      ...notification("test"),
-      sessionId: null,
-      test: true,
-    });
-    expect(worker.visible.size).toBe(2);
-    expect(worker.show).toHaveBeenLastCalledWith(
-      "Inspire test notification",
-      expect.objectContaining({ tag: "inspire-task:test", renotify: false }),
-    );
+    expect(await worker.local(next)).toHaveProperty("error");
+    expect([...worker.visible.keys()]).toEqual(["inspire-session:session-one"]);
+    await worker.local(next);
+    expect([...worker.visible.keys()]).toEqual(["inspire-project:project-one"]);
   });
 
   it("routes clicks through a focused window or a credential-free cold launch", async () => {

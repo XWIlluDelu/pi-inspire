@@ -303,6 +303,7 @@ export class UpdateCoordinator implements UpdateCoordinatorLike {
   private unavailablePiCheck(): PiUpdateCheckResponse {
     return {
       currentVersion: this.options.currentPiVersion,
+      installedVersion: null,
       pi: { kind: "unavailable" },
       extensions: { kind: "unavailable" },
     };

@@ -7,7 +7,6 @@ import type {
 } from "../shared/notifications";
 import type { Api } from "./api";
 import type { AppState } from "./app-state";
-import { migrateTaskAlertIntent } from "./browser-auth";
 import {
   browserNotificationPermission,
   requestBrowserNotificationPermission,
@@ -54,8 +53,6 @@ export class TaskNotificationController {
   private enrollment: Promise<unknown> = Promise.resolve();
   private readonly targetKey = "inspire-notification-target";
   private initialSettingsApi: Api | null = null;
-  private legacyIntent: CompletionAttentionPreference = "off";
-  private modeNeedsMigration = false;
 
   constructor(private readonly host: Host) {}
 
@@ -151,8 +148,7 @@ export class TaskNotificationController {
   }
   /** The event connection sends device settings before notification offers.
    * Browser enrollment is optional work, never a prerequisite for that stream. */
-  start(legacy: CompletionAttentionPreference): void {
-    this.legacyIntent = legacy;
+  start(): void {
     this.initialSettingsApi = this.host.api();
     this.captureTarget();
     this.refreshPermission();
@@ -163,7 +159,6 @@ export class TaskNotificationController {
     this.groupingGeneration++;
     this.groupingSync++;
     this.initialSettingsApi = null;
-    this.modeNeedsMigration = false;
     this.pendingSettings = null;
     this.pendingSettingsApi = null;
     this.patch({ busy: false, groupingBusy: false });
@@ -175,13 +170,6 @@ export class TaskNotificationController {
     return pending;
   }
   applySettings(settings: TaskAlertSettings): void {
-    // A real Host choice retires unresolved migration immediately, even while
-    // another control defers displaying settings. Null only renders as Off.
-    const migrationResolved = this.modeNeedsMigration && settings.mode !== null;
-    if (migrationResolved) {
-      this.modeNeedsMigration = false;
-      this.generation++;
-    }
     // Let an in-flight local gesture finish rather than applying its older echo.
     if (
       this.host.state().taskAlerts.busy ||
@@ -191,44 +179,38 @@ export class TaskNotificationController {
       this.pendingSettingsApi = this.host.api();
       return;
     }
-    if (
-      !migrationResolved &&
-      (settings.mode ?? "off") !== this.host.state().taskAlerts.mode
-    )
-      this.generation++;
-    this.modeNeedsMigration = settings.mode === null;
+    if (settings.mode !== this.host.state().taskAlerts.mode) this.generation++;
     const groupingCurrent = this.acceptGroupingSettings(settings);
     this.patch({
-      mode: settings.mode ?? "off",
+      mode: settings.mode,
       ...(groupingCurrent
         ? {
-            grouping: settings.grouping ?? "session",
-            groupingUpdatedAt: settings.groupingUpdatedAt ?? 0,
+            grouping: settings.grouping,
+            groupingUpdatedAt: settings.groupingUpdatedAt,
           }
         : {}),
       subscribed: settings.subscribed,
       error: settings.error,
     });
-    if ((settings.mode ?? "off") === "off") this.host.clear();
+    if (settings.mode === "off") this.host.clear();
     const initial =
       this.initialSettingsApi !== null &&
       this.initialSettingsApi === this.host.api();
     if (initial) {
       this.initialSettingsApi = null;
-      void this.initialize(this.legacyIntent, settings);
+      void this.initialize(settings);
     } else if (groupingCurrent) void this.syncGrouping(settings);
   }
   private acceptGroupingSettings(settings: TaskAlertSettings): boolean {
     const state = this.host.state().taskAlerts;
-    const stamp = settings.groupingUpdatedAt ?? 0;
+    const stamp = settings.groupingUpdatedAt;
     // An unchanged echo cannot erase a failed explicit choice. A newer Host
     // revision can resolve a lost response or a choice made in another window.
     const current =
       settings.publicKey !== this.groupingSettings?.publicKey ||
       stamp > state.groupingUpdatedAt ||
       (stamp === state.groupingUpdatedAt &&
-        (!state.groupingError ||
-          (settings.grouping ?? "session") === state.grouping));
+        (!state.groupingError || settings.grouping === state.grouping));
     if (current) this.groupingSettings = settings;
     return current;
   }
@@ -249,36 +231,21 @@ export class TaskNotificationController {
         this.initialSettingsApi === this.host.api()) ||
         settings.mode !== state.mode ||
         settings.publicKey !== this.groupingSettings?.publicKey ||
-        (settings.groupingUpdatedAt ?? 0) > state.groupingUpdatedAt)
+        settings.groupingUpdatedAt > state.groupingUpdatedAt)
     )
       this.applySettings(settings);
   }
-  async initialize(
-    legacy: CompletionAttentionPreference,
-    initialSettings?: TaskAlertSettings,
-  ): Promise<void> {
+  async initialize(initialSettings?: TaskAlertSettings): Promise<void> {
     this.captureTarget();
     this.refreshPermission();
     const api = this.host.api();
     if (!api) return;
-    let generation = this.generation;
+    const generation = this.generation;
     const groupingGeneration = this.groupingGeneration;
     try {
       let settings = initialSettings ?? (await api.taskAlertSettings());
       if (generation !== this.generation || this.host.api() !== api) return;
       this.initialSettingsApi = null;
-      if (this.modeNeedsMigration && settings.mode !== null)
-        generation = ++this.generation;
-      this.modeNeedsMigration = settings.mode === null;
-      if (settings.mode === null) {
-        const mode = await migrateTaskAlertIntent(legacy);
-        if (generation !== this.generation || this.host.api() !== api) return;
-        // Publish the migrated intent before its own settings echo arrives.
-        this.modeNeedsMigration = false;
-        this.patch({ mode });
-        settings = await this.save(mode, undefined, undefined, api);
-      }
-      if (generation !== this.generation || this.host.api() !== api) return;
       if (settings.mode === "off" || settings.mode === "title") {
         await this.updateEnrollment(async () => {
           if (generation !== this.generation || this.host.api() !== api) return;
@@ -326,11 +293,11 @@ export class TaskNotificationController {
         groupingGeneration === this.groupingGeneration &&
         this.acceptGroupingSettings(settings);
       this.patch({
-        mode: settings.mode ?? "off",
+        mode: settings.mode,
         ...(groupingCurrent
           ? {
-              grouping: settings.grouping ?? "session",
-              groupingUpdatedAt: settings.groupingUpdatedAt ?? 0,
+              grouping: settings.grouping,
+              groupingUpdatedAt: settings.groupingUpdatedAt,
             }
           : {}),
         subscribed: settings.subscribed,
@@ -400,8 +367,7 @@ export class TaskNotificationController {
   ): Promise<boolean> {
     const sequence = ++this.groupingSync;
     const api = this.host.api();
-    const grouping = settings.grouping ?? "session";
-    const updatedAt = settings.groupingUpdatedAt ?? 0;
+    const { grouping, groupingUpdatedAt: updatedAt } = settings;
     const current = () =>
       sequence === this.groupingSync &&
       api === this.host.api() &&
@@ -442,8 +408,8 @@ export class TaskNotificationController {
       if (!current()) return false;
       this.groupingSettings = settings;
       this.patch({
-        grouping: settings.grouping ?? "session",
-        groupingUpdatedAt: settings.groupingUpdatedAt ?? 0,
+        grouping: settings.grouping,
+        groupingUpdatedAt: settings.groupingUpdatedAt,
       });
       return await this.syncGrouping(settings);
     } catch (error) {
@@ -468,7 +434,6 @@ export class TaskNotificationController {
     const current = () =>
       generation === this.generation && this.host.api() === api;
     this.initialSettingsApi = null;
-    this.modeNeedsMigration = false;
     this.pendingSettings = null;
     this.patch({ mode, busy: true, error: null, testResult: null });
     if (mode === "off") this.host.clear();

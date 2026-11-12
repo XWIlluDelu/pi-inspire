@@ -338,9 +338,6 @@ const assistantTextSchema = z
     viewId: z.string().min(1).max(512),
   })
   .strict();
-const transcriptOlderPageSchema = transcriptPageSchema.extend({
-  deferActivity: z.literal("1").optional(),
-});
 const transcriptUserTurnsSchema = z
   .object({
     sessionId: sessionIdField,
@@ -423,15 +420,6 @@ const MAX_PROMPT_OPERATION_RESULT_BYTES = 32 * 1024 * 1024;
 const PROMPT_OPERATION_RESULT_TTL_MS = 15 * 60 * 1_000;
 const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
-const ACCESS_COOKIE = "inspire_access";
-/** Legacy names are retained only to expire this Host\'s cookie-era credentials. */
-export function accessCookieName(host: string | undefined): string {
-  const suffix = createHash("sha256")
-    .update(host?.trim().toLowerCase() || "missing-host")
-    .digest("base64url")
-    .slice(0, 12);
-  return `${ACCESS_COOKIE}_${suffix}`;
-}
 
 interface MaintenanceRestartLike {
   reserve(): Promise<MaintenanceRestartOutcome>;
@@ -495,20 +483,6 @@ type AuthenticatedResponse = Response<unknown, { browserId?: string }>;
 function bearerToken(request: Request): string | undefined {
   const value = request.get("authorization");
   return value?.startsWith("Bearer ") ? value.slice(7) : undefined;
-}
-
-function expireLegacyCookies(request: Request, response: Response): void {
-  const names = new Set([ACCESS_COOKIE, accessCookieName(request.get("host"))]);
-  for (const segment of (request.get("cookie") ?? "").split(";")) {
-    const name = segment.slice(0, segment.indexOf("=")).trim();
-    if (!names.has(name)) continue;
-    response.clearCookie(name, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: request.secure,
-      path: "/",
-    });
-  }
 }
 
 function requestOrigin(request: Request): string {
@@ -770,10 +744,6 @@ export function createInspireServer(deps: AppDependencies): {
     response.set("Cache-Control", "no-store");
     next();
   });
-  app.use((request, response, next) => {
-    expireLegacyCookies(request, response);
-    next();
-  });
   // JSON escapes can take six bytes per character of a valid prompt.
   app.post("/api/prompt", express.json({ limit: "4mb" }));
   app.use(express.json({ limit: "2mb" }));
@@ -881,12 +851,9 @@ export function createInspireServer(deps: AppDependencies): {
         break;
       case "restart-prepare": {
         const { scope } = z
-          .object({ scope: z.enum(["host", "host-only"]) })
+          .object({ scope: z.literal("host") })
           .parse(grant.request.payload);
-        result =
-          scope === "host"
-            ? { kind: "prepared", scope }
-            : { kind: "skipped", reason: "scoped-shutdown-required" };
+        result = { kind: "prepared", scope };
         break;
       }
       case "maintenance-commit":
@@ -1100,6 +1067,7 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({
       ...(updateStatus.piUpdateCheck ?? {
         currentVersion: deps.piVersion,
+        installedVersion: null,
         pi: { kind: "unavailable" },
         extensions: { kind: "unavailable" },
       }),
@@ -1959,15 +1927,8 @@ export function createInspireServer(deps: AppDependencies): {
     ),
   );
   app.get("/api/transcript/older", async (request, response) => {
-    const { sessionId, cursor, deferActivity } =
-      transcriptOlderPageSchema.parse(request.query);
-    response.json(
-      await deps.runtime.transcriptPage(
-        sessionId,
-        cursor,
-        deferActivity === "1",
-      ),
-    );
+    const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
+    response.json(await deps.runtime.transcriptPage(sessionId, cursor));
   });
   app.get("/api/transcript/activity", async (request, response) => {
     const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
@@ -2054,35 +2015,6 @@ export function createInspireServer(deps: AppDependencies): {
 
   const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    // Replace the direct launch master token with a one-use, origin-bound
-    // transfer in the fragment. Fragments never reach HTTP/referrers; the bundle
-    // removes it from history before registering its origin-stored browser key.
-    // HTTPS proxy launches strip query credentials without pairing.
-    app.get("/", (request, response, next) => {
-      const candidate =
-        typeof request.query.token === "string"
-          ? request.query.token
-          : undefined;
-      if (candidate === undefined) return next();
-      const bootstrap =
-        !trustedForwardedHttps(request) &&
-        !request.secure &&
-        isLoopbackAddress(request.socket.remoteAddress) &&
-        tokenMatches(candidate, deps.token)
-          ? browserAuth.bootstrap(requestOrigin(request))
-          : null;
-      const clean = new URL(
-        request.originalUrl,
-        `http://${request.get("host") ?? "127.0.0.1"}`,
-      );
-      clean.searchParams.delete("token");
-      clean.hash = bootstrap ? `inspire-bootstrap=${bootstrap}` : "";
-      response.set("Cache-Control", "no-store");
-      response.redirect(
-        303,
-        `${clean.pathname}${clean.search}${clean.hash}` || "/",
-      );
-    });
     // Content-hashed bundles under /assets are safe to cache forever. Serve
     // the active build first, then bounded prior generations so a connected
     // old page can still perform its first lazy import after a Host rebuild.

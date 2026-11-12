@@ -138,7 +138,7 @@ beforeEach(async () => {
       return { body: { kind: "not-repository" } };
     return undefined;
   });
-  await act(async () => store.init("token"));
+  await act(async () => store.init());
   for (const item of store.getState().attachments)
     store.removeAttachment(item.localId);
   for (const path of store.getState().projectFiles)

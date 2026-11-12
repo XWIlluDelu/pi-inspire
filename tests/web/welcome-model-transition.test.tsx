@@ -74,7 +74,7 @@ beforeEach(async () => {
       };
     return undefined;
   });
-  await store.init("fixture-token");
+  await store.init();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -136,7 +136,7 @@ it("does not let an inherited model bypass unverified directory checks or their 
   queries.mockRejectedValue(
     new ApiError(503, "Replacement directory service unavailable"),
   );
-  await act(() => store.init("replacement-token"));
+  await act(() => store.init());
   expect(screen.getByRole("button", { name: "Start session" })).toBeDisabled();
   await act(() => vi.advanceTimersByTimeAsync(14_220));
   expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
@@ -214,7 +214,7 @@ it.each(["directory", "transport", "unmount"] as const)(
         },
       );
     } else if (change === "transport") {
-      await act(() => store.init("replacement-token"));
+      await act(() => store.init());
     } else {
       view.unmount();
     }

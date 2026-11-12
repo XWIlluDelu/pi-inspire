@@ -97,7 +97,7 @@ interface ConnectionControllerHost {
   onTransportReplaced(): void;
   /** An unexpected close invalidates stream-owned state before retrying. */
   onTransportClosed(): void;
-  reconnect(token: string | null): void;
+  reconnect(): void;
 }
 
 function parseWireEvent(data: unknown): WireEvent | null {
@@ -165,7 +165,6 @@ export class ConnectionController {
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1_000;
-  private token: string | null = null;
   private started = false;
   private reconnectPending = false;
   private synchronized = false;
@@ -184,12 +183,11 @@ export class ConnectionController {
 
   constructor(private readonly host: ConnectionControllerHost) {}
 
-  connect(token: string | null): Promise<void> {
+  connect(): Promise<void> {
     this.started = true;
-    this.token = token;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
-    return this.openSocket(token, "bootstrap");
+    return this.openSocket("bootstrap");
   }
 
   /** Selection commits keep the global stream alive, but fence its detail
@@ -248,10 +246,7 @@ export class ConnectionController {
       : state.snapshotDigest;
   }
 
-  private async openSocket(
-    token: string | null,
-    phase: "bootstrap" | "resume",
-  ): Promise<void> {
+  private async openSocket(phase: "bootstrap" | "resume"): Promise<void> {
     const request = ++this.socketRequest;
     const handshakeStartedAt = performance.now();
     this.reconnectPending = false;
@@ -273,7 +268,7 @@ export class ConnectionController {
       ticket = await socketTicket("events");
     } catch {
       if (this.started && request === this.socketRequest)
-        this.scheduleReconnectAfterDelay(token, "bootstrap");
+        this.scheduleReconnectAfterDelay("bootstrap");
       return;
     }
     if (!this.started || request !== this.socketRequest) return;
@@ -414,10 +409,7 @@ export class ConnectionController {
       this.lastFrameAt = 0;
       this.clearStreamTimers();
       this.host.onTransportClosed();
-      this.scheduleReconnectAfterDelay(
-        token,
-        canResume ? "resume" : "bootstrap",
-      );
+      this.scheduleReconnectAfterDelay(canResume ? "resume" : "bootstrap");
     };
     socket.onerror = () => this.failSocket(socket);
   }
@@ -425,7 +417,6 @@ export class ConnectionController {
   stop(): void {
     this.socketRequest += 1;
     this.started = false;
-    this.token = null;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
@@ -439,9 +430,8 @@ export class ConnectionController {
     socket?.close();
   }
 
-  retry(token: string | null): void {
+  retry(): void {
     this.started = true;
-    this.token = token;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
     this.reconnectDelay = 1_000;
@@ -459,11 +449,10 @@ export class ConnectionController {
     this.requestReconnect("bootstrap");
   }
 
-  scheduleReconnect(token: string | null): void {
+  scheduleReconnect(): void {
     this.started = true;
-    this.token = token;
     this.reconnectPending = false;
-    this.scheduleReconnectAfterDelay(token, "bootstrap");
+    this.scheduleReconnectAfterDelay("bootstrap");
   }
 
   /** Recover promptly from browser/network lifecycle boundaries. A normal
@@ -506,11 +495,11 @@ export class ConnectionController {
     if (!this.started || this.reconnectPending) return;
     this.scheduledReconnectKind = null;
     if (kind === "resume") {
-      void this.openSocket(this.token, "resume");
+      void this.openSocket("resume");
       return;
     }
     this.reconnectPending = true;
-    this.host.reconnect(this.token);
+    this.host.reconnect();
   }
 
   private applySocketEvent(socket: WebSocket, event: WireEvent): boolean {
@@ -619,17 +608,10 @@ export class ConnectionController {
     this.clearStreamTimers();
     this.host.onTransportClosed();
     socket.close();
-    this.scheduleReconnectAfterDelay(
-      this.token,
-      canResume ? "resume" : "bootstrap",
-    );
+    this.scheduleReconnectAfterDelay(canResume ? "resume" : "bootstrap");
   }
 
-  private scheduleReconnectAfterDelay(
-    token: string | null,
-    kind: "resume" | "bootstrap",
-  ): void {
-    this.token = token;
+  private scheduleReconnectAfterDelay(kind: "resume" | "bootstrap"): void {
     this.clearReconnectTimer();
     this.scheduledReconnectKind = kind;
     const delay = this.reconnectDelay;

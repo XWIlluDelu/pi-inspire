@@ -82,17 +82,9 @@ export class RuntimeReadController {
     });
   }
 
-  transcriptPage(
-    sessionId: string,
-    cursor: string,
-    deferActivity = false,
-  ): Promise<TranscriptPage> {
-    return this.projectionRead(
-      sessionId,
-      (projection, slot, effectiveLeafId) =>
-        deferActivity
-          ? projection.visiblePage(cursor, effectiveLeafId, slot.viewId)
-          : projection.page(cursor, effectiveLeafId, slot.viewId),
+  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage> {
+    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
+      projection.visiblePage(cursor, effectiveLeafId, slot.viewId),
     );
   }
 
@@ -198,15 +190,7 @@ export class RuntimeReadController {
       // entry-bound images from retained USER prompts on this same branch.
       return [
         ...projection.viewMessages(leaf),
-        ...projection
-          .composerHistoryMessages(leaf)
-          .filter(
-            (message) =>
-              message &&
-              typeof message === "object" &&
-              typeof (message as Record<string, unknown>)
-                .__inspireHistoryEntryId === "string",
-          ),
+        ...projection.composerHistoryMessages(leaf),
       ];
     });
   }

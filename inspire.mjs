@@ -333,21 +333,13 @@ function expected(context) {
 }
 
 async function inspect(context) {
-  return inspectInstance(context.statePath, expected(context), {
-    processMarker: distribution ? "build/server/index.js" : "server/index.ts",
-  });
+  return inspectInstance(context.statePath, expected(context));
 }
 
-function reportUnavailableHost(state) {
+function reportUnavailableHost() {
+  console.error("Cannot authenticate readiness of the managed INSΠRE Host.");
   console.error(
-    state.httpControlVersion === 1
-      ? "Cannot authenticate readiness of the managed INSΠRE Host."
-      : "The running Host predates authenticated readiness.",
-  );
-  console.error(
-    state.shutdownControlVersion === 1 || process.platform === "linux"
-      ? "If it remains unavailable, use 'inspire stop' with the same Host configuration, then start it again. Stopping an installed service also ends its project terminals."
-      : "Stop it through its existing service manager or inspected process controls before starting the new Host.",
+    "If it remains unavailable, stop the instance through its launcher or service manager before starting it again.",
   );
 }
 
@@ -371,7 +363,7 @@ async function showExisting(context) {
     return "shown";
   }
   if (result.kind === "unavailable") {
-    reportUnavailableHost(result.state);
+    reportUnavailableHost();
     return "blocked";
   }
   // A stale publication is only evidence about the snapshot we inspected.
@@ -454,9 +446,6 @@ async function superviseHost(context, lease) {
     void (async () => {
       try {
         await stopManagedInstance(context.statePath, expected(context), {
-          processMarker: distribution
-            ? "build/server/index.js"
-            : "server/index.ts",
           timeoutMs: 10_000,
         });
       } catch (error) {
@@ -648,9 +637,6 @@ async function stopLocalHost(retainLease = false) {
   const result = await stopManagedInstance(
     context.statePath,
     expected(context),
-    {
-      processMarker: distribution ? "build/server/index.js" : "server/index.ts",
-    },
   );
   if (result.kind === "stopped") {
     return completeLocalStop(
@@ -690,13 +676,7 @@ async function stopLocalHost(retainLease = false) {
     const pending = await stopManagedInstance(
       context.statePath,
       expected(context),
-      {
-        processMarker: distribution
-          ? "build/server/index.js"
-          : "server/index.ts",
-        healthTimeoutMs: 250,
-        timeoutMs: 5_000,
-      },
+      { timeoutMs: 5_000 },
     );
     if (pending.kind === "stopped") {
       return completeLocalStop(
@@ -766,11 +746,6 @@ async function restartHostOnly(context, serviceStatus) {
       );
     return startHost(serviceStatus === 5);
   }
-  if (!owner.state.scopedShutdown || !owner.state.durableWorkerRelease)
-    throw new Error(
-      "This Host predates scoped shutdown with durable worker release. Restart it normally to enable --host-only.",
-    );
-
   const invocationId = owner.state.systemdInvocationId;
   const control =
     serviceStatus === 0
@@ -829,12 +804,7 @@ async function restartHost(all = false, hostOnly = false) {
   await prepareRestart();
   const context = instanceContext();
   if (hostOnly) return restartHostOnly(context, inspected.code);
-  await prepareInstanceRestart(
-    context.statePath,
-    expected(context),
-    "host",
-    { processMarker: distribution ? "build/server/index.js" : "server/index.ts" },
-  );
+  await prepareInstanceRestart(context.statePath, expected(context));
   const service = await manageHostService(all ? "restart-all" : "restart");
   if (service.code === 0) return 0;
   if (service.code !== 3) return service.code;
@@ -861,7 +831,7 @@ async function statusHost() {
       await showInstanceUrl(result);
       return 0;
     }
-    if (result.kind === "unavailable") reportUnavailableHost(result.state);
+    if (result.kind === "unavailable") reportUnavailableHost();
     else
       console.error(
         "INSΠRE system service is active, but its Host is not reachable.",
@@ -881,7 +851,7 @@ async function statusHost() {
     await showInstanceUrl(result);
     return 0;
   }
-  if (result.kind === "unavailable") reportUnavailableHost(result.state);
+  if (result.kind === "unavailable") reportUnavailableHost();
   else console.error("INSΠRE is not running.");
   return 1;
 }
@@ -972,7 +942,7 @@ async function main() {
       if (args.length) return 64;
       const result = await inspect(instanceContext());
       if (result.kind !== "healthy") {
-        if (result.kind === "unavailable") reportUnavailableHost(result.state);
+        if (result.kind === "unavailable") reportUnavailableHost();
         else
           console.error(
             "No authenticated matching Host; no token was displayed.",

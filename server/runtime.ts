@@ -386,11 +386,7 @@ export interface RuntimeLike extends RestartLeaseOwner {
     sessionId: string,
     viewId: string,
   ): Promise<{ text: string | null }>;
-  transcriptPage(
-    sessionId: string,
-    cursor: string,
-    deferActivity?: boolean,
-  ): Promise<TranscriptPage>;
+  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage>;
   transcriptActivityPage(
     sessionId: string,
     cursor: string,
@@ -5922,12 +5918,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
-  transcriptPage(
-    sessionId: string,
-    cursor: string,
-    deferActivity = false,
-  ): Promise<TranscriptPage> {
-    return this.reads.transcriptPage(sessionId, cursor, deferActivity);
+  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage> {
+    return this.reads.transcriptPage(sessionId, cursor);
   }
 
   transcriptActivityPage(

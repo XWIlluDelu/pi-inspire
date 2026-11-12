@@ -108,7 +108,7 @@ it.each([false, true])(
         return realFetch(new URL(url, host!.baseUrl), { ...init, headers });
       }) satisfies typeof fetch);
       store = new AppStore();
-      await store.init(token);
+      await store.init();
       const before = commands.length;
       await store.cycleModel(1);
       expect(store.getState()).toMatchObject({

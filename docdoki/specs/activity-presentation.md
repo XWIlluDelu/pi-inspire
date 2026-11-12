@@ -202,8 +202,7 @@ motion transitions; lifecycle eligibility still comes from Pi.
 ## Tool states and streaming
 
 Call IDs correlate argument generation, execution updates, final results, and failure. Pi's
-identity-bearing `toolcall_start` creates the card immediately; legacy starts without identity wait
-for the complete call instead of guessing a name.
+`toolcall_start` creates the card immediately.
 
 | State | Display |
 | --- | --- |
@@ -231,5 +230,5 @@ messages use the same interruption projection.
 ## Checks
 
 Activity/fold tests cover the single collapsed disclosure and focus return, independent group/item
-preferences, kind indicators, legacy behavior, density, timing, identity, pagination, and scroll
-anchoring. Event tests cover generation, waiting, execution, settlement, and late updates.
+preferences, kind indicators, density, timing, identity, pagination, and scroll anchoring. Event
+tests cover generation, waiting, execution, settlement, and late updates.

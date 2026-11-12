@@ -302,7 +302,7 @@ export class TaskNotifications {
     const device = this.saved.devices[id];
     return {
       installationId: id,
-      mode: device?.mode ?? null,
+      mode: device?.mode ?? "off",
       grouping: device?.grouping ?? "session",
       groupingUpdatedAt: device?.groupingUpdatedAt ?? 0,
       publicKey: this.saved.vapid.publicKey,
