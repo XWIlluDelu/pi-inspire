@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { HostRestartBackend } from "./host-restart.js";
 import { prepareHostRestart } from "./host-restart-preparation.js";
+import { stopAllPiProcesses, supportsGlobalPiStop } from "./pi-processes.mjs";
 
 interface ServiceControl {
   inspectBrowserRestart(
@@ -19,7 +20,13 @@ interface ServiceControl {
 export function systemdRestartBackend(
   root: string,
   enabled: boolean,
+  options: {
+    includeHerdr?: boolean;
+    stopPi?: (options: { includeHerdr: boolean }) => Promise<void>;
+  } = {},
 ): HostRestartBackend {
+  const includeHerdr = options.includeHerdr === true;
+  const stopPi = options.stopPi ?? stopAllPiProcesses;
   const invocationId = process.env.INVOCATION_ID ?? "";
   const supported =
     enabled &&
@@ -35,14 +42,36 @@ export function systemdRestartBackend(
         supported &&
         (await (await control()).inspectBrowserRestart(root, { invocationId }))
           .kind === "managed";
-      return { host: available, all: available };
+      return {
+        host: available,
+        all: available,
+        allPi: available && supportsGlobalPiStop(),
+        includeHerdr,
+      };
     },
     prepare: () => prepareHostRestart(root),
-    async request(all, commit) {
-      if (!supported) return { issued: false, code: 1 };
-      return (await control()).requestBrowserRestart(root, all, commit, {
-        invocationId,
-      });
+    async request(scope, commit) {
+      if (!supported || (scope === "all-pi" && !supportsGlobalPiStop()))
+        return { issued: false, code: 1 };
+      let stopError: string | undefined;
+      const result = await (await control()).requestBrowserRestart(
+        root,
+        scope === "all" || scope === "all-pi",
+        async () => {
+          if (!(await commit())) return false;
+          if (scope === "all-pi") {
+            try {
+              await stopPi({ includeHerdr });
+            } catch (error) {
+              stopError = `Pi shutdown failed. Inspire was not restarted. ${error instanceof Error ? error.message : String(error)}`;
+              return false;
+            }
+          }
+          return true;
+        },
+        { invocationId },
+      );
+      return stopError ? { ...result, error: stopError } : result;
     },
   };
 }

@@ -308,11 +308,13 @@ const application = createInspireServer({
   piVersion: piInstallation.version,
   getHerdrStatus: () => herdr.status(),
   maintenanceRestart,
+  activeHerdrMode: herdr.enhancedWorkersEnabled,
   hostRestart: new HostRestartController(
     runtime,
     hostRestartBackend(root, {
       enabled: true,
       systemdEnabled: host === "127.0.0.1" && port === 4587,
+      includeHerdr: herdr.enhancedWorkersEnabled,
       restart: () =>
         shutdown("launcher-owned Host restart", HOST_RESTART_EXIT_CODE),
     }),

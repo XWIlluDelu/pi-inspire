@@ -155,7 +155,7 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
 
   try {
     const restart = settings.getByRole("button", {
-      name: "Restart all",
+      name: "Restart",
       exact: true,
     });
     await expect(restart).toBeEnabled();
@@ -164,14 +164,14 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
       expect((await row.boundingBox())!.height, phase).toBeCloseTo(before, 1);
 
     await restart.click();
-    await dialog.getByRole("button", { name: "Restart all" }).click();
+    await dialog.getByRole("button", { name: "Restart", exact: true }).click();
     const force = settings.getByRole("button", {
-      name: "Stop work and restart all",
+      name: "Stop work and restart",
       exact: true,
     });
     await expect(force).toBeVisible();
     const idleAttempt = submitted.at(-1)!;
-    expect(idleAttempt.scope).toBe("all");
+    expect(idleAttempt.scope).toBe("host");
     expect(idleAttempt.interruptWork).toBeUndefined();
     await stable("busy");
 
@@ -179,7 +179,7 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
     await expect(dialog).toHaveCount(0);
     await expect.poll(() => submitted.at(-1)?.interruptWork).toBe(true);
     expect(submitted.at(-1)).toMatchObject({
-      scope: "all",
+      scope: "host",
       hostId: idleAttempt.hostId,
     });
     expect(submitted.at(-1)?.operationId).not.toBe(idleAttempt.operationId);
@@ -200,6 +200,59 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
   }
   expect(submitted).toHaveLength(2);
 });
+
+for (const includeHerdr of [false, true]) {
+  test(`Restart all confirms Pi shutdown with active Herdr mode ${includeHerdr}`, async ({
+    page,
+  }) => {
+    const status: HostRestartStatus = {
+      hostId: crypto.randomUUID(),
+      available: true,
+      allAvailable: true,
+      allPiAvailable: true,
+      allPiIncludesHerdr: includeHerdr,
+      operation: null,
+    };
+    const submitted: HostRestartRequest[] = [];
+    await page.route("**/api/host/restart", async (route) => {
+      if (route.request().method() === "GET")
+        return route.fulfill({ json: status });
+      const request = route.request().postDataJSON() as HostRestartRequest;
+      submitted.push(request);
+      status.operation = {
+        id: request.operationId,
+        scope: request.scope,
+        interruptWork: true,
+        phase: "submitted",
+      };
+      return route.fulfill({ json: status.operation });
+    });
+    await pairedPage(page);
+    const settings = await openSystemSettings(page);
+    await settings
+      .getByRole("button", { name: "Restart all", exact: true })
+      .click();
+    const dialog = page.getByRole("alertdialog", { name: "Restart all?" });
+    await expect(dialog).toContainText(
+      includeHerdr
+        ? "All your Pi sessions, including Herdr sessions, will close."
+        : "Your Pi sessions outside Herdr will close.",
+    );
+    expect(submitted).toHaveLength(0);
+    await dialog
+      .getByRole("button", { name: "Restart all", exact: true })
+      .click();
+    await expect.poll(() => submitted.length).toBe(1);
+    expect(submitted[0]).toMatchObject({
+      scope: "all-pi",
+      interruptWork: true,
+      hostId: status.hostId,
+    });
+    await expect(settings.locator(".host-restart__status")).toHaveText(
+      "Restart requested.",
+    );
+  });
+}
 
 test("selected Settings categories remain visible across responsive layouts without trapping manual navigation scrolling", async ({
   page,

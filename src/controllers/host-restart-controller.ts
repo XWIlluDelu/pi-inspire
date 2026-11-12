@@ -70,7 +70,8 @@ export class HostRestartClient {
           !UUID.test(value.hostId) ||
           typeof value.operationId !== "string" ||
           !UUID.test(value.operationId) ||
-          !["host", "host-only", "all"].includes(value.scope) ||
+          !["host", "host-only", "all", "all-pi"].includes(value.scope) ||
+          (value.scope === "all-pi" && value.interruptWork !== true) ||
           ("interruptWork" in value && value.interruptWork !== true) ||
           ("skipAttachedStop" in value && value.skipAttachedStop !== true)
         )
@@ -182,9 +183,12 @@ export class HostRestartClient {
       if (
         this.state.pending ||
         !this.state.status ||
-        !(scope === "all"
-          ? this.state.status.allAvailable
-          : this.state.status.available) ||
+        (scope === "all-pi" && !interruptWork) ||
+        !(scope === "all-pi"
+          ? this.state.status.allPiAvailable
+          : scope === "all"
+            ? this.state.status.allAvailable
+            : this.state.status.available) ||
         this.state.status.hostId !== hostId
       )
         return;

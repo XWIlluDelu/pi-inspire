@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Restart all** closes current-user Pi sessions before restarting Inspire and project terminals.
+  Herdr Pi are included when enhancement is active and preserved otherwise.
+- `inspire restart --all` uses the same scope. The previous terminal-service-only scope is now
+  `inspire restart --terminals`; `restart` and `restart --host-only` keep their existing behavior.
+
 ## 0.7.0 — 2026-11-09
 
 Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).

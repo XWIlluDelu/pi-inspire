@@ -371,6 +371,7 @@ describe("Host local-control ingress", () => {
     const f = await hostApiFixture({
       instanceState: () => owner,
       maintenanceRestart: maintenance,
+      activeHerdrMode: true,
     });
     const api = request(f.application.server);
     const localControl = (message: object) =>
@@ -396,6 +397,15 @@ describe("Host local-control ingress", () => {
       );
       expect(JSON.stringify(response.body)).not.toContain(owner.token);
       await localControl(ready).expect(401);
+      const mode = createInstanceControlRequest(owner, "restart-mode");
+      const modeResponse = await localControl(mode).expect(200);
+      expect(modeResponse.body.result).toEqual({ includeHerdr: true });
+      expect(
+        verifyInstanceControlResponse(owner, mode, modeResponse.body),
+      ).toBe(true);
+      expect(JSON.stringify(mode)).not.toContain(owner.token);
+      expect(JSON.stringify(modeResponse.body)).not.toContain(owner.token);
+      await localControl(mode).expect(401);
       const link = await instanceLaunchUrl(owner);
       expect(link).not.toBeNull();
       expect(link).not.toContain(owner.token);

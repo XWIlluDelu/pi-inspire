@@ -26,7 +26,9 @@ import {
 import { preparePackagedLauncher } from "./fixtures/packaged-launcher.mjs";
 
 const directories: string[] = [];
+const closeServers: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  for (const close of closeServers.splice(0)) await close();
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
 });
@@ -35,6 +37,21 @@ async function fixture(fail: boolean) {
   const root = await mkdtemp(join(tmpdir(), "inspire-restart-launcher-"));
   directories.push(root);
   await preparePackagedLauncher(root);
+  // The launcher fixture must never enumerate or stop real user Pi processes.
+  await writeFile(
+    join(root, "build/server/pi-processes.mjs"),
+    `
+    import { appendFileSync } from "node:fs";
+    export const supportsGlobalPiStop = () => true;
+    export async function assertExternalPiRestartCaller() {
+      if (process.env.FIXTURE_PI_ANCESTOR) throw new Error("Run inspire restart --all outside Pi, from an OS terminal.");
+    }
+    export async function stopAllPiProcesses({ includeHerdr }) {
+      appendFileSync(process.env.FIXTURE_LOG, "stop-all-pi:" + includeHerdr + "\\n");
+      if (process.env.FIXTURE_STOP_PI_FAIL) throw new Error("Synthetic Pi stop failure");
+    }
+  `,
+  );
   await cp(resolve("deploy/systemd"), join(root, "deploy/systemd"), {
     recursive: true,
   });
@@ -114,6 +131,59 @@ if (args[1] === 'show') console.log([
       await writeFile(
         entry,
         `export * from "./instance-state.original.mjs";\n${source}`,
+      );
+    },
+    async runningHerdrMode(enabled: boolean) {
+      let state: InstanceState;
+      const control = new InstanceHttpControl();
+      const server = createServer(async (request, response) => {
+        if (
+          request.url !== "/api/host/local-control" ||
+          request.headers.authorization
+        )
+          return response.writeHead(401).end();
+        let body = "";
+        for await (const chunk of request) body += String(chunk);
+        const message = JSON.parse(body);
+        const grant = control.accept(state, message);
+        if (!grant || message.action !== "restart-mode")
+          return response.writeHead(401).end();
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify(control.reply(grant, { includeHerdr: enabled })),
+        );
+      });
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      closeServers.push(
+        () =>
+          new Promise<void>((resolve, reject) =>
+            server.close((error) => (error ? reject(error) : resolve())),
+          ),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Expected port");
+      state = {
+        schemaVersion: 1,
+        root,
+        pid: process.pid,
+        processStartTime: await processStartIdentity(process.pid),
+        startedAt: new Date().toISOString(),
+        durableWorkerRelease: true,
+        host: "127.0.0.1",
+        port: address.port,
+        token: "fixture-token",
+      };
+      const entry = join(root, "build/server/instance-state.mjs");
+      await rename(
+        entry,
+        join(root, "build/server/instance-state.original.mjs"),
+      );
+      await writeFile(
+        entry,
+        `export * from "./instance-state.original.mjs";\nexport async function inspectInstance() { return { kind: "healthy", state: ${JSON.stringify(state)} }; }`,
       );
     },
     log: () => readFile(logPath, "utf8"),
@@ -238,7 +308,7 @@ describe.runIf(process.platform === "linux")(
     });
     it("prepares before restarting both services exactly once", async () => {
       const f = await fixture(false);
-      f.run(["restart", "--all"]);
+      f.run(["restart", "--terminals"]);
       const lines = (await f.log()).split("\n");
       const mutations = lines.filter((line) =>
         /^--user (start|stop|restart)/u.test(line),
@@ -250,6 +320,40 @@ describe.runIf(process.platform === "linux")(
       expect(lines.indexOf("preflight")).toBeLessThan(
         lines.indexOf(mutations[0]!),
       );
+    });
+    it.each([false, true])(
+      "uses running Herdr mode (%s) and stops the owner before Pi cleanup",
+      async (includeHerdr) => {
+        const f = await fixture(false);
+        await f.runningHerdrMode(includeHerdr);
+        await f.runAsync(["restart", "--all"]);
+        const lines = (await f.log()).split("\n");
+        const stopped = lines.indexOf("--user stop inspire-host.service");
+        const cleaned = lines.indexOf(`stop-all-pi:${includeHerdr}`);
+        const started = lines.indexOf("--user start inspire-host.service");
+        expect(stopped).toBeGreaterThan(lines.indexOf("preflight"));
+        expect(cleaned).toBeGreaterThan(stopped);
+        expect(started).toBeGreaterThan(cleaned);
+      },
+    );
+    it("refuses a Pi-descended caller before preparation or service shutdown", async () => {
+      const f = await fixture(false);
+      f.env.FIXTURE_PI_ANCESTOR = "1";
+      expect(() => f.run(["restart", "--all"])).toThrow(/outside Pi/);
+      const log = await f.log();
+      expect(log).not.toContain("preflight");
+      expect(log).not.toContain("stop-all-pi");
+      expect(log).not.toMatch(/^--user (start|stop|restart)/mu);
+    });
+    it("never starts a replacement after failed global Pi cleanup", async () => {
+      const f = await fixture(false);
+      f.env.FIXTURE_STOP_PI_FAIL = "1";
+      await f.runningHerdrMode(false);
+      await expect(f.runAsync(["restart", "--all"])).rejects.toThrow(
+        /Synthetic Pi stop failure/,
+      );
+      expect(await f.log()).toContain("stop-all-pi");
+      expect(await f.log()).not.toContain("--user start inspire-host.service");
     });
     it.each([{ flags: [] }, { flags: ["--host-only"] }])(
       "verifies the running Host after preflight ($flags)",

@@ -26,6 +26,7 @@ export async function preparePackagedLauncher(
       "platform-paths",
       "platform-environment",
       "process-tree",
+      "pi-processes",
       "static-asset-cache",
       "user-environment",
     ].map((name) =>

@@ -2,24 +2,32 @@ import { randomUUID } from "node:crypto";
 import type {
   HostRestartOperation,
   HostRestartRequest,
+  HostRestartScope,
   HostRestartStatus,
 } from "../shared/host-restart.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeController } from "./runtime.js";
 
 export interface HostRestartBackend {
-  inspect(): Promise<{ host: boolean; all: boolean }>;
+  inspect(): Promise<{
+    host: boolean;
+    all: boolean;
+    allPi?: boolean;
+    includeHerdr?: boolean;
+  }>;
   prepare(): Promise<void>;
   request(
-    all: boolean,
+    scope: HostRestartScope,
     commit: () => boolean | Promise<boolean>,
-  ): Promise<{ code: number; issued?: boolean }>;
+  ): Promise<{ code: number; issued?: boolean; error?: string }>;
 }
 
 const UNAVAILABLE =
   "Page restart requires the Inspire launcher or this Host's installed Linux systemd services.";
 const ALL_UNAVAILABLE =
-  "Restart all requires this Host's installed Linux systemd services.";
+  "Restart with terminals requires this Host's installed Linux systemd services.";
+const ALL_PI_UNAVAILABLE =
+  "Restart all requires this Host's installed Linux services and Pi process control.";
 const WORK_BUSY =
   "Finish Pi work and pending operations before restarting, or choose Stop work and restart.";
 
@@ -57,6 +65,9 @@ export class HostRestartController {
       hostId: this.hostId,
       available: available.host,
       allAvailable: available.all,
+      allPiAvailable: available.allPi === true,
+      allPiIncludesHerdr: available.includeHerdr === true,
+      ...(!available.allPi ? { allPiReason: ALL_PI_UNAVAILABLE } : {}),
       ...(!available.host ? { reason: UNAVAILABLE } : {}),
       ...(!available.all ? { allReason: ALL_UNAVAILABLE } : {}),
       operation: this.operation ? { ...this.operation } : null,
@@ -66,6 +77,11 @@ export class HostRestartController {
   start(request: HostRestartRequest): HostRestartOperation {
     if (request.hostId !== this.hostId)
       throw requestError("Host changed. Review restart again.", 409);
+    if (request.scope === "all-pi" && request.interruptWork !== true)
+      throw requestError(
+        "Confirm closing all Pi sessions before restarting.",
+        400,
+      );
     const previous = this.receipts.get(request.operationId);
     if (previous) {
       if (
@@ -112,9 +128,19 @@ export class HostRestartController {
     let mayHaveIssued = false;
     try {
       const available = await this.backend.inspect();
-      if (!available[operation.scope === "all" ? "all" : "host"])
+      const capability =
+        operation.scope === "all-pi"
+          ? "allPi"
+          : operation.scope === "all"
+            ? "all"
+            : "host";
+      if (!available[capability])
         throw new Error(
-          operation.scope === "all" ? ALL_UNAVAILABLE : UNAVAILABLE,
+          operation.scope === "all-pi"
+            ? ALL_PI_UNAVAILABLE
+            : operation.scope === "all"
+              ? ALL_UNAVAILABLE
+              : UNAVAILABLE,
         );
       await this.backend.prepare();
       // Preparation can be slow. Acquire the authoritative admission fence
@@ -138,6 +164,7 @@ export class HostRestartController {
       leaseId = reservation.leaseId;
       if (
         !preserveWork &&
+        operation.scope !== "all-pi" &&
         operation.interruptWork &&
         !operation.skipAttachedStop
       ) {
@@ -148,46 +175,44 @@ export class HostRestartController {
           throw error;
         }
       }
-      const result = await this.backend.request(
-        operation.scope === "all",
-        async () => {
-          if (preserveWork && !this.canPreserveWorkers())
-            throw new Error(
-              "Use inspire restart --host-only to preserve enhanced Pi workers.",
-            );
-          if (!preserveWork && !operation.interruptWork) {
-            const busy = await this.runtime.checkAttachedRestartWork();
-            if (busy) {
-              operation.busyReason = busy;
-              return false;
-            }
-          }
-          const committed = this.runtime.commitMaintenanceRestart(
-            reservation.leaseId,
+      const result = await this.backend.request(operation.scope, async () => {
+        if (preserveWork && !this.canPreserveWorkers())
+          throw new Error(
+            "Use inspire restart --host-only to preserve enhanced Pi workers.",
           );
-          if (committed.kind !== "committed") {
-            if (
-              committed.kind === "skipped" &&
-              (committed.reason === "active-work" ||
-                committed.reason === "in-flight-operation")
-            )
-              operation.busyReason = committed.reason;
+        if (!preserveWork && !operation.interruptWork) {
+          const busy = await this.runtime.checkAttachedRestartWork();
+          if (busy) {
+            operation.busyReason = busy;
             return false;
           }
-          mayHaveIssued = true;
-          // Publish domain state before submission can disconnect this observer.
-          operation.phase = "submitted";
-          return true;
-        },
-      );
+        }
+        const committed = this.runtime.commitMaintenanceRestart(
+          reservation.leaseId,
+        );
+        if (committed.kind !== "committed") {
+          if (
+            committed.kind === "skipped" &&
+            (committed.reason === "active-work" ||
+              committed.reason === "in-flight-operation")
+          )
+            operation.busyReason = committed.reason;
+          return false;
+        }
+        mayHaveIssued = true;
+        // Publish domain state before submission can disconnect this observer.
+        operation.phase = "submitted";
+        return true;
+      });
       if (result.issued === false) mayHaveIssued = false;
       if (result.code !== 0 || result.issued === false)
         throw new Error(
-          operation.busyReason
-            ? WORK_BUSY
-            : mayHaveIssued
-              ? "Restart outcome is unknown. Check the Host launcher or service."
-              : "Restart was not issued. Check the Host launcher or service configuration.",
+          result.error ??
+            (operation.busyReason
+              ? WORK_BUSY
+              : mayHaveIssued
+                ? "Restart outcome is unknown. Check the Host launcher or service."
+                : "Restart was not issued. Check the Host launcher or service configuration."),
         );
     } catch (error) {
       if (!mayHaveIssued && leaseId) {

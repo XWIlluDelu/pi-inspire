@@ -1,6 +1,8 @@
-/** `host` restarts the Host and its own Pi workers. `host-only` preserves those
- * workers, and `all` also restarts the terminal service. */
-export type HostRestartScope = "host" | "host-only" | "all";
+/** `host` replaces owned Pi workers; `host-only` preserves them.
+ * `all` also restarts terminals. `all-pi` closes current-user Pi processes,
+ * including Herdr Pi only in enhanced mode, then restarts Host and terminals.
+ * Keep `all` scoped for older clients. */
+export type HostRestartScope = "host" | "host-only" | "all" | "all-pi";
 
 export interface HostRestartOperation {
   id: string;
@@ -18,8 +20,12 @@ export interface HostRestartStatus {
   hostId: string;
   available: boolean;
   allAvailable: boolean;
+  allPiAvailable?: boolean;
+  /** Effective Host mode, fixed until this Host is replaced. */
+  allPiIncludesHerdr?: boolean;
   reason?: string;
   allReason?: string;
+  allPiReason?: string;
   operation: HostRestartOperation | null;
 }
 

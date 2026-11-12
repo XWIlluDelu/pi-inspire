@@ -11,6 +11,7 @@ const MAX_BYTES = 2_048;
 const MAX_PENDING = 1_024;
 const actions = new Set([
   "readiness",
+  "restart-mode",
   "launch-url",
   "maintenance-prepare",
   "maintenance-commit",

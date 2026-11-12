@@ -116,6 +116,44 @@ describe("Host administration API", () => {
     expect(restart).not.toHaveBeenCalled();
   });
 
+  it("requires explicit global shutdown permission before preparing a new-scope restart", async () => {
+    const prepare = vi.fn(async () => {
+      throw new Error("Synthetic preflight failure");
+    });
+    const { local } = await fixture({
+      restart: {
+        inspect: async () => ({
+          host: true,
+          all: true,
+          allPi: true,
+          includeHerdr: true,
+        }),
+        prepare,
+        request: vi.fn(async () => {
+          throw new Error("must not submit");
+        }),
+      },
+    });
+    const path = "/api/host/restart";
+    const { body: status } = await local.get(path).expect(200);
+    expect(status).toMatchObject({
+      allPiAvailable: true,
+      allPiIncludesHerdr: true,
+    });
+    const intent = {
+      hostId: status.hostId,
+      operationId: randomUUID(),
+      scope: "all-pi",
+    };
+    await local.post(path).send(intent).expect(400);
+    expect(prepare).not.toHaveBeenCalled();
+    await local
+      .post(path)
+      .send({ ...intent, interruptWork: true })
+      .expect(202);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  });
+
   it("authenticates Herdr status and reports missing integration as unavailable", async () => {
     const { guest, local } = await fixture();
     await guest.get("/api/host/herdr").expect(401);

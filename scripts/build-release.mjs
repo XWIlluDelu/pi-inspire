@@ -1,5 +1,5 @@
-import { cp, mkdir, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -27,6 +27,7 @@ for (const supportModule of [
   "platform-paths.mjs",
   "platform-environment.mjs",
   "process-tree.mjs",
+  "pi-processes.mjs",
   "static-asset-cache.mjs",
   "user-environment.mjs",
 ]) {

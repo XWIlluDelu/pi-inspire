@@ -1,15 +1,14 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { HostRestartScope } from "../../shared/host-restart";
 import { hostRestartClient } from "../controllers/host-restart-controller";
 import { SettingField } from "./SettingsControls";
 import { SettingsConfirmation } from "./SettingsDialog";
 
-type SettingsRestartScope = Exclude<HostRestartScope, "host-only">;
+type SettingsRestartScope = "host" | "all-pi";
 
 const RESTART_NAMES: Record<SettingsRestartScope, string> = {
   host: "Restart",
-  all: "Restart all",
+  "all-pi": "Restart all",
 };
 
 export function HostRestartSettings({
@@ -101,14 +100,14 @@ export function HostRestartSettings({
     state.status?.available === false ? state.status.reason : null;
   return (
     <div id="settings-host-restart" className="host-restart">
-      {(["host", "all"] as const).map((scope) => {
+      {(["host", "all-pi"] as const).map((scope) => {
         const host = scope === "host";
         const name = RESTART_NAMES[scope];
         const unconfirmed = unconfirmedScope === scope;
         const busy = busyScope === scope;
         const available = host
           ? state.status?.available
-          : state.status?.allAvailable;
+          : state.status?.allPiAvailable;
         return (
           <SettingField
             key={scope}
@@ -117,8 +116,10 @@ export function HostRestartSettings({
               host
                 ? "Restart Inspire and its Pi workers. Keep project terminals running."
                 : state.status && !available
-                  ? state.status.allReason
-                  : "Also close project terminals."
+                  ? state.status.allPiReason
+                  : state.status?.allPiIncludesHerdr
+                    ? "Close all Pi sessions and restart Inspire."
+                    : "Close Pi sessions outside Herdr and restart Inspire."
             }
           >
             <button
@@ -206,8 +207,10 @@ export function HostRestartSettings({
           id="host-restart"
           title={`${RESTART_NAMES[confirmation.scope]}?`}
           description={
-            confirmation.scope === "all"
-              ? "Project terminals will close. The page will briefly disconnect."
+            confirmation.scope === "all-pi"
+              ? state.status?.allPiIncludesHerdr
+                ? "All your Pi sessions, including Herdr sessions, will close. Project terminals will close and running tasks will stop."
+                : "Your Pi sessions outside Herdr will close. Project terminals will close and running tasks will stop."
               : "Inspire's Pi workers will restart. Project terminals keep running. The page will briefly disconnect."
           }
           confirmLabel={RESTART_NAMES[confirmation.scope]}
@@ -216,7 +219,7 @@ export function HostRestartSettings({
             void hostRestartClient.start(
               confirmation.scope,
               confirmation.hostId,
-              false,
+              confirmation.scope === "all-pi",
             );
             setConfirmation(null);
           }}

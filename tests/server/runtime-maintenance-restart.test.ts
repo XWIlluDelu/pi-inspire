@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostRestartController } from "../../server/host-restart.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
+import type { HostRestartScope } from "../../shared/host-restart.js";
 
 import {
   deferredSignal,
@@ -76,7 +77,10 @@ describe("maintenance restart admission", () => {
         },
       });
       const submit = vi.fn(
-        async (_all: boolean, commit: () => boolean | Promise<boolean>) => ({
+        async (
+          _scope: HostRestartScope,
+          commit: () => boolean | Promise<boolean>,
+        ) => ({
           code: (await commit()) ? 0 : 1,
         }),
       );

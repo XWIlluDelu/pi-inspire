@@ -14,6 +14,7 @@ function fixture() {
     hostId: crypto.randomUUID(),
     available: true,
     allAvailable: true,
+    allPiAvailable: true,
     operation: null,
   };
   const api = {
@@ -90,6 +91,7 @@ describe("browser restart delivery", () => {
 
   it.each([
     { scope: "all", interruptWork: undefined, initial: "lost" },
+    { scope: "all-pi", interruptWork: true, initial: "lost" },
     { scope: "host", interruptWork: true, initial: "accepted" },
   ] as const)(
     "recovers $initial $scope delivery by retrying only the persisted identity and grant",
@@ -166,6 +168,21 @@ describe("browser restart delivery", () => {
     expect(f.client.snapshot().pending).toBeNull();
     await f.client.start("host", f.status.hostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
+  });
+
+  it("requires the new global capability and explicit interruption without changing legacy all scope", async () => {
+    const f = fixture();
+    await f.client.refresh();
+    await f.client.start("all-pi", f.status.hostId);
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+    f.status.allPiAvailable = false;
+    await f.client.refresh();
+    await f.client.start("all-pi", f.status.hostId, true);
+    expect(f.api.restartHost).not.toHaveBeenCalled();
+    await f.client.start("all", f.status.hostId);
+    expect(f.api.restartHost).toHaveBeenCalledWith(
+      expect.objectContaining({ scope: "all" }),
+    );
   });
 
   it("keeps Host observation independent of broken local recovery and unblocks after repair", async () => {

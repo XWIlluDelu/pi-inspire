@@ -108,6 +108,7 @@
       "server/platform-paths.d.mts",
       "server/platform-environment.d.mts",
       "server/process-tree.d.mts",
+      "server/pi-processes.d.mts",
       "server/pi-rpc-ui-relay.d.mts",
       "server/launcher-restart.d.mts",
       "server/static-asset-cache.d.mts",

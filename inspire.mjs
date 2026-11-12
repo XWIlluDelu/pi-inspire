@@ -702,14 +702,16 @@ async function restartHostOnly(context, serviceStatus) {
   return startHost(false);
 }
 
-async function restartHost(all = false, hostOnly = false) {
-  if (all && process.env.INSPIRE_TERMINAL_ID)
+async function restartHost(scope = "host") {
+  const allPi = scope === "all-pi";
+  const terminals = scope === "all" || allPi;
+  if (terminals && process.env.INSPIRE_TERMINAL_ID)
     throw new Error(
-      "Run inspire restart --all from an external OS terminal. It can close the terminal running this command before reporting the result.",
+      "Run this restart from an external OS terminal. It can close the terminal running this command before reporting the result.",
     );
   // Refuse unsupported full restarts before any build or process mutation.
   const inspected = await manageHostService("status", true);
-  if (all && inspected.code !== 0 && inspected.code !== 5) {
+  if (terminals && inspected.code !== 0 && inspected.code !== 5) {
     console.error(
       inspected.output ||
         "Full restart requires this installation's Linux systemd services. No service was restarted.",
@@ -720,18 +722,58 @@ async function restartHost(all = false, hostOnly = false) {
     console.error(inspected.output);
     return inspected.code;
   }
-  if (all)
-    console.log("Full restart will close project terminals in the installed service.");
+  if (terminals)
+    console.log(allPi
+      ? "Restart all will close Pi sessions and stop running tasks."
+      : "Restart with terminals will close project terminals.");
+  let stopPi;
+  if (allPi) {
+    const processes = await import(pathToFileURL(join(supportRoot, "pi-processes.mjs")).href);
+    if (!processes.supportsGlobalPiStop())
+      throw new Error("Restart all requires Linux Pi process control.");
+    await processes.assertExternalPiRestartCaller();
+    stopPi = processes.stopAllPiProcesses;
+  }
   console.log("Preparing restart…");
   await prepareRestart();
   const context = instanceContext();
-  if (hostOnly) return restartHostOnly(context, inspected.code);
-  if ((await inspect(context)).kind === "unavailable")
+  if (scope === "host-only") return restartHostOnly(context, inspected.code);
+  const owner = await inspect(context);
+  if (owner.kind === "unavailable")
     throw new Error("Cannot verify the running Host for restart.");
-  const service = await manageHostService(all ? "restart-all" : "restart");
+  if (allPi) {
+    // Use the running Host mode, never a saved next-start preference.
+    let includeHerdr = false;
+    if (owner.kind === "healthy") {
+      const { requestInstanceControl } = await import(
+        pathToFileURL(join(supportRoot, "instance-control.mjs")).href
+      );
+      const mode = await requestInstanceControl(owner.state, "restart-mode");
+      if (!mode || typeof mode.includeHerdr !== "boolean")
+        throw new Error("Cannot read the running Herdr mode. Restart Inspire normally before using --all.");
+      includeHerdr = mode.includeHerdr;
+    } else if (inspected.code === 0) {
+      throw new Error("Cannot read the running Herdr mode. No processes were stopped.");
+    }
+    console.log(includeHerdr
+      ? "Closing Pi sessions, including Herdr sessions."
+      : "Closing Pi sessions outside Herdr.");
+    // Stop the managed owner before global cleanup so it cannot create more
+    // workers while Pi processes are being retired.
+    const stopped = await manageHostService("stop");
+    if (stopped.code !== 0)
+      throw new Error("The managed services could not be stopped. No global Pi cleanup was attempted.");
+    await stopPi({ includeHerdr });
+    const started = await manageHostService("start");
+    if (started.code !== 0)
+      throw new Error("Pi sessions were closed, but Inspire could not be restarted.");
+    console.log("Closed Pi sessions and restarted Inspire.");
+    return 0;
+  }
+  const service = await manageHostService(terminals ? "restart-all" : "restart");
   if (service.code === 0) return 0;
   if (service.code !== 3) return service.code;
-  if (all) {
+  if (terminals) {
     console.error(
       "The managed services changed. No local fallback restart was attempted.",
     );
@@ -809,7 +851,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart         prepare and restart Host; keep terminals running\n  inspire restart --all   prepare and restart Host + terminals (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --host-only  restart only Inspire; keep Pi work and terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -830,11 +872,13 @@ async function main() {
     case "stop":
       return stopHost();
     case "restart":
-      if (args.length > 1 || (args.length === 1 && !["--all", "--host-only"].includes(args[0]))) {
-        console.error("Use: inspire restart [--all | --host-only]");
+      if (args.length > 1 || (args.length === 1 && !["--all", "--host-only", "--terminals"].includes(args[0]))) {
+        console.error("Use: inspire restart [--all | --terminals | --host-only]");
         return 64;
       }
-      return restartHost(args[0] === "--all", args[0] === "--host-only");
+      return restartHost(args[0] === "--all" ? "all-pi"
+        : args[0] === "--terminals" ? "all"
+        : args[0] === "--host-only" ? "host-only" : "host");
     case "recover-session": {
       if (args.length !== 1) {
         console.error("Use: inspire recover-session <bundle-folder>");

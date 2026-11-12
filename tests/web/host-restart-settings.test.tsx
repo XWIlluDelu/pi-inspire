@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostRestartSettings } from "../../src/components/HostRestartSettings";
 import type { HostRestartClient } from "../../src/controllers/host-restart-controller";
@@ -25,6 +25,8 @@ const available = {
   hostId: "fixture-host",
   available: true,
   allAvailable: true,
+  allPiAvailable: true,
+  allPiIncludesHerdr: false,
   operation: null,
 };
 
@@ -51,7 +53,9 @@ describe("Settings restart controls", () => {
         "Restart Inspire and its Pi workers. Keep project terminals running.",
       ),
     ).toBeVisible();
-    expect(screen.getByText("Also close project terminals.")).toBeVisible();
+    expect(
+      screen.getByText("Close Pi sessions outside Herdr and restart Inspire."),
+    ).toBeVisible();
     const all = screen.getByRole("button", { name: "Restart all" });
     expect(host).toBeDisabled();
     expect(all).toBeDisabled();
@@ -59,13 +63,13 @@ describe("Settings restart controls", () => {
 
     fixture.state.status = {
       ...available,
-      allAvailable: false,
-      allReason: "Restart all requires installed Linux systemd services.",
+      allPiAvailable: false,
+      allPiReason: "Restart all requires installed Linux systemd services.",
     };
     rerender(<HostRestartSettings />);
     expect(host).toBeEnabled();
     expect(all).toBeDisabled();
-    expect(screen.getByText(fixture.state.status.allReason!)).toBeVisible();
+    expect(screen.getByText(fixture.state.status.allPiReason!)).toBeVisible();
 
     fixture.state.status = {
       ...fixture.state.status,
@@ -83,7 +87,7 @@ describe("Settings restart controls", () => {
     const restartAll = screen.getByRole("button", { name: "Restart all" });
     fireEvent.click(restartAll);
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
-      "Project terminals will close.",
+      "Project terminals will close and running tasks will stop.",
     );
     rerender(<HostRestartSettings suspended />);
     expect(screen.queryByRole("alertdialog")).toBeNull();
@@ -96,6 +100,30 @@ describe("Settings restart controls", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(fixture.start).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "confirms global Pi shutdown using the effective Herdr mode (%s)",
+    (includeHerdr) => {
+      fixture.state.status = { ...available, allPiIncludesHerdr: includeHerdr };
+      render(<HostRestartSettings />);
+      fireEvent.click(screen.getByRole("button", { name: "Restart all" }));
+      const dialog = screen.getByRole("alertdialog");
+      expect(dialog).toHaveTextContent(
+        includeHerdr
+          ? "All your Pi sessions, including Herdr sessions, will close."
+          : "Your Pi sessions outside Herdr will close.",
+      );
+      expect(fixture.start).not.toHaveBeenCalled();
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Restart all" }),
+      );
+      expect(fixture.start).toHaveBeenCalledExactlyOnceWith(
+        "all-pi",
+        available.hostId,
+        true,
+      );
+    },
+  );
 
   it("does not offer work interruption when a restart is already pending", () => {
     fixture.state.status = {

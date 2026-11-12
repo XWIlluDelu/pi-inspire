@@ -119,7 +119,8 @@ compare the same page and theme in an ordinary Chrome tab.
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
 | `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
 | `inspire restart --host-only` | Restart Inspire and detach its Pi workers so their work can continue. |
-| `inspire restart --all` | Restart this installation's Linux Host and terminal services, closing project terminals in the installed terminal service. |
+| `inspire restart --terminals` | Restart the Linux Host and terminal services, closing project terminals. |
+| `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host and terminals. Include Herdr Pi when enhancement is active. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
 | `inspire terminal status` | Inspect the matching terminal daemon without creating one. |
 | `inspire terminal stop` | Stop that daemon; running terminals require `--force`. |
@@ -176,12 +177,16 @@ that Pi to apply the update.
 | Action | Effect |
 | --- | --- |
 | **Restart** | Restarts Inspire and its own Pi workers. Project terminals and attached Pi processes stay open. Use `/reload` in a terminal Pi to reload its resources. |
-| **Restart all** | Like Restart, and also restarts the installed Linux terminal service, closing its project terminals. |
+| **Restart all** | Closes current-user Pi sessions and project terminals, then restarts Inspire. Includes Herdr Pi when enhancement is active. |
 
-Both scopes check for unfinished work, including work in a taken-over Pi. After a workload refusal,
-the same row offers **Stop work and restart** or **Stop work and restart all**. If the Host cannot
-confirm Stop for an attached Pi, it lists the affected sessions and waits for your decision.
-**Restart anyway** or **Restart all anyway** proceeds without another attached Pi Stop request.
+**Restart** checks for unfinished work, including work in a taken-over Pi. After a workload refusal,
+the same row offers **Stop work and restart**. If the Host cannot confirm Stop for an attached Pi,
+it lists the affected sessions; **Restart anyway** proceeds without another Stop request.
+
+**Restart all** confirms that running tasks will stop. It uses the current Host\'s Herdr mode,
+not a saved setting waiting for restart: disabled mode preserves Herdr Pi; enabled mode closes
+Pi in Herdr too. The shared Herdr server stays running. Pi shutdown must succeed before Inspire
+starts again. This action requires the installed Linux services.
 
 Use **Recheck status** if a restart request is unconfirmed. **Reset restart recovery…** clears
 an invalid browser record while any submitted restart continues on the Host.
@@ -197,9 +202,9 @@ Linux service. It reuses the launcher or service, configuration and browser pair
 or worker-retirement failure prevents replacement. A Host started directly from the internal
 server entry point needs an operator restart.
 
-Restarts leave connection services running. `inspire restart --all` requires the installed Linux
-services and an external OS terminal, since the project terminal running the command could close
-before it shows the result. Settings shows the availability of both restart scopes.
+Restarts leave connection services running. `inspire restart --all` and `--terminals` require the
+installed Linux services and an external OS terminal, since the project terminal running the command could close
+before it shows the result. Run `--all` outside Pi as well, so closing Pi cannot end the restart command. Settings shows the availability of both restart scopes.
 
 If the listener is down, use `inspire stop` with the running Host's port and state-path overrides,
 then start Inspire after shutdown. Stopping an installed service also ends its project terminals.
@@ -237,7 +242,7 @@ input or controls. Inspect `inspire terminal status` and the owning service. The
 the connection detail for copying.
 
 After enabling the Linux units, a compatible terminal daemon retained from a direct launch keeps
-serving the Host. **Restart all** affects the installed terminal service. The retained daemon keeps
+serving the Host. `inspire restart --terminals` affects the installed terminal service. The retained daemon keeps
 running, and the installed daemon can exit with code 78 when it finds that owner. To move terminal
 ownership to the installed service, finish terminal work, run `inspire terminal stop` from an
 external OS terminal, then run `systemctl --user start inspire-terminal.service`. See

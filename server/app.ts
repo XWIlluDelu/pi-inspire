@@ -60,8 +60,8 @@ import { queryModelThinkingLevel } from "./model-metadata.js";
 import type { ModelSettingsService } from "./model-settings.js";
 import { commonModelOptions } from "./model-settings.js";
 import { registerModelSettingsRoutes } from "./model-settings-routes.js";
-import { resolveProjectDirectory } from "./paths.js";
 import { OperationReceipts } from "./operation-receipts.js";
+import { resolveProjectDirectory } from "./paths.js";
 import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
 import type { PreferencesStore } from "./preferences.js";
@@ -419,6 +419,7 @@ interface AppDependencies {
     "reserve" | "commit" | "release"
   >;
   hostRestart?: import("./host-restart.js").HostRestartController;
+  activeHerdrMode?: boolean;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
   /** Already-known picker metadata; bootstrap never starts model discovery. */
@@ -756,6 +757,9 @@ export function createInspireServer(deps: AppDependencies): {
       case "readiness":
         result = { appName: "inspire" };
         break;
+      case "restart-mode":
+        result = { includeHerdr: deps.activeHerdrMode === true };
+        break;
       case "launch-url": {
         let origin = new URL(instanceUrl(state)).origin;
         if (grant.request.payload.origin !== undefined) {
@@ -936,8 +940,10 @@ export function createInspireServer(deps: AppDependencies): {
             hostId: authorityId,
             available: false,
             allAvailable: false,
+            allPiAvailable: false,
+            allPiReason: "Restart all is unavailable for this Host.",
             allReason:
-              "Restart all requires this Host's installed Linux systemd services.",
+              "Restart with terminals requires this Host's installed Linux systemd services.",
             reason: "Page restart is unavailable for this Host.",
             operation: null,
           },
@@ -947,7 +953,7 @@ export function createInspireServer(deps: AppDependencies): {
     .object({
       hostId: z.string().uuid(),
       operationId: z.string().uuid(),
-      scope: z.enum(["host", "host-only", "all"]),
+      scope: z.enum(["host", "host-only", "all", "all-pi"]),
       interruptWork: z.literal(true).optional(),
       skipAttachedStop: z.literal(true).optional(),
     })

@@ -97,6 +97,7 @@ const fixtureModel = {
 export async function hostApiFixture(
   options: {
     token?: string;
+    activeHerdrMode?: boolean;
     maintenanceRestart?: Parameters<
       typeof createInspireServer
     >[0]["maintenanceRestart"];
@@ -141,6 +142,7 @@ export async function hostApiFixture(
   };
   const application = createInspireServer({
     token,
+    activeHerdrMode: options.activeHerdrMode,
     runtime,
     catalog: workbench.catalog,
     attachments,

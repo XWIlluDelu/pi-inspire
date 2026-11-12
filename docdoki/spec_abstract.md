@@ -38,6 +38,7 @@ locally and are not tracked.
 
 | State | Work |
 | --- | --- |
+| Implemented | [Restart all Pi](stages/follow-global-pi-restart-2026-11-12.md) closes current-user Pi with mode-dependent Herdr inclusion; the previous terminal-only CLI scope is `--terminals`. |
 | Device acceptance open | [Runtime quality](stages/follow-runtime-quality-2026-10-25.md) records native lifecycle evidence, the cross-platform baseline and remaining physical-device checks. |
 | Implemented | [Workbench interactions](stages/follow-workbench-interactions-2026-10-24.md) links the reading, input and inspection contracts and records pending platform checks and interaction proposals. |
 | Implemented; device acceptance partial | Host-owned task outcomes, device-local alert settings and Web Push ([notifications](specs/notifications.md)). Verified: Linux Chrome delivery, installed-PWA refresh continuity, Android system display of a manual test. Open: Android background-task/click and iOS acceptance ([follow-notifications-2026-10-22](stages/follow-notifications-2026-10-22.md)). |

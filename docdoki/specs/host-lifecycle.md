@@ -23,6 +23,8 @@ covers:
   - server/{runtime,runtime-worker-lifecycle,runtime-events}.ts
   - server/{host-restart,host-restart-backend,host-restart-preparation,host-restart-systemd,restart-preflight}.ts
   - server/launcher-restart.{mjs,d.mts}
+  - server/pi-processes.{mjs,d.mts}
+  - tests/server/global-pi-restart.test.ts
   - shared/host-restart.ts
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx
@@ -325,13 +327,20 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
 - `inspire restart` prepares dependencies/client build and imports the next runtime and external
   Pi SDK before stopping the Host. Preparation failure leaves it running. Host-only restart
   preserves the independent terminal daemon.
-- `inspire restart --all` requires this installation's verified Linux systemd Host and terminal
-  units. It restarts both in one transaction, with Host ordered after terminal readiness. It ends
+- `inspire restart --terminals` requires this installation\'s verified Linux systemd Host and terminal
+  units. It restarts both in one transaction, with Host ordered after terminal readiness, ending
   project terminals in the installed unit. An independent daemon retained from a direct launch
-  keeps its own lifecycle under [[terminal]]. Run the command from an external OS terminal so it
-  can report the result.
-  Unsupported or foreign services are refused before stopping anything. Connection services are
-  outside the scope, and a failed full restart cannot fall back to Host-only.
+  keeps its own lifecycle under [[terminal]]. Run terminal-closing commands from an external OS
+  terminal. Unsupported or foreign services are refused before stopping anything, connection
+  services remain outside the scope, and a failed service restart cannot fall back to a local Host.
+- **Restart all** and `inspire restart --all` additionally close current-user Pi processes regardless
+  of their owner. Include Herdr Pi only when the running Host has enhancement enabled; otherwise
+  preserve them. Read the effective mode, not the saved next-start preference. The Herdr server
+  itself stays running. The CLI stops the managed Host/terminals before process cleanup and starts
+  them only after cleanup succeeds. If no Host is running, Herdr Pi are excluded.
+  The CLI reads the static effective mode through signed local control, without sending a reusable
+  bearer or probing Herdr. Reject Pi-descended CLI callers before preparation: terminating their
+  parent Pi could kill the restart coordinator before it starts Inspire again.
 - **Restart** and **Restart all** live in Settings → System → Host, with concise confirmation
   for each scope. Restart supports launcher-owned native Windows, macOS, and Linux instances,
   including custom loopback addresses, ports, and state paths. Installed Linux services retain their
@@ -367,14 +376,21 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   workload checks while keeping preparation, service ownership, lease exclusivity and final commit.
   Automatic maintenance keeps its update and idle checks and restarts only the Host service.
 - **Restart** replaces Inspire-owned Pi workers. Attached Pi processes keep running with their
-  loaded settings. Pi exposes reload in its command context, so a terminal Pi reloads through its
-  own `/reload` command. **Restart all** also restarts the terminal service. A busy taken-over Pi
-  counts as active work for both scopes. Before submission, the Host reads the attached Pi
-  directly. An unavailable observation leaves the ordinary restart blocked. Only an explicit
-  **Stop work and restart** interrupts its agent work through attach-control. The interruption
-  must identify the attached branch. If Stop cannot be confirmed, the Host reports the affected
-  sessions before restarting. The same row offers **Restart anyway** to proceed without issuing
-  another Stop to attached Pi processes.
+  loaded settings. Pi exposes reload through its own `/reload` command. An ordinary restart counts
+  busy taken-over Pi as active work and reads it directly before submission. Unavailable observation
+  blocks restart. **Stop work and restart** explicitly interrupts its attached branch; if Stop
+  cannot be confirmed, report the affected sessions and offer **Restart anyway** without another Stop.
+- **Restart all** confirms Pi termination before submission and requires `interruptWork: true`.
+  Acquire and commit the same restart admission lease, then terminate the selected Pi processes
+  before issuing the service restart. It does not depend on attached-Pi Stop acknowledgement.
+  Use the distinct `all-pi` API scope; older clients\' `all` scope remains terminal-service-only.
+  Unsupported scope is rejected before preparation; absence of the new capability disables it.
+- Linux process cleanup snapshots exact `pi` and `pi-rpc` titles owned by the current OS user.
+  Herdr pane/socket environment markers identify Herdr Pi. Revalidate birth ticks, ownership,
+  title and inclusion before each signal; send SIGTERM, wait up to five seconds, then SIGKILL
+  surviving identities and verify exit. Never signal shells, Herdr, the Host, or a reused PID.
+  Fresh final discovery must confirm that no included Pi remains. Discovery, signalling or exit
+  verification failures prevent restart and report the failure, including partial shutdown.
 - `inspire restart --host-only` preserves every Pi process and its running work, including
   Inspire's workers. Running work can continue during restart because the closing Host detaches
   its workers. When the browser returns to a preserved session, it automatically attaches to a

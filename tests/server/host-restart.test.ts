@@ -34,7 +34,7 @@ function fixture(
     stopAttachedPiWork: vi.fn(async () => {}),
   };
   const backend: HostRestartBackend = {
-    inspect: vi.fn(async () => ({ host: true, all: true })),
+    inspect: vi.fn(async () => ({ host: true, all: true, allPi: true })),
     prepare: vi.fn(async () => {}),
     request: vi.fn(async (_all, commit) =>
       (await commit()) ? { code: 0 } : { code: 1, issued: false },
@@ -82,11 +82,35 @@ describe("manual Host restart ownership", () => {
         preserveWork ? 0 : 1,
       );
       expect(f.backend.request).toHaveBeenCalledWith(
-        scope === "all",
+        scope,
         expect.any(Function),
       );
     },
   );
+
+  it("requires explicit permission for global Pi shutdown and bypasses attached-only Stop", async () => {
+    const f = fixture();
+    const request = {
+      ...(await intent(f.controller)),
+      scope: "all-pi" as const,
+    };
+    expect(() => f.controller.start(request)).toThrow("Confirm closing all Pi");
+    f.controller.start({ ...request, interruptWork: true });
+    await vi.waitFor(async () =>
+      expect((await f.controller.status()).operation?.phase).toBe("submitted"),
+    );
+    expect(f.backend.request).toHaveBeenCalledWith(
+      "all-pi",
+      expect.any(Function),
+    );
+    expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
+      true,
+      true,
+      false,
+    );
+    expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
+    expect(f.runtime.checkAttachedRestartWork).not.toHaveBeenCalled();
+  });
 
   it("finishes preparation before acquiring idle authority and excludes other operations", async () => {
     let ready!: () => void;
@@ -239,7 +263,7 @@ describe("manual Host restart ownership", () => {
     await vi.waitFor(async () =>
       expect((await f.controller.status()).operation).toMatchObject({
         phase: "rejected",
-        error: expect.stringContaining("Restart all requires"),
+        error: expect.stringContaining("Restart with terminals requires"),
       }),
     );
     expect(f.backend.prepare).not.toHaveBeenCalled();
@@ -316,9 +340,13 @@ it("captures an isolated restart preflight failure and allows a corrected retry"
   const launcher = join(root, "inspire.mjs");
   try {
     const backend = systemdRestartBackend(root, false);
-    expect(await backend.inspect()).toEqual({ host: false, all: false });
+    expect(await backend.inspect()).toMatchObject({
+      host: false,
+      all: false,
+      allPi: false,
+    });
     await expect(
-      backend.request(true, () => {
+      backend.request("all", () => {
         throw new Error("must not commit");
       }),
     ).resolves.toEqual({ issued: false, code: 1 });

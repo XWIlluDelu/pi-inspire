@@ -8,6 +8,7 @@ export function hostRestartBackend(
   options: {
     enabled: boolean;
     systemdEnabled: boolean;
+    includeHerdr: boolean;
     restart: () => Promise<void>;
   },
 ): HostRestartBackend {
@@ -15,6 +16,7 @@ export function hostRestartBackend(
     return systemdRestartBackend(
       root,
       options.enabled && options.systemdEnabled,
+      { includeHerdr: options.includeHerdr },
     );
   const launcher = createLauncherRestartClient(process);
   return {
@@ -22,8 +24,9 @@ export function hostRestartBackend(
       return { host: await launcher.inspect(), all: false };
     },
     prepare: () => prepareHostRestart(root),
-    async request(all, commit) {
-      if (all) return { code: 1, issued: false };
+    async request(scope, commit) {
+      if (scope === "all" || scope === "all-pi")
+        return { code: 1, issued: false };
       const result = await launcher.request(commit);
       if (result.issued) {
         // Let the controller publish submission before graceful shutdown.

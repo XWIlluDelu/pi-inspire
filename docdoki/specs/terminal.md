@@ -49,7 +49,7 @@ An existing non-private POSIX parent is rejected rather than chmodded, so a cust
 state address cannot change permissions on a shared or system directory.
 
 `inspire terminal status|stop|restart` supplies portable, instance-scoped maintenance without
-restarting the Host/Pi or expanding Restart all. Stop/restart run from an external OS terminal; a
+restarting the Host/Pi. Stop/restart run from an external OS terminal; a
 managed-terminal environment is refused before stopping work, so the command cannot kill its own
 coordinator midway through replacement. Status stays available there. Maintenance has a stable
 authenticated protocol so the launcher can still control a detached daemon across a Host update.
@@ -160,7 +160,7 @@ notice card with complete Copy and separate Dismiss; text selection does not dis
 An incompatible daemon requires an explicit upgrade after its work is finished. Without verified
 maintenance controls, use its existing service owner or an inspected manual shutdown, never a PID
 claimed by an unverified listener. [Maintenance guidance](../../docs/host.md#connection-recovery-and-upgrades)
-covers this boundary and the installed-service scope of Restart all.
+covers this boundary and the installed-service scope of `inspire restart --terminals`.
 
 Catalog loads, polling, and mutations belong to one pane project/reload generation. Switching projects,
 reloading, or unmounting retires old response/error/loading/selection/rollback writebacks, while completed
@@ -376,8 +376,8 @@ Browser-local preferences never become process authority.
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
 dependencies. The terminal user service is separate from `inspire-host.service`, so Host-only
 lifecycle operations preserve PTYs; disabling the terminal service ends them. [[host-lifecycle]]
-defines CLI stop and Restart all, which address both installed services, and Host-only
-ordinary/automatic restart.
+defines CLI stop and `inspire restart --terminals`, which address both installed services,
+ordinary/Host-only restart, and **Restart all**, which additionally closes Pi processes.
 
 ## Boundaries
 
