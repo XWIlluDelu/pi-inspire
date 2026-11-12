@@ -49,7 +49,6 @@ function hostSettings(
   overrides: Partial<TaskAlertSettings> = {},
 ): TaskAlertSettings {
   return {
-    installationId: "device-one",
     mode,
     grouping,
     groupingUpdatedAt,

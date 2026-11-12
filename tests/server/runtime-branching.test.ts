@@ -829,7 +829,6 @@ describe("stock RPC branch bridge", () => {
         kind: "image",
         mimeType: images[index]!.mimeType,
       });
-      expect(item).not.toHaveProperty("previewDataUrl");
       const preview = await attachments.imagePreview(item.id);
       expect(preview.bytes.toString("base64")).toBe(images[index]!.data);
     }

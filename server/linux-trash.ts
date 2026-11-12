@@ -189,26 +189,20 @@ async function optionalStats(path: string) {
 async function privateDirectory(
   path: string,
   uid: number,
-  create: boolean,
   recursive = false,
-): Promise<boolean> {
-  if (create)
-    await mkdir(path, { recursive, mode: 0o700 }).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code !== "EEXIST") throw error;
-      },
-    );
+): Promise<void> {
+  await mkdir(path, { recursive, mode: 0o700 }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EEXIST") throw error;
+    },
+  );
   const stats = await optionalStats(path);
-  if (!stats) return false;
+  if (!stats) return;
   if (!stats.isDirectory() || stats.isSymbolicLink() || stats.uid !== uid)
     throw new Error(
       "Linux Trash directory is not a current-user non-symlink directory",
     );
-  if ((stats.mode & 0o077) !== 0) {
-    if (!create) throw new Error("Linux Trash directory is not private");
-    await chmod(path, 0o700);
-  }
-  return true;
+  if ((stats.mode & 0o077) !== 0) await chmod(path, 0o700);
 }
 
 async function validSharedTrash(path: string): Promise<boolean> {
@@ -226,9 +220,9 @@ async function prepareRoot(
   uid: number,
   recursive = false,
 ): Promise<void> {
-  await privateDirectory(root, uid, true, recursive);
-  await privateDirectory(join(root, "files"), uid, true);
-  await privateDirectory(join(root, "info"), uid, true);
+  await privateDirectory(root, uid, recursive);
+  await privateDirectory(join(root, "files"), uid);
+  await privateDirectory(join(root, "info"), uid);
 }
 
 export async function selectLinuxTrash(

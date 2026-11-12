@@ -190,7 +190,6 @@ describe("TerminalSessionManager", () => {
         cols: before.cols,
         rows: before.rows,
         resizeRevision: before.resizeRevision,
-        firstOutputOffset: before.firstOutputOffset,
         nextOutputOffset: before.nextOutputOffset,
       });
       expect(

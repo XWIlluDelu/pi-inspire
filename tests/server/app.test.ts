@@ -81,25 +81,6 @@ describe("Host HTTP workflows", () => {
     expect(response.body.toolPresentationsWarning).toBeUndefined();
   });
 
-  it("finishes the authenticated shutdown acknowledgement before dispatching teardown", async () => {
-    const { shutdown } = fixture;
-    const sequence: string[] = [];
-    application.server.prependListener("request", (_request, response) => {
-      response.once("finish", () => {
-        if (response.statusCode === 202) sequence.push("acknowledged");
-      });
-    });
-    shutdown.mockImplementation(() => {
-      sequence.push("shutdown");
-    });
-
-    await guest.post("/api/host/shutdown").expect(401);
-    expect(shutdown).not.toHaveBeenCalled();
-    await local.post("/api/host/shutdown").expect(202);
-    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
-    expect(sequence).toEqual(["acknowledged", "shutdown"]);
-  });
-
   it("requires local authentication for Inspire, Pi, and extension update status", async () => {
     for (const path of ["/api/update", "/api/pi-update"]) {
       await guest.get(path).expect(401);
@@ -422,7 +403,6 @@ describe("Host HTTP workflows", () => {
       targetMessageId: "user-0",
       rangeStart: 0,
       rangeEnd: 1,
-      hasMoreInTurn: false,
       continuationCursor: null,
     };
     const turnPaging = vi

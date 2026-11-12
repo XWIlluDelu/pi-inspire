@@ -80,12 +80,11 @@ export async function modelSettingsScenario(page: Page, theme = "light") {
         api: edit.values.api,
         apiKeyConfigured: Boolean(edit.values.apiKey),
         models: [],
-        advancedFields: [],
       });
     } else if (edit?.kind === "model") {
       snapshot.providers
         .find((provider) => provider.id === edit.provider)!
-        .models.push({ ...edit.values, advancedFields: [] });
+        .models.push(edit.values);
       snapshot.models.push({ ...edit.values, provider: edit.provider });
     } else if (patch) {
       snapshot.saved = {

@@ -139,10 +139,8 @@ describe("Files pane", () => {
             sessionId: "s1",
             viewId: "view-s1",
             revision: responseRevision,
-            offset: 0,
-            total: resources.length,
-            nextCursor: null,
             resources,
+            produced: [],
           });
         }
         if (url.startsWith("/api/resources/probe")) {

@@ -157,7 +157,6 @@ describe("Prompt Map navigation ownership", () => {
               targetMessageId: "u2",
               rangeStart: continued ? 3 : 2,
               rangeEnd: continued ? 4 : 3,
-              hasMoreInTurn: !continued,
               continuationCursor: continued ? null : "continue-turn",
             },
           };
@@ -269,7 +268,6 @@ describe("Prompt Map navigation ownership", () => {
         targetMessageId: "u0",
         rangeStart: 0,
         rangeEnd: 1,
-        hasMoreInTurn: false,
         continuationCursor: null,
       },
     });

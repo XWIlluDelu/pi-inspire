@@ -158,10 +158,10 @@ export class ResourceController {
     });
   }
 
-  /** Load one bounded page from the reference projection for the currently
-   * visible branch revision. The host returns labels and references only. */
+  /** Load the reference page for the currently visible branch revision.
+   * The host returns labels and references only. */
   async loadSessionResources(
-    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
+    signal?: AbortSignal,
   ): Promise<SessionResourceListResponse | null> {
     const api = this.host.api();
     const {
@@ -171,11 +171,11 @@ export class ResourceController {
     } = this.host.state();
     if (!api || !sessionId || !viewId) return null;
     try {
-      const response = await api.listResources(sessionId, options);
+      const response = await api.listResources(sessionId, signal);
       const current = this.host.state();
       if (
         this.host.api() !== api ||
-        options.signal?.aborted ||
+        signal?.aborted ||
         current.sessionId !== sessionId ||
         current.transcriptViewId !== viewId ||
         current.transcriptRevision !== revision ||

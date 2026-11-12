@@ -29,10 +29,6 @@ export class TerminalRingBuffer {
     return this.endOffset;
   }
 
-  get size(): number {
-    return this.retainedBytes;
-  }
-
   append(value: Uint8Array): number {
     const start = this.endOffset;
     this.endOffset += value.byteLength;

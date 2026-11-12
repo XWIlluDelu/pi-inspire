@@ -55,7 +55,7 @@ afterEach(async () => {
 });
 
 describe("ResourceStore", () => {
-  it("paginates one revision-bound citation index without retaining message content", async () => {
+  it("lists the newest references and every written file from one citation index", async () => {
     const { project } = await workspace();
     let messageLoads = 0;
     const messages = [
@@ -86,33 +86,15 @@ describe("ResourceStore", () => {
       },
     };
 
-    const first = await resources.list(context);
-    expect(first).toMatchObject({ offset: 0, total: 21 });
-    expect(first.resources).toHaveLength(8);
-    expect(first.resources[0]?.reference).toBe("file-19.md");
-    expect(first.nextCursor).toEqual(expect.any(String));
-
-    const second = await resources.list(context, {
-      cursor: first.nextCursor!,
-      limit: 10,
-    });
-    expect(first.produced).toEqual([
+    const listed = await resources.list(context);
+    expect(listed.resources).toHaveLength(21);
+    expect(listed.resources[0]?.reference).toBe("file-19.md");
+    expect(listed.produced).toEqual([
       expect.objectContaining({ reference: "analysis.m", writes: true }),
     ]);
-    expect(second).not.toHaveProperty("produced");
-    expect(second).toMatchObject({ offset: 8, total: 21 });
-    expect(second.resources).toHaveLength(10);
-    expect(second.resources[0]?.reference).toBe("file-11.md");
-    expect(second.nextCursor).toEqual(expect.any(String));
 
     await resources.probe(context, ["file-19.md", "file-0.md"]);
     expect(messageLoads).toBe(1);
-    await expect(
-      resources.list(
-        { ...context, revision: 8 },
-        { cursor: first.nextCursor! },
-      ),
-    ).rejects.toMatchObject({ status: 409 });
   });
 
   it("keeps the newest revision cached when an older index completes later", async () => {
@@ -154,17 +136,21 @@ describe("ResourceStore", () => {
         content: [{ type: "text", text: "See `newer.md`." }],
       },
     ]);
-    await expect(newerList).resolves.toMatchObject({ total: 1 });
+    await expect(newerList).resolves.toMatchObject({
+      resources: [{ reference: "newer.md" }],
+    });
     resolveOlder([
       {
         role: "assistant",
         content: [{ type: "text", text: "See `older.md`." }],
       },
     ]);
-    await expect(olderList).resolves.toMatchObject({ total: 1 });
+    await expect(olderList).resolves.toMatchObject({
+      resources: [{ reference: "older.md" }],
+    });
 
     await expect(resources.list(newerContext)).resolves.toMatchObject({
-      total: 1,
+      resources: [{ reference: "newer.md" }],
     });
     expect({ olderLoads, newerLoads }).toEqual({
       olderLoads: 1,

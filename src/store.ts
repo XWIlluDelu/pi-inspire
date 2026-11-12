@@ -3605,9 +3605,8 @@ export class AppStore {
     this.resources.cancelProbes(clearStanding);
   };
 
-  loadSessionResources = (
-    options: { cursor?: string; limit?: number; signal?: AbortSignal } = {},
-  ) => this.resources.loadSessionResources(options);
+  loadSessionResources = (signal?: AbortSignal) =>
+    this.resources.loadSessionResources(signal);
 
   probeResources = (references: string[]): Promise<void> =>
     this.resources.probeResources(references);

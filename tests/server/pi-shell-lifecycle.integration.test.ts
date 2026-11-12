@@ -115,11 +115,9 @@ describe("native shell input", () => {
     const tree = await f.runtime.branchTree(f.sessionId);
     const shellNodes = tree.nodes.filter((node) => node.role === "shell");
     expect(shellNodes).toHaveLength(3);
-    expect(
-      shellNodes.every(
-        (node) => node.canSwitch && !node.canEdit && !node.canFork,
-      ),
-    ).toBe(true);
+    expect(shellNodes.every((node) => !node.canEdit && !node.canFork)).toBe(
+      true,
+    );
     for (const [query, command, context] of [
       ["EXTENSION_BASH_RESULT", "!!fixture-hook", "Excluded from context"],
       ["EXTENSION_CUSTOM_OPERATIONS", "!fixture-ops", "Included in context"],

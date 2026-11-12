@@ -9,9 +9,7 @@ interface Access {
   expiresAt: number;
 }
 
-export class BrowserPairingError extends Error {
-  readonly status = 401;
-}
+export class BrowserPairingError extends Error {}
 
 let bootstrap: string | null = null;
 let access: Access | null = null;

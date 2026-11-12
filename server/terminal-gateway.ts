@@ -95,7 +95,6 @@ const terminalControlSchema = z.discriminatedUnion("type", [
   z
     .object({ type: z.literal("take_control"), ...terminalDimensionsSchema })
     .strict(),
-  z.object({ type: z.literal("release_control") }).strict(),
   z.object({ type: z.literal("ping") }).strict(),
 ]);
 

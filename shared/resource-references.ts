@@ -279,7 +279,6 @@ function isWritingToolName(name: string | undefined): boolean {
   return Boolean(name) && WRITING_TOOL_NAME.test(name!);
 }
 
-export const RESOURCE_LIST_INITIAL_SIZE = 8;
 export const MAX_RESOURCE_LIST_PAGE_SIZE = 100;
 export const MAX_RESOURCE_PROBE_REFERENCES = 16;
 // Keep the existing 8,192 native UTF-16-unit allowance after URI escaping:
@@ -287,18 +286,15 @@ export const MAX_RESOURCE_PROBE_REFERENCES = 16;
 export const MAX_RESOURCE_PATH_LENGTH = 8_192;
 export const MAX_RESOURCE_REFERENCE_LENGTH = MAX_RESOURCE_PATH_LENGTH * 9;
 
-/** Browser-safe page from the complete reference projection of one branch view. */
+/** The newest page of one branch view's complete reference projection. */
 export interface SessionResourceListResponse {
   sessionId: string;
   viewId: string;
   revision: number;
-  offset: number;
-  total: number;
-  nextCursor: string | null;
   resources: SessionResourceReference[];
-  /** First page only: written files from the whole view, newest first, so
-   * Produced is complete even when writes fall outside the page. */
-  produced?: SessionResourceReference[];
+  /** Written files from the whole view, newest first, so Produced is
+   * complete even when writes fall outside the page. */
+  produced: SessionResourceReference[];
 }
 
 function trimReference(value: string): string {

@@ -451,9 +451,7 @@ describe("Models settings configuration and ownership", () => {
 
   it("omits an API override when adding a model with native API inheritance", async () => {
     const snapshot = modelSettingsSnapshot();
-    snapshot.providers = [
-      { id: "openai", models: [], apiKeyConfigured: true, advancedFields: [] },
-    ];
+    snapshot.providers = [{ id: "openai", models: [], apiKeyConfigured: true }];
     snapshot.nativeApiProviders = ["openai"];
     snapshot.models = [];
     fixture.host.readModelSettings.mockResolvedValue(snapshot);
@@ -491,7 +489,6 @@ describe("Models settings configuration and ownership", () => {
         id: "same ",
         type: "embedding",
         name: "Embedding model",
-        advancedFields: [],
       },
       {
         id: "same ",
@@ -499,7 +496,6 @@ describe("Models settings configuration and ownership", () => {
         name: "Chat model",
         contextWindow: 0,
         maxTokens: 0.5,
-        advancedFields: [],
       },
     ];
     fixture.host.readModelSettings.mockResolvedValue(snapshot);

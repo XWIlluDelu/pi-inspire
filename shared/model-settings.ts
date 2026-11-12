@@ -44,7 +44,6 @@ export interface ModelDeclaration {
   contextWindow?: number;
   maxTokens?: number;
   type?: string;
-  advancedFields: string[];
 }
 export interface ProviderDeclaration {
   id: string;
@@ -52,7 +51,6 @@ export interface ProviderDeclaration {
   api?: string;
   apiKeyConfigured: boolean;
   models: ModelDeclaration[];
-  advancedFields: string[];
 }
 export interface ModelSettingsSnapshot {
   settingsRevision: string;

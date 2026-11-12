@@ -871,10 +871,6 @@ export class TerminalSessionManager implements TerminalService {
       this.takeControl(session, attachment, message.cols, message.rows);
       return;
     }
-    if (message.type === "release_control") {
-      this.releaseControl(session, attachment);
-      return;
-    }
     if (message.type === "resize") {
       validateDimensions(message.cols, message.rows);
       if (attachment.writable && session.owner?.attachmentId === attachment.id)
@@ -894,7 +890,7 @@ export class TerminalSessionManager implements TerminalService {
         if (session.owner?.attachmentId !== null) return;
         session.owner = null;
         this.touch(session);
-        this.broadcastOwnership(session, "available");
+        this.broadcastOwnership(session);
         this.broadcastDescriptor(session);
       }, this.ownerReconnectGraceMs);
       session.owner.releaseTimer.unref();
@@ -1465,19 +1461,6 @@ export class TerminalSessionManager implements TerminalService {
     this.broadcastDescriptor(session);
   }
 
-  private releaseControl(
-    session: ManagedTerminal,
-    attachment: ManagedAttachment,
-  ): void {
-    if (session.owner?.attachmentId !== attachment.id) return;
-    if (session.owner.releaseTimer) clearTimeout(session.owner.releaseTimer);
-    session.owner = null;
-    attachment.writable = false;
-    this.touch(session);
-    this.broadcastOwnership(session, "released");
-    this.broadcastDescriptor(session);
-  }
-
   private resizeSession(
     session: ManagedTerminal,
     cols: number,
@@ -1612,7 +1595,6 @@ export class TerminalSessionManager implements TerminalService {
       rows: session.rows,
       resizeRevision: session.resizeRevision,
       outputEpoch: session.outputEpoch,
-      firstOutputOffset: session.ring.firstOffset,
       nextOutputOffset: session.ring.nextOffset,
       viewerCount: session.attachments.size,
       hasOwner: session.owner !== null,
@@ -1638,16 +1620,13 @@ export class TerminalSessionManager implements TerminalService {
     );
   }
 
-  private broadcastOwnership(
-    session: ManagedTerminal,
-    reason: "available" | "released",
-  ): void {
+  private broadcastOwnership(session: ManagedTerminal): void {
     for (const attachment of session.attachments.values()) {
       this.sendControl(attachment, {
         type: "ownership",
         writable: attachment.writable,
         hasOwner: session.owner !== null,
-        reason,
+        reason: "available",
       });
     }
   }

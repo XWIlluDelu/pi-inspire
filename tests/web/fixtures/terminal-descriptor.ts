@@ -25,7 +25,6 @@ export function terminalDescriptor(
     rows: 24,
     resizeRevision: 0,
     outputEpoch: "output-1",
-    firstOutputOffset: 0,
     nextOutputOffset: 0,
     viewerCount: 1,
     hasOwner: true,

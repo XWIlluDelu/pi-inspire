@@ -1021,7 +1021,6 @@ export interface UserTurnTranscriptPage extends TranscriptPage {
   targetMessageId: string;
   rangeStart: number;
   rangeEnd: number;
-  hasMoreInTurn: boolean;
   continuationCursor: string | null;
 }
 
@@ -1081,7 +1080,6 @@ export interface BranchTreeNode {
   timestamp: string;
   active: boolean;
   leaf: boolean;
-  canSwitch: boolean;
   canEdit: boolean;
   canFork: boolean;
   /** Complete native child count, independent of this page. */
@@ -1393,7 +1391,6 @@ export interface UploadedAttachment {
   mimeType: string;
   size: number;
   kind: "image" | "file";
-  previewDataUrl?: string;
 }
 
 export interface ComposerHistoryArtifactsRequest {
