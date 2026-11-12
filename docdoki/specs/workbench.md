@@ -173,10 +173,11 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   Desktop Pin/Hide or Restore/Delete appear at the trailing edge on hover or keyboard focus. On a
   one-line row they take the age's place and the title fades under them without changing width;
   while a session is opening, its Opening… status keeps that place and the actions wait. Two-line
-  pointer rows are 44px high; coarse desktop rows keep visible 36px actions. On phone-width layouts or without hover the
-  actions stay visible; phone-width or touch drawers keep their persistent 36px actions in a
-  separate column beside both text lines. Pin and Hide stay directly accessible, not behind an
-  overflow menu. The exact timestamp and message count stay in tooltips.
+  rows are 44px high. On phone-width layouts or without hover, the 36px actions stay visible in a
+  separate column beside both text lines. Pin and Hide stay directly accessible. The exact timestamp
+  and message count stay in tooltips.
+
+  On devices without hover, the action's background shows during the press and clears on release.
 
   Folder groups use the same spacing in the catalog and Hidden, including the transition from a
   pinned folder to an ordinary folder. The titled Pinned sessions section has its own spacing

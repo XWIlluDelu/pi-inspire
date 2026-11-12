@@ -149,6 +149,54 @@ test.describe("touch session rows", () => {
   });
 });
 
+test.describe("desktop touch navigation", () => {
+  test.use({ hasTouch: true });
+
+  test("keeps session titles and touch actions in separate columns", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await navigationGroupsFixture(page);
+    await pairedPage(page);
+    expect(await page.evaluate(() => matchMedia("(hover: none)").matches)).toBe(
+      true,
+    );
+    const folder = page
+      .locator(".nav__group")
+      .filter({ has: page.getByRole("button", { name: /^calibration/ }) });
+    await folder.locator(".nav__group-toggle").tap();
+    const row = folder.locator(".nav__row");
+    const title = (await row.locator(".nav__row-name").boundingBox())!;
+    const actions = (await row.locator(".nav__row-actions").boundingBox())!;
+    expect(title.x + title.width).toBeLessThanOrEqual(actions.x);
+    expect((await row.boundingBox())!.height).toBe(44);
+
+    const pin = row.getByRole("button", { name: 'Pin "Geometry session"' });
+    expect(await pin.boundingBox()).toMatchObject({ width: 36, height: 36 });
+    // Keep the row in place for one tap so curation cannot mask stale hover.
+    await pin.evaluate((button) => {
+      button.addEventListener("click", (event) => event.stopPropagation(), {
+        once: true,
+      });
+    });
+    await pin.tap();
+    await expect(pin).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(row).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+    await row.locator(".nav__row-main").tap();
+    await expect(page.locator(".topbar__title-button")).toHaveText(
+      "Geometry session",
+    );
+    await pin.tap();
+    await expect(
+      page
+        .locator(".nav__group--pinned")
+        .getByRole("button", { name: 'Unpin "Geometry session"' }),
+    ).toBeVisible();
+  });
+});
+
 test("session search distinguishes loading, error and an empty result", async ({
   page,
 }) => {

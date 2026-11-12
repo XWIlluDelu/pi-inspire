@@ -418,8 +418,10 @@
 
 /* Hover lifts toward the ink in both themes; an inset well reads as a hole
    on dark navigation. */
-.nav__row:hover {
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
+@media (hover: hover) {
+  .nav__row:hover {
+    background: color-mix(in srgb, var(--ink) 6%, transparent);
+  }
 }
 
 .nav__row--active,
@@ -453,6 +455,8 @@
 }
 
 .nav__row-action {
+  --nav-action-ink: var(--accent-deep);
+  --nav-action-fill: color-mix(in srgb, var(--ink) 8%, transparent);
   width: 24px;
   height: 24px;
   padding: 0;
@@ -469,15 +473,22 @@
     background var(--dur-micro) var(--ease-standard);
 }
 
-.nav__row-action:hover {
-  color: var(--accent-deep);
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
+.nav__row-action--danger {
+  --nav-action-ink: var(--error);
+  --nav-action-fill: var(--error-tint);
 }
 
-.nav__row-action--danger:hover:not(:disabled),
+.nav__row-action:active:not(:disabled),
 .nav__row-action--danger:focus-visible:not(:disabled) {
-  color: var(--error);
-  background: var(--error-tint);
+  color: var(--nav-action-ink);
+  background: var(--nav-action-fill);
+}
+
+@media (hover: hover) {
+  .nav__row-action:hover:not(:disabled) {
+    color: var(--nav-action-ink);
+    background: var(--nav-action-fill);
+  }
 }
 
 .nav__row-action:disabled {
@@ -913,27 +924,6 @@
   }
 }
 
-@media (min-width: 901px) and (hover: none) {
-  .nav__row {
-    display: block;
-  }
-
-  .nav__row-main {
-    width: 100%;
-    min-height: 52px;
-  }
-
-  .nav__row-meta {
-    padding-inline-end: 78px;
-  }
-
-  .nav__row-actions {
-    position: absolute;
-    /* The trailing inset comes from right rather than the touch grid's margin. */
-    margin-inline-end: 0;
-  }
-}
-
 /* --- Shared workspace browser --- */
 
 .workspace-tree {
@@ -1196,8 +1186,10 @@ button.workspace-tree__status:hover:where(:not(.workspace-tree__status--error)) 
   border-radius: var(--radius-control);
 }
 
-.nav__group-title--folder:hover {
-  background: var(--bg-inset);
+@media (hover: hover) {
+  .nav__group-title--folder:hover {
+    background: var(--bg-inset);
+  }
 }
 
 .nav__group--pinned > .nav__group-title {
