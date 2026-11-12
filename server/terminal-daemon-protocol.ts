@@ -5,10 +5,10 @@ import type {
   TerminalMutationMethod,
   TerminalOperationIdentity,
 } from "../shared/terminal-contracts.js";
-import { installationKey } from "./installation-key.js";
 import {
   inspireRuntimeDirectory,
   inspireStateDirectory,
+  installationKey,
 } from "./platform-paths.mjs";
 
 export const TERMINAL_DAEMON_PROTOCOL_VERSION = 3;
