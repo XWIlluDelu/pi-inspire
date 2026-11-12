@@ -14,15 +14,14 @@ covers:
   - src/components/{Transcript,transcript-cards,ChildCalls,CodeModeResult,ImagePreview}.tsx
   - src/components/ResourcePathLabel.tsx
   - src/child-call-summary.ts
-  - tests/web/{child-call-summary,status-choice}.test.ts*
+  - tests/web/status-choice.test.tsx
   - src/styles/activity-cards.css
   - tests/browser/{tool-presentations,custom-message}.spec.ts
   - tests/server/{app,app-events}.test.ts
   - tests/server/tool-presentation-config.test.ts
-  - tests/web/{tool-cards,tool-card-fallbacks,streaming-edit-cards,child-calls,codemode-result}.test.tsx
+  - tests/web/{tool-cards,tool-output-preview,child-calls,codemode-result}.test.tsx
   - tests/server/pi-child-calls.integration.test.ts
   - tests/fixtures/pi-child-calls-extension.ts
-  - tests/fixtures/tool-result-resources.{mjs,d.mts}
   - tests/web/thinking-presentations.test.tsx
   - tests/web/tool-presentations.test.ts
   - tests/web/custom-message*.test.{ts,tsx}

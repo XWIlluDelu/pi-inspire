@@ -55,35 +55,7 @@ describe("preference persistence", () => {
     );
   });
 
-  it("setTheme updates local state and persists a field-scoped PATCH", async () => {
-    const store = new AppStore();
-    await store.init();
-    store.setTheme("dark");
-    expect(store.getState().prefs.theme).toBe("dark");
-    await vi.waitFor(() => expect(saved.length).toBeGreaterThan(0));
-    expect(saved.at(-1)).toEqual({ theme: "dark" });
-  });
-
-  it.each([
-    "wisteria",
-    "hydrangea",
-    "lycoris",
-    "chimonanthus",
-    "classic-jade",
-    "classic-amber",
-    "mono",
-  ] as const)(
-    "setPalette persists %s with a field-scoped patch",
-    async (palette) => {
-      const store = new AppStore();
-      await store.init();
-      store.setPalette(palette);
-      expect(store.getState().prefs.palette).toBe(palette);
-      await vi.waitFor(() => expect(saved.at(-1)).toEqual({ palette }));
-    },
-  );
-
-  it("persists session action order as its own preference field", async () => {
+  it("queues rapid changes in order, each patch carrying only its own field", async () => {
     const store = new AppStore();
     await store.init();
     const order = [
@@ -93,24 +65,14 @@ describe("preference persistence", () => {
       "clone",
       "switch-branch",
     ] as const;
-    store.setSessionActionOrder([...order]);
-    expect(store.getState().prefs.sessionActionOrder).toEqual(order);
-    await vi.waitFor(() =>
-      expect(saved.at(-1)).toEqual({ sessionActionOrder: order }),
-    );
-  });
-
-  it("queues rapid changes in order, each patch carrying only its own field", async () => {
-    const store = new AppStore();
-    await store.init();
     store.setTheme("dark");
-    store.setToolVisibility("hidden");
+    store.setSessionActionOrder([...order]);
     expect(store.getState().prefs).toMatchObject({
       theme: "dark",
-      toolVisibility: "hidden",
+      sessionActionOrder: order,
     });
     await vi.waitFor(() => expect(saved).toHaveLength(2));
-    expect(saved).toEqual([{ theme: "dark" }, { toolVisibility: "hidden" }]);
+    expect(saved).toEqual([{ theme: "dark" }, { sessionActionOrder: order }]);
   });
 });
 

@@ -8,7 +8,7 @@ import { type Api, ApiError, ApiRequestCancelledError } from "../api";
 
 export type SessionOpenResult = "opened" | "missing" | "retry" | "superseded";
 
-export interface SessionSelectionState {
+interface SessionSelectionState {
   sessionId: string | null;
   cwd: string | null;
   openingSessionId: string | null;

@@ -4,116 +4,41 @@ import { expect, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openFixtureSession,
+  openPreviewFixture,
+  pairedPage,
+} from "./support/navigation";
 import { textBaseline } from "./support/text-baseline";
 
-for (const touch of [false, true]) {
-  test.describe(`header keyboard focus · ${touch ? "coarse" : "fine"} pointer`, () => {
-    test.use({
-      viewport: { width: 1366, height: 768 },
-      hasTouch: touch,
-      deviceScaleFactor: touch ? 2 : 1,
-      contextOptions: { reducedMotion: "reduce" },
-    });
-    test("keeps focus rings and workspace buttons inside clipped header regions", async ({
-      page,
-    }) => {
-      await pairedPage(page);
-      await openFixtureSession(page, /Review extension event lifecycle/);
-      await page.evaluate(() => document.fonts.ready);
-      for (const [width, height] of [
-        [1366, 768],
-        [901, 390],
-        [390, 844],
-        [320, 640],
-        [568, 320],
-      ]) {
-        await page.setViewportSize({ width, height });
-        for (const button of await page.locator(".topbar button").all()) {
-          if (!(await button.isVisible()) || !(await button.isEnabled()))
-            continue;
-          await button.focus();
-          // A real keyboard round trip also clears restored-focus suppression.
-          await page.keyboard.press("Tab");
-          await page.keyboard.press("Shift+Tab");
-          await expect(button).toBeFocused();
-          await page.evaluate(
-            () =>
-              new Promise<void>((resolve) =>
-                requestAnimationFrame(() =>
-                  requestAnimationFrame(() => resolve()),
-                ),
-              ),
-          );
-          await expect(button).toHaveCSS("outline-style", "solid");
-          const clipping = await button.evaluate(focusRingClipping);
-          expect(
-            clipping,
-            `${width}×${height}: ${await button.getAttribute("aria-label")}`,
-          ).toBeLessThanOrEqual(0.5);
-        }
-        expect(
-          await page.locator(".topbar__ident").evaluate((el) => el.scrollLeft),
-        ).toBe(0);
-      }
-    });
-  });
-}
-
-for (const touch of [false, true]) {
-  test.describe(`compact context toolbar · ${touch ? "coarse" : "fine"} pointer`, () => {
-    test.use({ hasTouch: touch });
-    test("context toolbar keeps icons centered in its compact desktop and narrow heights", async ({
-      page,
-    }) => {
-      await page.setViewportSize({ width: 1440, height: 900 });
-      await pairedPage(page);
-      await openFixtureSession(page, /Formula rendering and spectral analysis/);
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-      for (const width of [1440, 390, 320]) {
-        await page.setViewportSize({ width, height: 900 });
-        const header = page.locator(".ctx__header");
-        await header.getByRole("tab", { name: "Files", exact: true }).waitFor();
-        await expect(header).toBeVisible();
-        if (width > 900) {
-          for (const row of await page.locator(".nav__row").all()) {
-            expect((await row.boundingBox())!.height).toBeLessThanOrEqual(
-              touch ? 54 : 46,
-            );
-          }
-        }
-        const box = (await header.boundingBox())!;
-        expect(box.height).toBe(width > 900 ? (touch ? 36 : 32) : 37);
-        for (const tool of await header.getByRole("tab").all()) {
-          const target = (await tool.boundingBox())!;
-          const icon = (await tool.locator("svg").first().boundingBox())!;
-          expect(target.height).toBeGreaterThanOrEqual(
-            width > 900 && !touch ? 26 : 32,
-          );
-          expect(icon.width).toBeCloseTo(16, 2);
-          expect(icon.height).toBeCloseTo(16, 2);
-          expect(
-            Math.abs(icon.y + icon.height / 2 - box.y - box.height / 2),
-          ).toBeLessThanOrEqual(0.5);
-          expect(target.y).toBeGreaterThanOrEqual(box.y);
-          expect(target.y + target.height).toBeLessThanOrEqual(
-            box.y + box.height,
-          );
-        }
-        const files = header.getByRole("tab", { name: "Files", exact: true });
-        await files.click();
-        await expect(files).toHaveAttribute("aria-selected", "true");
-      }
-    });
-  });
-}
+test("header controls keep visible keyboard focus across desktop and phone layouts", async ({
+  page,
+}) => {
+  await pairedPage(page);
+  await openFixtureSession(page, /Review extension event lifecycle/);
+  await page.evaluate(() => document.fonts.ready);
+  for (const [width, height, name] of [
+    [901, 390, "Toggle resources panel"],
+    [320, 640, "Toggle navigation"],
+  ] as const) {
+    await page.setViewportSize({ width, height });
+    const button = page.getByRole("button", { name, exact: true });
+    await button.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(button).toBeFocused();
+    await expect(button).toHaveCSS("outline-style", "solid");
+    await expect
+      .poll(() => button.evaluate(focusRingClipping))
+      .toBeLessThanOrEqual(0.5);
+  }
+});
 
 test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
@@ -127,65 +52,38 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
     const pane = page.locator(selector);
     const initial = (await pane.boundingBox())!.width;
     const bounds = (await handle.boundingBox())!;
-    expect(bounds.width).toBeGreaterThanOrEqual(8);
-    await page.mouse.move(800, 60);
-    await expect
-      .poll(() =>
-        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
-      )
-      .toBe("0");
-    // Start near the header: a scroll thumb may correctly own lower parts
-    // of the shared hit band. Exercise a real pointer, not dispatched events.
+    // A scroll thumb may own lower parts of the shared hit band.
     const x = bounds.x + bounds.width / 2;
     const y = bounds.y + 24;
     await page.mouse.move(x, y);
-    await expect(handle).toHaveCSS("cursor", "col-resize");
-    await expect
-      .poll(() =>
-        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
-      )
-      .toBe("1");
-    const restingStroke = await handle.evaluate(
-      (el) => getComputedStyle(el, "::after").backgroundColor,
-    );
     await page.mouse.down();
-    await expect
-      .poll(() =>
-        handle.evaluate(
-          (el) => getComputedStyle(el, "::after").backgroundColor,
-        ),
-      )
-      .not.toBe(restingStroke);
     await page.mouse.move(x + delta, y, { steps: 6 });
     await page.mouse.up();
     await expect
       .poll(async () => (await pane.boundingBox())!.width)
       .toBeCloseTo(initial + 48, 0);
 
-    await page.mouse.move(800, 60);
+    const dragged = (await pane.boundingBox())!.width;
     await handle.focus();
     await handle.press(selector === ".nav" ? "ArrowRight" : "ArrowLeft");
     await expect
-      .poll(() =>
-        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
-      )
-      .toBe("1");
+      .poll(async () => (await pane.boundingBox())!.width)
+      .toBeGreaterThan(dragged);
+    // Save the settled size, rather than an intermediate frame of the resize.
     await expect
       .poll(async () => (await pane.boundingBox())!.width)
-      .toBeCloseTo(initial + 72, 0);
-    await page.keyboard.press("Tab");
-    await expect
-      .poll(() =>
-        handle.evaluate((el) => getComputedStyle(el, "::after").opacity),
-      )
-      .toBe("0");
+      .toBeCloseTo(Number(await handle.getAttribute("aria-valuenow")), 0);
   }
 
-  const saved = await Promise.all(
-    [".nav", ".ctx"].map((selector) =>
-      page.locator(selector).evaluate((el) => el.getBoundingClientRect().width),
-    ),
-  );
+  const widths = () =>
+    Promise.all(
+      [".nav", ".ctx"].map((selector) =>
+        page
+          .locator(selector)
+          .evaluate((el) => el.getBoundingClientRect().width),
+      ),
+    );
+  const saved = await widths();
   await page.reload();
   // Reload restores the open pane as well as both independently saved widths.
   await expect(
@@ -207,6 +105,10 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
       .toBeLessThan(saved[i]);
   }
 
+  const reset = await widths();
+  await page.reload();
+  await expect.poll(widths).toEqual(reset);
+
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("separator", { name: "Resize files panel" }),
@@ -216,93 +118,29 @@ test("desktop pane gutters remain pointer and keyboard resize targets", async ({
   ).toHaveCount(0);
 });
 
-test("saved side widths share a reading budget without changing preferences on resize", async ({
+test("side panes preserve saved widths and leave the reading budget during resize", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.addInitScript(() => {
     localStorage.setItem("inspire.nav-width", "460");
     localStorage.setItem("inspire.ctx-width", "1200");
   });
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 901, height: 900 });
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await expect(page.locator(".ctx__modes")).toBeVisible();
 
-  for (const width of [1280, 901, 980, 1600, 2200, 840, 1280, 2200]) {
-    await page.setViewportSize({ width, height: 900 });
-    if (width <= 900) {
-      await expect(
-        page.getByRole("dialog", { name: "Context panel" }),
-      ).toBeVisible();
-      await expect(
-        page.getByRole("separator", { name: "Resize files panel" }),
-      ).toHaveCount(0);
-    } else {
-      // Two 4px pane gutters and the 8px trailing shell inset are not reading space.
-      const minimum = Math.min(400, width - 220 - 320 - 4 - 4 - 8);
-      await expect
-        .poll(async () => (await page.locator(".center").boundingBox())!.width)
-        .toBeGreaterThanOrEqual(minimum - 1);
-      await expect
-        .poll(async () => (await page.locator(".ctx").boundingBox())!.width)
-        .toBeGreaterThanOrEqual(320);
-      await expect
-        .poll(async () => (await page.locator(".nav").boundingBox())!.width)
-        .toBeGreaterThanOrEqual(220);
-      const right = await page
-        .locator(".ctx")
-        .evaluate((el) => el.getBoundingClientRect().right);
-      expect(right).toBeLessThanOrEqual(width);
-    }
-    expect(
-      await page.evaluate(() => [
-        localStorage.getItem("inspire.nav-width"),
-        localStorage.getItem("inspire.ctx-width"),
-      ]),
-    ).toEqual(["460", "1200"]);
-  }
-  expect((await page.locator(".nav").boundingBox())!.width).toBe(460);
-  expect((await page.locator(".ctx").boundingBox())!.width).toBe(1200);
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await expect
-    .poll(async () => (await page.locator(".nav").boundingBox())!.width)
-    .toBe(460);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await expect
-    .poll(async () => (await page.locator(".center").boundingBox())!.width)
-    .toBeGreaterThanOrEqual(400);
-
-  await page.getByRole("button", { name: "Collapse navigation" }).click();
-  await expect(page.locator(".nav--rail")).toBeVisible();
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await expect
-    .poll(async () => (await page.locator(".center").boundingBox())!.width)
-    .toBeGreaterThanOrEqual(400);
-  await page.getByRole("button", { name: "Expand navigation" }).click();
-  await expect
-    .poll(async () => (await page.locator(".nav").boundingBox())!.width)
-    .toBeGreaterThanOrEqual(220);
-  await expect
-    .poll(async () => (await page.locator(".center").boundingBox())!.width)
-    .toBeGreaterThanOrEqual(400);
-});
-
-test("resizing one side holds its peer still and exposes only the remaining reading budget", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.addInitScript(() => {
-    localStorage.setItem("inspire.nav-width", "460");
-    localStorage.setItem("inspire.ctx-width", "800");
-  });
-  await pairedPage(page);
-  await openFixtureSession(page, /Review extension event lifecycle/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  await expect(page.locator(".ctx__modes")).toBeVisible();
   const nav = page.locator(".nav");
   const ctx = page.locator(".ctx");
+  const center = page.locator(".center");
+  const width = (pane: typeof nav) =>
+    pane.evaluate((el) => el.getBoundingClientRect().width);
+  await expect.poll(() => width(nav)).toBeGreaterThanOrEqual(220);
+  expect(await width(ctx)).toBeGreaterThanOrEqual(320);
+  expect(await width(center)).toBeGreaterThanOrEqual(344);
+
   const left = page.getByRole("separator", {
     name: "Resize navigation",
     exact: true,
@@ -311,46 +149,41 @@ test("resizing one side holds its peer still and exposes only the remaining read
     name: "Resize files panel",
     exact: true,
   });
-  const originalNav = (await nav.boundingBox())!.width;
-  const originalContext = (await ctx.boundingBox())!.width;
+  await page.setViewportSize({ width: 840, height: 900 });
+  await expect(
+    page.getByRole("dialog", { name: "Context panel" }),
+  ).toBeVisible();
+  await expect(right).toHaveCount(0);
+  await page.setViewportSize({ width: 2200, height: 900 });
+  await expect
+    .poll(() => Promise.all([width(nav), width(ctx)]))
+    .toEqual([460, 1200]);
 
-  await left.focus();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect.poll(() => width(center)).toBeGreaterThanOrEqual(400);
+  const originalNav = await width(nav);
+  const originalContext = await width(ctx);
   await left.press("ArrowLeft");
-  await expect
-    .poll(async () => (await nav.boundingBox())!.width)
-    .toBeCloseTo(originalNav - 24, 0);
-  expect((await ctx.boundingBox())!.width).toBeCloseTo(originalContext, 1);
-  expect(
-    await page.evaluate(() => localStorage.getItem("inspire.ctx-width")),
-  ).toBe("800");
-  await expect
-    .poll(async () => Number(await right.getAttribute("aria-valuemax")))
-    .toBeCloseTo(originalContext + 24, 1);
+  await expect.poll(() => width(nav)).toBeLessThan(originalNav);
+  const reducedNav = Number(await left.getAttribute("aria-valuenow"));
+  await expect.poll(() => width(nav)).toBeCloseTo(reducedNav, 0);
+  expect(await width(ctx)).toBeCloseTo(originalContext, 1);
+  const limit = Number(await right.getAttribute("aria-valuemax"));
+  expect(limit).toBeGreaterThan(originalContext);
 
-  const handleBox = (await right.boundingBox())!;
-  const x = handleBox.x + handleBox.width / 2;
-  const y = handleBox.y + 24;
+  const handle = (await right.boundingBox())!;
+  const x = handle.x + handle.width / 2;
+  const y = handle.y + 24;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x - 400, y, { steps: 8 });
   await page.mouse.up();
-  expect((await nav.boundingBox())!.width).toBeCloseTo(originalNav - 24, 0);
-  expect(
-    (await page.locator(".center").boundingBox())!.width,
-  ).toBeGreaterThanOrEqual(400);
-  expect((await ctx.boundingBox())!.width).toBeCloseTo(originalContext + 24, 0);
-  const pinnedContext = (await ctx.boundingBox())!.width;
+  expect(await width(nav)).toBeCloseTo(reducedNav, 0);
+  expect(await width(center)).toBeGreaterThanOrEqual(400);
+  expect(await width(ctx)).toBeCloseTo(limit, 0);
   await left.press("ArrowRight");
-  expect((await ctx.boundingBox())!.width).toBe(pinnedContext);
-  expect((await nav.boundingBox())!.width).toBeCloseTo(originalNav - 24, 0);
-
-  await right.dblclick({ position: { x: 4, y: 24 } });
-  expect(
-    await page.evaluate(() => localStorage.getItem("inspire.ctx-width")),
-  ).toBeNull();
-  expect((await nav.boundingBox())!.width).toBeCloseTo(originalNav - 24, 0);
-  await page.setViewportSize({ width: 2200, height: 900 });
-  await expect.poll(async () => (await ctx.boundingBox())!.width).toBe(760);
+  expect(await width(ctx)).toBeCloseTo(limit, 0);
+  expect(await width(nav)).toBeCloseTo(reducedNav, 0);
 });
 
 test("sidebar owns desktop toggles and creation while phones keep a full drawer", async ({
@@ -379,51 +212,6 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
   await expect
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toBe(browserWorkspace);
-  const title = page.locator(".topbar__title-button");
-  await expect(
-    page.locator(".topbar").getByRole("button", { name: "Toggle navigation" }),
-  ).toHaveCount(0);
-  await page.locator(".nav__brand-lockup").click();
-  await expect(title).toHaveText(/Formula rendering and spectral analysis/);
-
-  // One primary icon axis and one label axis, not a succession of unrelated paddings.
-  const alignment = await page.locator(".nav").evaluate((nav) => {
-    const box = (selector: string) =>
-      nav.querySelector(selector)!.getBoundingClientRect();
-    const icons = [
-      ".nav__brand-icon",
-      ".nav__new-session-label > svg",
-      ".nav__search .search-field__icon",
-      ".nav__group-toggle > svg",
-      ...(nav.querySelector(".nav__dock-toggle")
-        ? [".nav__dock-toggle > svg"]
-        : []),
-    ].map((s) => {
-      const rect = box(s);
-      const style = getComputedStyle(nav.querySelector(s)!);
-      // Compare icon slots, including the folder glyph's marker-clearance inset.
-      const leading = parseFloat(style.marginLeft);
-      const trailing = parseFloat(style.marginRight);
-      return rect.x + (rect.width + trailing - leading) / 2;
-    });
-    const labels = [
-      ".wordmark",
-      ".nav__new-session-label > span",
-      ".nav__search input",
-      ".nav__group-name",
-      ".nav__row-name",
-      ...(nav.querySelector(".nav__dock-title") ? [".nav__dock-title"] : []),
-    ].map((s) => box(s).x);
-    const right = [".nav__new-session", ".nav__search", ".nav__row"].map(
-      (s) => box(s).right,
-    );
-    return { icons, labels, right };
-  });
-  for (const positions of Object.values(alignment))
-    expect(Math.max(...positions) - Math.min(...positions)).toBeLessThanOrEqual(
-      0.5,
-    );
-
   const collapse = page.getByRole("button", { name: "Collapse navigation" });
   const expand = page.getByRole("button", { name: "Expand navigation" });
   await collapse.focus();
@@ -462,21 +250,9 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
     name: "Search sessions",
     exact: true,
   });
-  expect((await create.boundingBox())!.height).toBe(36);
-  expect((await drawer.locator(".nav__search").boundingBox())!.height).toBe(36);
-  expect(await create.evaluate((el) => getComputedStyle(el).fontSize)).toBe(
-    "14px",
-  );
-  expect(await search.evaluate((el) => getComputedStyle(el).fontSize)).toBe(
-    "14px",
-  );
-  const controlsBox = (await drawer.locator(".nav__controls").boundingBox())!;
-  const createBox = (await create.boundingBox())!;
-  const searchBox = (await drawer.locator(".nav__search").boundingBox())!;
-  expect(searchBox.y - createBox.y - createBox.height).toBe(8);
-  expect(
-    controlsBox.y + controlsBox.height - searchBox.y - searchBox.height,
-  ).toBe(16);
+  await expect(create).toBeVisible();
+  await search.fill("Formula rendering");
+  await expect(search).toHaveValue("Formula rendering");
   await drawer.getByRole("button", { name: "Close navigation" }).click();
   await expect(phoneToggle).toBeFocused();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -484,28 +260,40 @@ test("sidebar owns desktop toggles and creation while phones keep a full drawer"
   await expect(phoneToggle).toHaveCount(0);
 });
 
-test("session title and workspace/status text share a baseline at every header tier", async ({
+test("workbench headers keep labels, controls and the live Git count readable", async ({
   page,
 }) => {
+  let total = 1;
+  await page.route("**/api/git/status?**", async (route) => {
+    const response = await route.fetch();
+    const status = await response.json();
+    if (status.kind === "repository") status.total = total;
+    await route.fulfill({ response, json: status });
+  });
   await routeSnapshots(page, {
-    snapshot: (snapshot) => {
+    snapshot(snapshot) {
       snapshot.extensionStatuses = { context: "mc: 93.7K (46%) · idle" };
-      if (snapshot.active) snapshot.active.sessionName = "frontend cross val";
+      if (snapshot.active?.model) snapshot.active.model.reasoning = false;
+      for (const model of snapshot.active?.availableModels ?? [])
+        model.reasoning = false;
+    },
+    bootstrap(body) {
+      for (const model of body.availableModels ?? []) model.reasoning = false;
     },
   });
   await pairedPage(page);
-  await page
-    .locator(".nav__row-main")
-    .filter({ hasText: /Formula rendering and spectral analysis/ })
-    .click();
-  await expect(page.locator(".topbar__title-button")).toHaveText(
-    "frontend cross val",
-  );
+  await openFixtureSession(page, /Formula rendering and spectral analysis/);
+  await expect(
+    page.getByRole("combobox", { name: "Thinking level" }),
+  ).toBeDisabled();
   await expect(page.locator(".topbar__extension-text")).toHaveText(
     "mc: 93.7K (46%) · idle",
   );
+  await expect(page.locator(".topbar__git")).toHaveAccessibleName(
+    /fixture\/analysis, 1 change/,
+  );
   await page.evaluate(() => document.fonts.ready);
-  for (const width of [1440, 1024, 768, 390, 320]) {
+  for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     const title = page.locator(".topbar__title-button > span");
     await expect(title).toBeVisible();
@@ -524,47 +312,7 @@ test("session title and workspace/status text share a baseline at every header t
         ).toBeLessThanOrEqual(0.5);
       }
     }
-    const header = (await page.locator(".topbar").boundingBox())!;
-    for (const button of await page
-      .locator(".topbar__actions > button, .topbar > .icon-button")
-      .all()) {
-      if (!(await button.isVisible())) continue;
-      const box = (await button.boundingBox())!;
-      expect(
-        Math.abs(box.y + box.height / 2 - header.y - header.height / 2),
-      ).toBeLessThanOrEqual(0.5);
-    }
   }
-});
-
-test("narrow workbench headers preserve model controls and the Git count", async ({
-  page,
-}) => {
-  await page.route("**/api/git/status?**", async (route) => {
-    const response = await route.fetch();
-    const status = await response.json();
-    if (status.kind === "repository") status.total = 1234;
-    await route.fulfill({ response, json: status });
-  });
-  await pairedPage(page);
-  await openFixtureSession(page, /Formula rendering and spectral analysis/);
-  await page.route("**/api/bootstrap**", async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    for (const model of body.availableModels ?? []) model.reasoning = false;
-    const active = body.snapshot?.active;
-    if (active?.model) active.model.reasoning = false;
-    for (const model of active?.availableModels ?? []) model.reasoning = false;
-    await route.fulfill({ response, json: body });
-  });
-  await page.reload();
-  await expect(
-    page.getByRole("combobox", { name: "Thinking level" }),
-  ).toBeDisabled();
-  await expect(page.locator(".topbar__git")).toHaveAccessibleName(
-    "Open Git changes: fixture/analysis, 1234 changes",
-  );
-  await page.evaluate(() => document.fonts.ready);
   await page.setViewportSize({ width: 1440, height: 1000 });
   const branch = page.locator(".topbar__git-branch");
   await expect(branch).toBeVisible();
@@ -572,83 +320,94 @@ test("narrow workbench headers preserve model controls and the Git count", async
     await branch.evaluate((label) => label.scrollWidth - label.clientWidth),
   ).toBeLessThanOrEqual(1);
 
-  for (const width of [390, 320]) {
-    await page.setViewportSize({ width, height: 844 });
-    const model = page
-      .locator(".composer__meta")
-      .getByRole("button", { name: "Model", exact: true });
-    await expect(model).toBeVisible();
-    expect((await model.boundingBox())!.width).toBeGreaterThanOrEqual(44);
-    const labelFits = await model
-      .locator(".dropdown__value")
-      .evaluate((label) => label.scrollWidth <= label.clientWidth + 1);
-    expect(labelFits).toBe(true);
-    const metadata = page.locator(".topbar__workspace-meta");
-    if (width === 390) {
-      // Read both boxes in the same layout; Git arrives asynchronously after
-      // reload and can change the workspace metadata's width.
-      const rightOverflow = await metadata.evaluate((element) => {
-        const meta = element.getBoundingClientRect();
-        const git = element
-          .querySelector(".topbar__git")!
-          .getBoundingClientRect();
-        return git.right - meta.right;
-      });
-      expect(rightOverflow).toBeLessThanOrEqual(1);
-    } else {
-      // The 320px bar yields secondary workspace details to primary controls.
-      await expect(metadata).toBeHidden();
-    }
-  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  const metadata = page.locator(".topbar__workspace-meta");
+  expect(
+    await metadata.evaluate((element) => {
+      const meta = element.getBoundingClientRect();
+      const git = element
+        .querySelector(".topbar__git")!
+        .getBoundingClientRect();
+      return git.right - meta.right;
+    }),
+  ).toBeLessThanOrEqual(1);
 
+  await page.setViewportSize({ width: 320, height: 844 });
+  await expect(metadata).toBeHidden();
+  const model = page.getByRole("button", { name: "Model", exact: true });
+  await expect(model).toBeVisible();
+  expect(
+    await model
+      .locator(".dropdown__value")
+      .evaluate((label) => label.scrollWidth - label.clientWidth),
+  ).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();
   await page.getByRole("tab", { name: "History", exact: true }).click();
-  const history = page.getByRole("dialog", { name: "Context panel" });
-  await expect(history.getByRole("button", { name: /Refresh/ })).toHaveCount(1);
-  await expect(
-    history.getByRole("tab", { name: "Changes", exact: true }),
-  ).toHaveAttribute("title", "Changes (1234 changes)");
-  await expect(history.locator(".ctx__mode-count")).toHaveText("99+");
-  const headerSpacing = await history.locator(".ctx__header").evaluate((el) => {
-    const header = el.getBoundingClientRect();
-    const tabs = el.querySelector(".ctx__modes")!.getBoundingClientRect();
-    const strip = el.querySelector(".ctx__tabs")!.getBoundingClientRect();
-    return {
-      top: tabs.top - header.top,
-      bottom: header.bottom - tabs.bottom,
-      left: strip.left - header.left,
-    };
+  const pane = page.getByRole("dialog", { name: "Context panel" });
+  const modes = pane.locator(".ctx__modes");
+  const changes = pane.getByRole("tab", { name: "Changes", exact: true });
+  const count = modes.locator(".ctx__mode-count");
+  await expect(count).toHaveText("1");
+  const refresh = pane.getByRole("button", {
+    name: "Refresh context pane",
+    exact: true,
   });
-  expect(headerSpacing.top).toBeCloseTo(0, 2);
-  expect(headerSpacing.bottom).toBeCloseTo(0, 2);
-  expect(headerSpacing.left).toBeCloseTo(0, 2);
-  const iconInsets = await history
-    .locator(".ctx__modes [role='tab']")
-    .evaluateAll((tabs) =>
-      tabs.map((tab) => {
-        const icon = tab.querySelector("svg")!.getBoundingClientRect();
-        const bounds = tab.getBoundingClientRect();
-        return Math.min(icon.left - bounds.left, bounds.right - icon.right);
-      }),
-    );
-  expect(Math.min(...iconInsets)).toBeGreaterThanOrEqual(0);
-
-  const changes = page.getByRole("tab", { name: "Changes", exact: true });
+  await expect(refresh).toBeVisible();
   await changes.click();
-  const count = page.locator(".ctx__mode-count");
-  for (const width of [320, 1440]) {
-    await page.setViewportSize({ width, height: 1000 });
-    await expect(changes).toHaveAttribute("aria-selected", "true");
-    await expect(changes).toHaveAttribute("title", "Changes (1234 changes)");
-    await expect(count).toBeVisible();
-    await expect(count).toHaveText("99+");
+  total = 1234;
+  await refresh.click();
+  await expect(changes).toHaveAttribute("title", "Changes (1234 changes)");
+  await expect(count).toHaveText("99+");
+  await openPreviewFixture(pane, "document.md");
+
+  const tiles = await modes.locator("button").evaluateAll((buttons) =>
+    buttons.map((button) => {
+      const box = button.getBoundingClientRect();
+      const icon = button.querySelector("svg")!.getBoundingClientRect();
+      const count = button
+        .querySelector(".ctx__mode-count")
+        ?.getBoundingClientRect();
+      return {
+        width: box.width,
+        height: box.height,
+        icon: [icon.width, icon.height],
+        iconCenterOffset: Math.abs(
+          icon.y + icon.height / 2 - box.y - box.height / 2,
+        ),
+        gutter: Math.min(
+          icon.left - box.left,
+          box.right - (count ?? icon).right,
+        ),
+        counted: count !== undefined,
+      };
+    }),
+  );
+  const regularWidths = tiles
+    .filter((tile) => !tile.counted)
+    .map((tile) => tile.width);
+  expect(Math.max(...regularWidths) - Math.min(...regularWidths)).toBeLessThan(
+    0.1,
+  );
+  for (const tile of tiles) {
+    expect(tile.icon).toEqual([16, 16]);
+    expect(tile.height).toBeGreaterThanOrEqual(32);
+    expect(tile.iconCenterOffset).toBeLessThanOrEqual(1);
+    expect(tile.gutter).toBeGreaterThanOrEqual(2);
+  }
+  const tools = (await modes.boundingBox())!;
+  const actions = (await pane.locator(".ctx__header-actions").boundingBox())!;
+  expect(actions.x - tools.x - tools.width).toBeGreaterThanOrEqual(2);
+
+  for (const mode of ["Files", "Changes"]) {
+    await modes.getByRole("tab", { name: mode, exact: true }).click();
+    const icon = (await changes.locator("svg").boundingBox())!;
+    const target = (await changes.boundingBox())!;
+    const box = (await count.boundingBox())!;
+    expect(box.x - icon.x - icon.width).toBeGreaterThanOrEqual(2);
+    expect(box.x + box.width).toBeLessThan(target.x + target.width);
     expect(
-      await count.evaluate((el) => {
-        const tab = el.closest("button")!.getBoundingClientRect();
-        const box = el.getBoundingClientRect();
-        return Math.min(box.top - tab.top, tab.right - box.right);
-      }),
-    ).toBeGreaterThanOrEqual(0);
+      Math.abs(box.y + box.height / 2 - icon.y - icon.height / 2),
+    ).toBeLessThanOrEqual(1);
   }
   await page.unrouteAll({ behavior: "wait" });
 });

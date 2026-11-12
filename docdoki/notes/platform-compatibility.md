@@ -64,7 +64,7 @@ converter execution. See [[resource-preview#Git Changes]] for scope.
 
 Filesystem fields use `fileResourceReference`; prose and diagnostic locations use their own
 adapter. The resolver parses locations before decoding URLs once, preserving literal `%20` and
-hash filenames alongside encoded URLs. `tests/server/resource-reference-identity.test.ts` checks
+hash filenames alongside encoded URLs. `tests/server/resources.test.ts` checks
 their distinct identities. Portable fixtures normalize Host document separators while checking
 native paths separately.
 

@@ -8,13 +8,13 @@ export async function clipboardLines(page: Page) {
 }
 
 interface ClipboardWrite {
-  started: number;
   text: string | null;
   imageWidth: number | null;
 }
 declare global {
   interface Window {
     gestureClipboardWrites: ClipboardWrite[];
+    gestureClipboardWriteStarts: number;
   }
 }
 // Keep the real browser clipboard. Inspect the original items only after the
@@ -25,8 +25,9 @@ export async function observeClipboardWrites(page: Page) {
     const write = clipboard.write.bind(clipboard);
     const writeText = clipboard.writeText.bind(clipboard);
     window.gestureClipboardWrites = [];
+    window.gestureClipboardWriteStarts = 0;
     clipboard.write = async (items) => {
-      const started = performance.now();
+      window.gestureClipboardWriteStarts += 1;
       await write(items);
       const item = items[0]!;
       let imageWidth: number | null = null;
@@ -36,7 +37,6 @@ export async function observeClipboardWrites(page: Page) {
         image.close();
       }
       window.gestureClipboardWrites.push({
-        started,
         text: item.types.includes("text/plain")
           ? await (await item.getType("text/plain")).text()
           : null,
@@ -44,9 +44,9 @@ export async function observeClipboardWrites(page: Page) {
       });
     };
     clipboard.writeText = async (text) => {
-      const started = performance.now();
+      window.gestureClipboardWriteStarts += 1;
       await writeText(text);
-      window.gestureClipboardWrites.push({ started, text, imageWidth: null });
+      window.gestureClipboardWrites.push({ text, imageWidth: null });
     };
   });
 }

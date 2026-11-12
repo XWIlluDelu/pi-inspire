@@ -1,4 +1,4 @@
-import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
+import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import type { IMarker, ITerminalAddon, Terminal } from "@xterm/xterm";
 
 /** xterm cannot parse modern translucent CSS colors, even though canvas can.
@@ -19,7 +19,7 @@ export function terminalSelectionColor(
     .join("")}`;
 }
 
-export type TerminalSearchQuery = Pick<
+type TerminalSearchQuery = Pick<
   ISearchOptions,
   "caseSensitive" | "regex" | "wholeWord"
 > & { query: string; open: boolean };

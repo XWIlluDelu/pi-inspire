@@ -2,36 +2,66 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { TablePreview } from "../../src/components/TablePreview";
+import { delimiterForFile, parseDelimitedText } from "../../src/delimited-text";
 
-const csv = "run,sample,latency_ms\n1,A,12.4\n2,B,18.2\n3,C,9.5\n4,D,\n";
-
-const column = (index: number) =>
+const rows = () =>
   screen
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[index]?.textContent);
+    .map((row) =>
+      within(row)
+        .getAllByRole("cell")
+        .map((cell) => cell.textContent),
+    );
 
-describe("TablePreview", () => {
-  it("aligns numeric columns and cycles sort ascending, descending, original", () => {
-    render(<TablePreview text={csv} delimiter="," name="fit.csv" />);
+describe("delimited table preview", () => {
+  it("renders quoted CSV and cycles numeric sorting while keeping blank cells last", () => {
+    const csv =
+      '\uFEFFsample,note,latency_ms\r\n"Sample, A","said ""ok""\nthen left",12.4\r\nB,,2e1\r\nC,,9.5\r\nD\r\n';
+    const name = "results/fit_params.CSV";
+    render(
+      <TablePreview
+        text={csv}
+        delimiter={delimiterForFile(name)!}
+        name={name}
+      />,
+    );
+    expect(rows()).toEqual([
+      ["Sample, A", 'said "ok"\nthen left', "12.4"],
+      ["B", "", "2e1"],
+      ["C", "", "9.5"],
+      ["D", "", ""],
+    ]);
     const header = screen.getByRole("columnheader", { name: /latency_ms/ });
-    expect(header).toHaveClass("table-preview__numeric");
     const sort = within(header).getByRole("button");
+    const latencies = () => rows().map((row) => row[2]);
     fireEvent.click(sort);
     expect(header).toHaveAttribute("aria-sort", "ascending");
-    // Blank cells sink in either direction.
-    expect(column(2)).toEqual(["9.5", "12.4", "18.2", ""]);
+    expect(latencies()).toEqual(["9.5", "12.4", "2e1", ""]);
     fireEvent.click(sort);
-    expect(column(2)).toEqual(["18.2", "12.4", "9.5", ""]);
+    expect(header).toHaveAttribute("aria-sort", "descending");
+    expect(latencies()).toEqual(["2e1", "12.4", "9.5", ""]);
     fireEvent.click(sort);
     expect(header).toHaveAttribute("aria-sort", "none");
-    expect(column(1)).toEqual(["A", "B", "C", "D"]);
+    expect(latencies()).toEqual(["12.4", "2e1", "9.5", ""]);
   });
 
-  it("says when rows are withheld from a truncated transfer", () => {
-    render(<TablePreview text={csv} delimiter="," name="fit.csv" truncated />);
+  it("withholds an incomplete TSV record and tells the reader where to get the rest", () => {
+    const name = "runs.tsv";
+    render(
+      <TablePreview
+        text={"a\tb\n1\t2\n3\t4\n5\t"}
+        delimiter={delimiterForFile(name)!}
+        name={name}
+        truncated
+      />,
+    );
+    expect(rows()).toEqual([
+      ["1", "2"],
+      ["3", "4"],
+    ]);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Showing the first 3 rows",
+      "Showing the first 2 rows. See the rest in Source or Download.",
     );
   });
 
@@ -53,5 +83,19 @@ describe("TablePreview", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       /Showing the first \d+ rows and 250 columns/,
     );
+  });
+
+  it("distinguishes exactly enough rows from an omitted narrow-table suffix", () => {
+    const text = "x\n1\n2\n3";
+    expect(parseDelimitedText(text, ",", { maxRows: 3 }).omittedRows).toBe(
+      false,
+    );
+    expect(parseDelimitedText(`${text}\n4`, ",", { maxRows: 3 })).toMatchObject(
+      {
+        rows: [["1"], ["2"], ["3"]],
+        omittedRows: true,
+      },
+    );
+    expect(delimiterForFile("notes.md")).toBeNull();
   });
 });

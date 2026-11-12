@@ -1,13 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 
 test("PDF scrolls continuously through selectable pages, preserves its reading point and never runs actions", async ({
   page,
 }) => {
-  await pairedPage(page);
-  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  const resources = page.getByRole("complementary", { name: "Context panel" });
+  const resources = await openResourceFixture(page);
   const localOrigin = new URL(page.url()).origin;
   const externalRequests: string[] = [];
   await page.route("**/*", async (route) => {
@@ -31,14 +28,7 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
     activePdfContent.push(popup.url());
     await popup.close();
   });
-  await resources
-    .getByRole("searchbox", { name: "Search workspace files" })
-    .fill("file-previews/report.pdf");
-  await resources
-    .locator(
-      '[data-workspace-path="tests/browser/fixtures/file-previews/report.pdf"]',
-    )
-    .click();
+  await openPreviewFixture(resources, "report.pdf");
   const pdf = page.getByRole("document", { name: "Preview report.pdf" });
   const first = pdf.getByRole("region", { name: "PDF page 1", exact: true });
   const pdfPage = pdf.getByRole("region", { name: "PDF page 2", exact: true });
@@ -137,7 +127,22 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
   });
   await expect.poll(readingPoint).toBeGreaterThan(0.05);
   const position = await readingPoint();
-  await pdf.getByRole("button", { name: "Zoom in PDF" }).click();
+  const actions = page.getByRole("toolbar", { name: "File actions" });
+  const showActions = actions.getByRole("button", {
+    name: "Show file actions",
+  });
+  if (await showActions.isVisible()) await showActions.click();
+  const hideActions = actions.getByRole("button", {
+    name: "Hide file actions",
+  });
+  await expect(hideActions).toBeVisible();
+  const zoom = pdf.getByRole("button", { name: "Zoom in PDF" });
+  const top = (await zoom.boundingBox())!.y;
+  await zoom.click();
+  await expect(
+    pdf.getByRole("button", { name: "Fit PDF to width" }),
+  ).toHaveText("125%");
+  expect((await zoom.boundingBox())!.y).toBeCloseTo(top, 1);
   await expect
     .poll(async () => Math.abs((await readingPoint()) - position))
     .toBeLessThanOrEqual(0.005);
@@ -152,15 +157,22 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
   ).toBeLessThanOrEqual(1);
   await page.setViewportSize(viewport);
 
-  await resources.getByRole("tab", { name: "Files", exact: true }).click();
-  await resources
-    .getByRole("searchbox", { name: "Search workspace files" })
-    .fill("file-previews/unsafe.pdf");
-  await resources
-    .locator(
-      '[data-workspace-path="tests/browser/fixtures/file-previews/unsafe.pdf"]',
-    )
-    .click();
+  await pdf.getByRole("button", { name: "Find in PDF" }).click();
+  const find = pdf.getByRole("search", { name: "Find in PDF" });
+  const query = find.getByRole("searchbox", { name: "Find in PDF" });
+  await query.fill(" sAmPlE ");
+  await expect(find.getByText("1 / 4", { exact: true })).toBeVisible();
+  await expect(first.locator(".pdf-preview__hit")).toContainText("Sample A");
+  await query.press("Shift+Enter");
+  await expect(find.getByText("4 / 4", { exact: true })).toBeVisible();
+  await expect(pdfPage.locator(".pdf-preview__hit")).toContainText(
+    "per sample",
+  );
+  await query.press("Escape");
+  await expect(find).toHaveCount(0);
+  await expect(pdf.locator(".pdf-preview__hit")).toHaveCount(0);
+
+  await openPreviewFixture(resources, "unsafe.pdf");
   const staticPdf = page.getByRole("document", { name: "Preview unsafe.pdf" });
   await expect(staticPdf.locator(".pdf-preview__page")).toHaveAttribute(
     "aria-busy",

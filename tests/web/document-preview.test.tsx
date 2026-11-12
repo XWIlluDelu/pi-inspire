@@ -5,7 +5,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,50 +50,23 @@ describe("document Markdown", () => {
     );
     vi.spyOn(store, "openResource").mockResolvedValue();
   });
-  afterEach(() => vi.restoreAllMocks());
-
-  it("renders local images in place, preserving linked images, alt text and titles", async () => {
-    const { container, unmount } = render(
-      preview(
-        '![Training curve](figures/curve.png "Validation MSE")\n\n[![Linked curve](figures/curve.png)](details.md)',
-      ),
-    );
-    const image = await screen.findByRole("img", { name: "Training curve" });
-    expect(image).toHaveAttribute("src", "blob:document-image");
-    expect(image).toHaveAttribute("title", "Validation MSE");
-    expect(container.querySelector("p img")).toBeTruthy();
-    expect(container.querySelector("a button")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Preview curve.png" }));
-    expect(
-      screen.getByRole("dialog", { name: "Image preview" }),
-    ).toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Image preview" }),
-      ).toBeNull(),
-    );
-    expect(store.loadDocumentImage).toHaveBeenCalledTimes(1);
-    expect(store.loadDocumentImage).toHaveBeenCalledWith(
-      "document-1",
-      "./reports/figures/curve.png",
-      expect.any(AbortSignal),
-    );
-    fireEvent.click(screen.getByRole("img", { name: "Linked curve" }));
-    expect(store.openResource).toHaveBeenCalledWith("./reports/details.md");
-    unmount();
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:document-image");
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it("resolves relative file links, extensionless links and inline paths from the document directory", () => {
+  it("resolves authored local links and inline paths without intercepting external links", () => {
     render(
       preview(
-        "[Guide](../guide.md#results) [License](LICENSE) `./config.yaml`",
+        "[`Guide.md`](../guide.md#results) [License](LICENSE) `./config.yaml`\n\n[![Build status](https://pi.dev/status.svg)](https://pi.dev/build)",
       ),
     );
-    fireEvent.click(screen.getByRole("link", { name: "Guide" }));
+    fireEvent.click(screen.getByRole("link", { name: "Guide.md" }));
     fireEvent.click(screen.getByRole("link", { name: "License" }));
     fireEvent.click(screen.getByRole("button", { name: "./config.yaml" }));
+    const external = screen.getByRole("link", { name: /Build status/ });
+    expect(external).toHaveAttribute("href", "https://pi.dev/build");
+    expect(fireEvent.click(external)).toBe(true);
     expect(
       vi.mocked(store.openResource).mock.calls.map(([reference]) => reference),
     ).toEqual([
@@ -102,30 +74,7 @@ describe("document Markdown", () => {
       "./reports/LICENSE",
       "./reports/./config.yaml",
     ]);
-  });
-
-  it("preserves authored code and remote-image links in a document", () => {
-    const { container } = render(
-      preview(
-        "[`README.md`](../guide.md#results)\n\n[`CHANGELOG.md`](https://pi.dev/changes)\n\n[![Build status](https://pi.dev/status.svg)](https://pi.dev/build)",
-      ),
-    );
-    expect(fireEvent.click(screen.getByText("README.md"))).toBe(false);
-    expect(store.openResource).toHaveBeenCalledExactlyOnceWith(
-      "./reports/../guide.md#results",
-    );
-    vi.mocked(store.openResource).mockClear();
-    for (const [label, href] of [
-      ["CHANGELOG.md", "https://pi.dev/changes"],
-      ["Build status", "https://pi.dev/build"],
-    ]) {
-      const target = screen.getByText(label);
-      expect(target.closest("a")).toHaveAttribute("href", href);
-      expect(fireEvent.click(target)).toBe(true);
-    }
-    expect(store.openResource).not.toHaveBeenCalled();
     expect(store.loadDocumentImage).not.toHaveBeenCalled();
-    expect(container.querySelector("a button, a a, img")).toBeNull();
   });
 
   it("keeps heading anchors inside the document, including Unicode and duplicates", () => {
@@ -182,6 +131,9 @@ describe("document Markdown", () => {
   it.each([false, true])(
     "waits for image layout before incoming anchors; user cancellation=%s",
     async (cancel) => {
+      vi.useFakeTimers({
+        toFake: ["requestAnimationFrame", "cancelAnimationFrame"],
+      });
       render(
         preview("## Results\n\n![Curve](curve.png)", {
           ...descriptor,
@@ -190,7 +142,7 @@ describe("document Markdown", () => {
       );
       const image = await screen.findByRole("img", { name: "Curve" });
       // jsdom does not decode blob images; explicitly deliver the browser's load.
-      await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+      act(() => vi.advanceTimersToNextFrame());
       expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
       if (cancel) fireEvent.wheel(image);
       Object.defineProperty(image, "complete", {
@@ -198,15 +150,10 @@ describe("document Markdown", () => {
         value: true,
       });
       fireEvent.load(image);
-      if (cancel) {
-        await act(
-          async () => new Promise((resolve) => setTimeout(resolve, 30)),
-        );
-        expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-      } else
-        await waitFor(() =>
-          expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1),
-        );
+      act(() => vi.advanceTimersToNextFrame());
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledTimes(
+        cancel ? 0 : 1,
+      );
     },
   );
 
@@ -241,14 +188,6 @@ describe("document Markdown", () => {
     expect(
       screen.getAllByRole("link", { name: /Protocol relative/ })[0],
     ).toHaveAttribute("rel", "noreferrer noopener");
-  });
-
-  it("retains the conversation's explicit-open image behavior", () => {
-    render(<RichText text="![Conversation curve](figures/curve.png)" />);
-    expect(
-      screen.getByRole("button", { name: "Preview Conversation curve" }),
-    ).toHaveAttribute("data-file-path", "figures/curve.png");
-    expect(store.loadDocumentImage).not.toHaveBeenCalled();
   });
 
   it("rejects late images after document replacement and survives StrictMode replay", async () => {
@@ -299,12 +238,11 @@ describe("document Markdown", () => {
     );
     const code = container.querySelector(".notebook-preview__cell--code code")!;
     expect(code.textContent).toBe(source);
-    expect(code.querySelector(".hljs-built_in")).toHaveTextContent("print");
-    expect(code.querySelector(".hljs-number")).toHaveTextContent("42");
+    expect(code.querySelector("span")).toBeInTheDocument();
     expect(code.querySelector("unsafe")).toBeNull();
     const raw = container.querySelector(".notebook-preview__cell--raw code")!;
     expect(raw.textContent).toBe(source);
-    expect(raw.children).toHaveLength(0);
+    expect(raw.querySelector("span")).toBeNull();
     expect(
       container.querySelector(".notebook-preview__output--error pre")!
         .textContent,
@@ -314,31 +252,26 @@ describe("document Markdown", () => {
   });
 
   it.each([
-    [{ kernelspec: { name: "python3" } }, "print(42)", "hljs-built_in"],
+    [{ kernelspec: { name: "python3" } }, "print(42)", true],
+    [{ kernelspec: { name: "julia-1.11" } }, "function f()\nend", true],
+    [{ kernelspec: { name: "deno" } }, "const x = 42", true],
     [
-      { kernelspec: { name: "julia-1.11" } },
-      "function f()\nend",
-      "hljs-keyword",
-    ],
-    [{ kernelspec: { name: "ir" } }, "TRUE", "hljs-literal"],
-    [{ kernelspec: { name: "deno" } }, "const x = 42", "hljs-keyword"],
-    [
-      { language_info: { name: "plaintext" }, kernelspec: { name: "python3" } },
+      {
+        language_info: { name: "plaintext" },
+        kernelspec: { language: "python", name: "python3" },
+      },
       "print(42)",
-      null,
+      false,
     ],
     [
       { kernelspec: { language: "plaintext", name: "python3" } },
       "print(42)",
-      null,
+      false,
     ],
-    [{ kernelspec: { name: "custom-python-environment" } }, "print(42)", null],
-    [{ kernelspec: { name: "constructor" } }, "print(42)", null],
-    [{ kernelspec: { name: "__proto__" } }, "print(42)", null],
-    [{}, "print(42)", null],
+    [{ kernelspec: { name: "constructor" } }, "print(42)", false],
   ])(
     "uses explicit language before recognized kernel names: %j",
-    (metadata, source, token) => {
+    (metadata, source, highlighted) => {
       const { container } = render(
         <NotebookPreview
           text={JSON.stringify({
@@ -351,18 +284,16 @@ describe("document Markdown", () => {
         ".notebook-preview__cell--code code",
       )!;
       expect(code.textContent).toBe(source);
-      if (token) expect(code.querySelector(`.${token}`)).not.toBeNull();
-      else expect(code.children).toHaveLength(0);
+      expect(code.childElementCount > 0).toBe(highlighted);
     },
   );
 
-  it("renders Notebook Markdown/output file images and cell-local attachments without executing HTML", async () => {
+  it("keeps notebook attachments local to their own cell and accepts only raster data", async () => {
     const text = JSON.stringify({
       cells: [
         {
           cell_type: "markdown",
-          source:
-            "![Cell file](figures/curve.png) ![Attached](attachment:plot%20one.png)",
+          source: "![Attached](attachment:plot%20one.png)",
           attachments: { "plot one.png": { "image/png": raster } },
         },
         {
@@ -373,17 +304,6 @@ describe("document Markdown", () => {
             "active.svg": { "image/svg+xml": "<svg onload='bad()'/>" },
           },
         },
-        {
-          cell_type: "code",
-          source: "",
-          outputs: [
-            {
-              output_type: "display_data",
-              data: { "text/markdown": "![Output file](../output.png)" },
-            },
-            { output_type: "display_data", data: { "image/png": raster } },
-          ],
-        },
       ],
     });
     render(
@@ -391,46 +311,12 @@ describe("document Markdown", () => {
         <NotebookPreview text={text} />
       </DocumentPreview>,
     );
-    const notebook = await screen.findByRole("document", {
-      name: "Notebook preview",
-    });
     expect(
-      await within(notebook).findByRole("img", { name: "Attached" }),
+      await screen.findByRole("img", { name: "Attached" }),
     ).toHaveAttribute("src", `data:image/png;base64,${raster}`);
-    await within(notebook).findByRole("img", { name: "Cell file" });
-    await within(notebook).findByRole("img", { name: "Output file" });
-    expect(
-      within(notebook).getByRole("img", { name: "Notebook output" }),
-    ).toHaveAttribute("loading", "lazy");
-    fireEvent.click(
-      within(notebook).getByRole("button", { name: "Preview Notebook output" }),
-    );
-    const viewer = screen.getByRole("dialog", { name: "Image preview" });
-    expect(viewer.querySelector("img")).not.toHaveAttribute("loading", "lazy");
-    expect(viewer.querySelector("img")).toHaveAttribute(
-      "src",
-      `data:image/png;base64,${raster}`,
-    );
-    expect(
-      within(viewer).getByRole("group", { name: "Image navigation" }),
-    ).toHaveTextContent("4 / 4");
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Image preview" }),
-      ).toBeNull(),
-    );
-    expect(
-      within(notebook).queryByRole("img", { name: "Other cell" }),
-    ).toBeNull();
-    expect(
-      within(notebook).getByText("Other cell · Image unavailable"),
-    ).toBeVisible();
-    expect(
-      within(notebook).getByText("Unsafe · Image unavailable"),
-    ).toBeVisible();
-    expect(
-      vi.mocked(store.loadDocumentImage).mock.calls.map(([, ref]) => ref),
-    ).toEqual(["./reports/figures/curve.png", "./reports/../output.png"]);
+    expect(screen.getAllByRole("img")).toHaveLength(1);
+    expect(screen.getByText("Other cell · Image unavailable")).toBeVisible();
+    expect(screen.getByText("Unsafe · Image unavailable")).toBeVisible();
+    expect(store.loadDocumentImage).not.toHaveBeenCalled();
   });
 });

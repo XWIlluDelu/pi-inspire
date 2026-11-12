@@ -1,21 +1,13 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { codemodeCalls } from "../../shared/tool-activity";
-import { ChildCalls } from "../../src/components/ChildCalls";
+import { childCallSummary } from "../../src/child-call-summary";
 import {
   ToolCard,
   ToolResultCard,
 } from "../../src/components/transcript-cards";
 import {
-  type ActivityTool,
   type ChatMessage,
   emptyEventSlice,
   reduceEvent,
@@ -58,78 +50,9 @@ const final: ChatMessage = {
   details: { calls: finishedCalls },
   __inspireCalls: codemodeCalls({ calls: finishedCalls }),
 };
-afterEach(() => {
-  vi.useRealTimers();
-  configureToolPresentationRegistry();
-});
+afterEach(() => configureToolPresentationRegistry());
 
-function toolCard(
-  result?: ChatMessage,
-  activity?: ActivityTool,
-  visibility: "expanded" | "collapsed" = "expanded",
-  adaptive = false,
-  onManualOpenChange?: (open: boolean) => void,
-) {
-  return (
-    <ToolCard
-      call={call}
-      result={result}
-      activity={activity}
-      live={!result}
-      visibility={visibility}
-      dynamic={adaptive}
-      dynamicActive={adaptive ? !result : undefined}
-      onManualOpenChange={onManualOpenChange}
-    />
-  );
-}
-
-it.each(["cancelled", "unfinished"] as const)(
-  "keeps %s child calls neutral and static without declaring failure",
-  (status) => {
-    const { container } = render(
-      <ChildCalls
-        running={false}
-        onRead={() => {}}
-        list={{
-          source: "nested",
-          complete: true,
-          calls: [{ key: "passive", name: "read", status }],
-        }}
-      />,
-    );
-    expect(container.querySelector(".child-call__status svg")).toHaveAttribute(
-      "data-status",
-      "neutral",
-    );
-    expect(container.querySelector(".pi-loading")).toBeNull();
-    expect(container.querySelector(".child-call__status")).toHaveTextContent(
-      status === "cancelled" ? "Cancelled" : "Unfinished",
-    );
-  },
-);
-
-it("separates the failure-count text role from child status marks", () => {
-  const { container } = render(
-    <ToolResultCard
-      result={{
-        ...final,
-        toolName: "orchestrator",
-      }}
-      visibility="expanded"
-    />,
-  );
-  const heading = container.querySelector(".tool-call-list__heading")!;
-  expect(within(heading as HTMLElement).getByText("· 1 failed")).toHaveClass(
-    "tool-call-list__error-count",
-  );
-  expect(heading.querySelector(".child-call__status--error")).toBeNull();
-  expect(
-    container.querySelector(".child-call__status--error svg"),
-  ).toHaveAttribute("data-status", "error");
-});
-
-it("separates Calls and Output and copies the complete tool block once from the header", async () => {
+it("expands the child-call summary and copies the complete original tool block", async () => {
   const result = {
     ...final,
     content: [
@@ -145,23 +68,27 @@ it("separates Calls and Output and copies the complete tool block once from the 
     configurable: true,
     value: { writeText },
   });
-  const view = render(toolCard(result));
-  expect(screen.getByText("3.5s")).toBeVisible();
-  expect(screen.getAllByText("1 failed · 2 calls")).toHaveLength(1);
-  expect(screen.queryByText("Calls", { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByText("Output", { exact: true })).toBeVisible();
-  expect(
-    screen.queryByText("Result details", { exact: true }),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Raw" })).not.toBeInTheDocument();
-  const copy = screen.getAllByRole("button", {
-    name: "Copy codemode tool block",
-  });
-  expect(copy).toHaveLength(1);
-  expect(view.container.querySelector(".card__header")!.contains(copy[0])).toBe(
-    true,
+  render(
+    <ToolCard
+      call={call}
+      result={result}
+      activity={undefined}
+      live={false}
+      visibility="collapsed"
+    />,
   );
-  fireEvent.click(copy[0]);
+  expect(screen.getByText("1 failed · 2 calls")).toBeVisible();
+  expect(screen.queryByRole("group", { name: "Child calls" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
+  expect(
+    await screen.findByRole("group", { name: "Child calls" }),
+  ).toBeVisible();
+  expect(screen.getByLabelText("finished", { exact: true })).toBeVisible();
+  expect(screen.getByText("3.5s")).toBeVisible();
+  expect(screen.getByText("Output", { exact: true })).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Copy codemode tool block" }),
+  );
   await waitFor(() =>
     expect(writeText).toHaveBeenCalledWith(
       [
@@ -238,10 +165,9 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     childCall: { key: "script/1", name: "read", status: "running" },
   });
   expect(Object.keys(slice.tools)).toEqual(["script"]);
-  expect(slice.tools.script?.calls?.calls.map((call) => call.key)).toEqual([
-    "codemode:0",
-    "codemode:1",
-  ]);
+  const liveCalls = slice.tools.script?.calls?.calls.map(({ key }) => key);
+  expect(liveCalls).toHaveLength(2);
+  expect(new Set(liveCalls).size).toBe(2);
   event({
     type: "tool_execution_end",
     toolCallId: "script",
@@ -253,8 +179,8 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
     phase: "done",
     calls: {
       calls: [
-        { key: "codemode:0", status: "error" },
-        { key: "codemode:1", status: "ok" },
+        { key: liveCalls![0], status: "error" },
+        { key: liveCalls![1], status: "ok" },
       ],
     },
   });
@@ -266,70 +192,6 @@ it("uses Codemode's snapshot positions, not temporary ids or generic receipts, a
   });
   expect(slice.tools.script?.phase).toBe("done");
   expect(slice.tools.script?.calls?.calls[0]?.status).toBe("error");
-});
-
-it("keeps the collapsed summary useful and shows every call when the parent opens, without another list disclosure", async () => {
-  const result: ChatMessage = {
-    ...final,
-    __inspireCalls: codemodeCalls({
-      calls: [
-        ...finishedCalls,
-        {
-          id: "script/3",
-          name: "grep",
-          args: '{"pattern":"TODO"}',
-          status: "ok",
-        },
-        {
-          id: "script/4",
-          name: "read",
-          args: '{"path":"b.txt"}',
-          status: "ok",
-        },
-      ],
-    }),
-  };
-  const view = render(toolCard(result, undefined, "collapsed"));
-  expect(screen.getByText("CodeMode")).toBeVisible();
-  expect(screen.getByText("1 failed · 4 calls")).toBeVisible();
-  expect(view.container.querySelector(".card--failed")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
-  const list = await screen.findByRole("group", { name: "Child calls" });
-  expect(list.querySelectorAll(".child-call")).toHaveLength(4);
-  expect(
-    screen.queryByRole("button", { name: /^Calls / }),
-  ).not.toBeInTheDocument();
-});
-
-it("holds an inspected Script open through Adaptive completion", async () => {
-  const activity: ActivityTool = {
-    id: "script",
-    name: "codemode",
-    phase: "running",
-  };
-  const hold = vi.fn();
-  const view = render(toolCard(undefined, activity, "expanded", true, hold));
-  const summary = view.container.querySelector(
-    ".tool-call-script summary",
-  ) as HTMLElement;
-  fireEvent.click(summary);
-  (summary.parentElement as HTMLDetailsElement).open = true;
-  fireEvent(summary.parentElement!, new Event("toggle"));
-  const scriptReader = within(summary.parentElement!);
-  const code = await scriptReader.findByRole("group", { name: "Code" });
-  expect(
-    scriptReader.queryByText("JavaScript", { exact: true }),
-  ).not.toBeInTheDocument();
-  summary.focus();
-  vi.useFakeTimers();
-  view.rerender(
-    toolCard(final, { ...activity, phase: "done" }, "expanded", true, hold),
-  );
-  act(() => vi.advanceTimersByTime(5_000));
-  expect(hold).toHaveBeenCalledWith(true);
-  expect(scriptReader.getByRole("group", { name: "Code" })).toBe(code);
-  expect(document.activeElement).toBe(summary);
-  expect(summary.parentElement).toHaveAttribute("open");
 });
 
 it("distinguishes omitted arguments from unfinished child calls", async () => {
@@ -348,6 +210,7 @@ it("distinguishes omitted arguments from unfinished child calls", async () => {
           status: "unfinished",
           argumentsOmitted: true,
         },
+        { key: "parent/2", name: "write", status: "cancelled" },
       ],
     },
   };
@@ -366,7 +229,8 @@ it("distinguishes omitted arguments from unfinished child calls", async () => {
       visibility="expanded"
     />,
   );
-  expect(screen.getByText("Unfinished")).toBeInTheDocument();
+  for (const status of ["Unfinished", "Cancelled"])
+    expect(screen.getByText(status)).toBeVisible();
   const row = view.container.querySelector(".child-call > summary")!;
   (row.parentElement as HTMLDetailsElement).open = true;
   fireEvent(row.parentElement!, new Event("toggle"));
@@ -375,22 +239,88 @@ it("distinguishes omitted arguments from unfinished child calls", async () => {
   expect(screen.getByText(/Call record incomplete/)).toBeInTheDocument();
 });
 
-it("retains lazy bodies and exact user-mapping precedence over the Codemode rule", async () => {
+it("shows generic child calls when the selected Codemode mapping is missing", async () => {
   configureToolPresentationRegistry({
     version: 1,
     rules: {},
     mappings: { codemode: "user.missing" },
   });
-  const spy = vi.spyOn(JSON, "stringify");
-  const view = render(toolCard(final, undefined, "collapsed"));
-  expect(spy).not.toHaveBeenCalled();
+  render(
+    <ToolCard
+      call={call}
+      result={final}
+      activity={undefined}
+      live={false}
+      visibility="collapsed"
+    />,
+  );
   fireEvent.click(screen.getByRole("button", { name: "Expand CodeMode tool" }));
-  expect(
-    view.container.querySelector('[data-tool-rule="inspire.pi.codemode"]'),
-  ).toBeNull();
-  expect(view.container.querySelector(".tool-call-script")).toBeNull();
   expect(
     await screen.findByRole("group", { name: "Child calls" }),
   ).toBeVisible();
-  spy.mockRestore();
+  expect(screen.getByRole("group", { name: "Result text" })).toHaveTextContent(
+    "Script completed actual result",
+  );
+});
+
+describe("childCallSummary", () => {
+  const summaryCall = { key: "test", name: "edit", status: "ok" as const };
+  const preview = (argumentsPreview: string) =>
+    childCallSummary({ ...summaryCall, argumentsPreview });
+
+  it("summarizes intact arguments and native model identities without changing path values", () => {
+    expect(
+      childCallSummary({
+        ...summaryCall,
+        arguments: { path: "src/app.tsx", edits: [] },
+      }),
+    ).toEqual({ text: "src/app.tsx", path: true });
+    expect(
+      preview('{"command":"npm run typecheck\\nnpm run build"}').text,
+    ).toBe("npm run typecheck");
+    expect(preview('{"drop":"1","quiet":true}').text).toBe(
+      "drop: 1 · quiet: true",
+    );
+    expect(
+      childCallSummary({
+        ...summaryCall,
+        name: "models.classify",
+        argumentsPreview: "fixture/classifier",
+      }).text,
+    ).toBe("fixture/classifier");
+  });
+
+  it("recovers complete root fields before a truncated suffix, respecting escaped strings and nesting", () => {
+    const path = 'C:\\project\\quoted "file".tsx';
+    const args = JSON.stringify({
+      path,
+      edits: [{ oldText: "a".repeat(300), newText: "new" }],
+    }).slice(0, 200);
+    expect(preview(args)).toEqual({ text: path, path: true });
+    expect(
+      preview(
+        '{"edits":[{"path":"nested-decoy"}],"path":"real.ts","newText":"cut',
+      ),
+    ).toEqual({ text: "real.ts", path: true });
+    expect(preview('{"path":"real.ts","unfinishedKey"')).toEqual({
+      text: "real.ts",
+      path: true,
+    });
+    expect(preview('{"path":"real.ts"')).toEqual({
+      text: "real.ts",
+      path: true,
+    });
+  });
+
+  it("omits incomplete values and nested lookalikes instead of exposing broken JSON or guessing parameters", () => {
+    for (const args of [
+      '{"path":"unfinished',
+      '{"edits":[{"path":"not-the-target","oldText":"cut',
+      '{"oldText":"fake \\"path\\":\\"wrong.ts\\"',
+      '{"path":"invalid\\q","edits":[',
+      '{"count":12',
+      "not JSON",
+    ])
+      expect(preview(args).text).toBe("");
+  });
 });

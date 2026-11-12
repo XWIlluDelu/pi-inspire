@@ -6,6 +6,7 @@ import {
   deferred,
   installFakeWebSocket,
   installFetch,
+  jsonBody,
   type RouteResponse,
 } from "./helpers";
 import { baseRoutes, initStore } from "./store-fixture";
@@ -33,59 +34,10 @@ describe("feedback scope", () => {
     ]);
   });
 
-  it.each(["send", "stop", "clear-pending", "prompt-history"] as const)(
-    "keeps %s feedback separate from a current synchronization warning",
-    async (action) => {
-      const snapshot = activeSnapshot({
-        transcriptPage: { composerHistoryVersion: "history-1" },
-      });
-      const requested: string[] = [];
-      installFetch((url, init) => {
-        if (url.startsWith("/api/bootstrap"))
-          return { body: bootstrapPayload({ snapshot }) };
-        if (url.startsWith("/api/snapshot"))
-          return { status: 503, body: { error: "Snapshot unavailable" } };
-        if (
-          ["/api/prompt", "/api/control/abort", "/api/pending/clear"].includes(
-            url,
-          ) ||
-          url.startsWith("/api/composer/history")
-        ) {
-          requested.push(url);
-          return { status: 503, body: { error: "Action refused" } };
-        }
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      await store.refreshSession();
-      const warning = store.getState().error;
-      expect(warning).toBe("Failed to refresh session: Snapshot unavailable");
-
-      if (action === "send") await store.sendPrompt("Keep this draft");
-      else if (action === "stop") await store.abort();
-      else if (action === "clear-pending") await store.clearPending();
-      else {
-        const state = store.getState();
-        await store.loadComposerHistory(
-          state.sessionId!,
-          state.transcriptViewId!,
-          state.transcriptIncarnation,
-          state.composerHistoryVersion!,
-        );
-      }
-
-      expect(requested).toHaveLength(1);
-      expect(store.getState().error).toBe(warning);
-      expect(store.getState().notices).toEqual([
-        expect.objectContaining({ kind: "warning", text: expect.any(String) }),
-      ]);
-      if (action === "send")
-        expect(store.getState().editorText?.text).toBe("Keep this draft");
-    },
-  );
-
-  it("clears a refresh warning only when state is reobserved, not when a send succeeds", async () => {
+  it("preserves a read warning through prompt acceptance and clears it independently of control failures", async () => {
     let unavailable = true;
+    const failedActions = ["/api/control/abort", "/api/pending/clear"];
+    const requested: string[] = [];
     installFetch((url, init) => {
       if (url.startsWith("/api/snapshot"))
         return unavailable
@@ -93,17 +45,24 @@ describe("feedback scope", () => {
           : { body: activeSnapshot() };
       if (url === "/api/prompt")
         return { body: { accepted: true, historyEntry: null } };
-      if (url === "/api/control/abort")
-        return { status: 409, body: { error: "Stop was not confirmed" } };
+      if (failedActions.includes(url)) {
+        requested.push(url);
+        return { status: 409, body: { error: "Action refused" } };
+      }
       return baseRoutes(url, init);
     });
     const { store } = await initStore();
     await store.refreshSession();
+    const warning = store.getState().error;
+    expect(warning).toContain("Snapshot unavailable");
     await store.sendPrompt("Still usable");
-    expect(store.getState().error).toContain("Snapshot unavailable");
+    expect(store.getState().error).toBe(warning);
     await store.abort();
+    await store.clearPending();
+    expect(requested).toEqual(failedActions);
+    expect(store.getState().error).toBe(warning);
     const notices = store.getState().notices;
-    expect(notices).toHaveLength(1);
+    expect(notices).toHaveLength(2);
     unavailable = false;
     await store.refreshSession();
     expect(store.getState().error).toBeNull();
@@ -136,13 +95,16 @@ describe("feedback scope", () => {
     },
   );
 
-  it.each([false, true])(
-    "returns a dialog response error only while its request still exists (expired=%s)",
-    async (expired) => {
+  it.each(["current", "expired", "changed session"] as const)(
+    "scopes a dialog answer to its original request (%s)",
+    async (outcome) => {
       const response = deferred<RouteResponse>();
-      installFetch((url, init) =>
-        url === "/api/extension-ui" ? response.promise : baseRoutes(url, init),
-      );
+      const submitted = deferred<Record<string, unknown>>();
+      installFetch((url, init) => {
+        if (url !== "/api/extension-ui") return baseRoutes(url, init);
+        submitted.resolve(jsonBody(init));
+        return response.promise;
+      });
       const { store, socket } = await initStore();
       socket.emit({
         type: "extension_ui_request",
@@ -156,18 +118,47 @@ describe("feedback scope", () => {
         id: "choice",
         value: "One",
       });
-      if (expired)
+      expect(await submitted.promise).toMatchObject({
+        sessionId: "s1",
+        id: "choice",
+      });
+      if (outcome === "expired")
         socket.emit({
           type: "extension_ui_remove",
           sessionId: "s1",
           id: "choice",
           reason: "expired",
         });
-      response.resolve({ status: 409, body: { error: "Reply refused" } });
-      await expect(answering).resolves.toBe(expired ? null : "Reply refused");
-      expect(store.getState().error).toBeNull();
-      expect(store.getState().notices).toEqual([]);
-      expect(store.getState().extensionUiRespondingId).toBeNull();
+      if (outcome === "changed session") {
+        const next = activeSnapshot({ sessionId: "s2" });
+        next.pendingExtensionUiRequests = [
+          {
+            sessionId: "s2",
+            id: "choice",
+            method: "confirm",
+            title: "Question B",
+          },
+        ];
+        socket.emit({ type: "snapshot", data: next });
+      }
+
+      response.resolve(
+        outcome === "changed session"
+          ? { body: { ok: true } }
+          : { status: 409, body: { error: "Reply refused" } },
+      );
+      await expect(answering).resolves.toBe(
+        outcome === "current" ? "Reply refused" : null,
+      );
+      expect(store.getState()).toMatchObject({
+        error: null,
+        notices: [],
+        extensionUiRespondingId: null,
+      });
+      if (outcome === "changed session")
+        expect(store.getState().extensionUiRequests).toMatchObject([
+          { sessionId: "s2", id: "choice" },
+        ]);
     },
   );
 });

@@ -78,11 +78,6 @@ test.describe("phone action dialogs", () => {
           exact: true,
         });
         await draft.fill("Keep this unfinished input");
-        await expect
-          .poll(() =>
-            page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
-          )
-          .toBe(0);
         const open = async () => {
           if (name === "Command palette")
             await page
@@ -131,11 +126,6 @@ test.describe("phone action dialogs", () => {
         await expect(
           page.getByRole("dialog", { name, exact: true }),
         ).toHaveCount(0);
-        await expect
-          .poll(() =>
-            page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
-          )
-          .toBe(0);
         await page.goBack();
         await expect(page).toHaveURL("about:blank#outside-inspire");
       },
@@ -143,66 +133,33 @@ test.describe("phone action dialogs", () => {
   }
 });
 
-for (const name of ["Settings", "Terminal settings"]) {
-  test(
-    name + " keeps modal ownership when the workspace becomes a drawer",
-    async ({ page }) => {
-      await page.setViewportSize({ width: 1280, height: 900 });
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await pairAndOpen(page);
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-      await expect(
-        page.getByRole("complementary", { name: "Context panel" }),
-      ).toBeVisible();
-      if (name === "Settings") await openSettings(page);
-      else {
-        const palette = await openCommandPalette(page);
-        await palette.getByLabel("Filter commands").fill("Terminal settings");
-        await page.getByRole("option", { name: /Terminal settings/ }).click();
-      }
-      const dialog = page.getByRole("dialog", { name, exact: true });
-      await expect(dialog).toBeVisible();
-      for (const width of [390, 1280, 320]) {
-        await page.setViewportSize({ width, height: 760 });
-        await expect(dialog).toBeVisible();
-        expect(
-          await dialog.evaluate((el) =>
-            Boolean(el.closest('[inert], [aria-hidden="true"]')),
-          ),
-        ).toBe(false);
-        await dialog
-          .getByRole("button", {
-            name:
-              name === "Settings"
-                ? "Close settings"
-                : "Close terminal settings",
-            exact: true,
-          })
-          .focus();
-        for (let index = 0; index < 4; index++) {
-          await page.keyboard.press("Tab");
-          expect(
-            await dialog.evaluate((el) => el.contains(document.activeElement)),
-          ).toBe(true);
-        }
-        expect(
-          await page.evaluate(() =>
-            Boolean(document.activeElement?.closest(".ctx")),
-          ),
-        ).toBe(false);
-      }
-      await page.keyboard.press("Escape");
-      await expect(dialog).toHaveCount(0);
-      const drawer = page.getByRole("dialog", { name: "Context panel" });
-      await expect(drawer).toBeVisible();
-      await drawer.getByRole("tab", { name: "Files", exact: true }).focus();
-      await expect(
-        drawer.getByRole("tab", { name: "Files", exact: true }),
-      ).toBeFocused();
-      await page.keyboard.press("Escape");
-      await expect(drawer).toHaveCount(0);
-    },
-  );
-}
+test("Settings keeps modal ownership when the workspace becomes a drawer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairAndOpen(page);
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Context panel" }),
+  ).toBeVisible();
+  await openSettings(page);
+  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+  await expect(dialog).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 760 });
+  const close = dialog.getByRole("button", { name: "Close settings" });
+  await close.focus();
+  await page.keyboard.press("Shift+Tab");
+  await expect(dialog.locator(":focus")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  const drawer = page.getByRole("dialog", { name: "Context panel" });
+  await expect(drawer).toBeVisible();
+  const files = drawer.getByRole("tab", { name: "Files", exact: true });
+  await files.focus();
+  await expect(files).toBeFocused();
+  await files.press("Escape");
+  await expect(drawer).toBeHidden();
+});

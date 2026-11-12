@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AppStore } from "../../src/store";
-import { sessionPage } from "./fixtures/session-catalog";
+import { installCatalog, sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
   DEFAULT_PREFS,
   deferred,
-  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -20,408 +18,228 @@ import { baseRoutes, initStore } from "./store-fixture";
 describe("session switching guard", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("refreshes a missing open target out of the list without changing the visible session", async () => {
-    let missing = false;
-    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s9" })];
+  it.each([
+    [404, "Session not found"],
+    [409, "Session is owned by another Pi process"],
+  ] as const)(
+    "reports a refused selection (%s) and lets the user select again",
+    async (status, error) => {
+      const visible = sessionSummary({ id: "s1" });
+      const target = sessionSummary({ id: "s9" });
+      let missing = false;
+      installFetch((url, init) => {
+        if (url === "/api/sessions/open") {
+          if (jsonBody(init).id === target.id) {
+            missing = status === 404;
+            return {
+              status,
+              body: {
+                error,
+                ...(missing ? { code: "SESSION_NOT_FOUND" } : {}),
+              },
+            };
+          }
+          return { body: activeSnapshot({ sessionId: "s3" }) };
+        }
+        if (url.startsWith("/api/sessions?")) {
+          const sessions = missing ? [visible] : [visible, target];
+          return { body: sessionPage(sessions, sessions.length) };
+        }
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+      await store.openSession(target.id);
+      expect(store.getState()).toMatchObject({
+        sessionId: "s1",
+        openingSessionId: null,
+        error: null,
+        sessionActionError: error,
+      });
+      await vi.waitFor(() =>
+        expect(store.getState().sessions.map(({ id }) => id)).toEqual(
+          missing ? ["s1"] : ["s1", "s9"],
+        ),
+      );
+      await store.openSession("s3");
+      expect(store.getState()).toMatchObject({
+        sessionId: "s3",
+        error: null,
+        sessionActionError: null,
+      });
+    },
+  );
+
+  it("requires a workspace before dispatching session creation", async () => {
+    const creating = vi.fn();
     installFetch((url, init) => {
-      if (url === "/api/sessions/open") {
-        missing = true;
+      if (url.startsWith("/api/bootstrap"))
         return {
-          status: 404,
-          body: { error: "Session not found", code: "SESSION_NOT_FOUND" },
+          body: bootstrapPayload({
+            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
+          }),
         };
-      }
-      if (url.startsWith("/api/sessions")) {
-        const sessions = missing ? rows.slice(0, 1) : rows;
-        return {
-          body: sessionPage(sessions, sessions.length),
-        };
-      }
+      if (url === "/api/sessions/new") creating();
       return baseRoutes(url, init);
     });
     const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
-    await store.openSession("s9");
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((row) => row.id)).toEqual(["s1"]),
-    );
-    expect(store.getState()).toMatchObject({
-      sessionId: "s1",
-      openingSessionId: null,
-      sessionActionError: "Session not found",
+    await expect(store.newSession()).resolves.toBeNull();
+    expect(creating).not.toHaveBeenCalled();
+    expect(store.getState().notices.at(-1)).toMatchObject({
+      kind: "warning",
+      text: "Enter a project directory to start a session",
     });
-  });
-
-  it("clears the pending state and surfaces the error when the open fails", async () => {
-    installFetch(baseRoutes);
-    const store = new AppStore();
-    await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: unknown) => {
-        const url = String(input);
-        if (url.startsWith("/api/sessions/open")) {
-          return new Response(
-            JSON.stringify({ error: "session is owned by another Pi process" }),
-            {
-              status: 409,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-        return new Response(JSON.stringify({ error: "unexpected" }), {
-          status: 404,
-        });
-      }),
-    );
-
-    await store.openSession("s9");
-    expect(store.getState().openingSessionId).toBeNull();
-    expect(store.getState().sessionId).toBe("s1"); // active session unchanged
-    expect(store.getState().error).toBeNull();
-    expect(store.getState().sessionActionError).toBe(
-      "session is owned by another Pi process",
-    );
-
-    // a later selection is not blocked by the failed attempt
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: unknown) => {
-        const url = String(input);
-        if (url.startsWith("/api/sessions/open")) {
-          return new Response(
-            JSON.stringify(activeSnapshot({ sessionId: "s3" })),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
-        }
-        return new Response(JSON.stringify({ error: "unexpected" }), {
-          status: 404,
-        });
-      }),
-    );
-    await store.openSession("s3");
-    expect(store.getState().sessionId).toBe("s3");
-    expect(store.getState().error).toBeNull();
   });
 });
 
 describe("navigation curation", () => {
   beforeEach(() => installFakeWebSocket());
 
-  const curationRoutes = (
-    patchBehavior: "ok" | "fail",
-    onPatch?: (patch: Record<string, unknown>) => void,
-  ): RouteHandler => {
-    return (url, init) => {
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        const patch = jsonBody(init);
-        onPatch?.(patch);
-        if (patchBehavior === "fail")
-          return { status: 500, body: { error: "preference write rejected" } };
-        return { body: { ...bootstrapPayload().preferences, ...patch } };
-      }
-      if (url.startsWith("/api/sessions")) {
+  const patchPreferences = (init: RequestInit) => ({
+    body: { ...DEFAULT_PREFS, ...jsonBody(init) },
+  });
+  const curationRoutes =
+    (refused = false): RouteHandler =>
+    (url, init) => {
+      if (url === "/api/preferences" && init.method === "PATCH")
+        return refused
+          ? { status: 500, body: { error: "preference write rejected" } }
+          : patchPreferences(init);
+      if (url.startsWith("/api/sessions?"))
         return {
           body: sessionPage(
-            [
-              {
-                id: "s7",
-                cwd: "/demo",
-                project: "demo",
-                title: "Pin target",
-                created: "2026-07-20T10:00:00Z",
-                modified: "2026-07-21T10:00:00Z",
-                messageCount: 2,
-              },
-            ],
+            [sessionSummary({ id: "s7", title: "Pin target" })],
             1,
           ),
         };
-      }
       return baseRoutes(url, init);
     };
-  };
 
-  it("retains an off-page curated row until restore is confirmed, then prunes it without a list reload", async () => {
-    let listRequests = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            preferences: {
-              ...bootstrapPayload().preferences,
-              hiddenSessionIds: ["off-page"],
-            },
-            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-          }),
-        };
-      }
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        return {
-          body: {
-            ...bootstrapPayload().preferences,
-            ...jsonBody(init),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions/by-id")) {
-        return {
-          body: {
-            sessions: [
-              sessionSummary({ id: "off-page", cwd: "/work/archived" }),
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        listRequests += 1;
-        return {
-          body: sessionPage([sessionSummary({ id: "recent" })], 2),
-        };
-      }
-      return baseRoutes(url, init);
-    });
+  const recent = sessionSummary({ id: "recent", cwd: "/work/other" });
+  const folder = sessionSummary({ id: "off-page", cwd: "/work/demo" });
+  const sessionIds = (store: Awaited<ReturnType<typeof initStore>>["store"]) =>
+    store.getState().sessions.map(({ id }) => id);
+
+  it("prunes a restored off-page row after confirmation without refetching the catalog", async () => {
+    const write = deferred<void>();
+    let lists = 0;
+    installCatalog(
+      () => {
+        lists++;
+        return { body: sessionPage([recent], 2) };
+      },
+      {
+        preferences: { hiddenSessionIds: [folder.id] },
+        routes: async (url, init) => {
+          if (url === "/api/sessions/by-id")
+            return { body: { sessions: [folder] } };
+          if (url === "/api/preferences") {
+            await write.promise;
+            return patchPreferences(init);
+          }
+        },
+      },
+    );
     const { store } = await initStore();
     await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-        "off-page",
-      ]),
+      expect(sessionIds(store)).toEqual([recent.id, folder.id]),
     );
 
-    store.toggleSessionHidden("off-page");
-    expect(store.getState().sessions.map((session) => session.id)).toContain(
-      "off-page",
-    );
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-      ]),
-    );
-    expect(listRequests).toBe(1);
+    store.toggleSessionHidden(folder.id);
+    expect(sessionIds(store)).toContain(folder.id);
+    write.resolve();
+    await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
+    expect(lists).toBe(1);
     expect(store.getState()).toMatchObject({
-      sessionListLoading: false,
-      sessionListHydrating: false,
       sessionListNextOffset: 1,
       sessionListTotal: 2,
     });
   });
 
   it("does not revive rows from a catalog refresh that captured older curation", async () => {
-    let folderRequests = 0;
-    const { promise: refreshHydrationGate, resolve: releaseRefreshHydration } =
-      deferred<void>();
-    const {
-      promise: refreshHydrationRequest,
-      resolve: refreshHydrationStarted,
-    } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            preferences: {
-              ...bootstrapPayload().preferences,
-              hiddenProjectCwds: ["/work/demo"],
-            },
-            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-          }),
-        };
-      }
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        return {
-          body: {
-            ...bootstrapPayload().preferences,
-            ...jsonBody(init),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions/refresh")) {
-        return { body: { ok: true } };
-      }
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        folderRequests += 1;
-        if (folderRequests === 2) {
-          refreshHydrationStarted();
-          await refreshHydrationGate;
+    const delayed = deferred<void>();
+    const started = deferred<void>();
+    let folderReads = 0;
+    installCatalog(() => ({ body: sessionPage([recent], 2) }), {
+      preferences: { hiddenProjectCwds: [folder.cwd] },
+      routes: async (url, init) => {
+        if (url === "/api/preferences") return patchPreferences(init);
+        if (url === "/api/sessions/refresh") return { body: { ok: true } };
+        if (url === "/api/sessions/by-cwd") {
+          if (++folderReads === 2) {
+            started.resolve();
+            await delayed.promise;
+          }
+          return { body: { sessions: [folder] } };
         }
-        return {
-          body: {
-            sessions: [sessionSummary({ id: "off-page", cwd: "/work/demo" })],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        return {
-          body: sessionPage([sessionSummary({ id: "recent" })], 2),
-        };
-      }
-      return baseRoutes(url, init);
+      },
     });
     const { store } = await initStore();
     await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-        "off-page",
-      ]),
+      expect(sessionIds(store)).toEqual([recent.id, folder.id]),
     );
-
     const refresh = store.refreshSessions();
-    await refreshHydrationRequest;
-    store.toggleProjectHidden("/work/demo");
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-      ]),
-    );
-
-    releaseRefreshHydration();
+    await started.promise;
+    store.toggleProjectHidden(folder.cwd);
+    await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
+    delayed.resolve();
     await refresh;
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "recent",
-    ]);
+    expect(sessionIds(store)).toEqual([recent.id]);
   });
 
-  it("hydrates a newly curated folder without resetting or foregrounding the chronological list", async () => {
-    let listRequests = 0;
-    const { promise: folderGate, resolve: releaseFolder } = deferred<void>();
-    const { promise: folderRequest, resolve: folderStarted } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-          }),
-        };
-      }
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        return {
-          body: {
-            ...bootstrapPayload().preferences,
-            ...jsonBody(init),
+  it.each([false, true])(
+    "hydrates the confirmed curated folder without replacing the chronological list (refused removal=%s)",
+    async (refuseRemoval) => {
+      const hydration = deferred<void>();
+      const requested = deferred<void>();
+      let lists = 0;
+      let writes = 0;
+      installCatalog(
+        () => {
+          lists++;
+          return { body: sessionPage([recent], 8) };
+        },
+        {
+          routes: async (url, init) => {
+            if (url === "/api/preferences") {
+              if (++writes === 2)
+                return { status: 500, body: { error: "removal rejected" } };
+              return patchPreferences(init);
+            }
+            if (url === "/api/sessions/by-cwd") {
+              requested.resolve();
+              await hydration.promise;
+              return { body: { sessions: [folder] } };
+            }
           },
-        };
+        },
+      );
+      const { store } = await initStore();
+      await vi.waitFor(() => expect(sessionIds(store)).toEqual([recent.id]));
+      store.toggleProjectHidden(folder.cwd);
+      if (refuseRemoval) {
+        store.toggleProjectHidden(folder.cwd);
+        expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
       }
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        folderStarted();
-        await folderGate;
-        return {
-          body: {
-            sessions: [sessionSummary({ id: "folder-old", cwd: "/work/demo" })],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        listRequests += 1;
-        return {
-          body: sessionPage(
-            [sessionSummary({ id: "recent", cwd: "/work/other" })],
-            8,
-          ),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListLoading).toBe(false),
-    );
-
-    store.toggleProjectHidden("/work/demo");
-    await folderRequest;
-    expect(store.getState()).toMatchObject({
-      sessionListLoading: false,
-      sessionListHydrating: true,
-      sessionListOperation: null,
-      sessionListNextOffset: 1,
-      sessionListTotal: 8,
-    });
-    expect(listRequests).toBe(1);
-
-    releaseFolder();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-        "folder-old",
-      ]),
-    );
-    expect(store.getState()).toMatchObject({
-      sessionListHydrating: false,
-      sessionListOperation: null,
-      sessionListNextOffset: 1,
-      sessionListTotal: 8,
-    });
-    expect(listRequests).toBe(1);
-  });
-
-  it("hydrates confirmed curation restored after a newer queued removal is refused", async () => {
-    let listRequests = 0;
-    let folderRequests = 0;
-    let preferenceWrites = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-          }),
-        };
-      }
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        preferenceWrites += 1;
-        if (preferenceWrites === 2) {
-          return { status: 500, body: { error: "removal rejected" } };
-        }
-        return {
-          body: {
-            ...bootstrapPayload().preferences,
-            ...jsonBody(init),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        folderRequests += 1;
-        return {
-          body: {
-            sessions: [sessionSummary({ id: "folder-old", cwd: "/work/demo" })],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        listRequests += 1;
-        return {
-          body: sessionPage([sessionSummary({ id: "recent" })], 2),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListLoading).toBe(false),
-    );
-
-    store.toggleProjectHidden("/work/demo");
-    store.toggleProjectHidden("/work/demo");
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
-
-    await vi.waitFor(() =>
-      expect(store.getState().prefs.hiddenProjectCwds).toEqual(["/work/demo"]),
-    );
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-        "folder-old",
-      ]),
-    );
-    expect(folderRequests).toBeGreaterThanOrEqual(1);
-    expect(listRequests).toBe(1);
-  });
+      await requested.promise;
+      await vi.waitFor(() =>
+        expect(store.getState().prefs.hiddenProjectCwds).toEqual([folder.cwd]),
+      );
+      expect(store.getState()).toMatchObject({
+        sessionListLoading: false,
+        sessionListNextOffset: 1,
+        sessionListTotal: 8,
+      });
+      hydration.resolve();
+      await vi.waitFor(() =>
+        expect(sessionIds(store)).toEqual([recent.id, folder.id]),
+      );
+      expect(lists).toBe(1);
+    },
+  );
 
   it("rolls a refused curation write back and reports it", async () => {
-    installFetch(curationRoutes("fail"));
+    installFetch(curationRoutes(true));
     const { store } = await initStore();
 
     store.toggleSessionPin("s7");
@@ -491,7 +309,7 @@ describe("navigation curation", () => {
           body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
         };
       }
-      return curationRoutes("ok")(url, init);
+      return curationRoutes()(url, init);
     });
     const { store } = await initStore();
 
@@ -503,245 +321,58 @@ describe("navigation curation", () => {
     expect(store.getState().prefs.theme).toBe("dark");
   });
 
-  it("fetches pinned and hidden sessions missing from the first page", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot(),
-            preferences: {
-              ...bootstrapPayload().preferences,
-              pinnedSessionIds: ["s-pinned"],
-              hiddenSessionIds: ["s-hidden"],
-            },
-          }),
-        };
-      }
-      if (url.startsWith("/api/sessions/by-id")) {
-        const body = jsonBody(init) as { ids: string[] };
-        // Hidden sessions hydrate too: the Hidden group is what makes hiding
-        // reversible, so its rows cannot depend on the first catalog page.
-        expect(body.ids).toEqual(["s-pinned", "s-hidden", "s1"]);
-        return {
-          body: {
-            sessions: body.ids.map((id) => ({
-              id,
-              cwd: "/elsewhere",
-              project: "elsewhere",
-              title: `Off-page ${id}`,
-              created: "2026-07-19T10:00:00Z",
-              modified: "2026-07-19T11:00:00Z",
-              messageCount: 5,
-            })),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions")) {
-        return { body: sessionPage([], 0) };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() => {
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "s-pinned",
-        "s-hidden",
-        "s1",
-      ]);
-    });
-  });
-
-  it("fetches a pinned folder whose sessions all fall outside the first page", async () => {
-    let byCwdRequests = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot(),
-            preferences: {
-              ...bootstrapPayload().preferences,
-              pinnedProjectCwds: ["/work/pinned-folder"],
-            },
-          }),
-        };
-      }
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        byCwdRequests += 1;
-        expect(jsonBody(init)).toEqual({ cwds: ["/work/pinned-folder"] });
-        // A folder pin claims the whole folder, so its rows arrive by cwd
-        // rather than depending on which of them are recent enough to page in.
-        return {
-          body: {
-            sessions: ["old-a", "old-b"].map((id) => ({
-              id,
-              cwd: "/work/pinned-folder",
-              project: "pinned-folder",
-              title: `Archived ${id}`,
-              created: "2026-01-02T10:00:00Z",
-              modified: "2026-01-02T11:00:00Z",
-              messageCount: 3,
-            })),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions")) {
-        // The newest page holds nothing from that folder at all.
-        return {
-          body: sessionPage(
-            [sessionSummary({ id: "recent", cwd: "/work/other" })],
-            1,
-          ),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() => {
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "recent",
-        "old-a",
-        "old-b",
-      ]);
-    });
-    expect(byCwdRequests).toBe(1);
-  });
-
-  it("fetches a hidden folder by cwd so restoring it never depends on the first page", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot(),
-            preferences: {
-              ...bootstrapPayload().preferences,
-              hiddenProjectCwds: ["/work/hidden-folder"],
-            },
-          }),
-        };
-      }
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        expect(jsonBody(init)).toEqual({ cwds: ["/work/hidden-folder"] });
-        return {
-          body: {
-            sessions: [
-              sessionSummary({ id: "hidden-old", cwd: "/work/hidden-folder" }),
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions")) {
-        return { body: sessionPage([], 0) };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "hidden-old",
-      ]),
-    );
-    expect(store.getState().prefs.hiddenProjectCwds).toEqual([
-      "/work/hidden-folder",
-    ]);
-  });
-
-  it.each(["complete", "unavailable"] as const)(
-    "restores a child from a hidden folder only when its membership is %s",
-    async (membership) => {
-      const cwd = "/work/hidden";
-      const child = sessionSummary({ id: "child", cwd, title: "Restore me" });
-      const sibling = sessionSummary({ id: "sibling", cwd });
-      let failLookup = false;
-      installFetch((url, init) => {
-        if (url.startsWith("/api/bootstrap")) {
-          const payload = bootstrapPayload();
-          return {
-            body: {
-              ...payload,
-              preferences: { ...payload.preferences, hiddenProjectCwds: [cwd] },
-            },
-          };
-        }
-        if (url.startsWith("/api/sessions/by-cwd")) {
+  it("retries a child restore when the hidden folder's membership becomes available", async () => {
+    const cwd = "/work/hidden";
+    const child = sessionSummary({ id: "child", cwd, title: "Restore me" });
+    const sibling = sessionSummary({ id: "sibling", cwd });
+    let failLookup = false;
+    installCatalog(() => ({ body: sessionPage([child], 1) }), {
+      preferences: { hiddenProjectCwds: [cwd] },
+      routes: (url, init) => {
+        if (url === "/api/sessions/by-cwd")
           return failLookup
             ? { status: 503, body: { error: "Folder lookup failed" } }
             : { body: { sessions: [child, sibling] } };
-        }
-        if (url.startsWith("/api/sessions?"))
-          return { body: sessionPage([child], 1) };
-        if (url === "/api/preferences" && init.method === "PATCH")
-          return { body: { ...DEFAULT_PREFS, ...jsonBody(init) } };
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      await store.loadSessions("Restore me");
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        child.id,
-      ]);
-      failLookup = membership === "unavailable";
-      store.toggleSessionHidden(child.id);
-
-      if (failLookup) {
-        await vi.waitFor(() =>
-          expect(store.getState().notices.at(-1)?.text).toBe(
-            "Folder lookup failed",
-          ),
-        );
-        expect(store.getState().prefs.hiddenProjectCwds).toEqual([cwd]);
-        expect(store.getState().prefs.hiddenSessionIds).toEqual([]);
-      } else {
-        await vi.waitFor(() =>
-          expect(store.getState().prefs.hiddenSessionIds).toEqual([sibling.id]),
-        );
-        expect(store.getState().prefs.hiddenProjectCwds).toEqual([]);
-      }
-    },
-  );
-
-  it("restores the last confirmed value when two writes fail in a row", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        return { status: 500, body: { error: "preference write rejected" } };
-      }
-      return curationRoutes("ok")(url, init);
+        if (url === "/api/preferences") return patchPreferences(init);
+      },
     });
     const { store } = await initStore();
-    expect(store.getState().prefs.theme).toBe("system");
+    await store.loadSessions("Restore me");
+    expect(sessionIds(store)).toEqual([child.id]);
 
-    store.setTheme("dark");
-    store.setTheme("light");
+    failLookup = true;
+    store.toggleSessionHidden(child.id);
+    await vi.waitFor(() =>
+      expect(store.getState().notices.at(-1)?.text).toBe(
+        "Folder lookup failed",
+      ),
+    );
+    expect(store.getState().prefs).toMatchObject({
+      hiddenProjectCwds: [cwd],
+      hiddenSessionIds: [],
+    });
 
-    // Neither write reached disk, so the surviving value has to be the one the
-    // host still holds — not "dark", which was only ever a local optimism.
-    await vi.waitFor(() => expect(store.getState().prefs.theme).toBe("system"));
-    expect(store.getState().error).toBeNull();
-    expect(
-      store
-        .getState()
-        .notices.some(
-          (notice) =>
-            notice.kind === "warning" &&
-            notice.text === "preference write rejected",
-        ),
-    ).toBe(true);
+    failLookup = false;
+    store.toggleSessionHidden(child.id);
+    await vi.waitFor(() =>
+      expect(store.getState().prefs).toMatchObject({
+        hiddenProjectCwds: [],
+        hiddenSessionIds: [sibling.id],
+      }),
+    );
   });
 
-  it("adopts untouched authoritative fields as the next rollback baseline", async () => {
+  it("adopts untouched authoritative fields as the rollback baseline for successive refusals", async () => {
     let writes = 0;
     installFetch((url, init) => {
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        writes += 1;
-        if (writes === 2)
+      if (url === "/api/preferences" && init.method === "PATCH") {
+        if (++writes > 1)
           return { status: 500, body: { error: "preference write rejected" } };
         return {
-          body: {
-            ...bootstrapPayload().preferences,
-            ...jsonBody(init),
-            palette: "hydrangea",
-          },
+          body: { ...patchPreferences(init).body, palette: "hydrangea" },
         };
       }
-      return curationRoutes("ok")(url, init);
+      return curationRoutes()(url, init);
     });
     const { store } = await initStore();
 
@@ -749,18 +380,17 @@ describe("navigation curation", () => {
     await vi.waitFor(() =>
       expect(store.getState().prefs.palette).toBe("hydrangea"),
     );
-
     store.setPalette("chimonanthus");
+    store.setPalette("lycoris");
+    expect(store.getState().prefs.palette).toBe("lycoris");
     await vi.waitFor(() =>
-      expect(
-        store
-          .getState()
-          .notices.some(
-            (notice) => notice.text === "preference write rejected",
-          ),
-      ).toBe(true),
+      expect(store.getState().prefs.palette).toBe("hydrangea"),
     );
-    expect(store.getState().prefs.palette).toBe("hydrangea");
+    expect(store.getState().error).toBeNull();
+    expect(store.getState().notices.at(-1)).toMatchObject({
+      kind: "warning",
+      text: "preference write rejected",
+    });
   });
 });
 

@@ -2,125 +2,116 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/App";
 import { store } from "../../src/store";
+import {
+  modelCycleAction,
+  modelCycleShortcut,
+} from "../../src/workbench-keyboard";
 import { createComposerFixture } from "./fixtures/composer";
 
-beforeEach(async () => {
-  await act(async () => {
-    await createComposerFixture();
-  });
-});
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
+it.each([
+  {
+    platform: "macOS",
+    mac: true,
+    chord: { ctrlKey: true, metaKey: true },
+    hint: "Ctrl+⌘",
+    extra: [{ altKey: true }, { shiftKey: true }],
+  },
+  {
+    platform: "Windows and Linux",
+    mac: false,
+    chord: { altKey: true, shiftKey: true },
+    hint: "Alt+Shift",
+    extra: [{ ctrlKey: true }, { metaKey: true }],
+  },
+])(
+  "dispatches the advertised $platform shortcuts without stealing native text entry",
+  ({ mac, chord, hint, extra }) => {
+    for (const [key, action] of [
+      ["M", "next-model"],
+      ["P", "previous-model"],
+      ["R", "thinking"],
+    ] as const) {
+      expect(
+        modelCycleAction(new KeyboardEvent("keydown", { key, ...chord }), mac),
+      ).toBe(action);
+      expect(modelCycleShortcut(action, mac)).toBe(`${hint}+${key}`);
+    }
+    for (const init of [
+      { isComposing: true },
+      { keyCode: 229 },
+      { modifierAltGraph: true },
+      { key: "∏", code: "KeyP" },
+      { key: "Dead", code: "KeyP" },
+      ...extra,
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        key: "p",
+        ...chord,
+        ...init,
+      });
+      expect(modelCycleAction(event, mac)).toBeNull();
+    }
+  },
+);
 
 describe("workbench keyboard ownership", () => {
-  it.each([{ ctrlKey: true }, { metaKey: true }])(
-    "opens conversation search from the draft with %j and respects modal ownership",
-    async (modifier) => {
-      render(<App />);
-      const draft = screen.getByRole("textbox", { name: "Message" });
-      fireEvent.change(draft, { target: { value: "keep this draft" } });
+  beforeEach(async () => {
+    await act(async () => {
+      await createComposerFixture();
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("opens conversation search with either Find shortcut while preserving the draft and modal focus", async () => {
+    render(<App />);
+    const draft = screen.getByRole("textbox", { name: "Message" });
+    fireEvent.change(draft, { target: { value: "keep this draft" } });
+    const modifiers = [{ ctrlKey: true }, { metaKey: true }];
+    for (const modifier of modifiers) {
+      draft.focus();
       expect(fireEvent.keyDown(draft, { key: "f", ...modifier })).toBe(false);
       const search = screen.getByRole("searchbox", {
         name: "Search conversation",
       });
       expect(search).toHaveFocus();
-      expect(draft).toHaveValue("keep this draft");
       fireEvent.keyDown(search, { key: "Escape" });
       expect(search).not.toHaveFocus();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Open command palette" }),
-      );
-      const palette = await screen.findByRole("dialog", {
-        name: "Command palette",
-      });
-      const filter = within(palette).getByRole("combobox");
-      filter.focus();
+    }
+    expect(draft).toHaveValue("keep this draft");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open command palette" }),
+    );
+    const palette = await screen.findByRole("dialog", {
+      name: "Command palette",
+    });
+    const filter = within(palette).getByRole("combobox");
+    filter.focus();
+    for (const modifier of modifiers) {
       expect(fireEvent.keyDown(filter, { key: "f", ...modifier })).toBe(true);
       expect(filter).toHaveFocus();
-    },
-  );
-
-  it("leaves composing and modified Find chords to their original owners", () => {
-    render(<App />);
-    const draft = screen.getByRole("textbox", { name: "Message" });
-    draft.focus();
-    for (const modifier of [
-      { isComposing: true },
-      { keyCode: 229 },
-      { shiftKey: true },
-      { altKey: true },
-      { metaKey: true },
-    ]) {
-      expect(
-        fireEvent.keyDown(draft, { key: "f", ctrlKey: true, ...modifier }),
-      ).toBe(true);
-      expect(draft).toHaveFocus();
     }
   });
 
-  it.each(["MacIntel", "Win32", "Linux x86_64"])(
-    "cycles from the draft and exposes matching hints on %s",
-    async (platform) => {
-      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
-      const model = vi.spyOn(store, "cycleModel").mockResolvedValue();
-      const thinking = vi.spyOn(store, "cycleThinking").mockResolvedValue();
-      render(<App />);
-      const draft = screen.getByRole("textbox", { name: "Message" });
-      const mac = platform === "MacIntel";
-      const modifiers = mac
-        ? { ctrlKey: true, metaKey: true }
-        : { altKey: true, shiftKey: true };
-      for (const [key, direction] of [
-        ["m", 1],
-        ["p", -1],
-      ] as const) {
-        expect(fireEvent.keyDown(draft, { key, ...modifiers })).toBe(false);
-        expect(model).toHaveBeenLastCalledWith(direction);
-      }
-      expect(fireEvent.keyDown(draft, { key: "r", ...modifiers })).toBe(false);
-      expect(thinking).toHaveBeenCalledOnce();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Open command palette" }),
-      );
-      const palette = await screen.findByRole("dialog", {
-        name: "Command palette",
-      });
-      fireEvent.change(
-        within(palette).getByRole("combobox", { name: "Filter commands" }),
-        { target: { value: "Next model" } },
-      );
-      expect(
-        await within(palette).findByRole("option", { name: /Next model/ }),
-      ).toHaveTextContent(mac ? "Ctrl+⌘+M" : "Alt+Shift+M");
-    },
-  );
-
-  it("leaves Option characters, shifted browser chords and composition to their owners", () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-    const model = vi.spyOn(store, "cycleModel").mockResolvedValue();
-    const thinking = vi.spyOn(store, "cycleThinking").mockResolvedValue();
+  it("leaves composing and extra-modifier shortcuts to the editor or browser", () => {
     render(<App />);
     const draft = screen.getByRole("textbox", { name: "Message" });
+    draft.focus();
     for (const init of [
-      { key: "∏", code: "KeyP", altKey: true, shiftKey: true },
-      { key: "µ", code: "KeyM", altKey: true, shiftKey: true },
-      { key: "Dead", code: "KeyR", altKey: true, shiftKey: true },
-      { key: "m", ctrlKey: true, metaKey: true, isComposing: true },
-      { key: "m", ctrlKey: true, metaKey: true, keyCode: 229 },
-      { key: "m", ctrlKey: true, metaKey: true, modifierAltGraph: true },
+      { key: "f", ctrlKey: true, isComposing: true },
+      { key: "f", ctrlKey: true, keyCode: 229 },
+      { key: "f", ctrlKey: true, shiftKey: true },
+      { key: "f", ctrlKey: true, altKey: true },
+      { key: "f", ctrlKey: true, metaKey: true },
       { key: "k", ctrlKey: true, shiftKey: true },
       { key: "b", metaKey: true, shiftKey: true },
       { key: "k", ctrlKey: true, altKey: true },
     ])
       expect(fireEvent.keyDown(draft, init)).toBe(true);
-    expect(model).not.toHaveBeenCalled();
-    expect(thinking).not.toHaveBeenCalled();
+    expect(draft).toHaveFocus();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps cycling out of ordinary editors, expanded completions and modal controls", async () => {
+  it("cycles from the draft while ordinary editors, completions and modal controls keep ownership", async () => {
     vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const model = vi.spyOn(store, "cycleModel").mockResolvedValue();
     const chord = { key: "m", ctrlKey: true, metaKey: true };
@@ -132,11 +123,15 @@ describe("workbench keyboard ownership", () => {
     } finally {
       editor.remove();
     }
-    const draft = screen.getByRole("textbox", { name: "Message" });
-    const completion = draft.closest('[role="combobox"]')!;
-    completion.setAttribute("aria-expanded", "true");
+    const draft = screen.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Message",
+    });
+    draft.focus();
+    fireEvent.change(draft, { target: { value: "/com" } });
+    draft.setSelectionRange(4, 4);
+    fireEvent.select(draft);
+    await screen.findByRole("listbox", { name: "Slash command completions" });
     expect(fireEvent.keyDown(draft, chord)).toBe(true);
-    completion.setAttribute("aria-expanded", "false");
     fireEvent.click(
       screen.getByRole("button", { name: "Open command palette" }),
     );
@@ -147,5 +142,10 @@ describe("workbench keyboard ownership", () => {
       fireEvent.keyDown(within(palette).getByRole("combobox"), chord),
     ).toBe(true);
     expect(model).not.toHaveBeenCalled();
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Escape" });
+    fireEvent.change(draft, { target: { value: "Keep this draft" } });
+    expect(fireEvent.keyDown(draft, chord)).toBe(false);
+    expect(model).toHaveBeenCalledExactlyOnceWith(1);
+    expect(draft).toHaveValue("Keep this draft");
   });
 });

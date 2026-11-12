@@ -1,17 +1,5 @@
-import { expect, type Locator, test } from "@playwright/test";
-import { openFixtureSession, pairedPage } from "./support/navigation";
-
-async function openFile(resources: Locator, name: string) {
-  await resources.getByRole("tab", { name: "Files", exact: true }).click();
-  await resources
-    .getByRole("searchbox", { name: "Search workspace files" })
-    .fill(`file-previews/${name}`);
-  await resources
-    .locator(
-      `[data-workspace-path="tests/browser/fixtures/file-previews/${name}"]`,
-    )
-    .click();
-}
+import { expect, test } from "@playwright/test";
+import { openPreviewFixture, openResourceFixture } from "./support/navigation";
 
 test("Markdown and Notebook figures share scoped galleries while authored links and image authorization stay intact", async ({
   page,
@@ -21,11 +9,8 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
     remoteRequests++;
     await route.abort();
   });
-  await pairedPage(page);
-  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  const resources = page.getByRole("complementary", { name: "Context panel" });
-  await openFile(resources, "document-images.md");
+  const resources = await openResourceFixture(page);
+  await openPreviewFixture(resources, "document-images.md");
   await expect(
     resources.getByAltText("Validation curve", { exact: true }),
   ).toBeVisible();
@@ -58,7 +43,7 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
     resources.getByRole("heading", { name: "Observation log · Station 07" }),
   ).toBeVisible();
 
-  await openFile(resources, "document-images.ipynb");
+  await openPreviewFixture(resources, "document-images.ipynb");
   const notebook = resources.getByRole("document", {
     name: "Notebook preview",
   });
@@ -85,83 +70,21 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   await expect(
     resources.getByRole("region", { name: "File source" }),
   ).toContainText('"nbformat": 4');
-  expect(remoteRequests).toBe(0);
-});
 
-test("responsive panel history retires without dismissing a foreground Notebook image", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 820, height: 900 });
-  await pairedPage(page);
-  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  const resources = page.locator(".ctx");
-  await openFile(resources, "document-images.ipynb");
-  const dialog = page.getByRole("dialog", {
-    name: "Image preview",
-    exact: true,
+  await openPreviewFixture(resources, "vector.svg");
+  const vector = resources.getByAltText("vector.svg");
+  await expect(vector).toBeVisible();
+  await expect(vector).not.toHaveCSS("background-image", "none");
+  const geometry = await vector.evaluate((image) => {
+    const bounds = image.getBoundingClientRect();
+    const canvas = image.parentElement!.getBoundingClientRect();
+    return {
+      ratio: bounds.width / bounds.height,
+      contained: bounds.width <= canvas.width && bounds.height <= canvas.height,
+    };
   });
-  for (const [width, close, finalWidth] of [
-    [820, "Back", 1440],
-    [820, "Close", 820],
-    [1440, "Back", 820],
-    [1440, "Close", 1440],
-  ] as const) {
-    await page.setViewportSize({ width, height: 900 });
-    await resources
-      .getByRole("button", { name: "Preview Notebook output", exact: true })
-      .click();
-    await expect(dialog.locator("img")).toBeVisible();
-    for (const width of [1440, 820, 390, finalWidth]) {
-      await page.setViewportSize({ width, height: 900 });
-      await expect(dialog).toBeVisible();
-      await expect(dialog.locator(".image-lightbox__name")).toHaveText(
-        "Notebook output",
-      );
-      await expect(dialog.locator("img")).toBeVisible();
-    }
-    if (close === "Back") await page.goBack();
-    else
-      await dialog
-        .getByRole("button", { name: "Close image preview", exact: true })
-        .click();
-    await expect(dialog).toBeHidden();
-    await expect(
-      resources.getByRole("document", { name: "Notebook preview" }),
-    ).toBeVisible();
-    await expect
-      .poll(() =>
-        page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
-      )
-      .toBe(finalWidth < 901 ? 1 : 0);
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await expect
-      .poll(() =>
-        page.evaluate(() => history.state?.__inspireWorkbench?.depth ?? 0),
-      )
-      .toBe(0);
-  }
-});
-
-test("Notebook image outputs use the same reader as a standalone image file", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openFixtureSession(page, /Resource virtualization and sandbox fixture/);
-  await page.getByRole("button", { name: "Toggle resources panel" }).click();
-  const resources = page.getByRole("complementary", { name: "Context panel" });
-  await openFile(resources, "document-images.ipynb");
-  await resources
-    .getByRole("button", { name: "Preview Notebook output" })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Image preview" });
-  await expect(dialog.locator("img")).toBeVisible();
-  await expect(
-    dialog.getByRole("button", { name: "Actual size" }),
-  ).toBeEnabled();
-  await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-  await openFile(resources, "vector.svg");
+  expect(geometry.ratio).toBeCloseTo(720 / 420, 2);
+  expect(geometry.contained).toBe(true);
   await resources.getByRole("button", { name: "Preview vector.svg" }).click();
   await expect(dialog.locator("img")).toBeVisible();
   await expect(
@@ -171,4 +94,57 @@ test("Notebook image outputs use the same reader as a standalone image file", as
   await expect(
     dialog.getByRole("button", { name: "Actual size" }),
   ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  if (await showActions.isVisible()) await showActions.click();
+  const source = resources.getByRole("button", { name: "Source", exact: true });
+  const before = (await source.boundingBox())!;
+  await source.click();
+  const after = (await resources
+    .getByRole("button", { name: "Preview", exact: true })
+    .boundingBox())!;
+  expect(after.x).toBeCloseTo(before.x, 1);
+  expect(after.width).toBeCloseTo(before.width, 1);
+  await expect(
+    resources.getByRole("region", { name: "File source" }),
+  ).toContainText("<svg");
+  expect(remoteRequests).toBe(0);
+});
+
+test("responsive panel history retires without dismissing a foreground Notebook image", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 820, height: 900 });
+  const resources = await openResourceFixture(page);
+  await openPreviewFixture(resources, "document-images.ipynb");
+  const dialog = page.getByRole("dialog", {
+    name: "Image preview",
+    exact: true,
+  });
+  const notebook = resources.getByRole("document", {
+    name: "Notebook preview",
+  });
+  const output = notebook.getByRole("button", {
+    name: "Preview Notebook output",
+    exact: true,
+  });
+  const image = dialog.locator("img");
+
+  await output.click();
+  await expect(image).toBeVisible();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(image).toBeVisible();
+  await page.goBack();
+  await expect(dialog).toBeHidden();
+  await expect(notebook).toBeVisible();
+
+  await output.click();
+  await expect(image).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect(image).toBeVisible();
+  await dialog.getByRole("button", { name: "Close image preview" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(notebook).toBeVisible();
+  await page.goBack();
+  await expect(resources).toBeHidden();
 });

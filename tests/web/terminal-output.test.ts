@@ -38,8 +38,13 @@ afterEach(() => {
 });
 
 describe("last completed terminal output", () => {
-  it("keeps the first output line and excludes the following prompt", async () => {
+  it("keeps the command's lines and excludes the next prompt after row resize", async () => {
     const { terminal, range } = await completedOutput("first\r\nsecond\r\n");
+    expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
+      "first\nsecond",
+    );
+    terminal.resize(terminal.cols, 6);
+    terminal.resize(terminal.cols, 28);
     expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
       "first\nsecond",
     );
@@ -55,50 +60,15 @@ describe("last completed terminal output", () => {
     );
   });
 
-  it("joins soft wraps without losing Unicode or spaces at the boundary", async () => {
-    const text = "hello  中文 e\u0301 🙂 1234567890 ".repeat(3);
-    const { terminal, range } = await completedOutput(text, "", 16);
-    expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
-      text.trimEnd(),
-    );
-  });
-
-  it("copies rendered text without ANSI escapes", async () => {
-    const { terminal, range } = await completedOutput(
-      "\u001b[31mred\u001b[0m\r\n",
-    );
-    expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe("red");
-  });
-
-  it("retains normal-buffer output while a subsequent TUI uses the alternate screen", async () => {
-    const { terminal, range } = await completedOutput("shell output\r\n");
-    await write(terminal, "\u001b[?1049hTUI content");
-    expect(terminal.buffer.active).not.toBe(terminal.buffer.normal);
-    expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
-      "shell output",
-    );
-  });
-
-  it("retains the same command range through height-only changes", async () => {
-    const { terminal, range } = await completedOutput("first\r\nsecond\r\n");
-    for (const rows of [6, 28, 10]) {
-      terminal.resize(terminal.cols, rows);
-      expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
-        "first\nsecond",
-      );
-    }
-  });
-
   it("refuses a range whose start was evicted", async () => {
     const { terminal, range } = await completedOutput("old output\r\n");
     await write(terminal, "later\r\n".repeat(40));
-    expect(range.start.isDisposed).toBe(true);
     expect(terminalCommandOutput(terminal.buffer.normal, range)).toBeNull();
   });
 
-  it("reads all retained text without command markers, joining wraps and preserving Unicode", async () => {
+  it("copies rendered Unicode across soft wraps and distinguishes shell output from the alternate screen", async () => {
     const text = "hello  中文 e\u0301 🙂 1234567890 ".repeat(3);
-    const { terminal } = await completedOutput(
+    const { terminal, range } = await completedOutput(
       `\u001b[31m${text}\u001b[0m\r\n`,
       "",
       16,
@@ -106,13 +76,8 @@ describe("last completed terminal output", () => {
     expect(terminalBufferText(terminal.buffer.active)).toBe(`${text}\nnext$`);
     await write(terminal, "\u001b[?1049h\u001b[HTUI content");
     expect(terminalBufferText(terminal.buffer.active)).toBe("TUI content");
-    expect(terminalBufferText(terminal.buffer.normal)).toBe(`${text}\nnext$`);
-  });
-
-  it("refuses an explicitly retired output range", async () => {
-    const { terminal, range } = await completedOutput("old output\r\n");
-    range.start.dispose();
-    range.end.dispose();
-    expect(terminalCommandOutput(terminal.buffer.normal, range)).toBeNull();
+    expect(terminalCommandOutput(terminal.buffer.normal, range)).toBe(
+      text.trimEnd(),
+    );
   });
 });

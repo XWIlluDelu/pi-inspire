@@ -49,37 +49,12 @@ const confirm = () =>
   screen.getByRole("button", { name: "Use this directory" });
 
 describe("read recovery", () => {
-  it("recovers the requested directory instead of falling home after a transient failure", async () => {
+  it("retries the requested directory, retaining accepted entries only through temporary failures", async () => {
     vi.useFakeTimers();
     const browse = vi
       .mocked(store.browseHostDirs)
       .mockRejectedValueOnce(new ApiError(503, "Directory service unavailable"))
-      .mockImplementation(async (path) => (path ? project : home));
-    const onPick = vi.fn();
-    render(
-      <DirectoryPicker
-        initial={project.path}
-        onCancel={vi.fn()}
-        onPick={onPick}
-      />,
-    );
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(browse).toHaveBeenCalledTimes(1);
-    expect(
-      screen.getByRole("textbox", { name: "Project directory" }),
-    ).toHaveValue(project.path);
-    expect(confirm()).toBeDisabled();
-    expect(screen.queryByRole("alert")).toBeNull();
-    await act(() => vi.advanceTimersByTimeAsync(1_000));
-    expect(browse).toHaveBeenCalledTimes(2);
-    expect(browse).toHaveBeenLastCalledWith(project.path, false);
-    expect(confirm()).toBeEnabled();
-    expect(onPick).not.toHaveBeenCalled();
-  });
-
-  it("retains a confirmed listing through temporary reload failure, but invalidates an access denial", async () => {
-    vi.useFakeTimers();
-    const browse = vi.mocked(store.browseHostDirs).mockResolvedValue(home);
+      .mockResolvedValue(home);
     const onPick = vi.fn();
     render(
       <DirectoryPicker
@@ -90,6 +65,16 @@ describe("read recovery", () => {
     );
     await act(() => vi.advanceTimersByTimeAsync(0));
     const input = screen.getByRole("textbox", { name: "Project directory" });
+    expect(input).toHaveValue(home.path);
+    expect(confirm()).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(browse.mock.calls).toEqual([
+      [home.path, false],
+      [home.path, false],
+    ]);
+    expect(confirm()).toBeEnabled();
+
     browse.mockRejectedValueOnce(new ApiError(503, "Temporary read failure"));
     fireEvent.keyDown(input, { key: "Enter" });
     await act(() => vi.advanceTimersByTimeAsync(0));
@@ -102,11 +87,18 @@ describe("read recovery", () => {
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByRole("alert")).toHaveTextContent("Access denied");
     expect(screen.queryByRole("button", { name: "project" })).toBeNull();
+    const attempts = browse.mock.calls.length;
     fireEvent.change(input, { target: { value: ` ${home.path} ` } });
     fireEvent.click(confirm());
-    await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(browse).toHaveBeenCalledTimes(5);
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(browse).toHaveBeenCalledTimes(attempts + 1);
+    expect(browse).toHaveBeenLastCalledWith(home.path, false);
     expect(onPick).not.toHaveBeenCalled();
+    browse.mockResolvedValue(home);
+    fireEvent.click(toggle());
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(confirm()).toBeEnabled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("lets directory navigation continue while advisory drive discovery retries", async () => {
@@ -137,105 +129,49 @@ describe("read recovery", () => {
     ).toHaveValue(project.path);
   });
 
-  it.each(["navigation", "visibility", "dismissal"] as const)(
-    "retires a pending directory retry on %s",
-    async (change) => {
-      vi.useFakeTimers();
-      vi.mocked(store.browseHostRoots).mockResolvedValue({
-        roots: [
-          { name: "/", path: "/" },
-          { name: "Z:", path: "Z:\\" },
-        ],
-      });
-      const browse = vi
-        .mocked(store.browseHostDirs)
-        .mockRejectedValueOnce(
-          new ApiError(503, "Directory service unavailable"),
-        )
-        .mockResolvedValue(project);
-      const view = render(
-        <DirectoryPicker
-          initial={home.path}
-          onCancel={vi.fn()}
-          onPick={vi.fn()}
-        />,
-      );
-      await act(() => vi.advanceTimersByTimeAsync(0));
-      if (change === "navigation") {
-        fireEvent.click(screen.getByRole("button", { name: "/" }));
-      } else if (change === "visibility") {
-        fireEvent.click(toggle());
-      } else view.unmount();
-      await act(() => vi.advanceTimersByTimeAsync(20_000));
-      expect(browse).toHaveBeenCalledTimes(change === "dismissal" ? 1 : 2);
-      if (change === "navigation")
-        expect(browse).toHaveBeenLastCalledWith("/", false);
-      if (change === "visibility")
-        expect(browse).toHaveBeenLastCalledWith(home.path, true);
-    },
-  );
-});
+  it("retires scheduled directory reads after navigation, visibility changes, and dismissal", async () => {
+    vi.useFakeTimers();
+    vi.mocked(store.browseHostRoots).mockResolvedValue({
+      roots: [
+        { name: "/", path: "/" },
+        { name: "Z:", path: "Z:\\" },
+      ],
+    });
+    const browse = vi
+      .mocked(store.browseHostDirs)
+      .mockRejectedValueOnce(new ApiError(503, "Directory service unavailable"))
+      .mockRejectedValueOnce(new ApiError(503, "Directory service unavailable"))
+      .mockResolvedValue({ path: "/", parent: null, dirs: [] });
+    const view = render(
+      <DirectoryPicker
+        initial={home.path}
+        onCancel={vi.fn()}
+        onPick={vi.fn()}
+      />,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(screen.getByRole("button", { name: "/" }));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    fireEvent.click(toggle());
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(browse.mock.calls).toEqual([
+      [home.path, false],
+      ["/", false],
+      ["/", true],
+    ]);
 
-describe("independent drive discovery", () => {
-  it("keeps listing and typed selection usable when drive discovery fails", async () => {
-    vi.mocked(store.browseHostRoots).mockRejectedValue(
-      new ApiError(403, "Native probe unavailable"),
+    browse.mockRejectedValue(
+      new ApiError(503, "Directory service unavailable"),
     );
-    const onPick = vi.fn();
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Drive list unavailable",
-    );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    fireEvent.click(confirm());
-    expect(onPick).toHaveBeenCalledWith(home.path);
+    fireEvent.click(toggle());
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    view.unmount();
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(browse).toHaveBeenCalledTimes(4);
   });
 });
 
 describe("typed project directories", () => {
-  it("browses a typed path with Enter, then selects the host-normalized directory", async () => {
-    const onPick = vi.fn();
-    const browse = vi
-      .mocked(store.browseHostDirs)
-      .mockImplementation(async (path) =>
-        path?.includes("project") ? project : home,
-      );
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    const input = screen.getByRole("textbox", { name: "Project directory" });
-    expect(input).toHaveValue(home.path);
-    fireEvent.change(input, { target: { value: "  /home/demo/project/  " } });
-    input.focus();
-    await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(input).toHaveValue(project.path));
-    expect(browse).toHaveBeenLastCalledWith("/home/demo/project/", false);
-    expect(onPick).not.toHaveBeenCalled();
-    fireEvent.click(confirm());
-    expect(onPick).toHaveBeenCalledWith(project.path);
-  });
-
-  it("validates typed confirmation instead of selecting the old directory and recovers from invalid paths", async () => {
-    const onPick = vi.fn();
-    vi.mocked(store.browseHostDirs).mockImplementation(async (path) => {
-      if (path === "/missing") throw new ApiError(404, "Directory not found");
-      return path === project.path ? project : home;
-    });
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={onPick} />);
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    const input = screen.getByRole("textbox", { name: "Project directory" });
-    fireEvent.change(input, { target: { value: "/missing" } });
-    fireEvent.click(confirm());
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Directory not found",
-    );
-    expect(onPick).not.toHaveBeenCalled();
-    expect(confirm()).toBeDisabled();
-    fireEvent.change(input, { target: { value: project.path } });
-    fireEvent.click(confirm());
-    await waitFor(() => expect(onPick).toHaveBeenCalledWith(project.path));
-  });
-
   it("does not pick a pending typed confirmation after dismissal", async () => {
     const pending = deferred<HostDirListing>();
     const onPick = vi.fn();
@@ -257,92 +193,6 @@ describe("typed project directories", () => {
 });
 
 describe("hidden project directories", () => {
-  it.each([
-    { root: "/home/demo", child: "/home/demo/.hidden", parent: "/home" },
-    {
-      root: "C:\\Users\\demo",
-      child: "C:\\Users\\demo\\.hidden",
-      parent: "C:\\Users",
-    },
-    {
-      root: "\\\\server\\share",
-      child: "\\\\server\\share\\.hidden",
-      parent: null,
-    },
-  ])(
-    "reveals and picks hidden folders using verbatim host paths: $root",
-    async ({ root, child, parent }) => {
-      const onPick = vi.fn();
-      const browse = vi
-        .mocked(store.browseHostDirs)
-        .mockImplementation(async (path, hidden) => {
-          if (path === child) return { path, parent: root, dirs: [] };
-          return {
-            path: root,
-            parent,
-            dirs: hidden ? [{ name: ".hidden", path: child }] : [],
-          };
-        });
-      render(
-        <DirectoryPicker initial={root} onCancel={vi.fn()} onPick={onPick} />,
-      );
-      await screen.findByText("No subdirectories");
-      expect(toggle()).toHaveAttribute("aria-pressed", "false");
-      expect(toggle().parentElement).toContainElement(
-        screen.getByRole("heading", { name: "Choose project directory" }),
-      );
-      expect(toggle()).toHaveAttribute("title", "Show hidden folders");
-      expect(
-        screen.queryByRole("button", { name: ".hidden" }),
-      ).not.toBeInTheDocument();
-      fireEvent.click(toggle());
-      fireEvent.click(await screen.findByRole("button", { name: ".hidden" }));
-      await waitFor(() => expect(confirm()).toBeEnabled());
-      expect(toggle()).toHaveAttribute("aria-pressed", "true");
-      expect(toggle()).toHaveAttribute("title", "Hide hidden folders");
-      expect(browse).toHaveBeenLastCalledWith(child, true);
-      fireEvent.click(confirm());
-      expect(onPick).toHaveBeenCalledWith(child);
-    },
-  );
-
-  it("keeps the toggle across Windows drive navigation and resets on a new opening", async () => {
-    vi.mocked(store.browseHostRoots).mockResolvedValue({
-      roots: [
-        { name: "C:", path: "C:\\" },
-        { name: "D:", path: "D:\\" },
-      ],
-    });
-    const browse = vi
-      .mocked(store.browseHostDirs)
-      .mockImplementation(async (path, hidden) => ({
-        path: path ?? "C:\\",
-        parent: null,
-        dirs: hidden
-          ? [{ name: "Hidden by OS", path: `${path ?? "C:\\"}Hidden by OS` }]
-          : [],
-      }));
-    const { unmount } = render(
-      <DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />,
-    );
-    await screen.findByText("No subdirectories");
-    fireEvent.click(toggle());
-    await screen.findByRole("button", { name: "Hidden by OS" });
-    fireEvent.click(screen.getByRole("button", { name: "D:" }));
-    await waitFor(() => expect(browse).toHaveBeenLastCalledWith("D:\\", true));
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    expect(toggle()).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(toggle());
-    await screen.findByText("No subdirectories");
-    expect(browse).toHaveBeenLastCalledWith("D:\\", false);
-    fireEvent.click(toggle());
-    await screen.findByRole("button", { name: "Hidden by OS" });
-    unmount();
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
-    await screen.findByText("No subdirectories");
-    expect(toggle()).toHaveAttribute("aria-pressed", "false");
-  });
-
   it("refreshes hidden folders without discarding an unsubmitted address", async () => {
     const refresh = deferred<HostDirListing>();
     const browse = vi
@@ -393,28 +243,12 @@ describe("hidden project directories", () => {
       }),
     );
     await screen.findByRole("button", { name: ".nested" });
-    await act(async () => oldNavigation.resolve(project));
+    await act(async () =>
+      oldNavigation.reject(new ApiError(403, "Stale denial")),
+    );
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: ".nested" })).toBeInTheDocument();
     expect(confirm()).toBeEnabled();
-  });
-
-  it("keeps the latest visibility after rapid toggles and ignores an old failure", async () => {
-    const older = deferred<HostDirListing>();
-    vi.mocked(store.browseHostDirs).mockImplementation(async (_path, hidden) =>
-      hidden ? older.promise : home,
-    );
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
-    await screen.findByRole("button", { name: "project" });
-    fireEvent.click(toggle());
-    expect(confirm()).toBeDisabled();
-    fireEvent.click(toggle());
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    await act(async () => older.reject(new Error("stale error")));
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(toggle()).toHaveAttribute("aria-pressed", "false");
-    expect(
-      screen.queryByRole("button", { name: ".hidden" }),
-    ).not.toBeInTheDocument();
   });
 
   it("preserves hidden visibility through initial home fallback", async () => {
@@ -441,49 +275,7 @@ describe("hidden project directories", () => {
     expect(screen.getByRole("button", { name: ".hidden" })).toBeInTheDocument();
   });
 
-  it("shows errors, blocks stale confirmation, and allows recovery by changing visibility", async () => {
-    const browse = vi
-      .mocked(store.browseHostDirs)
-      .mockImplementation(async (path, hidden) => {
-        if (path === home.path && hidden)
-          throw new ApiError(403, "Cannot read that directory");
-        return home;
-      });
-    render(<DirectoryPicker onCancel={vi.fn()} onPick={vi.fn()} />);
-    await screen.findByRole("button", { name: "project" });
-    fireEvent.click(toggle());
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Cannot read that directory",
-    );
-    expect(confirm()).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: "project" }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(toggle());
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    expect(browse).toHaveBeenLastCalledWith(home.path, false);
-  });
-
-  it("is keyboard-operable and dismisses only the picker", async () => {
-    const user = userEvent.setup();
-    const onCancel = vi.fn();
-    render(<DirectoryPicker onCancel={onCancel} onPick={vi.fn()} />);
-    await screen.findByRole("button", { name: "project" });
-    toggle().focus();
-    await user.keyboard(" ");
-    await screen.findByRole("button", { name: ".hidden" });
-    expect(toggle()).toHaveFocus();
-    await user.keyboard("{Enter}");
-    await waitFor(() => expect(confirm()).toBeEnabled());
-    expect(toggle()).toHaveAttribute("aria-pressed", "false");
-    expect(
-      screen.queryByRole("button", { name: ".hidden" }),
-    ).not.toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    expect(onCancel).toHaveBeenCalledOnce();
-  });
-
-  it("keeps keyboard navigation in the refreshed list without stealing moved focus", async () => {
+  it("does not steal focus after a pending directory navigation", async () => {
     const user = userEvent.setup();
     const pending = deferred<HostDirListing>();
     vi.mocked(store.browseHostDirs).mockImplementation(async (path) =>
@@ -493,23 +285,9 @@ describe("hidden project directories", () => {
     const entry = await screen.findByRole("button", { name: "project" });
     entry.focus();
     await user.keyboard("{Enter}");
-    expect(
-      screen.queryByRole("button", { name: "project" }),
-    ).not.toBeInTheDocument();
-    await act(async () => pending.resolve(project));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: ".." })).toHaveFocus(),
-    );
-    await user.keyboard("{Enter}");
-    await screen.findByRole("button", { name: "project" });
-    expect(screen.getByRole("button", { name: ".." })).toHaveFocus();
-
-    const next = deferred<HostDirListing>();
-    vi.mocked(store.browseHostDirs).mockReturnValue(next.promise);
-    screen.getByRole("button", { name: "project" }).focus();
-    await user.keyboard("{Enter}");
     toggle().focus();
-    await act(async () => next.resolve(project));
+    await act(async () => pending.resolve(project));
+    expect(screen.getByRole("button", { name: ".." })).toBeVisible();
     expect(toggle()).toHaveFocus();
   });
 

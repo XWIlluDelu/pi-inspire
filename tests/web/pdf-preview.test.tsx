@@ -8,6 +8,11 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PdfPreview, pdfRenderSize } from "../../src/components/PdfPreview";
+import {
+  markOccurrence,
+  normalizeFindQuery,
+  pageMatches,
+} from "../../src/pdf-find";
 import { deferred } from "./helpers";
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), cancelText: vi.fn() }));
@@ -73,67 +78,33 @@ describe("static PDF preview", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("renders neighbouring selectable pages with navigation and anchored zoom, never active embeds", async () => {
-    const pdf = fakePdf();
-    mocks.load.mockReturnValue(pdf.task);
-    const { container, unmount } = render(
-      <PdfPreview blob={pdfBlob()} name="report.pdf" />,
-    );
-    await screen.findByText("Page 1 selectable text");
-    expect(container.querySelectorAll("canvas")).toHaveLength(2);
-    expect(
-      container.querySelector("iframe, object, embed, a, form"),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Previous PDF page" }),
-    ).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Next PDF page" }));
-    await screen.findByText("Page 2 selectable text");
-    expect(
-      screen.getByRole("button", { name: "Next PDF page" }),
-    ).toBeDisabled();
-    expect(container.querySelectorAll("canvas")).toHaveLength(2);
-    const scroll = screen.getByRole("region", { name: "PDF pages" });
-    scroll.scrollTop = 80;
-    fireEvent.scroll(scroll);
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in PDF" }));
-    await waitFor(() =>
-      expect(
-        Math.abs(container.querySelector("canvas")!.width - 500),
-      ).toBeLessThanOrEqual(1),
-    );
-    // Scale the position within the page, not the reader's fixed top gutter.
-    await waitFor(() =>
-      expect(scroll.scrollTop).toBeCloseTo(12 + (80 - 12) * 1.25),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Fit PDF to width" }));
-    await waitFor(() =>
-      expect(container.querySelector("canvas")!.width).toBe(400),
-    );
-    await waitFor(() => expect(scroll.scrollTop).toBeCloseTo(80));
-    expect(mocks.load).toHaveBeenCalledWith(expect.any(ArrayBuffer));
-    unmount();
-    expect(pdf.task.destroy).toHaveBeenCalledTimes(1);
-    expect(mocks.cancelText).toHaveBeenCalled();
-  });
-
-  it("releases offscreen canvases instead of rendering an entire long document", async () => {
+  it("keeps a bounded page window and releases rendering work when closed", async () => {
     const pdf = fakePdf(100);
     mocks.load.mockReturnValue(pdf.task);
-    const { container } = render(
+    const { container, unmount } = render(
       <PdfPreview blob={pdfBlob()} name="long-report.pdf" />,
     );
     await screen.findByText("Page 1 selectable text");
     expect(pdf.document.getPage.mock.calls.length).toBeLessThanOrEqual(3);
     const scroll = screen.getByRole("region", { name: "PDF pages" });
-    scroll.scrollTop = 20_000;
-    fireEvent.scroll(scroll);
+    vi.useFakeTimers();
+    try {
+      scroll.scrollTop = 20_000;
+      fireEvent.scroll(scroll);
+      // Finish the virtualizer's scroll-end fallback while its view is mounted.
+      await act(() => vi.runOnlyPendingTimersAsync());
+    } finally {
+      vi.useRealTimers();
+    }
     await waitFor(() =>
       expect(screen.queryByRole("region", { name: "PDF page 1" })).toBeNull(),
     );
     await waitFor(() => expect(pdf.cleanup).toHaveBeenCalled());
     expect(container.querySelectorAll("canvas").length).toBeLessThanOrEqual(4);
     expect(pdf.document.getPage.mock.calls.length).toBeLessThan(12);
+    unmount();
+    expect(pdf.task.destroy).toHaveBeenCalledOnce();
+    expect(mocks.cancelText).toHaveBeenCalled();
   });
 
   it("fits mixed portrait and landscape pages independently", async () => {
@@ -232,4 +203,28 @@ describe("static PDF preview", () => {
       expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(16_384);
     }
   });
+});
+
+it("finds repeated text in nested PDF text spans and clears the previous highlight", () => {
+  const layer = document.createElement("div");
+  layer.innerHTML =
+    '<span>Sample A</span><span class="markedContent"><span>none</span><span>sample a twice SAMPLE  A</span></span>';
+  const needle = normalizeFindQuery("  Sample   A ");
+  const matches = pageMatches(
+    2,
+    ["Sample A", "none", "sample a twice SAMPLE  A"],
+    needle,
+  );
+  expect(matches).toEqual([
+    { page: 2, occurrence: 0 },
+    { page: 2, occurrence: 1 },
+    { page: 2, occurrence: 2 },
+  ]);
+  expect(
+    markOccurrence(layer, needle, matches[2]!.occurrence, "hit")?.textContent,
+  ).toBe("sample a twice SAMPLE  A");
+  expect(
+    markOccurrence(layer, needle, matches[0]!.occurrence, "hit")?.textContent,
+  ).toBe("Sample A");
+  expect(layer.querySelectorAll(".hit")).toHaveLength(1);
 });

@@ -81,7 +81,7 @@ export function installLocalStorage(): void {
 // --- WebSocket stubbing (never connects unless told to) ---
 
 export const TEST_HOST_AUTHORITY = "11111111-1111-4111-8111-111111111111";
-export const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
+const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
 
 export class FakeWebSocket {
   static OPEN = 1;

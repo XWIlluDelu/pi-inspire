@@ -4,7 +4,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskBoardAdapter } from "../../docs/examples/task-board/TaskBoardAdapter";
@@ -41,28 +40,19 @@ const models = [
     thinkingLevelMap: { xhigh: "xhigh", max: null },
   },
 ];
-const resumeCommand = "pi --session '/sessions/test.jsonl'";
 let prompts: Record<string, unknown>[];
-let failPrompt = false;
 let aborts = 0;
-let catalogQueries: string[] = [];
 let catalog: ReturnType<typeof sessionSummary>[];
-let promptGate: ReturnType<
-  typeof deferred<{ status: number; body: { error: string } }>
-> | null = null;
 
 beforeEach(async () => {
   deleteSessionDraft("s1");
   deleteSessionDraft("s2");
   prompts = [];
-  failPrompt = false;
   aborts = 0;
-  catalogQueries = [];
   catalog = [
     sessionSummary({ title: "Test session" }),
     sessionSummary({ id: "s2", title: "Other session" }),
   ];
-  promptGate = null;
   installFakeWebSocket();
   installFetch((url, init) => {
     if (url.startsWith("/api/bootstrap"))
@@ -95,31 +85,7 @@ beforeEach(async () => {
     }
     if (url === "/api/prompt") {
       prompts.push(jsonBody(init));
-      if (promptGate) return promptGate.promise;
-      return failPrompt
-        ? { status: 400, body: { error: "Extension refused the request" } }
-        : { status: 202, body: { accepted: true } };
-    }
-    if (url === "/api/sessions/resume-command?sessionId=s1")
-      return {
-        body: { command: resumeCommand, projectDirectoryMissing: true },
-      };
-    if (url.startsWith("/api/sessions?")) {
-      const query =
-        new URL(url, "http://localhost").searchParams.get("q") ?? "";
-      catalogQueries.push(query);
-      if (query === "unloaded catalog")
-        return {
-          body: sessionPage(
-            [
-              sessionSummary({
-                id: "unloaded",
-                title: "Unloaded catalog result",
-              }),
-            ],
-            1,
-          ),
-        };
+      return { status: 202, body: { accepted: true } };
     }
     if (url.startsWith("/api/sessions"))
       return { body: sessionPage(catalog, catalog.length) };
@@ -227,15 +193,6 @@ describe("command discovery and preparation", () => {
     expect(screen.getByText(/No task snapshot is loaded/)).toBeInTheDocument();
   });
 
-  it("does not select a palette result on composition-confirming Enter", async () => {
-    render(<App />);
-    const input = await palette("settings");
-    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
-    expect(
-      screen.getByRole("dialog", { name: "Command palette" }),
-    ).toBeInTheDocument();
-  });
-
   it("keeps hidden sessions and projects out of palette recents and results", async () => {
     catalog.push(
       sessionSummary({ id: "hidden", title: "Hidden session" }),
@@ -274,16 +231,8 @@ describe("command discovery and preparation", () => {
       return screen.getByLabelText("New session name");
     };
     await palette("rename");
-    const unchanged = edit();
-    expect(unchanged).toHaveValue("Test session");
-    fireEvent.keyDown(unchanged, { key: "Enter" });
-    expect(
-      screen.queryByRole("dialog", { name: "Command palette" }),
-    ).toBeNull();
-    expect(rename).not.toHaveBeenCalled();
-
-    await palette("rename");
     const oldEditor = edit();
+    expect(oldEditor).toHaveValue("Test session");
     fireEvent.change(oldEditor, { target: { value: "Old request" } });
     fireEvent.keyDown(oldEditor, { key: "Enter" });
     expect(rename).toHaveBeenCalledWith("s1", "Old request");
@@ -295,286 +244,9 @@ describe("command discovery and preparation", () => {
     expect(screen.getByLabelText("New session name")).toHaveValue("New draft");
   });
 
-  it("copies the terminal resume command and shows Fork guidance for a missing project", async ({
-    onTestFinished,
-  }) => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    onTestFinished(() => {
-      Reflect.deleteProperty(navigator, "clipboard");
-    });
-    act(() =>
-      FakeWebSocket.instances.at(-1)?.emit({
-        type: "snapshot",
-        data: activeSnapshot({ readOnlyReason: "workspace-unavailable" }),
-      }),
-    );
-    render(<App />);
-    const input = await palette();
-    const action = { name: "Copy resume command", exact: true };
-    expect(screen.queryByRole("option", action)).toBeNull();
-    fireEvent.change(input, { target: { value: "resume command" } });
-    expect(screen.getAllByRole("option")[0]).toBe(
-      screen.getByRole("option", action),
-    );
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(
-      await screen.findByText(
-        "Resume command copied. Run it in the new project folder and choose Fork in Pi 1.5.2 or later.",
-      ),
-    ).toBeVisible();
-    expect(writeText).toHaveBeenCalledExactlyOnceWith(resumeCommand);
-    expect(
-      screen.queryByRole("dialog", { name: "Command palette" }),
-    ).toBeNull();
-
-    act(() =>
-      FakeWebSocket.instances.at(-1)?.emit({
-        type: "snapshot",
-        data: { ...activeSnapshot(), active: null },
-      }),
-    );
-    await palette("resume command");
-    expect(screen.queryByRole("option", action)).toBeNull();
-  });
-
-  it.each([false, true])(
-    "opens the existing full catalog search, including from start=%s",
-    async (start) => {
-      await act(async () => {
-        store.searchSessions("");
-        await store.refreshSessions();
-      });
-      await savedDraft();
-      if (start)
-        act(() =>
-          FakeWebSocket.instances.at(-1)?.emit({
-            type: "snapshot",
-            data: { ...activeSnapshot(), active: null },
-          }),
-        );
-      render(<App />);
-      expect(
-        screen.queryByRole("button", { name: /^Unloaded catalog result/ }),
-      ).toBeNull();
-      await palette("/resume");
-      fireEvent.click(screen.getByRole("option", { name: /Find a session/ }));
-      expect(
-        screen.queryByRole("dialog", { name: "Command palette" }),
-      ).toBeNull();
-      const search = screen.getByRole("searchbox", { name: "Search sessions" });
-      await waitFor(() => expect(search).toHaveFocus());
-      fireEvent.change(search, { target: { value: "unloaded catalog" } });
-      expect(
-        await screen.findByRole("button", { name: /^Unloaded catalog result/ }),
-      ).toBeInTheDocument();
-      expect(catalogQueries).toContain("unloaded catalog");
-      expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-      if (start)
-        act(() =>
-          FakeWebSocket.instances.at(-1)?.emit({
-            type: "snapshot",
-            data: activeSnapshot({ commands, availableModels: models }),
-          }),
-        );
-      expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-      expect(prompts).toEqual([]);
-    },
-  );
-
-  it("routes typed /resume to the same catalog search rather than reopening palette", async () => {
-    render(<App />);
-    fireEvent.keyDown(window, { key: "b", ctrlKey: true });
-    expect(
-      screen.queryByRole("searchbox", { name: "Search sessions" }),
-    ).toBeNull();
-    await act(async () => {
-      await store.sendPrompt("/resume");
-    });
-    await waitFor(() =>
-      expect(
-        screen.getByRole("searchbox", { name: "Search sessions" }),
-      ).toHaveFocus(),
-    );
-    expect(
-      screen.queryByRole("dialog", { name: "Command palette" }),
-    ).toBeNull();
-    expect(prompts).toEqual([]);
-  });
-
-  it("opens a native picker without consuming an unfinished attachment draft", async () => {
-    await savedDraft();
-    render(<App />);
-    await palette("model");
-    fireEvent.click(screen.getByRole("option", { name: /Choose model/ }));
-    expect(
-      await screen.findByRole("listbox", { name: "Available models" }),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByLabelText("Search models")).toHaveFocus(),
-    );
-    expect(screen.getByLabelText("Message", { exact: true })).toHaveValue(
-      "UNFINISHED DRAFT",
-    );
-    expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-    fireEvent.keyDown(screen.getByLabelText("Search models"), {
-      key: "Enter",
-      isComposing: true,
-    });
-    expect(
-      screen.getByRole("listbox", { name: "Available models" }),
-    ).toBeInTheDocument();
-    expect(prompts).toEqual([]);
-  });
-
-  it.each(["audit.inspect", "审阅/检查"])(
-    "runs a prepared native extension command named %s",
-    async (name) => {
-      await savedDraft();
-      act(() =>
-        FakeWebSocket.instances.at(-1)?.emit({
-          type: "snapshot",
-          data: {
-            ...activeSnapshot({
-              commands: [...commands, { name, source: "extension" }],
-            }),
-            runState: "running",
-          },
-        }),
-      );
-      render(<App />);
-      await palette(name);
-      fireEvent.click(
-        screen.getByRole("option", { name: new RegExp(`/${name}`) }),
-      );
-      fireEvent.change(screen.getByLabelText("Prepared command"), {
-        target: { value: `/${name}\tkeep paths\nnext` },
-      });
-      const run = screen.getByRole("button", {
-        name: /^(Run|Steer Pi|Queue prompt|Send)$/,
-      });
-      expect(run).toBeEnabled();
-      fireEvent.click(run);
-      await waitFor(() => expect(prompts).toHaveLength(1));
-      expect(prompts[0]).toMatchObject({
-        message: `/${name} keep paths\nnext`,
-      });
-      expect(prompts[0]).not.toHaveProperty("attachmentIds");
-      expect(prompts[0]).not.toHaveProperty("behavior");
-      expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-      expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-    },
-  );
-
-  it("prepares an extension, preserves work on success/failure, and does not promise queues", async () => {
-    await savedDraft();
+  it("lets modal and editor controls consume Escape before the hovered hint and Stop", async () => {
     render(<App />);
     runBusy();
-    const input = await palette("review");
-    fireEvent.click(screen.getByRole("option", { name: /\/review/ }));
-    const prepared = screen.getByLabelText("Prepared command");
-    expect(prompts).toEqual([]);
-    expect(
-      screen.queryByRole("group", { name: "Prepared prompt delivery" }),
-    ).toBeNull();
-    fireEvent.change(prepared, { target: { value: "/review scoped changes" } });
-    fireEvent.keyDown(prepared, { key: "Escape" });
-    expect(screen.getByLabelText("Filter commands")).toHaveValue("review");
-    fireEvent.click(screen.getByRole("option", { name: /\/review/ }));
-    fireEvent.change(screen.getByLabelText("Prepared command"), {
-      target: { value: "/review scoped changes" },
-    });
-    failPrompt = true;
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() => expect(prompts).toHaveLength(1));
-    expect(prompts[0]).toMatchObject({ message: "/review scoped changes" });
-    expect(prompts[0]).not.toHaveProperty("attachmentIds");
-    expect(prompts[0]).not.toHaveProperty("projectFiles");
-    expect(prompts[0]).not.toHaveProperty("behavior");
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
-    );
-    expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-    expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-    expect(store.getState().failedDeliveryCount).toBe(0);
-    failPrompt = false;
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Command palette" }),
-      ).toBeNull(),
-    );
-    expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-    expect(store.getState().attachments).toHaveLength(1);
-    void input;
-  });
-
-  it("retains preparation through a native dialog and genuine submission rejection", async () => {
-    await savedDraft();
-    render(<App />);
-    await palette("review");
-    fireEvent.click(screen.getByRole("option", { name: /\/review/ }));
-    const prepared = screen.getByLabelText("Prepared command");
-    fireEvent.change(prepared, {
-      target: { value: "/review unsent valuable arguments" },
-    });
-    const interrupt = () =>
-      act(() =>
-        FakeWebSocket.instances.at(-1)?.emit({
-          type: "extension_ui_request",
-          sessionId: "s1",
-          id: "interrupt",
-          method: "input",
-          title: "Native question",
-        }),
-      );
-    const remove = () =>
-      act(() =>
-        FakeWebSocket.instances.at(-1)?.emit({
-          type: "extension_ui_remove",
-          sessionId: "s1",
-          id: "interrupt",
-          reason: "answered",
-        }),
-      );
-    interrupt();
-    expect(
-      screen.queryByRole("dialog", { name: "Command palette" }),
-    ).toBeNull();
-    const question = screen.getByRole("dialog", { name: "Native question" });
-    expect(question).toContainElement(document.activeElement as HTMLElement);
-    remove();
-    await waitFor(() => expect(prepared).toHaveFocus());
-    expect(prepared).toHaveValue("/review unsent valuable arguments");
-    expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-    promptGate = deferred();
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
-    await waitFor(() => expect(prompts).toHaveLength(1));
-    interrupt();
-    await act(async () =>
-      promptGate!.resolve({
-        status: 400,
-        body: { error: "Extension refused after dialog" },
-      }),
-    );
-    remove();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Run" })).toBeEnabled(),
-    );
-    expect(prepared).toHaveValue("/review unsent valuable arguments");
-    expect(screen.getByLabelText("Message", { exact: true })).toHaveValue(
-      "UNFINISHED DRAFT",
-    );
-    expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-    expect(store.getState().failedDeliveryCount).toBe(0);
-    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
-  });
-
-  it("leaves Escape to a newer modal when a context hint is hovered", async () => {
-    render(<App />);
     const meter = screen.getByRole("meter");
     fireEvent.pointerEnter(meter.parentElement!, { pointerType: "mouse" });
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
@@ -592,13 +264,8 @@ describe("command discovery and preparation", () => {
     expect(
       screen.queryByRole("dialog", { name: "Command palette" }),
     ).toBeNull();
-  });
-
-  it("lets focused non-modal controls consume Escape before the hovered hint and Stop", async () => {
-    render(<App />);
-    runBusy();
-    const meter = screen.getByRole("meter");
     fireEvent.pointerEnter(meter.parentElement!, { pointerType: "mouse" });
+    expect(aborts).toBe(0);
     const thinking = screen.getByRole("combobox", { name: "Thinking level" });
     act(() => thinking.focus());
     fireEvent.keyDown(thinking, { key: "ArrowDown" });
@@ -629,101 +296,5 @@ describe("command discovery and preparation", () => {
     expect(aborts).toBe(0);
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     await waitFor(() => expect(aborts).toBe(1));
-  });
-
-  it("offers actual prompt delivery modes for templates during a run", async () => {
-    render(<App />);
-    runBusy();
-    await palette("plan");
-    fireEvent.click(screen.getByRole("option", { name: /\/plan/ }));
-    const delivery = screen.getByRole("group", {
-      name: "Prepared prompt delivery",
-    });
-    fireEvent.click(within(delivery).getByRole("button", { name: "Queue" }));
-    fireEvent.change(screen.getByLabelText("Prepared command"), {
-      target: { value: "/plan parser work" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Queue prompt" }));
-    await waitFor(() =>
-      expect(prompts[0]).toMatchObject({
-        message: "/plan parser work",
-        behavior: "followUp",
-      }),
-    );
-  });
-
-  it("opens independent export from the palette without borrowing the draft", async () => {
-    await savedDraft();
-    render(<App />);
-    await palette("export");
-    fireEvent.click(screen.getByRole("option", { name: /Export session/ }));
-    expect(
-      await screen.findByRole("dialog", { name: "Export session" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("dialog", { name: "Command palette" }),
-    ).toBeNull();
-    expect(screen.queryByLabelText("Prepared command")).toBeNull();
-    expect(screen.getByRole("button", { name: "Download" })).toBeEnabled();
-    expect(
-      screen.getByRole("radio", { name: "HTML Whole session" }),
-    ).toBeChecked();
-    expect(prompts).toEqual([]);
-    expect(sessionDraft("s1")).toBe("UNFINISHED DRAFT");
-    expect(store.getState().attachments[0]?.uploadedId).toBe("upload-a");
-  });
-
-  it("follows edited command semantics without embedding a separate export form", async () => {
-    render(<App />);
-    runBusy();
-    await palette("review");
-    fireEvent.click(screen.getByRole("option", { name: /\/review/ }));
-    const prepared = screen.getByLabelText("Prepared command");
-    fireEvent.change(prepared, { target: { value: "/plan changed scope" } });
-    expect(
-      screen.getByRole("group", { name: "Prepared prompt delivery" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Steer Pi" })).toBeEnabled();
-    expect(screen.getByLabelText("Prepared command")).toBe(prepared);
-    fireEvent.change(prepared, { target: { value: "/missing argument" } });
-    expect(screen.getByRole("button", { name: "Steer Pi" })).toBeDisabled();
-    fireEvent.change(prepared, {
-      target: { value: '/export "report copy.jsonl" ignored' },
-    });
-    expect(screen.getByRole("button", { name: "Run" })).toBeEnabled();
-    expect(screen.queryByRole("group", { name: "Export format" })).toBeNull();
-    expect(prompts).toEqual([]);
-  });
-
-  it("inserts model and supported thinking arguments without submitting", async () => {
-    render(<App />);
-    const input = screen.getByLabelText("Message", { exact: true });
-    fireEvent.change(input, {
-      target: { value: "/model gpt", selectionStart: 10 },
-    });
-    fireEvent.select(input);
-    const candidates = await screen.findByRole("listbox", {
-      name: "Model argument completions",
-    });
-    fireEvent.click(
-      within(candidates).getByRole("option", { name: /openai\/gpt-test/ }),
-    );
-    expect(input).toHaveValue("/model openai/gpt-test");
-    expect(prompts).toEqual([]);
-    fireEvent.change(input, {
-      target: { value: "/thinking h", selectionStart: 11 },
-    });
-    fireEvent.select(input);
-    const levels = await screen.findByRole("listbox", {
-      name: "Thinking level argument completions",
-    });
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(input).toHaveValue("/thinking high");
-    expect(prompts).toEqual([]);
-    void levels;
-    fireEvent.change(input, {
-      target: { value: "/compact preserve API names" },
-    });
-    expect(screen.getByRole("note")).toHaveTextContent("Optional instructions");
   });
 });

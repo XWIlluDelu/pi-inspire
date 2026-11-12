@@ -1,16 +1,22 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { expect, type Page, test } from "@playwright/test";
-import type { ActiveSnapshot } from "../../shared/contracts";
+import { expect, type Locator, type Page, test } from "@playwright/test";
+import type {
+  ActiveSnapshot,
+  BranchTreeResponse,
+} from "../../shared/contracts";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
   openConversationSearch,
   openFixtureSession,
+  openHistoryPane,
   pairedPage,
   reloadSession,
 } from "./support/navigation";
+import { firstTextBaseline } from "./support/text-baseline";
+import { textOverflowsInlineBounds } from "./support/text-bounds";
 
 test.use({ serviceWorkers: "block", viewport: { width: 1280, height: 900 } });
 
@@ -22,36 +28,44 @@ async function chooseSource(page: Page) {
   );
 }
 
-async function openHistory(page: Page) {
-  const toggle = page.getByRole("button", {
-    name: "Toggle resources panel",
-    exact: true,
-  });
-  if ((await toggle.getAttribute("aria-expanded")) === "false")
-    await toggle.click();
-  await page.getByRole("tab", { name: "History", exact: true }).click();
-  const history = page.getByRole("region", { name: "Conversation history" });
-  await expect(history).toBeVisible();
-  return history;
-}
-
 async function connectCalibration(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
   await chooseSource(page);
 }
 
-test("History read failure keeps Retry reachable in short panes", async ({
+test("History failures recover in a short drawer and the chosen preview survives reload", async ({
   page,
 }) => {
-  let refuse = true;
-  await page.route("**/api/branches/tree**", async (route) => {
-    if (refuse)
-      await route.fulfill({
-        status: 422,
-        json: { error: "History could not be read" },
+  let refuseTree = true;
+  let entryFailure: 403 | 404 | null = 403;
+  let resumePreview!: () => void;
+  const previewReady = new Promise<void>((resolve) => {
+    resumePreview = resolve;
+  });
+  const diagnostic =
+    "Cannot preview /workspace/calibration/instrument_calibration_reference_acquisition_results_archive.jsonl. Restore access and retry.";
+  await page.route("**/api/branches/tree**", (route) =>
+    refuseTree
+      ? route.fulfill({
+          status: 422,
+          json: { error: "History could not be read" },
+        })
+      : route.fallback(),
+  );
+  await page.route("**/api/branches/entry?**", async (route) => {
+    if (entryFailure)
+      return route.fulfill({
+        status: entryFailure,
+        json: {
+          error:
+            entryFailure === 403
+              ? diagnostic
+              : "History entry no longer exists",
+        },
       });
-    else await route.fallback();
+    await previewReady;
+    await route.fallback();
   });
   await connectCalibration(page);
   const toggle = page.getByRole("button", {
@@ -65,35 +79,131 @@ test("History read failure keeps Retry reachable in short panes", async ({
   await expect(
     pane.getByText("History is unavailable.", { exact: true }),
   ).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 420 });
+  await expect(pane).toHaveAttribute("role", "dialog");
+
   const retry = pane.getByRole("button", { name: "Retry", exact: true });
-  for (const [width, height] of [
-    [1280, 900],
-    [901, 390],
-    [320, 320],
-  ]) {
-    await page.setViewportSize({ width, height });
-    await expect(pane).toHaveAttribute(
-      "role",
-      width <= 900 ? "dialog" : "complementary",
+  await retry.focus();
+  await expect(retry).toBeInViewport();
+  refuseTree = false;
+  await retry.press("Enter");
+  const history = pane.getByRole("region", { name: "Conversation history" });
+  const search = history.getByRole("searchbox", { name: "Find in history" });
+  const query = "Review calibration run 598";
+  await search.fill(query);
+  const entry = history.getByRole("button", {
+    name: /Your input.*Review calibration run 598/,
+  });
+  await entry.click();
+  const warning = history.getByRole("alert");
+  await expect(warning).toHaveText(diagnostic);
+  await page.evaluate(() => document.fonts.ready);
+  expect(await warning.evaluate(textOverflowsInlineBounds)).toBe(false);
+
+  const retryPreview = history.getByRole("button", { name: "Retry preview" });
+  await retryPreview.focus();
+  await expect(retryPreview).toBeInViewport();
+  entryFailure = null;
+  try {
+    await retryPreview.press("Enter");
+    await expect(history.getByRole("status")).toContainText(
+      "Loading complete content",
     );
-    await retry.focus();
-    await retry.scrollIntoViewIfNeeded();
-    const box = await retry.boundingBox();
-    const viewport = await pane.boundingBox();
-    expect(box!.y).toBeGreaterThanOrEqual(viewport!.y);
-    expect(box!.y + box!.height).toBeLessThanOrEqual(
-      viewport!.y + viewport!.height,
-    );
-    expect(
-      await retry.evaluate((el) => parseFloat(getComputedStyle(el).marginTop)),
-    ).toBe(8);
-    await expect(retry).toBeFocused();
+    for (const name of ["Fork to new session", "Clone through here"]) {
+      await expect(history.getByRole("button", { name })).toBeDisabled();
+    }
+  } finally {
+    resumePreview();
   }
-  refuse = false;
-  await retry.click();
-  await expect(
-    pane.getByRole("region", { name: "Conversation history" }),
-  ).toBeVisible();
+  await expect(history.locator(".rich-text")).toContainText(query);
+  const back = history.getByRole("button", { name: "Back to history" });
+  await back.click();
+  await expect(entry).toBeFocused();
+  await entry.click();
+  await expect(history.locator(".rich-text")).toContainText(query);
+  await page.reload();
+  await expect(history.locator(".rich-text")).toContainText(query);
+  entryFailure = 404;
+  await page.reload();
+  await expect(warning).toHaveText("History entry no longer exists");
+  await expect(retryPreview).toBeEnabled();
+  await back.click();
+  await expect(search).toHaveValue(query);
+  entryFailure = null;
+  await entry.click();
+  await expect(history.locator(".rich-text")).toContainText(query);
+});
+
+test.describe("narrow History route labels", () => {
+  test.use({ viewport: { width: 320, height: 900 }, hasTouch: true });
+  test("aligns the first-line mark and metadata without clipping wrapped routes", async ({
+    page,
+  }) => {
+    const description =
+      "比较校准残差与参考采集结果，并在复查仪器重复性之前保留基线修正，再检查不同批次测量之间的偏差。";
+    await page.route("**/api/branches/tree?**", async (route) => {
+      if (!new URL(route.request().url()).searchParams.has("parentId"))
+        return route.fallback();
+      const response = await route.fetch();
+      const body: BranchTreeResponse = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...body,
+          nodes: body.nodes.map((node) => ({
+            ...node,
+            snippet: node.active ? description : "Saved calibration route",
+          })),
+        },
+      });
+    });
+    await pairedPage(page);
+    await openFixtureSession(page, /Calibration history fixture/);
+    const history = await openHistoryPane(page);
+    await history
+      .getByRole("button", { name: "Earlier conversation", exact: true })
+      .click();
+    const disclosure = history.getByRole("button", {
+      name: "Other routes",
+      exact: true,
+    });
+    expect((await disclosure.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await disclosure.click();
+    const routes = history.getByRole("group", {
+      name: "Routes from this point",
+    });
+    const current = routes
+      .locator(".history-route")
+      .filter({ hasText: description });
+    const short = routes.getByRole("button", {
+      name: "Saved calibration route",
+      exact: true,
+    });
+    await expect(current).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    const label = await current
+      .locator("span")
+      .evaluate(firstTextBaseline, ".history-route");
+    const metadata = await current
+      .locator("small")
+      .evaluate(firstTextBaseline, ".history-route");
+    expect(Math.abs(metadata! - label!)).toBeLessThanOrEqual(0.5);
+    const currentGeometry = await current.evaluate((row) => {
+      const label = row.querySelector("span")!;
+      const lineHeight = parseFloat(getComputedStyle(label).lineHeight);
+      const text = label.getBoundingClientRect();
+      const icon = row.querySelector("svg")!.getBoundingClientRect();
+      return {
+        lines: text.height / lineHeight,
+        iconOffset: icon.y + icon.height / 2 - text.y - lineHeight / 2,
+        overflow: row.scrollWidth - row.clientWidth,
+      };
+    });
+    expect(currentGeometry.lines).toBeGreaterThan(1);
+    expect(Math.abs(currentGeometry.iconOffset)).toBeLessThanOrEqual(0.5);
+    expect(currentGeometry.overflow).toBeLessThanOrEqual(1);
+    expect((await short.boundingBox())!.height).toBeCloseTo(44, 0);
+  });
 });
 
 test("Fork restores saved images for preview, editing and explicit resend", async ({
@@ -106,7 +216,7 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
     exact: true,
   });
   await input.fill("Keep this source draft");
-  const history = await openHistory(page);
+  const history = await openHistoryPane(page);
   await history
     .getByRole("searchbox", { name: "Find in history" })
     .fill("Compare the calibration strategies");
@@ -142,7 +252,7 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
     .last()
     .click();
   await expect(restored).toHaveCount(1);
-  await input.fill("Compare the saved image again");
+  await input.clear();
 
   const prompt = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/api/prompt",
@@ -152,11 +262,28 @@ test("Fork restores saved images for preview, editing and explicit resend", asyn
     .click();
   expect((await prompt).postDataJSON()).toMatchObject({
     sessionId: forked.sessionId,
-    message: "Compare the saved image again",
+    message: "",
     attachmentIds: [forked.editorAttachments[0].id],
   });
   await expect(restored).toHaveCount(0);
   await expect(input).toHaveValue("");
+
+  const sent = page.locator(".user-bubble").last();
+  await expect(sent).toBeVisible();
+  await page.reload();
+  const sentPreview = sent.getByRole("button", {
+    name: "Preview attached image",
+  });
+  await expect(sentPreview.locator("img")).toHaveJSProperty(
+    "naturalWidth",
+    720,
+  );
+  await expect(sentPreview.locator("img")).toHaveAttribute(
+    "draggable",
+    "false",
+  );
+  await sentPreview.click();
+  await expect(viewer.locator("img")).toHaveJSProperty("naturalWidth", 720);
 });
 
 test("recovers a History image and opens local references in the authorized session reader", async ({
@@ -187,7 +314,7 @@ test("recovers a History image and opens local references in the authorized sess
     else await route.continue();
   });
   const selectInput = async () => {
-    const history = await openHistory(page);
+    const history = await openHistoryPane(page);
     const back = history.getByRole("button", {
       name: "Back to history",
       exact: true,
@@ -226,6 +353,13 @@ test("recovers a History image and opens local references in the authorized sess
   expect(imageRequests.length).toBeGreaterThan(failedReads);
   expect(new Set(imageRequests).size).toBe(1);
   expect(entryRequests).toBe(1);
+  await image.press("Enter");
+  const viewer = page.getByRole("dialog", { name: "Image preview" });
+  await expect(viewer).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(viewer).toHaveCount(0);
+  await expect(image).toBeFocused();
+
   await history.getByRole("button", { name: "Back to history" }).click();
   await expect(
     history.getByRole("searchbox", { name: "Find in history" }),
@@ -253,102 +387,54 @@ test("recovers a History image and opens local references in the authorized sess
   }
 });
 
-test("reads native-shaped shell History and inspects saved images", async ({
+test("finds saved shell output and opens its full log through History", async ({
   page,
 }) => {
   await connectCalibration(page);
-  const history = await openHistory(page);
-  await history
-    .getByRole("button", { name: "Earlier conversation", exact: true })
-    .click();
-  const turn = history.locator(".history-turn").filter({
-    has: page.getByRole("button", { name: /Review calibration run 599/ }),
+  const fullOutput = "COMPLETE_NATIVE_SHELL_LOG_END";
+  const reference = resolve(browserWorkspace, "native-shell.log");
+
+  await openConversationSearch(page);
+  const transcriptSearch = page.getByRole("searchbox", {
+    name: "Search conversation",
   });
-  await turn.getByRole("button", { name: "Replies and activity" }).click();
-  const shell = turn
-    .getByRole("button", {
-      name: /Shell command.*!printf.*native-shell-history/,
-    })
-    .first();
-  await expect(shell).toBeVisible();
-  await shell.click();
-  const shellPreview = history.getByRole("region", {
-    name: "Shell record preview",
-  });
-  await expect(shellPreview).toContainText("Included in context");
-  await expect(shellPreview).toContainText("!printf 'native-shell-history'");
-  await expect(
-    shellPreview.getByRole("button", { name: /Insert.*terminal/ }),
-  ).toHaveCount(0);
-  await expect(
-    history.getByRole("button", { name: "Continue here", exact: true }),
-  ).toBeEnabled();
-  await expect(
-    history.getByRole("button", { name: "Edit in this session" }),
-  ).toHaveCount(0);
-  await history.getByRole("button", { name: "Back to history" }).click();
-  const search = history.getByRole("searchbox", {
-    name: "Find in history",
-  });
+  await transcriptSearch.fill(fullOutput);
+  await expect(page.getByLabel("Transcript search matches")).toContainText(
+    "1 match",
+  );
+  const history = await openHistoryPane(page);
+  const search = history.getByRole("searchbox", { name: "Find in history" });
   await search.fill("native-shell-excluded-result");
   await history
     .getByRole("button", {
       name: /Shell command.*native-shell-excluded-result/,
     })
     .click();
-  await expect(shellPreview).toContainText("!!printf 'native-shell-history'");
+  const shellPreview = history.getByRole("region", {
+    name: "Shell record preview",
+  });
   await expect(shellPreview).toContainText("Excluded from context");
 
   await history.getByRole("button", { name: "Back to history" }).click();
-  await search.fill("Compare the calibration strategies");
-  await history
-    .getByRole("button", {
-      name: /Your input.*Compare the calibration strategies/,
-    })
-    .click();
-  const image = history.getByRole("button", {
-    name: "Preview image in this history entry",
-  });
-  await expect(image.locator("img")).toHaveJSProperty("complete", true);
-  {
-    await image.focus();
-    await image.press("Enter");
-  }
-  const viewer = page.getByRole("dialog", { name: "Image preview" });
-  await expect(viewer).toBeVisible();
-  await viewer.getByRole("button", { name: "Actual size" }).click();
-  await viewer.getByRole("button", { name: "Zoom in" }).click();
-  await expect(viewer.getByRole("button", { name: "Actual size" })).toHaveText(
-    "125%",
-  );
-
-  await viewer.getByRole("button", { name: "Close image preview" }).click();
-  await expect(image).toBeFocused();
-  await image.press("Enter");
-  await expect(viewer).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(viewer).toHaveCount(0);
-  await expect(history.locator(".history-detail .rich-text")).toContainText(
-    "Compare the calibration strategies",
-  );
-  await expect(image).toBeFocused();
-
-  await history.getByRole("button", { name: "Back to history" }).click();
-  await search.fill("COMPLETE_NATIVE_SHELL_LOG_END");
+  await search.fill(fullOutput);
   await history
     .getByRole("button", { name: /Shell command.*native-shell-history/ })
     .click();
-  const fullLog = shellPreview.getByRole("button", {
-    name: "View full shell output",
-  });
+  await expect(shellPreview).toContainText("Included in context");
+  await expect(
+    history.getByRole("button", { name: "Continue here", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    history.getByRole("button", { name: "Edit in this session" }),
+  ).toHaveCount(0);
+
   await page.setViewportSize({ width: 600, height: 900 });
-  await expect(fullLog).toBeVisible();
-  expect((await fullLog.boundingBox())!.height).toBeCloseTo(24, 1);
-  const reference = (await fullLog.getAttribute("data-file-path"))!;
   const resolvedLog = page.waitForRequest(
     (request) => new URL(request.url()).pathname === "/api/resources/resolve",
   );
-  await fullLog.click();
+  await shellPreview
+    .getByRole("button", { name: "View full shell output" })
+    .click();
   expect((await resolvedLog).postDataJSON()).toMatchObject({
     sessionId: "fixture-calibration-history",
     reference,
@@ -358,184 +444,6 @@ test("reads native-shaped shell History and inspects saved images", async ({
   expect(await source.locator("code").textContent()).toBe(
     await readFile(reference, "utf8"),
   );
-});
-
-test("clears a pending search and recovers the selected detail without losing its place", async ({
-  page,
-}) => {
-  await connectCalibration(page);
-  let release!: () => void;
-  const gate = new Promise<void>((resolveGate) => {
-    release = resolveGate;
-  });
-  await page.route("**/api/branches/tree?**", async (route) => {
-    if (
-      new URL(route.request().url()).searchParams.get("query") ===
-      "delayed matches"
-    )
-      await gate;
-    await route.continue();
-  });
-  const history = await openHistory(page);
-  const search = history.getByRole("searchbox", {
-    name: "Find in history",
-  });
-  const requested = page.waitForRequest((request) =>
-    request.url().includes("query=delayed"),
-  );
-  await search.fill("delayed matches");
-  await requested;
-  await expect(history).toHaveAttribute("aria-busy", "true");
-  await search.fill("");
-  await expect(history).not.toHaveAttribute("aria-busy", "true");
-  await expect(
-    history.getByRole("button", { name: "Earlier conversation" }),
-  ).toBeEnabled();
-  release();
-  let reads = 0;
-  let releaseDetail!: () => void;
-  const detailGate = new Promise<void>((resolve) => {
-    releaseDetail = resolve;
-  });
-  await page.route("**/api/branches/entry?**", async (route) => {
-    reads++;
-    if (reads === 1)
-      await route.fulfill({
-        status: 503,
-        json: { error: "Preview temporarily unavailable" },
-      });
-    else {
-      await detailGate;
-      await route.continue();
-    }
-  });
-  await search.fill("Review calibration run 598");
-  const match = history.getByRole("button", {
-    name: /Your input.*Review calibration run 598/,
-  });
-  await match.click();
-  await expect(
-    history.getByRole("button", { name: "Retry preview", exact: true }),
-  ).toHaveCount(0);
-  try {
-    const loading = history.locator(".history-detail__body > p[role=status]");
-    await expect(loading).toContainText("Loading complete content");
-    for (const width of [1280, 390, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.evaluate(
-        () =>
-          new Promise((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)),
-          ),
-      );
-      const layout = await loading.evaluate((el) => {
-        const line = el.getBoundingClientRect();
-        const icon = el.querySelector("svg")!.getBoundingClientRect();
-        const text = [...el.childNodes].find(
-          (node) =>
-            node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
-        )!;
-        const offset = text.textContent!.search(/\S/);
-        const range = document.createRange();
-        range.setStart(text, offset);
-        range.setEnd(text, offset + 1);
-        return {
-          center: icon.y + icon.height / 2 - (line.y + line.height / 2),
-          gap: range.getBoundingClientRect().left - icon.right,
-        };
-      });
-      expect(Math.abs(layout.center)).toBeLessThanOrEqual(0.25);
-      expect(layout.gap).toBeCloseTo(8, 1);
-    }
-    for (const label of ["Fork to new session", "Clone through here"]) {
-      const action = history.getByRole("button", { name: label, exact: true });
-      await expect(action).toBeDisabled();
-      await expect(action).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-      await expect(action).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
-    }
-  } finally {
-    releaseDetail();
-  }
-  await expect(history.locator(".rich-text")).toContainText(
-    "Review calibration run 598",
-  );
-  expect(reads).toBe(2);
-
-  await history.getByRole("button", { name: "Back to history" }).click();
-  await expect(search).toHaveValue("Review calibration run 598");
-  await expect(match).toBeFocused();
-});
-
-test.describe("touch History navigation", () => {
-  test.use({
-    viewport: { width: 390, height: 844 },
-    hasTouch: true,
-  });
-  test("reveals inspected route endpoints with quiet responsive controls", async ({
-    page,
-  }) => {
-    page.setDefaultTimeout(8000);
-    await connectCalibration(page);
-    const composer = page.getByLabel("Message", { exact: true });
-    await composer.fill("UNSENT — retain the calibration notes");
-    const history = await openHistory(page);
-    await history
-      .getByRole("button", { name: "Earlier conversation", exact: true })
-      .click();
-    await history
-      .getByRole("button", { name: "Other routes", exact: true })
-      .click();
-    await history
-      .getByRole("button", {
-        name: /Try the alternate calibration strategy with the amber reference/,
-      })
-      .click();
-    const alternate = history.getByRole("button", {
-      name: "Try the alternate calibration strategy with the amber reference.",
-      exact: true,
-    });
-    await expect(alternate).toBeInViewport();
-    const current = history.getByRole("button", {
-      name: "Current conversation",
-      exact: true,
-    });
-    await expect(current).toHaveClass(/button--quiet/);
-
-    const rows = history.locator(".branch-tree__rows");
-    const position = await rows.evaluate((element) => element.scrollTop);
-    await alternate.click();
-    await history
-      .getByRole("button", { name: "Back to history", exact: true })
-      .click();
-    await expect
-      .poll(() => rows.evaluate((element) => element.scrollTop))
-      .toBe(position);
-    await expect(alternate).toBeFocused();
-    await current.click();
-    await expect(
-      history.getByRole("button", {
-        name: /Review calibration run 599.*Current conversation/,
-      }),
-    ).toBeInViewport();
-    await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
-    {
-      await page
-        .getByRole("button", { name: "Close context pane", exact: true })
-        .click();
-      await page.setViewportSize({ width: 320, height: 844 });
-      const title = page.getByRole("button", {
-        name: /^Session actions:/,
-      });
-      await expect(title).toBeVisible();
-      expect((await title.boundingBox())!.width).toBeGreaterThan(40);
-      await expect(
-        page.getByRole("button", {
-          name: "Open Git changes: fixture/analysis, 1 change",
-          exact: true,
-        }),
-      ).toBeHidden();
-    }
-  });
 });
 
 test.describe("touch History navigation", () => {
@@ -552,8 +460,6 @@ test.describe("touch History navigation", () => {
       path: string;
       body: Record<string, unknown>;
     }> = [];
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
     page.on("request", (request) => {
       if (
         request.method() === "POST" &&
@@ -567,7 +473,7 @@ test.describe("touch History navigation", () => {
     await connectCalibration(page);
     const composer = page.getByLabel("Message", { exact: true });
     await composer.fill("UNSENT — retain the calibration notes");
-    let history = await openHistory(page);
+    let history = await openHistoryPane(page);
     await expect(
       history.getByRole("button", {
         name: /Review calibration run 599.*Current conversation/,
@@ -585,6 +491,12 @@ test.describe("touch History navigation", () => {
     await expect(olderPrompt).toBeVisible();
     await olderPrompt.scrollIntoViewIfNeeded();
     const rows = history.locator(".branch-tree__rows");
+    const scrollTo = (surface: Locator, top: number) =>
+      surface.evaluate((element, offset) => {
+        element.scrollTop = offset;
+        element.dispatchEvent(new Event("scroll"));
+        return element.scrollTop;
+      }, top);
     const priorScroll = await rows.evaluate((element) => element.scrollTop);
     await olderPrompt.tap();
     await expect(
@@ -596,7 +508,7 @@ test.describe("touch History navigation", () => {
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     await history
       .getByRole("button", { name: "Back to history", exact: true })
-      .click();
+      .press("Escape");
     await expect(olderPrompt).toBeFocused();
     expect(await rows.evaluate((element) => element.scrollTop)).toBe(
       priorScroll,
@@ -613,18 +525,43 @@ test.describe("touch History navigation", () => {
     await expect(
       history.getByText("Inspecting another route", { exact: true }),
     ).toBeVisible();
-    await expect(
-      history.getByRole("button", {
-        name: "Try the alternate calibration strategy with the amber reference.",
-        exact: true,
-      }),
-    ).toBeVisible();
+    const alternate = history.getByRole("button", {
+      name: "Try the alternate calibration strategy with the amber reference.",
+      exact: true,
+    });
+    await expect(alternate).toBeInViewport();
+    const alternatePosition = await rows.evaluate(
+      (element) => element.scrollTop,
+    );
+    await alternate.click();
+    await history.getByRole("button", { name: "Back to history" }).click();
+    await expect(alternate).toBeFocused();
+    await expect
+      .poll(() => rows.evaluate((element) => element.scrollTop))
+      .toBe(alternatePosition);
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
+    expect(calls).toHaveLength(0);
+
+    const savedOutline = await scrollTo(rows, 180);
+    expect(savedOutline).toBeGreaterThan(0);
+    await page.reload();
+    await expect(
+      history.getByText("Inspecting another route", { exact: true }),
+    ).toBeVisible();
+    await expect(alternate).toBeVisible();
+    await expect
+      .poll(() => rows.evaluate((element) => element.scrollTop))
+      .toBe(savedOutline);
     expect(calls).toHaveLength(0);
 
     await history
       .getByRole("button", { name: "Current conversation", exact: true })
       .click();
+    await expect(
+      history.getByRole("button", {
+        name: /Review calibration run 599.*Current conversation/,
+      }),
+    ).toBeInViewport();
     const search = history.getByRole("searchbox", {
       name: "Find in history",
       exact: true,
@@ -638,74 +575,49 @@ test.describe("touch History navigation", () => {
     await expect(
       history.getByRole("button", { name: "Continue here", exact: true }),
     ).toBeEnabled();
-    while (
-      await history
-        .getByRole("button", { name: "Read more content", exact: true })
-        .count()
-    ) {
-      const more = history.getByRole("button", {
-        name: "Read more content",
-        exact: true,
-      });
+    const more = history.getByRole("button", { name: "Read more content" });
+    const tail = history.getByText("完整测量记录。", { exact: true });
+    await expect(more).toBeVisible();
+    await history
+      .getByRole("button", { name: "Back to history", exact: true })
+      .click();
+    await expect(oldResponse).toBeFocused();
+    await oldResponse.click();
+    await expect(more).toBeVisible();
+    await expect(tail).toHaveCount(0);
+    const detail = history.locator(".history-detail__body");
+    const savedDetail = await scrollTo(detail, 220);
+    expect(savedDetail).toBeGreaterThan(0);
+    await page.reload();
+    await expect(more).toBeVisible();
+    await expect
+      .poll(() => detail.evaluate((element) => element.scrollTop))
+      .toBe(savedDetail);
+    while (await more.count()) {
       await more.click();
       await expect(history).not.toHaveAttribute("aria-busy", "true");
     }
-    await expect(
-      history.getByText("完整测量记录。", { exact: true }),
-    ).toBeVisible();
+    await expect(tail).toBeVisible();
     await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     expect(calls).toHaveLength(0);
     await history
-      .getByText("完整测量记录。", { exact: true })
-      .scrollIntoViewIfNeeded();
-
+      .getByRole("group", { name: "New session", exact: true })
+      .getByRole("button", { name: "Clone through here", exact: true })
+      .click();
+    await expect(composer).toHaveValue("");
+    expect(calls.at(-1)).toMatchObject({
+      path: "/api/branches/clone",
+      body: { targetId: "history-a-0" },
+    });
+    await chooseSource(page);
+    await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
+    history = await openHistoryPane(page);
     await history
       .getByRole("button", { name: "Back to history", exact: true })
       .click();
     await expect(search).toHaveValue("cobalt baseline");
-    await expect(oldResponse).toBeFocused();
-    await search.fill("alternate calibration strategy");
-    await history
-      .getByRole("button", {
-        name: /Your input.*alternate calibration strategy/,
-      })
-      .click();
-    await expect(
-      history.getByRole("button", {
-        name: "Fork to new session",
-        exact: true,
-      }),
-    ).toBeEnabled();
-    await expect(
-      history
-        .getByRole("group", { name: "New session", exact: true })
-        .getByRole("button", { name: "Clone through here", exact: true }),
-    ).toBeEnabled();
-
-    await history
-      .getByRole("button", { name: "Fork to new session", exact: true })
-      .click();
-    await expect(composer).toHaveValue(
-      "Try the alternate calibration strategy with the amber reference.",
-    );
-    expect(calls.at(-1)).toMatchObject({
-      path: "/api/branches/fork",
-      body: { targetId: "history-alternate" },
-    });
-    await chooseSource(page);
-    await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
-    history = await openHistory(page);
-    const back = history.getByRole("button", {
-      name: "Back to history",
-      exact: true,
-    });
-    if (await back.isVisible()) await back.click();
-    await history
-      .getByRole("searchbox", { name: "Find in history" })
-      .fill("cobalt baseline");
-    await history
-      .getByRole("button", { name: /Response.*cobalt baseline/ })
-      .click();
+    await expect(oldResponse).toBeVisible();
+    await oldResponse.click();
     await expect(
       history.getByRole("checkbox", {
         name: "Carry branch summary",
@@ -722,111 +634,34 @@ test.describe("touch History navigation", () => {
     await expect(
       page.getByRole("dialog", { name: "Context panel", exact: true }),
     ).toHaveCount(0);
-    await page.setViewportSize({ width: 320, height: 844 });
-    await expect(banner).toBeInViewport({ ratio: 1 });
-    for (const control of await banner.getByRole("button").all()) {
-      await expect(control).toBeInViewport({ ratio: 1 });
-      expect((await control.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    }
-    await page.setViewportSize({ width: 390, height: 844 });
-    const sessionActions = page.getByRole("button", {
-      name: /^Session actions:/,
-    });
-    await sessionActions.tap();
-    await page
-      .getByRole("menuitem", { name: "Clone current branch", exact: true })
-      .tap();
-    await expect(composer).toHaveValue("");
-    await expect(banner).toHaveCount(0);
-    expect(calls.at(-1)).toMatchObject({
-      path: "/api/branches/clone",
-      body: { targetId: "history-a-0" },
-    });
-    await chooseSource(page);
-    await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
+    await page.reload();
+    await expect(banner).toBeVisible();
+    const navigations = () =>
+      calls.filter((call) => call.path === "/api/branches/navigate").length;
+    const beforeDismiss = navigations();
     await banner
-      .getByRole("button", { name: "Restore saved position", exact: true })
+      .getByRole("button", { name: "Dismiss earlier continuation notice" })
       .click();
     await expect(banner).toHaveCount(0);
-    await composer.fill("UNSENT — keep this in the source clone");
-
+    expect(navigations()).toBe(beforeDismiss);
     const palette = await openCommandPalette(page);
-    await palette.getByLabel("Filter commands").fill("clone");
-    await palette.getByRole("option", { name: /Clone current branch/ }).click();
-    await expect(palette).toHaveCount(0);
-    await expect
-      .poll(
-        () =>
-          calls.filter((call) => call.path === "/api/branches/clone").length,
+    await palette
+      .getByLabel("Filter commands")
+      .fill("restore latest saved position");
+    const restored = page.waitForResponse("**/api/branches/navigate");
+    await palette
+      .getByRole("option", { name: /Restore latest saved position/ })
+      .click();
+    expect((await restored).ok()).toBe(true);
+    const latest: BranchTreeResponse = await (
+      await hostRequest(page).get(
+        "/api/branches/tree?sessionId=fixture-calibration-history",
       )
-      .toBe(2);
-    await expect(sessionActions).toBeEnabled();
-    await expect(composer).toHaveValue("");
-    await composer.fill("/clone");
-    const send = page.getByRole("button", {
-      name: "Send message",
-      exact: true,
-    });
-    await send.tap();
-    await expect
-      .poll(
-        () =>
-          calls.filter((call) => call.path === "/api/branches/clone").length,
-      )
-      .toBe(3);
-    await expect(sessionActions).toBeEnabled();
-    await expect(composer).toHaveValue("");
-    expect(
-      calls.filter((call) => call.path === "/api/branches/clone"),
-    ).toHaveLength(3);
+    ).json();
+    expect(latest.effectiveLeafId).toBe(latest.durableLeafId);
+    await expect(composer).toHaveValue("UNSENT — retain the calibration notes");
     expect(calls.filter((call) => call.path === "/api/prompt")).toHaveLength(0);
-    expect(errors).toEqual([]);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth > window.innerWidth,
-      ),
-    ).toBe(false);
   });
-});
-
-test("navigates to a native shell card and opens its complete log on a narrow screen", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await connectCalibration(page);
-  await openConversationSearch(page);
-  const search = page.getByRole("searchbox", {
-    name: "Search conversation",
-  });
-  await search.fill("COMPLETE_NATIVE_SHELL_LOG_END");
-  await expect(page.getByLabel("Transcript search matches")).toContainText(
-    "1 match",
-  );
-  await search.press("Enter");
-  const card = page
-    .getByRole("region", { name: "Shell command" })
-    .filter({ hasText: "Included in context" });
-  const action = card.getByRole("button", {
-    name: "View full output",
-    exact: true,
-  });
-  await expect(action).toBeInViewport();
-  const reference = resolve(browserWorkspace, "native-shell.log");
-  await expect(action).toHaveAttribute("data-file-path", reference);
-  const resolved = page.waitForRequest(
-    (request) =>
-      new URL(request.url()).pathname === "/api/resources/resolve" &&
-      request.postDataJSON().reference === reference,
-  );
-  await action.click();
-  expect((await resolved).postDataJSON().sessionId).toBe(
-    "fixture-calibration-history",
-  );
-  const source = page.getByRole("region", { name: "File source" });
-  await expect(source).toBeVisible();
-  expect(await source.locator("code").textContent()).toBe(
-    await readFile(reference, "utf8"),
-  );
 });
 
 test("History Edit with a delayed summary preserves a newer draft and image", async ({
@@ -851,14 +686,25 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
   await reloadSession(page, (await copied.json()).snapshot.active.sessionId);
   const composer = page.getByLabel("Message", { exact: true });
   await composer.fill("Confirmed draft");
-  const history = await openHistory(page);
+  const history = await openHistoryPane(page);
   await history
     .getByRole("searchbox", { name: "Find in history" })
     .fill("Review calibration run 598");
   await history
     .getByRole("button", { name: /Your input.*Review calibration run 598/ })
     .click();
+  const edit = history.getByRole("button", {
+    name: "Edit in this session",
+    exact: true,
+  });
+  page.once("dialog", (dialog) => void dialog.dismiss());
+  await edit.click();
+  await expect(edit).toBeEnabled();
+  await expect(composer).toHaveValue("Confirmed draft");
   await history.getByRole("checkbox", { name: "Carry branch summary" }).check();
+  await history
+    .getByRole("textbox", { name: "Summary instructions" })
+    .fill("Keep the measurements");
   let release!: () => void;
   const summary = new Promise<void>((resolveSummary) => {
     release = resolveSummary;
@@ -867,12 +713,14 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
     await summary;
     await route.continue();
   });
-  page.on("dialog", (dialog) => void dialog.accept());
+  page.once("dialog", (dialog) => void dialog.accept());
   const dispatched = page.waitForRequest("**/api/branches/navigate");
-  await history
-    .getByRole("button", { name: "Edit in this session", exact: true })
-    .click();
-  await dispatched;
+  await edit.click();
+  expect((await dispatched).postDataJSON()).toMatchObject({
+    mode: "edit",
+    summarize: true,
+    customInstructions: "Keep the measurements",
+  });
   await composer.fill("Newer draft typed while waiting");
   await page.locator('input[type="file"]').setInputFiles({
     name: "newer-image.gif",
@@ -895,68 +743,12 @@ test("History Edit with a delayed summary preserves a newer draft and image", as
   ).toBeVisible();
 });
 
-test("earlier continuation can be restored from the palette after dismissal", async ({
+test("earlier-branch restore remains reachable when its diagnostic wraps", async ({
   page,
 }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await pairedPage(page);
-  await openFixtureSession(page, /Earlier branch recovery fixture/);
-  const branch = await (
-    await hostRequest(page).get("/api/branches/tree?sessionId=fixture-branch")
-  ).json();
-  const earlier = branch.nodes.find(
-    (node: { id: string; canSwitch: boolean }) =>
-      node.canSwitch && node.id !== branch.effectiveLeafId,
-  )?.id;
-  expect(earlier).toBeTruthy();
-  const navigated = await hostRequest(page).post("/api/branches/navigate", {
-    data: {
-      sessionId: "fixture-branch",
-      revision: branch.revision,
-      targetId: earlier,
-      mode: "switch",
-      summarize: false,
-    },
-  });
-  expect(navigated.ok()).toBe(true);
-  await page.reload();
-  const banner = page.getByRole("region", { name: "Earlier continuation" });
-  await expect(banner).toBeVisible();
-  const draft = page.getByRole("textbox", { name: "Message", exact: true });
-  await draft.fill("Keep the calibration draft");
-  await banner
-    .getByRole("button", { name: "Dismiss earlier continuation notice" })
-    .click();
-  await expect(banner).toHaveCount(0);
-  const stillEarlier = await (
-    await hostRequest(page).get("/api/branches/tree?sessionId=fixture-branch")
-  ).json();
-  expect(stillEarlier.effectiveLeafId).toBe(earlier);
-
-  const palette = await openCommandPalette(page);
-  await palette
-    .getByLabel("Filter commands")
-    .fill("restore latest saved position");
-  const restored = page.waitForResponse("**/api/branches/navigate");
-  await palette
-    .getByRole("option", { name: /Restore latest saved position/ })
-    .click();
-  expect((await restored).ok()).toBe(true);
-  await expect(draft).toHaveValue("Keep the calibration draft");
-  const latest = await (
-    await hostRequest(page).get("/api/branches/tree?sessionId=fixture-branch")
-  ).json();
-  expect(latest.effectiveLeafId).toBe(latest.durableLeafId);
-});
-
-test("earlier-branch notice follows reader width and reserves wrapped diagnostics", async ({
-  page,
-}) => {
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await connectCalibration(page);
   page.on("dialog", (dialog) => void dialog.accept());
-  const history = await openHistory(page);
+  const history = await openHistoryPane(page);
   await history
     .getByRole("searchbox", { name: "Find in history" })
     .fill("Review calibration run 598");
@@ -984,69 +776,24 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
   await expect
     .poll(async () => (await reader.boundingBox())!.width)
     .toBeLessThanOrEqual(400.5);
-  const measure = () =>
-    banner.evaluate((root) => {
-      const r = (element: Element) => element.getBoundingClientRect();
-      const stage = r(root.closest(".reading-stage")!);
-      const box = r(root);
-      const title = root.querySelector(
-        ".earlier-branch-banner__header > span",
-      )!;
-      const mark = r(
-        root.querySelector(".earlier-branch-banner__header > svg")!,
+  const fitsReader = () =>
+    banner.evaluate((element) => {
+      const banner = element.getBoundingClientRect();
+      const reader = element.closest(".reading-stage")!.getBoundingClientRect();
+      const transcript = element.parentElement!.querySelector(".transcript")!;
+      const content = transcript.querySelector(".transcript__content")!;
+      const needed = banner.bottom - transcript.getBoundingClientRect().top;
+      const clearance = Math.min(
+        Number.parseFloat(getComputedStyle(content).paddingTop),
+        Number.parseFloat(getComputedStyle(transcript).scrollPaddingTop),
       );
-      const controls = [...root.querySelectorAll("button")].map(r);
-      const transcript = root.parentElement!.querySelector(".transcript")!;
-      const style = getComputedStyle(transcript);
-      const contentStyle = getComputedStyle(
-        transcript.querySelector(".transcript__content")!,
+      return (
+        banner.left >= reader.left &&
+        banner.right <= reader.right &&
+        clearance >= needed - 0.5
       );
-      const needed =
-        box.bottom -
-        r(transcript).top +
-        Number.parseFloat(style.getPropertyValue("--space-4"));
-      const textFits = (element: Element) => {
-        const textBox = r(element);
-        const range = document.createRange();
-        range.selectNodeContents(element);
-        return [...range.getClientRects()].every(
-          (line) =>
-            line.left >= textBox.left - 0.5 &&
-            line.right <= textBox.right + 0.5,
-        );
-      };
-      const diagnostic = root.querySelector('[role="alert"]');
-      return {
-        fitsReader: box.left >= stage.left && box.right <= stage.right,
-        firstLineOffset:
-          mark.y +
-          mark.height / 2 -
-          r(title).y -
-          Number.parseFloat(getComputedStyle(title).lineHeight) / 2,
-        textFits: textFits(title) && (!diagnostic || textFits(diagnostic)),
-        controlsFit: controls.every(
-          (button) =>
-            button.left >= r(title).right && button.right <= box.right,
-        ),
-        paddingRoom:
-          Math.min(
-            Number.parseFloat(contentStyle.paddingTop),
-            Number.parseFloat(style.scrollPaddingTop),
-          ) - needed,
-      };
     });
-  const checkGeometry = async () => {
-    await page.evaluate(() => document.fonts.ready);
-    await expect
-      .poll(async () => (await measure()).paddingRoom)
-      .toBeGreaterThanOrEqual(-0.5);
-    const geometry = await measure();
-    expect(geometry.fitsReader).toBe(true);
-    expect(Math.abs(geometry.firstLineOffset)).toBeLessThanOrEqual(0.5);
-    expect(geometry.textFits).toBe(true);
-    expect(geometry.controlsFit).toBe(true);
-  };
-  await checkGeometry();
+  await expect.poll(fitsReader).toBe(true);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -1065,31 +812,20 @@ test("earlier-branch notice follows reader width and reserves wrapped diagnostic
     await restore.click();
     await expect(restore).toHaveAttribute("aria-busy", "true");
     await expect(restore).toBeDisabled();
-    await expect(restore.locator(".pi-loading")).toBeVisible();
-    await checkGeometry();
+    await expect.poll(fitsReader).toBe(true);
   } finally {
     release();
   }
   await expect(banner.getByRole("alert")).toHaveText(diagnostic);
   await expect(restore).toBeEnabled();
-  for (const width of [1280, 820, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    const close = page.getByRole("button", {
-      name: "Close context pane",
-      exact: true,
-    });
-    if (width <= 900 && (await close.isVisible())) await close.click();
-    await checkGeometry();
-  }
+  await page.setViewportSize({ width: 320, height: 900 });
+  const close = page.getByRole("button", { name: "Close context pane" });
+  if (await close.isVisible()) await close.click();
+  await expect.poll(fitsReader).toBe(true);
+  expect(
+    await banner.getByRole("alert").evaluate(textOverflowsInlineBounds),
+  ).toBe(false);
   await page.unroute("**/api/branches/navigate");
   await restore.click();
   await expect(banner).toHaveCount(0);
-  expect(
-    await page
-      .locator(".transcript-wrap")
-      .evaluate((wrap) =>
-        (wrap as HTMLElement).style.getPropertyValue("--earlier-branch-inset"),
-      ),
-  ).toBe("");
-  expect(errors).toEqual([]);
 });

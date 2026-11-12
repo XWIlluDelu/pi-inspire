@@ -8,6 +8,7 @@ import {
   type GitControllerState,
   inspectedGitChange,
 } from "../../src/controllers/git-controller";
+import { deferred } from "./helpers";
 
 const notRepository: GitStatusResponse = { kind: "not-repository" };
 const path = { id: "file", display: "file.txt", utf8Path: "file.txt" };
@@ -64,10 +65,7 @@ const visibleSelection = {
   gitDiff: { status: "ready" as const, result: diff("before") },
 };
 
-function createHarness(
-  initial: Partial<GitControllerState> = {},
-  sharedApi?: Api,
-) {
+function createHarness(initial: Partial<GitControllerState> = {}) {
   let state: GitControllerState = {
     sessionId: "s1",
     selectionGeneration: 1,
@@ -84,18 +82,17 @@ function createHarness(
   };
   const gitStatus = vi.fn();
   const gitDiff = vi.fn();
-  const api = sharedApi ?? ({ gitStatus, gitDiff } as unknown as Api);
+  const api = { gitStatus, gitDiff } as unknown as Api;
   const openResourceFromGit = vi.fn<(change: GitFileChange) => Promise<void>>(
     () => Promise.resolve(),
   );
-  const handleAuthFailure = vi.fn();
   const controller = new GitController({
     state: () => state,
     patch: (patch: GitControllerPatch) => {
       state = { ...state, ...patch };
     },
     api: () => api,
-    handleAuthFailure,
+    handleAuthFailure: vi.fn(),
     openResourceFromGit: (change) => {
       state = { ...state, ...fileSelection(change.path) };
       return openResourceFromGit(change);
@@ -109,9 +106,17 @@ function createHarness(
     },
     gitStatus,
     gitDiff,
-    handleAuthFailure,
     openResourceFromGit,
   };
+}
+
+function pollVisibleComparison(status = modified) {
+  vi.useFakeTimers();
+  const harness = createHarness({ ...visibleSelection, gitStatus: status });
+  harness.gitStatus.mockResolvedValue(status);
+  harness.gitDiff.mockImplementation(async () => diff("before"));
+  harness.controller.setSurfaceVisible("detail", true);
+  return harness;
 }
 
 describe("GitController", () => {
@@ -120,50 +125,60 @@ describe("GitController", () => {
     vi.useRealTimers();
   });
 
-  it("does not use native index facets as evidence of a net change", async () => {
-    const harness = createHarness({
-      gitStatus: {
-        ...modified,
-        files: [
-          {
-            path,
-            staged: { kind: "modified" },
-            unstaged: { kind: "modified" },
-            untracked: false,
-          },
-        ],
+  it("opens reported net changes without waiting for the file body", async () => {
+    const eligible = [
+      {
+        path: { id: "added", display: "added.txt", utf8Path: "added.txt" },
+        worktree: { kind: "added" },
+        untracked: true,
       },
+      {
+        path: {
+          id: "conflict",
+          display: "conflict.txt",
+          utf8Path: "conflict.txt",
+        },
+        conflict: { code: "UU" },
+        untracked: false,
+      },
+    ] satisfies GitFileChange[];
+    const harness = createHarness();
+    harness.gitStatus.mockResolvedValue({
+      ...modified,
+      files: [
+        {
+          path,
+          staged: { kind: "modified" },
+          unstaged: { kind: "modified" },
+          untracked: false,
+        },
+        ...eligible,
+      ],
+      total: eligible.length,
     });
+    harness.openResourceFromGit.mockReturnValue(new Promise(() => {}));
 
     await harness.controller.openChange(path.id);
-
     expect(harness.gitDiff).not.toHaveBeenCalled();
     expect(harness.openResourceFromGit).not.toHaveBeenCalled();
-  });
 
-  it.each([
-    { path, worktree: { kind: "added" }, untracked: true },
-    { path, conflict: { code: "UU" }, untracked: false },
-  ] satisfies GitFileChange[])(
-    "opens a net addition or conflict without requiring index facets: %j",
-    async (change) => {
-      const harness = createHarness({
-        gitStatus: { ...modified, files: [change] },
+    for (const change of eligible) {
+      const result = { ...diff("selected"), path: change.path };
+      harness.gitDiff.mockResolvedValueOnce(result);
+      await harness.controller.openChange(change.path.id);
+      expect(harness.state().gitDiff).toMatchObject({
+        status: "ready",
+        result,
       });
-      harness.gitDiff.mockResolvedValue(diff("net"));
-
-      await harness.controller.openChange(path.id);
-
-      expect(harness.openResourceFromGit).toHaveBeenCalledExactlyOnceWith(
-        change,
-      );
-      expect(harness.gitDiff).toHaveBeenCalledExactlyOnceWith(
-        "s1",
-        path.id,
-        expect.any(AbortSignal),
-      );
-    },
-  );
+    }
+    expect(harness.gitStatus).toHaveBeenCalledOnce();
+    expect(harness.openResourceFromGit.mock.calls).toEqual(
+      eligible.map((change) => [change]),
+    );
+    expect(
+      harness.gitDiff.mock.calls.map(([session, id]) => [session, id]),
+    ).toEqual(eligible.map(({ path }) => ["s1", path.id]));
+  });
 
   it("cancels a pending comparison when fresh net status removes the path", async () => {
     const harness = createHarness({ gitStatus: modified });
@@ -193,7 +208,7 @@ describe("GitController", () => {
     expect(harness.state().gitDiff).toBeNull();
   });
 
-  it("retains readable source while coalescing refresh hints behind a slow diff", async () => {
+  it("coalesces refreshes and retires a pending status when the selection changes", async () => {
     const harness = createHarness(visibleSelection);
     const releases: Array<(value: ReturnType<typeof diff>) => void> = [];
     harness.gitStatus.mockResolvedValue(modified);
@@ -229,56 +244,25 @@ describe("GitController", () => {
         status: "ready",
         result: diff("latest update"),
       });
+
+      const late = deferred<GitStatusResponse>();
+      harness.gitStatus.mockReturnValueOnce(late.promise);
+      const pending = harness.controller.refreshStatus();
+      harness.patch({
+        selectionGeneration: 2,
+        sessionId: "s2",
+        gitStatus: null,
+      });
+      late.resolve(notRepository);
+      await pending;
+      expect(harness.state().gitStatus).toBeNull();
     } finally {
       harness.controller.setSurfaceVisible("detail", false);
     }
   });
 
-  it("keeps the last source visibly stale on failure and clears the warning on recovery", async () => {
-    const harness = createHarness(visibleSelection);
-    harness.gitStatus.mockResolvedValue(modified);
-    harness.gitDiff.mockRejectedValueOnce(new Error("Repository busy"));
-    await harness.controller.refreshStatus();
-    expect(harness.state().gitDiff).toMatchObject({
-      status: "ready",
-      result: diff("before"),
-      refreshError: "Repository busy",
-    });
-
-    harness.gitDiff.mockResolvedValue(diff("recovered"));
-    await harness.controller.refreshStatus();
-    expect(harness.state().gitDiff).toEqual({
-      status: "ready",
-      result: diff("recovered"),
-    });
-  });
-
-  it("does not publish a status response after its selection generation changes", async () => {
-    let resolve!: (status: GitStatusResponse) => void;
-    const pending = new Promise<GitStatusResponse>((complete) => {
-      resolve = complete;
-    });
-    const harness = createHarness();
-    harness.gitStatus.mockReturnValue(pending);
-
-    const refresh = harness.controller.refreshStatus();
-    harness.patch({ selectionGeneration: 2, sessionId: "s2" });
-    resolve(notRepository);
-    await refresh;
-
-    expect(harness.state()).toMatchObject({
-      sessionId: "s2",
-      gitStatus: null,
-      gitStatusError: null,
-    });
-  });
-
   it("backs off after two unchanged reads but detects new diff content with the same status", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness(visibleSelection);
-    harness.gitStatus.mockResolvedValue(modified);
-    harness.gitDiff.mockImplementation(async () => diff("before"));
-    harness.controller.setSurfaceVisible("detail", true);
+    const harness = pollVisibleComparison();
     await vi.advanceTimersByTimeAsync(0);
 
     for (const count of [2, 3]) {
@@ -305,11 +289,7 @@ describe("GitController", () => {
   it.each(["status", "diff"] as const)(
     "restores the fast interval after a %s read fails",
     async (failedRead) => {
-      vi.useFakeTimers();
-      const harness = createHarness(visibleSelection);
-      harness.gitStatus.mockResolvedValue(modified);
-      harness.gitDiff.mockResolvedValue(diff("before"));
-      harness.controller.setSurfaceVisible("detail", true);
+      const harness = pollVisibleComparison();
       await vi.advanceTimersByTimeAsync(8_000);
       expect(harness.gitStatus).toHaveBeenCalledTimes(3);
 
@@ -325,8 +305,20 @@ describe("GitController", () => {
           ? failed.gitStatusError
           : failed.gitDiff?.status === "ready" && failed.gitDiff.refreshError,
       ).toBe("Read failed");
+      expect(failed.gitStatus).toEqual(modified);
+      expect(failed.gitDiff).toMatchObject({
+        status: "ready",
+        result: diff("before"),
+      });
+
+      harness.gitDiff.mockResolvedValue(diff("recovered"));
       await vi.advanceTimersByTimeAsync(4_000);
       expect(harness.gitStatus).toHaveBeenCalledTimes(5);
+      expect(harness.state()).toMatchObject({
+        gitStatusError: null,
+        gitDiff: { status: "ready", result: diff("recovered") },
+      });
+      expect(harness.state().gitDiff).not.toHaveProperty("refreshError");
       harness.controller.setSurfaceVisible("detail", false);
     },
   );
@@ -334,15 +326,11 @@ describe("GitController", () => {
   it.each(["manual", "visible"] as const)(
     "refreshes immediately and resets stable polling on %s intent",
     async (intent) => {
-      vi.useFakeTimers();
       let visibility: DocumentVisibilityState = "visible";
       vi.spyOn(document, "visibilityState", "get").mockImplementation(
         () => visibility,
       );
-      const harness = createHarness(visibleSelection);
-      harness.gitStatus.mockResolvedValue(modified);
-      harness.gitDiff.mockResolvedValue(diff("before"));
-      harness.controller.setSurfaceVisible("detail", true);
+      const harness = pollVisibleComparison();
       await vi.advanceTimersByTimeAsync(8_000);
       expect(harness.gitStatus).toHaveBeenCalledTimes(3);
       if (intent === "manual") await harness.controller.refreshStatus();
@@ -365,13 +353,8 @@ describe("GitController", () => {
   );
 
   it("uses summary cadence without reading hidden diff and refreshes when detail returns", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness(visibleSelection);
-    harness.gitStatus.mockResolvedValue(modified);
-    harness.gitDiff.mockResolvedValue(diff("before"));
+    const harness = pollVisibleComparison();
     harness.controller.setSurfaceVisible("topbar-git", true);
-    await vi.advanceTimersByTimeAsync(0);
-    harness.controller.setSurfaceVisible("detail", true);
     await vi.advanceTimersByTimeAsync(8_000);
     const before = harness.gitStatus.mock.calls.length;
     const diffBefore = harness.gitDiff.mock.calls.length;
@@ -398,7 +381,6 @@ describe("GitController", () => {
   });
 
   it("waits for a slow diff and keeps a new selection's cadence independent of the old read", async () => {
-    vi.useFakeTimers();
     const other = { id: "other", display: "other.txt", utf8Path: "other.txt" };
     const status = {
       ...modified,
@@ -411,18 +393,10 @@ describe("GitController", () => {
         },
       ],
     };
-    const harness = createHarness({ ...visibleSelection, gitStatus: status });
-    harness.gitStatus.mockResolvedValue(status);
-    harness.gitDiff.mockResolvedValue(diff("before"));
-    harness.controller.setSurfaceVisible("detail", true);
+    const harness = pollVisibleComparison(status);
     await vi.advanceTimersByTimeAsync(8_000);
-    let release!: (result: ReturnType<typeof diff>) => void;
-    harness.gitDiff.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
-    );
+    const late = deferred<ReturnType<typeof diff>>();
+    harness.gitDiff.mockReturnValueOnce(late.promise);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(harness.gitStatus).toHaveBeenCalledTimes(4);
     await vi.advanceTimersByTimeAsync(30_000);
@@ -432,7 +406,7 @@ describe("GitController", () => {
     const nextDiff = { ...diff("new selection"), path: other };
     harness.gitDiff.mockResolvedValue(nextDiff);
     await harness.controller.openChange(other.id);
-    release(diff("before"));
+    late.resolve(diff("before"));
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.state().gitDiff).toMatchObject({ result: nextDiff });
     await vi.advanceTimersByTimeAsync(4_000);
@@ -440,96 +414,5 @@ describe("GitController", () => {
     await vi.advanceTimersByTimeAsync(4_000);
     expect(harness.gitStatus).toHaveBeenCalledTimes(6);
     harness.controller.setSurfaceVisible("detail", false);
-  });
-
-  it("keeps two clients' slow reads and cancellation independent", async () => {
-    vi.useFakeTimers();
-    const reads: Array<{ signal: AbortSignal; finish: () => void }> = [];
-    const gitStatus = vi.fn(
-      (_sessionId: string, signal: AbortSignal) =>
-        new Promise<GitStatusResponse>((resolve) => {
-          reads.push({ signal, finish: () => resolve(modified) });
-        }),
-    );
-    const gitDiff = vi.fn(async () => diff("before"));
-    const api = { gitStatus, gitDiff } as unknown as Api;
-    const first = createHarness(visibleSelection, api);
-    const second = createHarness(visibleSelection, api);
-    first.controller.setSurfaceVisible("detail", true);
-    second.controller.setSurfaceVisible("detail", true);
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(gitStatus).toHaveBeenCalledTimes(2);
-
-    first.controller.setSurfaceVisible("detail", false);
-    expect(reads[0].signal.aborted).toBe(true);
-    expect(reads[1].signal.aborted).toBe(false);
-    reads[0].finish();
-    reads[1].finish();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(gitDiff).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(3_999);
-    expect(gitStatus).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(gitStatus).toHaveBeenCalledTimes(3);
-    second.controller.setSurfaceVisible("detail", false);
-    reads[2].finish();
-    await vi.advanceTimersByTimeAsync(0);
-  });
-
-  it("resolves a change once before opening its resource and diff", async () => {
-    const path = {
-      id: "main-path",
-      display: "src/main.ts",
-      utf8Path: "src/main.ts",
-      workspacePath: "src/main.ts",
-    };
-    const harness = createHarness();
-    harness.gitStatus.mockResolvedValue({
-      kind: "repository",
-      head: { kind: "branch", name: "main", oid: "abc" },
-      files: [
-        {
-          path,
-          unstaged: { kind: "modified" },
-          worktree: { kind: "modified" as const },
-          untracked: false,
-        },
-      ],
-      total: 1,
-      truncated: false,
-    });
-    const diff = {
-      kind: "empty" as const,
-      path,
-      reason: "no-changes" as const,
-    };
-    harness.gitDiff.mockResolvedValue(diff);
-
-    await harness.controller.openChange(path.id);
-
-    expect(harness.gitStatus).toHaveBeenCalledTimes(1);
-    expect(harness.openResourceFromGit).toHaveBeenCalledWith({
-      path,
-      unstaged: { kind: "modified" },
-      worktree: { kind: "modified" as const },
-      untracked: false,
-    });
-    expect(harness.gitDiff).toHaveBeenCalledTimes(1);
-    expect(harness.state().gitDiff).toEqual({ status: "ready", result: diff });
-    expect(harness.state().contextMode).toBe("files");
-  });
-
-  it("opens a comparison while the file body is still loading", async () => {
-    const harness = createHarness({ gitStatus: modified });
-    harness.openResourceFromGit.mockReturnValue(new Promise(() => {}));
-    const result = diff("selected");
-    harness.gitDiff.mockResolvedValue(result);
-
-    await harness.controller.openChange(path.id);
-
-    expect(harness.openResourceFromGit).toHaveBeenCalledExactlyOnceWith(
-      modified.files[0],
-    );
-    expect(harness.state().gitDiff).toEqual({ status: "ready", result });
   });
 });

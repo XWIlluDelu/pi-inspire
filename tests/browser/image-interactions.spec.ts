@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
+import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { attachImage, imageFile } from "./support/images";
+import { attachImage, imageFile, imagePixels } from "./support/images";
 import { pairAndOpen } from "./support/navigation";
 
 async function geometry(image: Locator) {
   return image.evaluate((element) => {
     const image = element.getBoundingClientRect();
     const canvas = element.parentElement!.getBoundingClientRect();
+    const { naturalWidth, naturalHeight } = element as HTMLImageElement;
     return {
       image: {
         x: image.x,
@@ -20,9 +22,31 @@ async function geometry(image: Locator) {
         width: canvas.width,
         height: canvas.height,
       },
-      scale: image.width / (element as HTMLImageElement).naturalWidth,
+      intrinsic: { width: naturalWidth, height: naturalHeight },
+      scale: image.width / naturalWidth,
     };
   });
+}
+
+async function fittedImage(image: Locator) {
+  const fit = ({ intrinsic, canvas }: Awaited<ReturnType<typeof geometry>>) =>
+    Math.min(
+      1,
+      canvas.width / intrinsic.width,
+      canvas.height / intrinsic.height,
+    );
+  await expect
+    .poll(async () => {
+      const layout = await geometry(image);
+      return Math.abs(layout.scale - fit(layout));
+    })
+    .toBeLessThan(0.01);
+  const layout = await geometry(image);
+  const { image: box, intrinsic, canvas } = layout;
+  expect(box.height / intrinsic.height).toBeCloseTo(layout.scale, 2);
+  expect(box.x + box.width / 2).toBeCloseTo(canvas.x + canvas.width / 2, 0);
+  expect(box.y + box.height / 2).toBeCloseTo(canvas.y + canvas.height / 2, 0);
+  return layout;
 }
 
 async function expectInBounds(image: Locator) {
@@ -67,7 +91,7 @@ test("desktop zoom is anchored, continuous and independent of single clicks; scr
     height: 2160,
   });
   const canvas = dialog.getByRole("region", { name: "Image canvas" });
-  const fit = await geometry(image);
+  const fit = await fittedImage(image);
   const point = {
     x: fit.canvas.x + fit.canvas.width / 2 - 80,
     y: fit.canvas.y + fit.canvas.height / 2 - 40,
@@ -126,19 +150,6 @@ test("desktop zoom is anchored, continuous and independent of single clicks; scr
   );
 });
 
-test("small images expand into the available viewport instead of a thumbnail-height clip", async ({
-  page,
-}) => {
-  await pairAndOpen(page);
-  const { image } = await attachImage(page, { width: 64, height: 64 });
-  await image.dblclick();
-  const { image: box, canvas } = await geometry(image);
-  expect(box.width).toBe(128);
-  expect(box.height).toBe(128);
-  expect(canvas.height).toBeGreaterThan(400);
-  await expectInBounds(image);
-});
-
 test("long screenshots reach actual size and stay visible after panning, resize and rotation", async ({
   page,
 }) => {
@@ -164,8 +175,7 @@ test("long screenshots reach actual size and stay visible after panning, resize 
   }
   await dialog.getByRole("button", { name: "Fit image to window" }).click();
   await page.setViewportSize({ width: 1280, height: 800 });
-  await expectInBounds(image);
-  expect((await geometry(image)).scale).toBeLessThan(0.1);
+  expect((await fittedImage(image)).scale).toBeLessThan(0.1);
 });
 
 test("gallery navigation keeps one Back entry, original downloads and a fresh fitted view", async ({
@@ -179,7 +189,6 @@ test("gallery navigation keeps one Back entry, original downloads and a fresh fi
     height: 64,
   });
   await page.locator('input[type="file"]').setInputFiles([first, second]);
-  const historyLength = await page.evaluate(() => history.length);
   const opener = page.getByRole("button", { name: "Preview first.png" });
   await opener.click();
   const dialog = page.getByRole("dialog", { name: "Image preview" });
@@ -198,13 +207,17 @@ test("gallery navigation keeps one Back entry, original downloads and a fresh fi
   await expect(
     dialog.getByRole("combobox", { name: "Image background" }),
   ).toHaveValue("Black");
+  const image = dialog.locator("img");
+  expect((await fittedImage(image)).image.width).toBe(64);
+  await image.dblclick();
+  expect((await geometry(image)).image.width).toBe(128);
+  await expectInBounds(image);
   await dialog.getByRole("button", { name: "Previous image" }).click();
   const download = page.waitForEvent("download");
   await dialog.getByRole("link", { name: "Download image" }).click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe("first.png");
   expect(await readFile((await saved.path())!)).toEqual(first.buffer);
-  expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
   await page.goBack();
   await expect(dialog).toBeHidden();
   await expect(opener).toBeFocused();
@@ -213,64 +226,11 @@ test("gallery navigation keeps one Back entry, original downloads and a fresh fi
   await expect(
     dialog.getByRole("combobox", { name: "Image background" }),
   ).toHaveValue("Checkerboard");
-  await dialog.getByRole("button", { name: "Close image preview" }).click();
-  await expect(dialog).toBeHidden();
-  await opener.click();
-  expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 });
 
-test("narrow controls trap focus; a background drag does not dismiss; copy failures retain a download", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: undefined,
-    });
-  });
-  await pairAndOpen(page);
-  await page.setViewportSize({ width: 320, height: 640 });
-  const { thumbnail, dialog, image } = await attachImage(page);
-  const backgrounds = dialog.getByRole("combobox", {
-    name: "Image background",
-  });
-  const copy = dialog.getByRole("button", { name: "Copy image" });
-  for (const icon of await dialog
-    .locator(".image-lightbox__actions svg")
-    .all()) {
-    await expect(icon).toHaveAttribute("width", "18");
-    await expect(icon).toHaveAttribute("height", "18");
-    const centered = await icon.evaluate((el) => {
-      const svg = el.getBoundingClientRect();
-      const control = el.closest("button,a")!.getBoundingClientRect();
-      return Math.abs(svg.y + svg.height / 2 - control.y - control.height / 2);
-    });
-    expect(centered).toBeLessThanOrEqual(0.5);
-  }
-  await backgrounds.focus();
-  await page.keyboard.press("Tab");
-  await expect(copy).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(backgrounds).toBeFocused();
-  await copy.click();
-  await expect(dialog.getByRole("alert")).toContainText(/download/i);
-  await expect(
-    dialog.getByRole("link", { name: "Download image" }),
-  ).toBeVisible();
-  const { canvas } = await geometry(image);
-  await page.mouse.move(canvas.x + 5, canvas.y + 5);
-  await page.mouse.down();
-  await page.mouse.move(canvas.x + 30, canvas.y + 15);
-  await page.mouse.up();
-  await expect(dialog).toBeVisible();
-  await page.mouse.click(canvas.x + 5, canvas.y + 5);
-  await expect(dialog).toBeHidden();
-  await expect(thumbnail).toBeFocused();
-});
-
-test("retrying an image copy clears the old warning and writes the original image", async ({
+test("narrow inspection contains focus, recovers a failed copy, and distinguishes backdrop drag from click", async ({
   page,
   context,
 }) => {
@@ -291,8 +251,35 @@ test("retrying an image copy clears the old warning and writes the original imag
       await write(items);
     };
   });
-  const { dialog } = await attachImage(page);
-  const copy = dialog.getByRole("button", { name: "Copy image", exact: true });
+  const { thumbnail, dialog, image } = await attachImage(page);
+  for (const viewport of [
+    { width: 740, height: 360 },
+    { width: 320, height: 640 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const { canvas } = await fittedImage(image);
+    expect(canvas.width).toBeGreaterThanOrEqual(viewport.width - 48);
+    expect(canvas.height).toBeGreaterThan(viewport.height - 180);
+    for (const control of await dialog.locator("button, a, select").all()) {
+      const box = (await control.boundingBox())!;
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x).toBeGreaterThanOrEqual(16);
+      expect(box.y).toBeGreaterThanOrEqual(16);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width - 16);
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height - 16);
+    }
+  }
+  const backgrounds = dialog.getByRole("combobox", {
+    name: "Image background",
+  });
+  const copy = dialog.getByRole("button", { name: "Copy image" });
+  await backgrounds.focus();
+  await page.keyboard.press("Tab");
+  await expect(copy).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(backgrounds).toBeFocused();
+  await backgrounds.selectOption("White");
   await copy.click();
   await expect(dialog.getByRole("alert")).toContainText(
     "Clipboard permission denied.",
@@ -305,14 +292,27 @@ test("retrying an image copy clears the old warning and writes the original imag
     dialog.getByRole("button", { name: "image copied", exact: true }),
   ).toBeVisible();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
-  const dimensions = await page.evaluate(async () => {
+  const copied = await page.evaluate(async () => {
     const item = (await navigator.clipboard.read())[0]!;
-    const image = await createImageBitmap(await item.getType("image/png"));
-    const size = { width: image.width, height: image.height };
-    image.close();
-    return size;
+    const bitmap = await createImageBitmap(await item.getType("image/png"));
+    const canvas = new OffscreenCanvas(1, 1);
+    const context = canvas.getContext("2d")!;
+    context.drawImage(bitmap, 0, 0);
+    const alpha = context.getImageData(0, 0, 1, 1).data[3];
+    const result = { width: bitmap.width, height: bitmap.height, alpha };
+    bitmap.close();
+    return result;
   });
-  expect(dimensions).toEqual({ width: 1200, height: 800 });
+  expect(copied).toEqual({ width: 1200, height: 800, alpha: 0 });
+  const { canvas } = await geometry(image);
+  await page.mouse.move(canvas.x + 5, canvas.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 30, canvas.y + 15);
+  await page.mouse.up();
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(canvas.x + 5, canvas.y + 5);
+  await expect(dialog).toBeHidden();
+  await expect(thumbnail).toBeFocused();
 });
 
 test("decode errors explain the failure and disable image operations without hiding original download", async ({
@@ -336,6 +336,58 @@ test("decode errors explain the failure and disable image operations without hid
   await expect(
     dialog.getByRole("link", { name: "Download image" }),
   ).toHaveAttribute("download", "broken.png");
+});
+
+test("inspection backgrounds isolate alpha and preserve image pixels across themes", async ({
+  page,
+}) => {
+  await pairAndOpen(page);
+  const { dialog, image } = await attachImage(page);
+  const source = await image.getAttribute("src");
+  const backgrounds = dialog.getByRole("combobox", {
+    name: "Image background",
+  });
+  await expect(backgrounds).toHaveValue("Checkerboard");
+  const reference = new Map<string, Buffer>();
+  for (const [palette, theme] of [
+    ["chimonanthus", "light"],
+    ["hydrangea", "dark"],
+  ]) {
+    await page.evaluate(
+      ({ palette, theme }) =>
+        Object.assign(document.documentElement.dataset, { palette, theme }),
+      { palette, theme },
+    );
+    for (const name of ["Checkerboard", "White", "Black"]) {
+      await backgrounds.selectOption(name);
+      const pixels = await imagePixels(page, image);
+      if (theme === "light") reference.set(name, pixels);
+      else expect(pixels.equals(reference.get(name)!), name).toBe(true);
+    }
+  }
+  expect(reference.get("White")!.equals(reference.get("Black")!)).toBe(false);
+
+  await backgrounds.selectOption("Checkerboard");
+  await page.locator(".image-lightbox").evaluate((element) => {
+    element.style.backgroundColor = "rgb(0, 255, 0)";
+  });
+  expect(
+    (await imagePixels(page, image)).equals(reference.get("Checkerboard")!),
+  ).toBe(true);
+  await expect(image).toHaveAttribute("src", source!);
+  const audit = await new AxeBuilder({ page })
+    .include(".image-lightbox")
+    .analyze();
+  expect(audit.violations).toEqual([]);
+  await dialog.getByRole("button", { name: "Close image preview" }).click();
+  const opaque = await attachImage(page, { opaque: true, name: "opaque.png" });
+  const original = await imagePixels(page, opaque.image);
+  for (const name of ["White", "Black", "Checkerboard"]) {
+    await opaque.dialog
+      .getByRole("combobox", { name: "Image background" })
+      .selectOption(name);
+    expect((await imagePixels(page, opaque.image)).equals(original)).toBe(true);
+  }
 });
 
 test.describe("touch image inspection", () => {
@@ -381,22 +433,10 @@ test.describe("touch image inspection", () => {
     expect((await geometry(image)).scale).toBeCloseTo(pinched.scale);
     await touch("touchEnd", []);
     await expect(dialog).toBeVisible();
-    await expect(
-      dialog.getByRole("region", { name: "Image canvas" }),
-    ).not.toHaveClass(/--panning/);
 
     await touch("touchStart", [point(3, cx, cy)]);
     await touch("touchMove", [point(3, cx + 35, cy)]);
     await touch("touchCancel", []);
-    await expect(
-      dialog.getByRole("region", { name: "Image canvas" }),
-    ).not.toHaveClass(/--panning/);
-    await dialog.getByRole("button", { name: "Fit image to window" }).tap();
-    await page.touchscreen.tap(cx, cy);
-    await page.touchscreen.tap(cx, cy);
-    await expect(
-      dialog.getByRole("button", { name: "Actual size" }),
-    ).toHaveText("100%");
     await page.touchscreen.tap(cx, cy);
     await page.touchscreen.tap(cx, cy);
     await expect

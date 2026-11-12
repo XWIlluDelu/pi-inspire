@@ -7,12 +7,11 @@ covers:
   - src/store.ts
   - shared/assistant-stream.ts
   - shared/assistant-outcome.ts
-  - tests/shared/assistant-outcome.test.ts
   - shared/contracts.ts
   - shared/user-turns.ts
   - shared/image-dimension-notes.ts
   - shared/attachment-context.ts
-  - tests/shared/attachment-context.test.ts
+  - tests/shared/user-message.test.ts
   - tests/browser/file-attachments.spec.ts
   - src/components/RichText*.tsx
   - src/rich-text-*.ts
@@ -51,15 +50,13 @@ covers:
   - tests/web/events.test.ts
   - tests/web/store*.test.ts
   - tests/web/branch-store.test.ts
-  - tests/web/{transcript-search,transcript-actions,activity-visibility,extension-displays}.test.tsx
+  - tests/web/{transcript-search-highlights,content-copy,activity-visibility}.test.tsx
+  - tests/browser/{transcript-search,extension-ui}.spec.ts
   - tests/web/assistant-error.test.tsx
   - tests/web/custom-message.test.tsx
   - tests/browser/assistant-error.spec.ts
   - tests/web/transcript-fold.test.tsx
-  - tests/web/transcript-paging.test.tsx
-  - tests/shared/user-turns.test.ts
   - tests/web/prompt-map.test.tsx
-  - tests/web/prompt-map-navigation.test.tsx
   - tests/web/transcript-virtual-search.test.tsx
   - tests/web/transcript-viewport.test.tsx
   - tests/server/runtime-transcript.test.ts

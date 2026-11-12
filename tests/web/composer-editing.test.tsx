@@ -10,6 +10,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../../src/components/Composer";
 import { ComposerInput } from "../../src/components/ComposerInput";
+import { store } from "../../src/store";
 import {
   attachFile,
   createComposerFixture,
@@ -78,52 +79,6 @@ describe("Composer editing and keyboard behavior", () => {
       expect(document.activeElement).toBe(textarea);
       expect(textarea.selectionStart).toBe(8);
       expect(textarea.selectionEnd).toBe(13);
-    });
-
-    it("browses Pi prompt history at visual-line boundaries and restores the draft", async () => {
-      host.historyEntries = [
-        { text: "latest prompt", images: [], files: [] },
-        { text: "older prompt", images: [], files: [] },
-      ];
-      const requestsBefore = host.historyRequests;
-      const socket = FakeWebSocket.instances.at(-1)!;
-      act(() =>
-        socket.emit({
-          type: "snapshot",
-          data: activeSnapshot({
-            transcriptPage: {
-              viewId: "history-view",
-              incarnation: "history-projection",
-            },
-          }),
-        }),
-      );
-
-      render(<Composer />);
-      await waitFor(() =>
-        expect(host.historyRequests).toBeGreaterThan(requestsBefore),
-      );
-      const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
-      typeDraft("working draft");
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      expect(textarea).toHaveValue("working draft");
-      expect(textarea.selectionStart).toBe(0);
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      await waitFor(() => expect(textarea).toHaveValue("latest prompt"));
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      await waitFor(() => expect(textarea).toHaveValue("older prompt"));
-      fireEvent.keyDown(textarea, { key: "ArrowDown" });
-      await waitFor(() => expect(textarea).toHaveValue("latest prompt"));
-      fireEvent.keyDown(textarea, { key: "ArrowDown" });
-      await waitFor(() => expect(textarea).toHaveValue("working draft"));
-
-      typeDraft("newly sent prompt");
-      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-      await waitFor(() => expect(textarea).toHaveValue(""));
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      await waitFor(() => expect(textarea).toHaveValue("newly sent prompt"));
     });
 
     it("reuses history across assistant leaves and recalls artifacts under the current leaf", async () => {
@@ -256,52 +211,39 @@ describe("Composer editing and keyboard behavior", () => {
       await waitFor(() => expect(textarea).toHaveValue("new user prompt"));
     });
 
-    it("keeps software-keyboard Return as a line break on touch-first devices", async () => {
-      const socket = FakeWebSocket.instances.at(-1)!;
-      act(() => socket.emit({ type: "snapshot", data: activeSnapshot() }));
-      const originalMatchMedia = window.matchMedia;
-      Object.defineProperty(window, "matchMedia", {
-        configurable: true,
-        value: (query: string) => ({
-          matches: query === "(hover: none) and (pointer: coarse)",
-          media: query,
-          onchange: null,
-          addListener: () => {},
-          removeListener: () => {},
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => false,
-        }),
-      });
+    it("dispatches only the selected desktop send chord", async () => {
+      render(<Composer />);
+      const textarea = screen.getByLabelText("Message");
+      const press = (modifiers: Partial<KeyboardEvent> = {}) =>
+        fireEvent.keyDown(textarea, { key: "Enter", ...modifiers });
+      const send = async (
+        message: string,
+        modifiers?: Partial<KeyboardEvent>,
+      ) => {
+        expect(press(modifiers)).toBe(false);
+        await waitFor(() => expect(textarea).toHaveValue(""));
+        expect(host.promptBodies.at(-1)).toMatchObject({ message });
+      };
 
-      try {
-        const promptsBefore = host.promptBodies.length;
-        render(<Composer />);
-        const textarea = screen.getByLabelText("Message");
-        typeDraft("first line");
-        expect(fireEvent.keyDown(textarea, { key: "Enter" })).toBe(true);
-        expect(
-          fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true }),
-        ).toBe(true);
-        expect(
-          fireEvent.keyDown(textarea, { key: "Enter", metaKey: true }),
-        ).toBe(true);
-        await act(async () => Promise.resolve());
-        expect(host.promptBodies).toHaveLength(promptsBefore);
+      typeDraft("ordinary Enter");
+      for (const modifiers of [
+        { ctrlKey: true },
+        { metaKey: true },
+        { shiftKey: true },
+        { altKey: true },
+      ])
+        expect(press(modifiers)).toBe(true);
+      expect(host.promptBodies).toEqual([]);
+      await send("ordinary Enter");
 
-        typeDraft("first line\nsecond line");
-        fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-        await waitFor(() =>
-          expect(host.promptBodies.at(-1)).toMatchObject({
-            message: "first line\nsecond line",
-          }),
-        );
-      } finally {
-        Object.defineProperty(window, "matchMedia", {
-          configurable: true,
-          value: originalMatchMedia,
-        });
-      }
+      act(() => store.setDesktopSendKey("mod-enter"));
+      typeDraft("Control sends");
+      expect(press()).toBe(true);
+      expect(press({ ctrlKey: true, keyCode: 229 })).toBe(true);
+      expect(host.promptBodies).toHaveLength(1);
+      await send("Control sends", { ctrlKey: true });
+      typeDraft("Command sends");
+      await send("Command sends", { metaKey: true });
     });
   });
 

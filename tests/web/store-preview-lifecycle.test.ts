@@ -28,16 +28,18 @@ describe("selected file preview lifecycle", () => {
       if (url === "/api/prompt")
         return { body: { accepted: true, historyEntry: null } };
       if (url.startsWith("/api/resources/resolve")) {
-        requests.push(jsonBody(init));
+        const query = jsonBody(init);
+        requests.push(query);
         if (resolveError)
           return { status: 403, body: { error: "File no longer authorized" } };
+        const embedded = String(query.reference).startsWith("pi-embedded://");
         return {
           body: {
             id: `chart-${requests.length}`,
             sessionId: "s1",
             viewId,
-            reference: "plots/chart.png",
-            workspacePath: "plots/chart.png",
+            reference: embedded ? query.reference : "plots/chart.png",
+            ...(embedded ? {} : { workspacePath: "plots/chart.png" }),
             name: "chart.png",
             mimeType: "image/png",
             size: 5,
@@ -65,25 +67,6 @@ describe("selected file preview lifecycle", () => {
       },
     };
   }
-
-  it("keeps the loaded image across prompt confirmation and ordinary appends", async () => {
-    const { store, socket, requests } = await openImage();
-    const preview = inspectedPreview(store.getState().fileInspection);
-    await expect(store.sendPrompt("Explain this result")).resolves.toEqual({
-      accepted: true,
-      historyEntry: null,
-    });
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: { revision: 2 },
-      }),
-    });
-    expect(store.getState().fileInspection.kind).toBe("file");
-    expect(inspectedPreview(store.getState().fileInspection)).toBe(preview);
-    expect(requests).toHaveLength(1);
-    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
-  });
 
   it.each([false, true])(
     "does not revive a closed loading tab after its late response (another file open: %s)",
@@ -153,13 +136,28 @@ describe("selected file preview lifecycle", () => {
     "reauthorizes the same file after a $label change without returning to Browse",
     async ({ viewId, incarnation }) => {
       const { store, socket, requests, setView } = await openImage();
+      if (viewId !== "view-s1") {
+        const preview = inspectedPreview(store.getState().fileInspection);
+        await expect(
+          store.sendPrompt("Explain this result"),
+        ).resolves.toMatchObject({
+          accepted: true,
+        });
+        socket.emit({
+          type: "snapshot",
+          data: activeSnapshot({ transcriptPage: { revision: 2 } }),
+        });
+        expect(inspectedPreview(store.getState().fileInspection)).toBe(preview);
+        expect(requests).toHaveLength(1);
+        expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+      }
       setView(viewId);
       socket.emit({
         type: "snapshot",
         data: activeSnapshot({
           transcriptPage: {
-            revision: 2,
-            appendFromRevision: 2,
+            revision: 3,
+            appendFromRevision: 3,
             viewId,
             incarnation,
           },
@@ -214,21 +212,43 @@ describe("selected file preview lifecycle", () => {
     expect(selectedWorkspacePath(store.getState())).toBe("plots/chart.png");
   });
 
-  it("does not reopen a preview the user has left for Browse", async () => {
+  it.each([
+    ["transcript rewrite", { revision: 2, appendFromRevision: 2 }],
+    ["branch switch", { viewId: "view-branch-b" }],
+  ] as const)(
+    "closes a positional image after a %s",
+    async (_change, transcriptPage) => {
+      const { store, socket, requests } = await openImage();
+      const reference = "pi-embedded://0/0";
+      await store.openResource(reference);
+      expect(store.getState().fileInspection).toMatchObject({
+        kind: "file",
+        reference,
+        preview: { status: "ready" },
+      });
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({ transcriptPage }),
+      });
+      expect(store.getState().fileInspection.kind).toBe("browse");
+      expect(store.getState().resourceTabs).toEqual([
+        { reference: "chart.png", workspacePath: "plots/chart.png" },
+      ]);
+      expect(requests).toHaveLength(2);
+    },
+  );
+
+  it("keeps Files selected through branch changes and background tab closure", async () => {
     const { store, socket, requests } = await openImage();
+    await store.openResource("other.png");
     store.showFileBrowser();
     socket.emit({
       type: "snapshot",
       data: activeSnapshot({ transcriptPage: { viewId: "view-compacted" } }),
     });
     expect(store.getState().fileInspection.kind).toBe("browse");
-    expect(requests).toHaveLength(1);
-  });
+    expect(requests).toHaveLength(2);
 
-  it("keeps Files selected when closing its last viewed background tab", async () => {
-    const { store } = await openImage();
-    await store.openResource("other.png");
-    store.showFileBrowser();
     store.closeResourceTab("other.png");
     expect(store.getState().resourceTabs).toEqual([
       { reference: "chart.png", workspacePath: "plots/chart.png" },
@@ -236,18 +256,25 @@ describe("selected file preview lifecycle", () => {
     expect(store.getState().fileInspection.kind).toBe("browse");
   });
 
-  it("retires the selected file when the workspace changes", async () => {
-    const { store, socket, requests } = await openImage();
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
+  it.each([
+    [
+      "workspace",
+      {
         cwd: "/another-project",
         transcriptPage: { viewId: "view-other-project" },
-      }),
-    });
-    expect(store.getState().fileInspection.kind).toBe("browse");
-    expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
-    expect(store.getState().resourceTabs).toEqual([]);
-    expect(requests).toHaveLength(1);
-  });
+      },
+    ],
+    ["session", { sessionId: "s2" }],
+  ] as const)(
+    "retires the selected file when the %s changes",
+    async (_owner, snapshot) => {
+      const { store, socket, requests } = await openImage();
+      socket.emit({ type: "snapshot", data: activeSnapshot(snapshot) });
+      expect(store.getState().fileInspection.kind).toBe("browse");
+      expect(inspectedPreview(store.getState().fileInspection)).toBeNull();
+      expect(store.getState().resourceTabs).toEqual([]);
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:chart");
+      expect(requests).toHaveLength(1);
+    },
+  );
 });

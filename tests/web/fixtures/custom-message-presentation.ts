@@ -15,7 +15,7 @@ export const customMessageConfiguration: ToolPresentationConfiguration = {
   },
 };
 
-export const relayBody = `## Composer review ready
+const relayBody = `## Composer review ready
 
 Expanded editing now preserves **the current draft and attachments**. The focused checks passed; the changes remain in the workspace for review.
 

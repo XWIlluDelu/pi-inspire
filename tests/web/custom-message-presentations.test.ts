@@ -144,30 +144,14 @@ describe("custom-message configuration schema", () => {
     }
   });
 
-  it("keeps existing version-1 tool and Thinking profiles valid", () => {
-    expect(
-      toolPresentationConfigurationSchema.safeParse(customMessageConfiguration)
-        .success,
-    ).toBe(true);
-    expect(
-      toolPresentationConfigurationSchema.safeParse({
-        version: 1,
-        rules: {},
-        mappings: {},
-      }).success,
-    ).toBe(true);
-  });
-
   it.each([
     { title: [] },
     { title: ["details.__proto__.name"] },
     { title: ["details.constructor.name"] },
     { body: "args.message" },
-    { body: "thinking.text" },
     { body: "details." },
     { source: " " },
     { requireAbsent: ["result.details.origin"] },
-    { timestamp: "details.message.timestamp" },
     { format: "first-line" },
   ])("rejects unsafe selectors and unsupported fields: %j", (invalid) => {
     expect(

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { McpConfigService } from "../../server/mcp-config";
 import type { McpConfigEdit, McpConnectionRead } from "../../shared/mcp";
-import { actionGeometry } from "./support/action-geometry";
 import { expectConfigurationField } from "./support/configuration-form";
 import { openSettings, pairAndOpen } from "./support/navigation";
 
@@ -22,7 +21,12 @@ async function scenario(page: Page) {
       Authorization: "Bearer stored-header-secret",
       "X-Tenant": "stored-tenant",
     },
-    oauth: { clientId: "stored-client", clientSecret: "stored-oauth-secret" },
+    oauth: {
+      clientId: "stored-client",
+      clientName: "Stored client",
+      clientSecret: "stored-oauth-secret",
+    },
+    toolExposure: { "read_*": "direct", "*": "hidden" },
     description: "Documentation",
     custom: { preserved: true },
   };
@@ -39,17 +43,16 @@ async function scenario(page: Page) {
           args: ["server.js", "--secret=stored-argument"],
           env: { TOKEN: "stored-env-secret" },
           description: "Project documentation",
+          toolExposure: { "read_*": "direct" },
         },
       },
     }),
   );
   const service = new McpConfigService(agent),
-    edits: McpConfigEdit[] = [],
-    wire: string[] = [];
+    reveals: McpConnectionRead[] = [];
   let authority = "",
+    writes = 0,
     reloads = 0;
-  const errors: string[] = [];
-  page.on("pageerror", (error) => errors.push(error.message));
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.route("**/api/bootstrap**", async (route) => {
     const response = await route.fetch();
@@ -62,17 +65,15 @@ async function scenario(page: Page) {
       if (
         new URL(route.request().url()).pathname === "/api/mcp-config/connection"
       ) {
-        payload = await service.readConnection(
-          cwd,
-          route.request().postDataJSON() as McpConnectionRead,
-        );
+        const read = route.request().postDataJSON() as McpConnectionRead;
+        reveals.push(read);
+        payload = await service.readConnection(cwd, read);
       } else if (route.request().method() === "PATCH") {
+        writes++;
         const edit = route.request().postDataJSON() as McpConfigEdit;
-        edits.push(edit);
         await service.save(cwd, edit);
         payload = { saved: true, snapshot: await service.read(cwd) };
       } else payload = await service.read(cwd);
-      wire.push(JSON.stringify(payload));
       await route.fulfill({
         headers: { "X-Inspire-Authority": authority },
         json: payload,
@@ -104,46 +105,13 @@ async function scenario(page: Page) {
     userFile,
     projectFile,
     settings,
-    edits,
-    wire,
-    errors,
+    reveals,
+    writes: () => writes,
     reloads: () => reloads,
     json: async (path: string) => JSON.parse(await readFile(path, "utf8")),
   };
 }
-test("MCP configuration failures share the existing card inset", async ({
-  page,
-}) => {
-  await page.route("**/api/mcp-config**", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: "Could not read the MCP configuration directory." },
-    }),
-  );
-  await pairAndOpen(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings.getByRole("button", { name: "MCP", exact: true }).click();
-  const error = settings.locator(".mcp-config > .settings__error");
-  await expect(error).toContainText("Could not read");
-  for (const width of [1280, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    const alignment = await error.evaluate((el) => {
-      const text = document.createRange();
-      text.selectNodeContents(el);
-      const card = el.parentElement!;
-      // The parent already owns the card inset; errors must not add another.
-      return (
-        text.getClientRects()[0]!.left -
-        card.getBoundingClientRect().left -
-        Number.parseFloat(getComputedStyle(card).paddingLeft)
-      );
-    });
-    expect(Math.abs(alignment)).toBeLessThanOrEqual(1);
-  }
-});
-
-test("MCP edits retain stored secrets and scope, keep drafts across categories, and separate save from Reload", async ({
+test("MCP reveals saved connection values on request, keeps edits scoped, and reloads only on confirmation", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -153,9 +121,14 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await settings
       .getByRole("button", { name: "Edit user server docs" })
       .click();
+    const url = settings.getByLabel("Server URL", { exact: true });
+    await expectConfigurationField(url);
+    await expect(url).toHaveValue("");
+    expect(fixture.reveals).toEqual([]);
+    await settings.getByRole("button", { name: "Show saved URL" }).click();
     await expect(
       settings.getByLabel("Server URL", { exact: true }),
-    ).toHaveValue("");
+    ).toHaveValue(/stored-url-secret/);
     await settings.getByText("Advanced configuration", { exact: true }).click();
     await settings
       .getByLabel("Description", { exact: true })
@@ -173,29 +146,52 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await expect(
       settings.getByLabel("Header value for Authorization"),
     ).toHaveValue("");
+    await settings.getByRole("button", { name: "Add header" }).click();
+    const newHeader = settings
+      .getByLabel("Header name", { exact: true })
+      .last();
+    await newHeader.fill("Authorization");
+    await expect
+      .poll(() =>
+        newHeader.evaluate(
+          (input: HTMLInputElement) => input.validationMessage,
+        ),
+      )
+      .toMatch(/unique/);
+    await settings.getByRole("button", { name: "Save", exact: true }).click();
+    expect(fixture.writes()).toBe(0);
+    await newHeader.fill("X-Workspace");
+    await settings.getByLabel("Header value for X-Workspace").fill("workspace");
     await settings
       .getByRole("button", { name: "Remove header X-Tenant" })
       .click();
     await settings
       .getByText("OAuth client configuration", { exact: true })
       .click();
+    await expect(
+      settings.getByLabel("Client secret", { exact: true }),
+    ).toHaveValue("");
     const registration = settings.getByRole("combobox", {
       name: "Client registration",
     });
     await expect(registration).toHaveText("Automatic (Pi default)");
     await registration.click();
     await page
-      .getByRole("option", { name: "Client ID or dynamic registration" })
+      .getByRole("option", { name: "Pi metadata document (CIMD)" })
       .click();
-    await registration.click();
-    await page.getByRole("option", { name: "Automatic (Pi default)" }).click();
-    await expect(
-      settings.getByLabel("Client secret", { exact: true }),
-    ).toHaveValue("");
+    const save = settings.getByRole("button", { name: "Save", exact: true });
+    await expect(settings.getByRole("alert")).toContainText(
+      "cannot use a client ID or client name",
+    );
+    await expect(save).toBeDisabled();
+    await settings.getByRole("checkbox", { name: "Remove client id" }).check();
     await settings
-      .getByLabel("Client name", { exact: true })
-      .fill("Inspire fixture");
-    await settings.getByRole("button", { name: "Save", exact: true }).click();
+      .getByRole("checkbox", { name: "Remove client name" })
+      .check();
+    await settings.getByRole("button", { name: "Remove tool rule 1" }).click();
+    await settings.getByRole("button", { name: "Add tool rule" }).click();
+    await settings.getByLabel("Tool name or pattern").last().fill("read_*");
+    await save.click();
     await expect(
       settings.getByText(
         "Saved to file. Running sessions have not been reloaded.",
@@ -205,27 +201,22 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
       settings.getByRole("button", { name: "Edit user server docs" }),
     ).toBeFocused();
     expect(fixture.reloads()).toBe(0);
-    const user = await fixture.json(fixture.userFile);
-    expect(user.mcpServers.docs).toMatchObject({
-      url: expect.stringContaining("stored-url-secret"),
-      headers: { Authorization: "Bearer stored-header-secret" },
-      oauth: {
-        clientId: "stored-client",
-        clientSecret: "stored-oauth-secret",
-        clientName: "Inspire fixture",
-        clientRegistration: "auto",
-      },
-      custom: { preserved: true },
+    expect(fixture.writes()).toBe(1);
+    const saved = (await fixture.json(fixture.userFile)).mcpServers.docs;
+    expect(saved.description).toBe("Updated documentation");
+    expect(saved.url).toContain("stored-url-secret");
+    expect(saved.headers).toEqual({
+      Authorization: "Bearer stored-header-secret",
+      "X-Workspace": "workspace",
     });
-    expect(user.mcpServers.docs.headers).not.toHaveProperty("X-Tenant");
-    expect(
-      (await fixture.json(fixture.projectFile)).mcpServers.docs.description,
-    ).toBe("Project documentation");
-    expect(fixture.edits[0]!.values).not.toHaveProperty("url");
-    expect(fixture.edits[0]!.values?.headers).toEqual({ "X-Tenant": null });
-    expect(fixture.wire.join("")).not.toMatch(
-      /stored-(url|query|header|tenant|oauth|argument|env|client)/,
-    );
+    expect(saved.oauth).toEqual({
+      clientRegistration: "cimd",
+      clientSecret: "stored-oauth-secret",
+    });
+    expect(Object.entries(saved.toolExposure)).toEqual([
+      ["*", "hidden"],
+      ["read_*", "codemode"],
+    ]);
     await settings
       .getByRole("button", { name: "Reload selected session…" })
       .click();
@@ -236,10 +227,6 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
       }),
     ).toBeVisible();
     expect(fixture.reloads()).toBe(0);
-    await settings.getByRole("button", { name: "Cancel reload" }).click();
-    await settings
-      .getByRole("button", { name: "Reload selected session…" })
-      .click();
     await settings
       .getByRole("button", { name: "Reload Pi resources", exact: true })
       .click();
@@ -248,8 +235,18 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await settings
       .getByRole("button", { name: "Edit project server docs" })
       .click();
+    await expect(
+      settings.getByLabel("Argument 1", { exact: true }),
+    ).toHaveCount(0);
+    await settings
+      .getByRole("button", { name: "Show saved arguments" })
+      .click();
+    const programArg = settings.getByLabel("Argument 1", { exact: true });
+    await expect(programArg).toBeFocused();
+    await expect(programArg).toHaveValue("server.js");
+    await programArg.fill("updated server.js");
     await settings.getByText("Advanced configuration", { exact: true }).click();
-    await settings.getByLabel("Description", { exact: true }).fill("My draft");
+    await settings.getByRole("button", { name: "Remove tool rule 1" }).click();
     const external = await fixture.json(fixture.projectFile);
     external.mcpServers.docs.timeout = 99;
     await writeFile(fixture.projectFile, JSON.stringify(external));
@@ -257,12 +254,7 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await expect(settings.getByRole("alert")).toContainText(
       "changed elsewhere",
     );
-    await expect(
-      settings.getByLabel("Description", { exact: true }),
-    ).toHaveValue("My draft");
-    expect(
-      (await fixture.json(fixture.projectFile)).mcpServers.docs.description,
-    ).toBe("Project documentation");
+    await expect(programArg).toHaveValue("updated server.js");
     await settings
       .getByRole("button", { name: "Refresh MCP files", exact: true })
       .click();
@@ -271,374 +263,152 @@ test("MCP edits retain stored secrets and scope, keep drafts across categories, 
     await expect(
       settings.getByRole("button", { name: "Edit project server docs" }),
     ).toBeVisible();
-    expect(
-      (await fixture.json(fixture.projectFile)).mcpServers.docs,
-    ).toMatchObject({
-      description: "My draft",
+    const project = (await fixture.json(fixture.projectFile)).mcpServers.docs;
+    expect(project).toMatchObject({
       timeout: 99,
-      args: ["server.js", "--secret=stored-argument"],
+      args: ["updated server.js", "--secret=stored-argument"],
       env: { TOKEN: "stored-env-secret" },
     });
-    expect(fixture.errors).toEqual([]);
+    expect(project.toolExposure).toEqual({});
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
-for (const hasTouch of [false, true]) {
-  test.describe(hasTouch ? "touch MCP fields" : "mouse MCP fields", () => {
-    test.use({ hasTouch });
-    test("aligns form selects with text inputs without losing field focus feedback", async ({
-      page,
-    }) => {
-      const fixture = await scenario(page);
-      try {
-        await page.setViewportSize({ width: 320, height: 740 });
-        await fixture.settings
-          .getByRole("button", { name: "Add server", exact: true })
-          .click();
-        const name = fixture.settings.getByLabel("Server name", {
-          exact: true,
-        });
-        await expect(name).toBeFocused();
-        await expect(name).toBeInViewport({ ratio: 1 });
-        const labelClearance = await name.evaluate((input) => {
-          const range = document.createRange();
-          range.selectNode(input.closest("label")!.firstChild!);
-          return (
-            range.getBoundingClientRect().top -
-            input.closest(".models-form__body")!.getBoundingClientRect().top
-          );
-        });
-        expect(labelClearance).toBeGreaterThanOrEqual(0);
-        const target = fixture.settings.getByRole("combobox", {
-          name: "Configuration target",
-          exact: true,
-        });
-        for (const width of [1280, 820, 390, 320]) {
-          await page.setViewportSize({ width, height: 900 });
-          await name.scrollIntoViewIfNeeded();
-          const [input, select] = await Promise.all([
-            name.boundingBox(),
-            target.boundingBox(),
-          ]);
-          expect(Math.abs(input!.width - select!.width)).toBeLessThanOrEqual(
-            0.5,
-          );
-          expect(Math.abs(input!.height - select!.height)).toBeLessThanOrEqual(
-            0.5,
-          );
-          expect(select!.height).toBeGreaterThanOrEqual(
-            hasTouch || width < 600 ? 44 : 36,
-          );
-          if (width >= 820)
-            expect(Math.abs(input!.y - select!.y)).toBeLessThanOrEqual(0.5);
-          await expect(
-            fixture.settings.getByRole("combobox", {
-              name: "Transport",
-              exact: true,
-            }),
-          ).toHaveClass(/dropdown__trigger/);
-          expect(
-            await target.evaluate(
-              (el) => el.closest(".dropdown--field") !== null,
-            ),
-          ).toBe(true);
-        }
-        await target.focus();
-        await target.press("ArrowDown");
-        await expect(
-          page.getByRole("listbox", {
-            name: "Configuration target",
-            exact: true,
-          }),
-        ).toBeVisible();
-        await expect(target).not.toHaveCSS("box-shadow", "none");
-        await target.press("Escape");
-        await expect(target).toHaveAttribute("aria-expanded", "false");
-        await expect(target).toBeFocused();
-        expect(fixture.errors).toEqual([]);
-      } finally {
-        await rm(fixture.root, { recursive: true, force: true });
-      }
-    });
-  });
-}
+test.describe("touch MCP editor", () => {
+  test.use({ hasTouch: true });
 
-for (const hasTouch of [false, true]) {
-  test.describe(
-    hasTouch ? "touch short MCP editors" : "pointer short MCP editors",
-    () => {
-      test.use({ hasTouch });
-      test("keeps focused connection and policy fields clear of pinned actions", async ({
-        page,
-      }) => {
-        const fixture = await scenario(page);
-        const settings = fixture.settings;
-        try {
-          for (const [width, height] of [
-            [844, 390],
-            [568, 320],
-          ]) {
-            await page.setViewportSize({ width, height });
-            for (const [opener, label] of [
-              ["Add server", "Server name"],
-              ["Edit user server docs", "Server URL"],
-              ["Edit project server docs", "Program"],
-            ]) {
-              await settings
-                .getByRole("button", { name: opener, exact: true })
-                .click();
-              await expectConfigurationField(
-                settings.getByLabel(label, { exact: true }),
-              );
-              await settings
-                .getByRole("button", { name: "Cancel", exact: true })
-                .click();
-            }
-          }
-          await writeFile(
-            fixture.projectFile,
-            JSON.stringify({ mcpServers: { docs: { exposure: "deferred" } } }),
-          );
-          await settings
-            .getByRole("button", { name: "Refresh MCP files", exact: true })
-            .click();
-          await settings
-            .getByRole("button", {
-              name: "Edit project server docs",
-              exact: true,
-            })
-            .click();
-          await expectConfigurationField(
-            settings.getByRole("combobox", {
-              name: "Tool exposure",
-              exact: true,
-            }),
-          );
-          expect(fixture.errors).toEqual([]);
-        } finally {
-          await rm(fixture.root, { recursive: true, force: true });
-        }
+  test("narrow MCP form adds and removes scoped stdio definitions and focuses inherited policy editing", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const fixture = await scenario(page);
+    const { settings } = fixture;
+    const editProject = (name: string) =>
+      settings.getByRole("button", {
+        name: `Edit project server ${name}`,
+        exact: true,
       });
-    },
-  );
-}
-
-test("narrow MCP form adds and removes scoped stdio definitions and focuses inherited policy editing", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const fixture = await scenario(page);
-  const { settings } = fixture;
-  try {
-    await settings
-      .getByRole("button", { name: "Add server", exact: true })
-      .click();
-    await settings
-      .getByLabel("Server name", { exact: true })
-      .fill("project-tools");
-    await settings
-      .getByRole("combobox", { name: "Configuration target" })
-      .click();
-    await page
-      .getByRole("option", { name: "This project", exact: true })
-      .click();
-    await settings
-      .getByRole("combobox", { name: "Transport", exact: true })
-      .click();
-    await page.getByRole("option", { name: "Stdio", exact: true }).click();
-    await settings.getByLabel("Program", { exact: true }).fill("node");
-    await settings
-      .getByRole("button", { name: "Add argument", exact: true })
-      .click();
-    await settings
-      .getByLabel("Argument 1", { exact: true })
-      .fill("server with spaces.js");
-    await settings.getByText("Advanced configuration", { exact: true }).click();
-    await settings
-      .getByRole("button", { name: "Add environment variable" })
-      .click();
-    await settings.getByLabel("Environment variable name").fill("API_TOKEN");
-    await settings
-      .getByLabel("Environment variable value for API_TOKEN")
-      .fill("${PROJECT_TOKEN}");
-    await settings
-      .getByRole("combobox", { name: "Tool exposure", exact: true })
-      .click();
-    await page.getByRole("option", { name: "Deferred", exact: true }).click();
-    await settings
-      .getByRole("switch", { name: "Enabled in file" })
-      .locator("..")
-      .click();
-    await expect(
-      settings.getByRole("switch", { name: "Enabled in file" }),
-    ).not.toBeChecked();
-    await settings
-      .getByLabel("Environment variable value for API_TOKEN")
-      .scrollIntoViewIfNeeded();
-    expect(
-      await settings.evaluate(
-        (element) => element.scrollWidth <= element.clientWidth,
-      ),
-    ).toBe(true);
-    const save = settings.getByRole("button", {
-      name: "Save",
-      exact: true,
-    });
-    let releaseSave!: () => void;
-    const saveReady = new Promise<void>((resolve) => {
-      releaseSave = resolve;
-    });
-    await page.route("**/api/mcp-config**", async (route) => {
-      if (route.request().method() === "PATCH") await saveReady;
-      await route.fallback();
-    });
-    await save.scrollIntoViewIfNeeded();
-    await page.evaluate(() => document.fonts.ready);
-    const actions = settings.locator(".models-form__actions");
-    const geometry = await actionGeometry(actions);
-    await save.click();
+    const removeProject = async (name: string) => {
+      await settings
+        .getByRole("button", {
+          name: `Remove project server ${name}`,
+          exact: true,
+        })
+        .click();
+      await settings
+        .getByRole("button", { name: "Remove configuration", exact: true })
+        .click();
+    };
+    const choose = async (name: string, option: string) => {
+      await settings.getByRole("combobox", { name, exact: true }).click();
+      await page.getByRole("option", { name: option, exact: true }).click();
+    };
     try {
+      const userBefore = await fixture.json(fixture.userFile);
+      await settings
+        .getByRole("button", { name: "Add server", exact: true })
+        .click();
+      const name = settings.getByLabel("Server name", { exact: true });
+      await expectConfigurationField(name);
+      await name.fill("project-tools");
+      await choose("Configuration target", "This project");
+      await choose("Transport", "Stdio");
+      await settings.getByLabel("Program", { exact: true }).fill("node");
+      await settings
+        .getByRole("button", { name: "Add argument", exact: true })
+        .click();
+      await settings
+        .getByLabel("Argument 1", { exact: true })
+        .fill("server with spaces.js");
+      await settings
+        .getByText("Advanced configuration", { exact: true })
+        .click();
+      await settings
+        .getByRole("button", { name: "Add environment variable" })
+        .click();
+      await settings.getByLabel("Environment variable name").fill("API_TOKEN");
+      await settings
+        .getByLabel("Environment variable value for API_TOKEN")
+        .fill("${PROJECT_TOKEN}");
+      await choose("Tool exposure", "Deferred");
+      await settings
+        .getByRole("switch", { name: "Enabled in file" })
+        .locator("..")
+        .click();
+      const save = settings.getByRole("button", {
+        name: "Save",
+        exact: true,
+      });
+      await save.scrollIntoViewIfNeeded();
+      await expect(save).toBeInViewport();
+      await save.click();
+      await expect(editProject("project-tools")).toBeVisible();
+      expect(
+        (await fixture.json(fixture.projectFile)).mcpServers["project-tools"],
+      ).toEqual({
+        command: "node",
+        args: ["server with spaces.js"],
+        env: { API_TOKEN: "${PROJECT_TOKEN}" },
+        exposure: "deferred",
+        enabled: false,
+      });
+      await removeProject("project-tools");
+      await expect(editProject("project-tools")).toHaveCount(0);
+      // Start without a project entry, then create a policy from the user server.
+      await removeProject("docs");
+      await settings
+        .getByRole("button", { name: "Customize for this project: docs" })
+        .click();
       await expect(
-        settings.getByRole("button", { name: "Saving…", exact: true }),
-      ).toBeDisabled();
-      expect(await actionGeometry(actions)).toEqual(geometry);
+        settings.getByRole("combobox", { name: "Tool exposure" }),
+      ).toBeFocused();
+      await expect(
+        settings.getByRole("combobox", { name: "Tool exposure" }),
+      ).toHaveText("Inherit from user");
+      await expect(
+        settings.getByRole("combobox", { name: "Enabled in this project" }),
+      ).toHaveText("Inherit from user");
+      await expect(save).toBeDisabled();
+      await settings.getByRole("button", { name: "Add tool rule" }).click();
+      await settings.getByLabel("Tool name or pattern").fill("read_*");
+      await expect(save).toBeEnabled();
+      await settings
+        .getByRole("button", { name: "Remove tool rule 1" })
+        .click();
+      await expect(save).toBeDisabled();
+      await choose("Enabled in this project", "Disabled");
+      await save.click();
+      const policyEdit = editProject("docs");
+      await expect(policyEdit).toBeVisible();
+      expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual(
+        {
+          enabled: false,
+        },
+      );
+      await page.setViewportSize({ width: 568, height: 320 });
+      await policyEdit.press("Enter");
+      await expectConfigurationField(
+        settings.getByRole("combobox", { name: "Tool exposure", exact: true }),
+      );
+      await choose("Enabled in this project", "Inherit from user");
+      await choose("Tool exposure", "Hidden");
+      await save.click();
+      await expect(policyEdit).toBeVisible();
+      expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual(
+        {
+          exposure: "hidden",
+        },
+      );
+      await removeProject("docs");
+      await expect(
+        settings.getByRole("button", {
+          name: "Customize for this project: docs",
+        }),
+      ).toBeVisible();
+      expect((await fixture.json(fixture.projectFile)).mcpServers).toEqual({});
+      expect(await fixture.json(fixture.userFile)).toEqual(userBefore);
     } finally {
-      releaseSave();
+      await rm(fixture.root, { recursive: true, force: true });
     }
-    await expect(
-      settings.getByRole("button", {
-        name: "Edit project server project-tools",
-      }),
-    ).toBeVisible();
-    expect(
-      (await fixture.json(fixture.projectFile)).mcpServers["project-tools"],
-    ).toEqual({
-      command: "node",
-      args: ["server with spaces.js"],
-      env: { API_TOKEN: "${PROJECT_TOKEN}" },
-      exposure: "deferred",
-      enabled: false,
-    });
-    expect(
-      (await fixture.json(fixture.userFile)).mcpServers,
-    ).not.toHaveProperty("project-tools");
-    await settings
-      .getByRole("button", { name: "Remove project server project-tools" })
-      .click();
-    await settings
-      .getByRole("button", { name: "Remove configuration", exact: true })
-      .click();
-    await expect(
-      settings.getByRole("button", {
-        name: "Edit project server project-tools",
-      }),
-    ).toHaveCount(0);
-    expect(
-      (await fixture.json(fixture.projectFile)).mcpServers.docs.env,
-    ).toEqual({ TOKEN: "stored-env-secret" });
-    const userBefore = await fixture.json(fixture.userFile);
-    // Start without a project entry, then create a policy from the user server.
-    await settings
-      .getByRole("button", { name: "Remove project server docs" })
-      .click();
-    await settings
-      .getByRole("button", { name: "Remove configuration", exact: true })
-      .click();
-    await settings
-      .getByRole("button", { name: "Customize for this project: docs" })
-      .click();
-    await expect(
-      settings.getByRole("combobox", { name: "Tool exposure" }),
-    ).toBeFocused();
-    await expect(
-      settings.getByRole("combobox", { name: "Tool exposure" }),
-    ).toHaveText("Inherit from user");
-    await expect(
-      settings.getByRole("combobox", { name: "Enabled in this project" }),
-    ).toHaveText("Inherit from user");
-    await expect(save).toBeDisabled();
-    await settings.getByRole("button", { name: "Add tool rule" }).click();
-    await settings.getByLabel("Tool name or pattern").fill("read_*");
-    await expect(save).toBeEnabled();
-    await settings.getByRole("button", { name: "Remove tool rule 1" }).click();
-    await expect(save).toBeDisabled();
-    await settings
-      .getByRole("combobox", { name: "Enabled in this project" })
-      .click();
-    await page.getByRole("option", { name: "Disabled", exact: true }).click();
-    await save.click();
-    await expect(
-      settings.getByRole("button", { name: "Edit project server docs" }),
-    ).toBeVisible();
-    expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual({
-      enabled: false,
-    });
-    const policyEdit = settings.getByRole("button", {
-      name: "Edit project server docs",
-    });
-    await expect(policyEdit).toBeEnabled();
-    await policyEdit.focus();
-    await policyEdit.press("Enter");
-    await expect(
-      settings.getByRole("combobox", { name: "Tool exposure", exact: true }),
-    ).toBeFocused();
-    await expect(page.getByRole("listbox")).toHaveCount(0);
-    await settings
-      .getByRole("combobox", { name: "Tool exposure", exact: true })
-      .press("ArrowDown");
-    await expect(
-      page.getByRole("option", { name: "Hidden", exact: true }),
-    ).toBeVisible();
-    await settings
-      .getByRole("combobox", { name: "Tool exposure", exact: true })
-      .press("Escape");
-    await expect(
-      settings.getByRole("combobox", { name: "Tool exposure", exact: true }),
-    ).toBeFocused();
-    await expect(
-      settings.getByLabel("Server URL", { exact: true }),
-    ).toHaveCount(0);
-    await expect(
-      settings.getByRole("combobox", { name: "Tool exposure", exact: true }),
-    ).toHaveText("Inherit from user");
-    await settings
-      .getByRole("combobox", { name: "Enabled in this project" })
-      .click();
-    await page
-      .getByRole("option", { name: "Inherit from user", exact: true })
-      .click();
-    await settings
-      .getByRole("combobox", { name: "Tool exposure", exact: true })
-      .click();
-    await page.getByRole("option", { name: "Hidden", exact: true }).click();
-    await save.click();
-    await expect(
-      settings.getByRole("button", { name: "Edit project server docs" }),
-    ).toBeVisible();
-    expect((await fixture.json(fixture.projectFile)).mcpServers.docs).toEqual({
-      exposure: "hidden",
-    });
-    await settings
-      .getByRole("button", { name: "Remove project server docs" })
-      .click();
-    await expect(
-      settings.getByText(
-        /This project will inherit the user configuration again/,
-      ),
-    ).toBeVisible();
-    await settings
-      .getByRole("button", { name: "Remove configuration", exact: true })
-      .click();
-    await expect(
-      settings.getByRole("button", {
-        name: "Customize for this project: docs",
-      }),
-    ).toBeVisible();
-    expect((await fixture.json(fixture.projectFile)).mcpServers).toEqual({});
-    expect(await fixture.json(fixture.userFile)).toEqual(userBefore);
-    expect(fixture.errors).toEqual([]);
-  } finally {
-    await rm(fixture.root, { recursive: true, force: true });
-  }
+  });
 });

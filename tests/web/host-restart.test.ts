@@ -88,68 +88,72 @@ describe("browser restart delivery", () => {
     expect(f.client.snapshot().status?.operation?.phase).toBe("submitted");
   });
 
-  it("persists before POST, keeps lost delivery across reload, and retries the identical request only explicitly", async () => {
-    const f = fixture();
-    f.api.restartHost.mockImplementation(async () => {
-      expect(sessionStorage.getItem("inspire:host-restart:v1")).not.toBeNull();
-      throw new Error("lost");
-    });
-    await f.client.refresh();
-    await f.client.start("all", f.status.hostId);
-    const request = f.api.restartHost.mock.calls[0]![0];
-    const reloaded = new HostRestartClient(f.api);
-    await reloaded.refresh();
-    await reloaded.refresh();
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-    expect(reloaded.snapshot().pending).toEqual(request);
-    await reloaded.start("host", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledOnce();
-    await reloaded.retry();
-    expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
-  });
+  it.each([
+    { scope: "all", interruptWork: undefined, initial: "lost" },
+    { scope: "host", interruptWork: true, initial: "accepted" },
+  ] as const)(
+    "recovers $initial $scope delivery by retrying only the persisted identity and grant",
+    async ({ scope, interruptWork, initial }) => {
+      const f = fixture();
+      f.api.restartHost.mockImplementationOnce(async (request) => {
+        expect(
+          JSON.parse(sessionStorage.getItem("inspire:host-restart:v1")!),
+        ).toEqual(request);
+        if (initial === "lost") throw new Error("lost");
+        return {
+          id: request.operationId,
+          scope,
+          phase: "preparing",
+          interruptWork,
+        };
+      });
+      await f.client.refresh();
+      await f.client.start(scope, f.status.hostId, interruptWork);
+      const request = f.api.restartHost.mock.calls[0]![0];
+      expect(request.scope).toBe(scope);
+      expect(request.interruptWork).toBe(interruptWork);
 
-  it("persists the work-interruption grant inside a distinct operation and replays only that grant", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    await f.client.start("host", f.status.hostId, true);
-    const request = f.api.restartHost.mock.calls[0]![0];
-    expect(request).toMatchObject({ scope: "host", interruptWork: true });
-    const reloaded = new HostRestartClient(f.api);
-    await reloaded.refresh();
-    expect(reloaded.snapshot().pending).toEqual(request);
-    await reloaded.retry();
-    expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
-    await reloaded.start("host", f.status.hostId);
-    expect(f.api.restartHost).toHaveBeenCalledTimes(2);
-  });
+      const reloaded = new HostRestartClient(f.api);
+      await reloaded.refresh();
+      await reloaded.refresh();
+      await reloaded.start("host", f.status.hostId);
+      expect(f.api.restartHost).toHaveBeenCalledOnce();
+      expect(reloaded.snapshot().pending).toEqual(request);
 
-  it("does not treat an HTTP rejection as proof that a previously delivered restart failed", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    await f.client.start("host", f.status.hostId);
-    f.api.restartHost.mockRejectedValue(new Error("401"));
-    await f.client.retry();
-    expect(f.client.snapshot().pending).not.toBeNull();
-    f.status.operation = {
-      id: f.client.snapshot().pending!.operationId,
-      scope: "host",
-      phase: "rejected",
-      error: "Build failed",
-    };
-    await f.client.refresh();
-    expect(f.client.snapshot().pending).toBeNull();
-    expect(f.client.snapshot().status?.operation?.error).toBe("Build failed");
-  });
+      f.api.restartHost.mockRejectedValueOnce(new Error("401"));
+      await reloaded.retry();
+      expect(f.api.restartHost.mock.calls[1]![0]).toEqual(request);
+      expect(reloaded.snapshot().pending).toEqual(request);
+
+      const rejection = {
+        id: request.operationId,
+        scope,
+        phase: "rejected" as const,
+        error: "Build failed",
+      };
+      if (interruptWork) {
+        f.status.operation = rejection;
+        await reloaded.refresh();
+        expect(reloaded.snapshot().pending).toEqual(request);
+      }
+      f.status.operation = { ...rejection, interruptWork };
+      await reloaded.refresh();
+      expect(reloaded.snapshot().pending).toBeNull();
+      expect(reloaded.snapshot().status?.operation?.error).toBe("Build failed");
+    },
+  );
 
   it("uses the new Host identity as reconnection evidence and never replays an old operation there", async () => {
     const f = fixture();
     await f.client.refresh();
-    await f.client.start("all", f.status.hostId);
+    const oldHostId = f.status.hostId;
+    await f.client.start("all", oldHostId);
     f.status.hostId = crypto.randomUUID();
     await f.client.refresh();
     expect(f.client.snapshot().pending).toBeNull();
     expect(f.client.snapshot().notice).toBe("Host reconnected.");
     await f.client.retry();
+    await f.client.start("host", oldHostId);
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
@@ -164,16 +168,6 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).toHaveBeenCalledOnce();
   });
 
-  it("abandons stale confirmations without sending", async () => {
-    const f = fixture();
-    await f.client.refresh();
-    const old = f.status.hostId;
-    f.status.hostId = crypto.randomUUID();
-    await f.client.refresh();
-    await f.client.start("host", old);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-  });
-
   it("keeps Host observation independent of broken local recovery and unblocks after repair", async () => {
     const f = fixture();
     sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
@@ -181,6 +175,7 @@ describe("browser restart delivery", () => {
     expect(f.client.snapshot().status).toEqual(f.status);
     expect(f.client.snapshot().blocked).toBe(true);
     expect(f.client.snapshot().recoveryInvalid).toBe(true);
+    await f.client.start("host", f.status.hostId);
     expect(f.api.restartHost).not.toHaveBeenCalled();
     sessionStorage.removeItem("inspire:host-restart:v1");
     await f.client.refresh();
@@ -197,8 +192,17 @@ describe("browser restart delivery", () => {
       scope: "all",
       phase: "submitted",
     };
-    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
+    sessionStorage.setItem(
+      "inspire:host-restart:v1",
+      JSON.stringify({
+        hostId: f.status.hostId,
+        operationId: f.status.operation.id,
+        scope: f.status.operation.scope,
+        interruptWork: false,
+      }),
+    );
     await f.client.refresh();
+    expect(f.client.snapshot().recoveryInvalid).toBe(true);
     await f.client.clearRecovery();
     expect(f.client.snapshot()).toMatchObject({
       blocked: false,
@@ -275,27 +279,8 @@ describe("browser restart delivery", () => {
     expect(f.api.restartHost).not.toHaveBeenCalled();
   });
 
-  it("blocks writes when recovery storage is malformed or unavailable", async () => {
+  it("does not dispatch when it cannot persist the request", async () => {
     const f = fixture();
-    sessionStorage.setItem("inspire:host-restart:v1", "{broken}");
-    await f.client.refresh();
-    await f.client.start("host", f.status.hostId);
-    expect(f.client.snapshot().blocked).toBe(true);
-    expect(f.api.restartHost).not.toHaveBeenCalled();
-    sessionStorage.clear();
-    sessionStorage.setItem(
-      "inspire:host-restart:v1",
-      JSON.stringify({
-        hostId: f.status.hostId,
-        operationId: crypto.randomUUID(),
-        scope: "host",
-        interruptWork: false,
-      }),
-    );
-    const invalidGrant = new HostRestartClient(f.api);
-    await invalidGrant.refresh();
-    expect(invalidGrant.snapshot().blocked).toBe(true);
-    sessionStorage.clear();
     const client = new HostRestartClient(
       f.api,
       () =>

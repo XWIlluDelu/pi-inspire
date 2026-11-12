@@ -12,10 +12,10 @@ covers:
   - src/components/{AppTopbar,ExportDialog,ExtensionDisplays,ExtensionUiDialog,ExtensionDialogContent}.tsx
   - docs/examples/task-board/**
   - tests/server/task-board-example.integration.test.ts
-  - tests/web/extension-dialog-content.test.tsx
   - tests/server/pi-*.test.ts
   - tests/server/runtime*.test.ts
-  - tests/web/{app,extension-displays,overlay-and-palette}.test.tsx
+  - tests/browser/extension-ui.spec.ts
+  - tests/web/extension-ui-ownership.test.tsx
   - tests/web/{store*,events}.test.ts
 ---
 

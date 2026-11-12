@@ -6,16 +6,16 @@ covers:
   - src/{App,api,store,app-state,clipboard-files,keyboard-input,composer-*,session-drafts,model-options}.ts*
   - src/controllers/{composer,pending-recovery}-controller.ts
   - server/pending-operation-receipts.ts
-  - tests/server/app-pending-recovery.test.ts
-  - tests/integration/{pending-deferred-images,recovered-image-user-intent}.test.ts
+  - tests/server/app-input-operations.test.ts
+  - tests/integration/recovered-image-user-intent.test.ts
   - src/components/{ActivityBar,AttachmentList,Composer,ComposerInput,ImagePreview,ImageLightbox,ImageGallery,ModelSelector,ProjectFiles,Transcript,transcript-rows,Welcome,DirectoryPicker,ExportDialog}.tsx
   - src/{image-viewport,use-image-viewport,use-image-history}.ts
   - src/styles/*.css
-  - tests/server/{attachments,attachment-file-names,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
-  - tests/shared/{composer-artifact-references,pending-contracts}.test.ts
-  - tests/web/{composer*,session-drafts,native-commands,readonly-session,transcript-actions,welcome*,directory-picker,project-file-picker,model-selector,model-store}.test.ts*
-  - tests/web/{image-viewport,image-gallery,attachments}.test.ts*
-  - tests/browser/{composer,file-attachments,usage-facts,model-selection,project-file-picker,pending-input,image-preview,image-interactions}.spec.ts
+  - tests/server/{attachments,attachment-retention,composer-history*,runtime-composer-artifacts,runtime-pending*,runtime-compaction,app}.test.ts
+  - tests/server/runtime-pending.test.ts
+  - tests/web/{composer*,session-drafts,native-commands,readonly-session,content-copy,welcome*,directory-picker,project-file-picker,model-selector,model-store}.test.ts*
+  - tests/web/{image-preview,attachments}.test.tsx
+  - tests/browser/{composer,file-attachments,usage-facts,model-selection,project-file-picker,pending-input,image-interactions}.spec.ts
 ---
 
 # Conversation composer

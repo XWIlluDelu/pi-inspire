@@ -14,16 +14,7 @@ scope:
 ## Objective
 
 Keep reading, composing, and inspection consistent across desktop and narrow layouts. The
-following contracts own the implemented behavior.
-
-| Area | Contract |
-| --- | --- |
-| Navigation, startup and disclosure | [[workbench]] and [[workspace-layout]] |
-| Transcript search, Prompt Map, Activity and Copy | [[conversation]], [[activity-presentation]] and [[rich-rendering]] |
-| Composer sizing, input and model controls | [[composer]] and [[design-system]] |
-| Shared tabs, Git inspection, file offsets and PDF | [[workspace-layout]] and [[resource-preview]] |
-| Terminal tools and reconnect | [[terminal]] |
-| Settings, themes and local restart recovery | [[interface-preferences]] and [[host-lifecycle]] |
+[design map](../spec_abstract.md#design-map) links the implemented contracts.
 
 ## Evidence and open acceptance
 

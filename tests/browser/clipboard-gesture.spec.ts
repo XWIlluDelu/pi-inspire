@@ -1,6 +1,16 @@
 import { expect, type Page, test } from "@playwright/test";
+import {
+  COPY_FIXTURE_SESSION_ID,
+  mixedCopySource,
+  savedCopy,
+} from "../fixtures/workbench-sessions";
 import { observeClipboardWrites as observeWrites } from "./support/clipboard";
-import { openFixtureSession, pairedPage } from "./support/navigation";
+import {
+  openConversationSearch,
+  openFixtureSession,
+  openHistoryPane,
+  pairedPage,
+} from "./support/navigation";
 
 test.use({
   serviceWorkers: "block",
@@ -15,203 +25,244 @@ test.beforeEach(async ({ browserName, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 });
 
-async function openHistoryDetail(page: Page) {
+async function openSavedCopy(page: Page) {
   await pairedPage(page);
   await openFixtureSession(
     page,
-    /Calibration history fixture/,
-    "fixture-calibration-history",
+    /Copy saved messages/,
+    COPY_FIXTURE_SESSION_ID,
   );
-  const toggle = page.getByRole("button", {
-    name: "Toggle resources panel",
-    exact: true,
-  });
-  if ((await toggle.getAttribute("aria-expanded")) === "false")
-    await toggle.click();
-  await page.getByRole("tab", { name: "History", exact: true }).click();
-  const history = page.getByRole("region", { name: "Conversation history" });
+}
+
+async function openHistoryDetail(page: Page) {
+  await openSavedCopy(page);
+  const history = await openHistoryPane(page);
   await history
     .getByRole("searchbox", { name: "Find in history" })
-    .fill("Compare the calibration strategies");
+    .fill("User source");
   await history
-    .getByRole("button", {
-      name: /Your input.*Compare the calibration strategies/,
-    })
+    .getByRole("button", { name: /Your input.*User source/ })
     .click();
   return history;
 }
 
-test("slow retained text and saved PNG copy after the gesture expires", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
-  const complete = "Retained content. ".repeat(2500) + "COPY_END";
-  let entryMetadata: Record<string, unknown>;
-  let copying = false;
-  await page.route("**/api/branches/entry?**", async (route) => {
-    const offset = Number(
-      new URL(route.request().url()).searchParams.get("offset") ?? 0,
-    );
-    if (offset === 0) {
-      const response = await route.fetch();
-      expect(response.ok()).toBe(true);
-      entryMetadata = await response.json();
-    }
-    const body = entryMetadata;
-    if (copying && offset === 0)
-      await new Promise((resolve) => setTimeout(resolve, 6100));
-    const end = Math.min(offset + 32000, complete.length);
-    await route.fulfill({
-      status: 200,
-      json: {
-        ...body,
-        text: complete.slice(offset, end),
-        totalChars: complete.length,
-        nextOffset: end < complete.length ? end : null,
-      },
-    });
+test("copies complete saved messages and images from bounded conversation previews", async ({
+  page,
+}) => {
+  const opened = page.waitForResponse("**/api/sessions/open");
+  await openSavedCopy(page);
+  const { active } = await (await opened).json();
+  const copyTail = /(?:USER|ASSISTANT|CUSTOM|DETAIL)_COPY_TAIL/u;
+  expect(JSON.stringify(active.transcriptPage.messages)).not.toMatch(copyTail);
+  await observeWrites(page);
+  const transcript = page.getByRole("log");
+  const userTurn = (text: string) =>
+    transcript.locator(".turn--user").filter({ hasText: text });
+  const mixed = userTurn("Inspect mixed attachments");
+  await expect(mixed).not.toContainText("Multiply coordinates");
+  const mixedBubbles = transcript.locator(".user-bubble").filter({
+    has: page.getByRole("list", { name: "Referenced files" }),
   });
+  await expect(mixedBubbles).toHaveCount(2);
+  await page.setViewportSize({ width: 320, height: 900 });
+  for (const bubble of await mixedBubbles.all()) {
+    await bubble.scrollIntoViewIfNeeded();
+    const image = bubble.getByRole("group", { name: "Attached images" });
+    const files = bubble.getByRole("list", { name: "Referenced files" });
+    await expect(image.locator("img")).toBeVisible();
+    await expect(files).toHaveText("report.md");
+    const imageBox = (await image.boundingBox())!;
+    expect(imageBox.y + imageBox.height).toBeLessThan(
+      (await files.boundingBox())!.y,
+    );
+  }
+  const files = (await mixed
+    .getByRole("list", { name: "Referenced files" })
+    .boundingBox())!;
+  const prose = (await mixed.locator(".rich-text").boundingBox())!;
+  expect(files.y + files.height).toBeLessThan(prose.y);
+  await expect(mixedBubbles.last().locator(".rich-text")).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  const search = await openConversationSearch(page);
+  const matches = page.getByLabel("Transcript search matches");
+  await search.fill("report.md");
+  await expect(matches).toHaveText("3 matches");
+  for (const attachment of [true, false, true]) {
+    await search.press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const range = CSS.highlights
+            .get("transcript-current-match")
+            ?.values()
+            .next().value as Range | undefined;
+          const element = range?.startContainer.parentElement;
+          if (!element) return null;
+          return Boolean(element.closest(".user-bubble__file"));
+        }),
+      )
+      .toBe(attachment);
+  }
+  await search.fill("Multiply coordinates");
+  await expect(matches).toHaveText("0 matches");
+  await search.press("Escape");
+  const cases = [
+    {
+      scope: userTurn("User source."),
+      name: "Copy message",
+      text: savedCopy.user,
+      imageWidth: 720,
+    },
+    {
+      scope: mixed,
+      name: "Copy message",
+      text: mixedCopySource,
+      imageWidth: 720,
+    },
+    {
+      name: "Copy response",
+      text: `${savedCopy.response}\n\n${savedCopy.final}`,
+      imageWidth: null,
+    },
+    {
+      name: "Copy copy fixture block",
+      text: [
+        "Copy fixture",
+        "Type: copy_fixture",
+        "Content",
+        savedCopy.custom,
+        "Details",
+        JSON.stringify(savedCopy.details, null, 2),
+      ].join("\n\n"),
+      imageWidth: null,
+    },
+  ];
+  for (const { scope = transcript, name, text, imageWidth } of cases) {
+    await scope.getByRole("button", { name, exact: true }).press("Enter");
+    await expect
+      .poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1)))
+      .toEqual({ text, imageWidth });
+  }
+  await expect(transcript).not.toContainText(copyTail);
+});
+
+test("starts History Copy at the gesture and delivers complete text and saved PNG without expanding the reader", {
+  tag: "@cross-browser",
+}, async ({ page, browserName }) => {
+  const reading = Promise.withResolvers<void>();
+  const delivery = Promise.withResolvers<void>();
+  const history = await openHistoryDetail(page);
+  const more = history.getByRole("button", { name: "Read more content" });
+  await expect(more).toBeVisible();
+  await observeWrites(page);
+  await page.route(
+    "**/api/branches/entry?**",
+    async (route) => {
+      reading.resolve();
+      await delivery.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  try {
+    await history
+      .getByRole("button", { name: "Copy history entry", exact: true })
+      .press("Enter");
+    await reading.promise;
+    if (browserName !== "chromium")
+      expect(
+        await page.evaluate(() => window.gestureClipboardWriteStarts),
+      ).toBe(1);
+    expect(await page.evaluate(() => window.gestureClipboardWrites)).toEqual(
+      [],
+    );
+  } finally {
+    delivery.resolve();
+  }
+  await expect(
+    history.getByRole("button", { name: "history entry copied" }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.gestureClipboardWrites)).toEqual([
+    { text: savedCopy.user, imageWidth: 720 },
+  ]);
+  await expect(more).toBeVisible();
+  await expect(history).not.toContainText("USER_COPY_TAIL");
+});
+
+test("leaving a pending History copy retires it while /copy keeps the replacement gesture", {
+  tag: "@cross-browser",
+}, async ({ page, browserName }) => {
   const history = await openHistoryDetail(page);
   await expect(
     history.getByRole("button", { name: "Read more content" }),
   ).toBeVisible();
   await observeWrites(page);
-  const needsGesture = await page.evaluate(async () => {
-    try {
-      const descriptor = {
-        name: "clipboard-write" as PermissionName,
-        allowWithoutGesture: true,
-      };
-      return (
-        (await navigator.permissions.query(descriptor)).state !== "granted"
-      );
-    } catch {
-      return true;
-    }
-  });
-  copying = true;
-  const started = await page.evaluate(() => performance.now());
-  await history
-    .getByRole("button", { name: "Copy history entry", exact: true })
-    .click();
-  await expect(
-    history.getByRole("button", { name: "history entry copied", exact: true }),
-  ).toBeVisible({ timeout: 15_000 });
-  const writes = await page.evaluate(() => window.gestureClipboardWrites);
-  expect(writes.at(-1)?.text === complete).toBe(true);
-  expect(writes.at(-1)?.imageWidth).toBe(720);
-  if (needsGesture) expect(writes[0]!.started - started).toBeLessThan(1000);
-});
 
-test("Copy last response initiates its text write before a slow Host read", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
-  const complete = "Complete response ".repeat(3000) + "RESPONSE_END";
-  await page.route("**/api/transcript/assistant-text?**", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 6100));
-    await route.fulfill({ json: { text: complete } });
-  });
-  await pairedPage(page);
-  await openFixtureSession(
-    page,
-    /Calibration history fixture/,
-    "fixture-calibration-history",
-  );
-  await observeWrites(page);
-  const input = page.getByRole("textbox", { name: "Message", exact: true });
-  await input.fill("/copy");
-  await page.getByRole("button", { name: "Send message", exact: true }).click();
-  await expect
-    .poll(
-      () =>
-        page.evaluate(
-          (expected) => window.gestureClipboardWrites.at(-1)?.text === expected,
-          complete,
-        ),
-      { timeout: 15_000 },
-    )
-    .toBe(true);
-  await expect(input).toHaveValue("");
-  await expect(
-    page.getByText(
-      "Copied the complete last assistant response to the clipboard.",
-      { exact: true },
-    ),
-  ).toBeVisible();
-});
-
-test("leaving a pending History copy does not replace a newer clipboard action", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
-  let copying = false;
-  let historyTarget: string | null = null;
-  let release: () => void = () => {};
-  let began: () => void = () => {};
-  const pending = new Promise<void>((resolve) => {
-    began = resolve;
-  });
-  const finish = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const historyRead = Promise.withResolvers<void>();
+  const historyDelivery = Promise.withResolvers<void>();
   await page.route("**/api/branches/entry?**", async (route) => {
     const response = await route.fetch();
-    const target = new URL(route.request().url()).searchParams.get("targetId");
-    if (!copying) historyTarget = target;
-    // Response Copy also reads retained entries; hold only the older action
-    // so the newer independent copy can finish while it is pending.
-    if (copying && target === historyTarget) {
-      began();
-      await finish;
-    }
+    historyRead.resolve();
+    await historyDelivery.promise;
     await route.fulfill({ response });
   });
-  const history = await openHistoryDetail(page);
-  await expect(
-    history.getByRole("button", { name: "Copy history entry", exact: true }),
-  ).toBeVisible();
-  await observeWrites(page);
-  copying = true;
-  await history
-    .getByRole("button", { name: "Copy history entry", exact: true })
-    .click();
-  await pending;
+  const responseRead = Promise.withResolvers<void>();
+  const responseDelivery = Promise.withResolvers<void>();
+  await page.route(
+    "**/api/transcript/assistant-text?**",
+    async (route) => {
+      responseRead.resolve();
+      await responseDelivery.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
   try {
-    const retiredCopy = page.waitForEvent("requestfailed", {
-      predicate: (request) => {
-        const url = new URL(request.url());
-        return (
-          url.pathname === "/api/branches/entry" &&
-          url.searchParams.get("targetId") === historyTarget
-        );
-      },
+    await history
+      .getByRole("button", { name: "Copy history entry", exact: true })
+      .click();
+    await historyRead.promise;
+    const retired = page.waitForEvent("requestfailed", {
+      predicate: (request) =>
+        new URL(request.url()).pathname === "/api/branches/entry",
     });
     await history
       .getByRole("button", { name: "Back to history", exact: true })
       .click();
-    // Observe retirement before the replacement gesture: even if its held
-    // response arrives later, this old read cannot complete a clipboard write.
-    await retiredCopy;
-    // Earlier suites may leave more of this session's transcript loaded.
-    // Copy the known complete response, not whichever assistant row is first.
+    await retired;
+
+    const writesBeforeCopy = await page.evaluate(
+      () => window.gestureClipboardWriteStarts,
+    );
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("/copy");
     await page
-      .locator(".turn--assistant")
-      .filter({ hasText: "The current calibration run is complete." })
-      .getByRole("button", { name: "Copy response", exact: true })
+      .getByRole("button", { name: "Send message", exact: true })
       .click();
+    await responseRead.promise;
+    if (browserName !== "chromium")
+      expect(
+        await page.evaluate(() => window.gestureClipboardWriteStarts),
+      ).toBe(writesBeforeCopy + 1);
+    responseDelivery.resolve();
     await expect
-      .poll(() => page.evaluate(() => window.gestureClipboardWrites.length))
-      .toBe(1);
+      .poll(() => page.evaluate(() => window.gestureClipboardWrites))
+      .toEqual([
+        {
+          text: `${savedCopy.response}
+${savedCopy.final}`,
+          imageWidth: null,
+        },
+      ]);
+    await expect(input).toHaveValue("");
+    historyDelivery.resolve();
+    await page.unrouteAll({ behavior: "wait" });
+    expect(
+      await page.evaluate(() => window.gestureClipboardWrites),
+    ).toHaveLength(1);
   } finally {
-    release();
+    historyDelivery.resolve();
+    responseDelivery.resolve();
   }
-  await expect(
-    page.getByRole("button", { name: "Back to history", exact: true }),
-  ).toHaveCount(0);
-  const writes = await page.evaluate(() => window.gestureClipboardWrites);
-  expect(writes).toEqual([
-    {
-      started: expect.any(Number),
-      text: expect.stringContaining("The current calibration run is complete."),
-      imageWidth: null,
-    },
-  ]);
 });

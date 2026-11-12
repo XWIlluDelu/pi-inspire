@@ -18,7 +18,6 @@ covers:
   - server/session-search.ts
   - server/session-search-query.ts
   - server/session-search-worker.ts
-  - tests/server/session-search-snippet.test.ts
   - server/session-jsonl.ts
   - server/session-preview.ts
   - server/session-projection.ts

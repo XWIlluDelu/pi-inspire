@@ -122,5 +122,5 @@ The example is included in project type/lint checks. Its native command/dialog/r
 inventory/draft-isolation regressions run with:
 
 ```sh
-npm exec -- vitest run tests/server/task-board-example.integration.test.ts tests/web/command-ux.test.tsx tests/web/extension-dialog-content.test.tsx
+npm exec -- vitest run tests/server/task-board-example.integration.test.ts tests/web/command-ux.test.tsx tests/web/extension-ui-ownership.test.tsx
 ```

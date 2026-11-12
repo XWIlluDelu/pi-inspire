@@ -16,7 +16,7 @@ const SESSION_PAGE_SIZE = 40;
 
 type SessionListOperation = "reset" | "older" | "refresh" | null;
 
-export interface SessionCatalogState {
+interface SessionCatalogState {
   sessions: SessionSummary[];
   sessionQuery: string;
   sessionListTotal: number;
@@ -32,7 +32,7 @@ export interface SessionCatalogState {
   externalSessionActivities?: ExternalSessionActivities;
 }
 
-export interface SessionCatalogPatch {
+interface SessionCatalogPatch {
   sessions?: SessionSummary[];
   sessionQuery?: string;
   sessionListTotal?: number;

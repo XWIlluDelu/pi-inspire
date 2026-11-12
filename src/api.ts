@@ -133,10 +133,10 @@ export class ApiError extends Error {
   }
 }
 
-export const PROMPT_CONFIRMATION_TIMEOUT_MS = 30_000;
+const PROMPT_CONFIRMATION_TIMEOUT_MS = 30_000;
 // Leave room for the Host's 30-second Pi reads and response transfer.
 export const HTTP_OBSERVATION_TIMEOUT_MS = 45_000;
-export const LONG_HTTP_OBSERVATION_TIMEOUT_MS = 120_000;
+const LONG_HTTP_OBSERVATION_TIMEOUT_MS = 120_000;
 
 /** No trustworthy application response. A mutation may still complete; an
  * observation failure is never permission to replay it. */

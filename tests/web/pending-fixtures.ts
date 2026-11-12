@@ -5,16 +5,12 @@ import {
 
 let nextPendingId = 0;
 
-export function pendingMessage(
-  text: string,
-  overrides: Partial<PendingMessageSummary> = {},
-): PendingMessageSummary {
+function pendingMessage(text: string): PendingMessageSummary {
   return {
     id: `pending-${++nextPendingId}`,
     textPreview: text,
     textLength: text.length,
     textTruncated: false,
-    ...overrides,
   };
 }
 

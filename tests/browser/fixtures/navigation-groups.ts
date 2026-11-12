@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import type { SessionSummary } from "../../../shared/contracts";
 import { routeSnapshots } from "../support/host-events";
 
-/** Isolated curation model: grouped projects, including a Hidden former pin.
+/** Isolated curation model: grouped projects, a Hidden former pin and a hidden session.
  * Seeded native IDs retain their real open/history envelopes; only the catalog
  * summaries and matching selected identity are fixture-owned. No Host preference
  * or canonical session file is changed. */
@@ -28,6 +28,12 @@ export async function navigationGroupsFixture(page: Page) {
       "Archived validation session",
       "01",
     ],
+    [
+      "hidden-independent",
+      "/projects/reports",
+      "Independent hidden session",
+      "01",
+    ],
   ].map(([id, cwd, title, day]) => ({
     id: id!,
     cwd: cwd!,
@@ -44,14 +50,14 @@ export async function navigationGroupsFixture(page: Page) {
         preferences = {
           ...body.preferences,
           pinnedSessionIds: [],
-          hiddenSessionIds: [],
+          hiddenSessionIds: ["hidden-independent"],
           pinnedProjectCwds: [
             "/projects/calibration",
             "/projects/acquisition",
             "/projects/archived-a",
           ],
           hiddenProjectCwds: ["/projects/archived-a", "/projects/archived-b"],
-          navCollapsedGroups: records.map((record) => record.cwd),
+          navCollapsedGroups: [...new Set(records.map((record) => record.cwd))],
         };
       Object.assign(body.preferences, preferences);
     },
@@ -63,6 +69,9 @@ export async function navigationGroupsFixture(page: Page) {
         snapshot.active.cwd = record.cwd;
         snapshot.active.sessionName = record.title;
       }
+    },
+    event: (event) => {
+      if (event.type === "external_session_activity") return false;
     },
   });
   await page.route("**/api/preferences", async (route) => {
@@ -101,4 +110,5 @@ export async function navigationGroupsFixture(page: Page) {
         },
       });
     });
+  return transport;
 }

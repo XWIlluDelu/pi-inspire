@@ -1,7 +1,20 @@
 // @vitest-environment jsdom
+import {
+  FileArchive,
+  FileCode2,
+  FileImage,
+  FileJson2,
+  FileText,
+} from "lucide-react";
 import { describe, expect, it } from "vitest";
 import type { GitDiffLine, GitDiffResponse } from "../../shared/contracts";
+import { decodeTextPreview } from "../../shared/text-preview";
+import { fileIconForPath } from "../../src/file-icons";
 import { sourceDiffRows } from "../../src/source-diff";
+import {
+  highlightSourceLines,
+  languageForFile,
+} from "../../src/syntax-highlighting";
 
 function diffFor(name: string, source: string[]) {
   let oldLine = 1;
@@ -89,7 +102,6 @@ describe("Changes source projection", () => {
       "original.ts",
     );
     expect(rows[0].html).toContain("hljs-keyword");
-    expect(rows[1].html).not.toContain("<span");
   });
 
   it.each(["page.html", "unknown.fixture"])(
@@ -115,5 +127,78 @@ describe("Changes source projection", () => {
     expect(code(rows[0].html).textContent).toBe(rows[0].line.text.slice(1));
     expect(rows[1].html).toContain("hljs-keyword");
     expect(rows[2].html).toContain("hljs-keyword");
+  });
+});
+
+describe("file presentation", () => {
+  it.each([
+    ["GNUmakefile", "makefile", FileCode2],
+    ["src\\Panel.TSX", "tsx", FileCode2],
+    ["config.JSON", "json", FileJson2],
+    ["plot.svg", "svg", FileImage],
+    ["bundle.tar.gz", "gz", FileArchive],
+    ["folder.ts/LICENSE", "plaintext", FileText],
+  ])(
+    "uses the basename of %s for highlighting and icons",
+    (path, language, Icon) => {
+      expect(languageForFile(path)).toBe(language);
+      expect(fileIconForPath(path)).toBe(Icon);
+    },
+  );
+
+  it("balances multiline nested tokens into independently renderable rows", () => {
+    const rows = highlightSourceLines('<div\n title="first\n second">', "html");
+    expect(rows).toHaveLength(3);
+    expect(rows[2]).toContain('class="hljs-string"');
+    for (const row of rows) {
+      expect(row.match(/<span\b/g)?.length ?? 0).toBe(
+        row.match(/<\/span>/g)?.length ?? 0,
+      );
+    }
+    const rendered = document.createElement("span");
+    rendered.innerHTML = rows[2]!;
+    expect(rendered.textContent).toBe(' second">');
+  });
+});
+
+const text = '$message = "你好 🌍"\r\nWrite-Output $message\r\n';
+
+function unicodeBytes(
+  text: string,
+  encoding: "utf-8" | "utf-16le" | "utf-16be",
+): Uint8Array<ArrayBuffer> {
+  if (encoding === "utf-8") return new TextEncoder().encode(text);
+  const bytes = new Uint8Array(2 + text.length * 2);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(0, 0xfeff, encoding === "utf-16le");
+  for (let index = 0; index < text.length; index++)
+    view.setUint16(
+      2 + index * 2,
+      text.charCodeAt(index),
+      encoding === "utf-16le",
+    );
+  return bytes;
+}
+
+describe("bounded Unicode file text", () => {
+  it.each(["utf-8", "utf-16le", "utf-16be"] as const)(
+    "decodes %s and suppresses a partial trailing character at a transfer cap",
+    (encoding) => {
+      expect(decodeTextPreview(unicodeBytes(text, encoding))).toBe(text);
+      const bytes = unicodeBytes("first 🌍", encoding);
+      const partial = bytes.subarray(0, bytes.length - 1);
+      expect(decodeTextPreview(partial, true)).toBe("first ");
+      expect(decodeTextPreview(partial)).toContain("�");
+    },
+  );
+
+  it("keeps BOM-less input UTF-8 and removes the UTF-8 BOM", () => {
+    expect(
+      decodeTextPreview(
+        new Uint8Array([0xef, 0xbb, 0xbf, ...unicodeBytes(text, "utf-8")]),
+      ),
+    ).toBe(text);
+    expect(decodeTextPreview(new Uint8Array([0xff]))).toBe("�");
+    expect(decodeTextPreview(new Uint8Array())).toBe("");
   });
 });

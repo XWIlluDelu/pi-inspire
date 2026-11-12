@@ -65,6 +65,7 @@
       "server/restart-preflight.ts",
       "server/session-search-worker.ts",
       "server/model-metadata-worker.ts",
+      "connections/dispatch.mjs",
       "deploy/systemd/control.mjs",
       "deploy/systemd/idle-maintenance-restart.mjs",
       "deploy/systemd/install.mjs",
@@ -77,7 +78,6 @@
       "public/service-worker.js",
       "tests/**/*.{test,spec}.{ts,tsx}",
       "tests/browser/fixtures/file-previews/interactive.js",
-      "tests/browser/fixtures/terminal-theme.ts",
       "tests/fixtures/pi-operation-lifecycle-extension.ts",
       "tests/fixtures/pi-attach-prompt-extension.ts",
       "tests/fixtures/pi-resource-reload-extension.ts",
@@ -111,8 +111,7 @@
       "server/pi-rpc-ui-relay.d.mts",
       "server/launcher-restart.d.mts",
       "server/static-asset-cache.d.mts",
-      "server/user-environment.d.mts",
-      "tests/fixtures/tool-result-resources.d.mts"
+      "server/user-environment.d.mts"
     ]
   },
   "scripts": {
@@ -182,7 +181,6 @@
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
-    "axe-core": "^4.12.1",
     "concurrently": "^9.2.4",
     "decode-named-character-reference": "1.3.0",
     "github-slugger": "^2.0.0",

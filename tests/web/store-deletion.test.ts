@@ -17,74 +17,6 @@ import { baseRoutes, initStore } from "./store-fixture";
 describe("session deletion ownership", () => {
   beforeEach(() => installFakeWebSocket());
 
-  it("removes a deleted hidden session from curation, pagination, status, and its draft", async () => {
-    const active = activeSnapshot({ sessionId: "s1", sessionName: "Active" });
-    active.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
-    const rows = [
-      sessionSummary({ id: "s1", title: "Active" }),
-      sessionSummary({ id: "s2", title: "Archived" }),
-    ];
-    let deleted = false;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: active,
-            preferences: {
-              ...DEFAULT_PREFS,
-              pinnedSessionIds: ["s2"],
-              hiddenSessionIds: ["s2"],
-            },
-          }),
-        };
-      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
-        deleted = true;
-        return {
-          body: {
-            sessionId: "s2",
-            disposition: "trashed",
-            preferences: {
-              ...DEFAULT_PREFS,
-              pinnedSessionIds: [],
-              hiddenSessionIds: [],
-            },
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions/by-id"))
-        return { body: { sessions: deleted ? [] : [rows[1]] } };
-      if (url.startsWith("/api/sessions")) {
-        const sessions = deleted ? rows.slice(0, 1) : rows;
-        return {
-          body: sessionPage(sessions, sessions.length),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "s1",
-        "s2",
-      ]),
-    );
-    setSessionDraft("s2", "not for another session");
-
-    await expect(store.deleteSession("s2")).resolves.toBe("trashed");
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "s1",
-    ]);
-    expect(store.getState().sessionStatuses).not.toHaveProperty("s2");
-    expect(store.getState().prefs).toMatchObject({
-      pinnedSessionIds: [],
-      hiddenSessionIds: [],
-    });
-    expect(sessionDraft("s2")).toBe("");
-    expect(store.getState().notices.at(-1)?.text).toBe(
-      "Session moved to Trash",
-    );
-  });
-
   it.each(["success", "failure", "newer-selection", "opening"] as const)(
     "deletes the visible session with %s ownership",
     async (outcome) => {
@@ -158,6 +90,8 @@ describe("session deletion ownership", () => {
       );
       if (outcome === "failure") {
         expect(sessionDraft("s1")).toBe("deleted draft");
+        expect(store.getState().prefs.hiddenSessionIds).toEqual(["s1"]);
+        expect(store.getState().sessions).toHaveLength(2);
         expect(store.getState().sessionDeleteError).toBe("Trash unavailable");
       } else {
         expect(sessionDraft("s1")).toBe("");
@@ -171,89 +105,29 @@ describe("session deletion ownership", () => {
     },
   );
 
-  it.each(["delete", "clear"] as const)(
-    "ignores late projection reads across a successful %s",
-    async (method) => {
+  it.each([
+    { method: "delete", result: "committed" },
+    { method: "clear", result: "committed" },
+    { method: "delete", result: "refused" },
+    { method: "clear", result: "partial" },
+  ] as const)(
+    "fences old projection reads during $method and reconciles the $result result",
+    async ({ method, result }) => {
       const oldRead = deferred<{ status: number; body: { error: string } }>();
       const deletion = deferred<void>();
-      let deleting = false;
-      let deleted = false;
+      const requested = deferred<void>();
+      const targets = result === "partial" ? ["s1", "s2"] : ["s1"];
+      let sessions = [
+        sessionSummary({ id: "s1" }),
+        sessionSummary({ id: "s2" }),
+      ];
       let reads = 0;
       installFetch(async (url, init) => {
         if (url.startsWith("/api/bootstrap"))
           return {
             body: bootstrapPayload({
               snapshot: activeSnapshot(),
-              preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s1"] },
-            }),
-          };
-        if (url.startsWith("/api/snapshot")) {
-          reads += 1;
-          return oldRead.promise;
-        }
-        if (
-          (url === "/api/sessions/s1" && init.method === "DELETE") ||
-          url === "/api/sessions/clear-hidden"
-        ) {
-          deleting = true;
-          await deletion.promise;
-          deleted = true;
-          const result = { sessionId: "s1", disposition: "trashed" };
-          return { body: method === "clear" ? { deleted: [result] } : result };
-        }
-        const sessions = deleted ? [] : [sessionSummary({ id: "s1" })];
-        if (url.startsWith("/api/sessions/by-id"))
-          return { body: { sessions } };
-        if (url.startsWith("/api/sessions"))
-          return { body: sessionPage(sessions, sessions.length) };
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      await vi.waitFor(() => {
-        expect(store.getState().sessions).toHaveLength(1);
-        expect(store.getState()).toMatchObject({
-          sessionListLoading: false,
-          sessionListHydrating: false,
-        });
-      });
-      const refreshing = store.refreshSession();
-      await vi.waitFor(() => expect(reads).toBe(1));
-      const removing =
-        method === "clear"
-          ? store.clearHiddenSessions(["s1"])
-          : store.deleteSession("s1");
-      await vi.waitFor(() => expect(deleting).toBe(true));
-      await store.refreshSession();
-      expect(reads).toBe(1);
-      deletion.resolve();
-      await removing;
-      oldRead.resolve({
-        status: 409,
-        body: { error: "That session is being deleted" },
-      });
-      await refreshing;
-      expect(store.getState().sessionId).toBeNull();
-      expect(store.getState().error).toBeNull();
-      expect(
-        store.getState().notices.every((notice) => notice.kind === "info"),
-      ).toBe(true);
-    },
-  );
-
-  it.each(["delete", "partial-clear"] as const)(
-    "resumes observation of a surviving session after %s fails",
-    async (method) => {
-      const deletion = deferred<void>();
-      const oldRead = deferred<{ status: number; body: { error: string } }>();
-      let deleting = false;
-      let reads = 0;
-      const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
-      installFetch(async (url, init) => {
-        if (url.startsWith("/api/bootstrap"))
-          return {
-            body: bootstrapPayload({
-              snapshot: activeSnapshot(),
-              preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s1", "s2"] },
+              preferences: { ...DEFAULT_PREFS, hiddenSessionIds: targets },
             }),
           };
         if (url.startsWith("/api/snapshot")) {
@@ -264,54 +138,79 @@ describe("session deletion ownership", () => {
           (url === "/api/sessions/s1" && init.method === "DELETE") ||
           url === "/api/sessions/clear-hidden"
         ) {
-          deleting = true;
+          requested.resolve();
           await deletion.promise;
-          return method === "delete"
-            ? { status: 500, body: { error: "Trash unavailable" } }
-            : {
-                body: {
-                  deleted: [{ sessionId: "s2", disposition: "trashed" }],
-                  failure: { sessionId: "s1", message: "Trash unavailable" },
-                },
-              };
+          if (result === "refused")
+            return { status: 500, body: { error: "Trash unavailable" } };
+          const sessionId = result === "partial" ? "s2" : "s1";
+          sessions = sessions.filter((row) => row.id !== sessionId);
+          const deleted = { sessionId, disposition: "trashed" };
+          if (result === "partial")
+            return {
+              body: {
+                deleted: [deleted],
+                failure: { sessionId: "s1", message: "Trash unavailable" },
+              },
+            };
+          return {
+            body: method === "clear" ? { deleted: [deleted] } : deleted,
+          };
         }
         if (url.startsWith("/api/sessions/by-id"))
-          return { body: { sessions: rows } };
+          return { body: { sessions } };
         if (url.startsWith("/api/sessions"))
-          return { body: sessionPage(rows, rows.length) };
+          return { body: sessionPage(sessions, sessions.length) };
         return baseRoutes(url, init);
       });
+
       const { store } = await initStore();
-      await vi.waitFor(() => {
-        expect(store.getState().sessions).toHaveLength(2);
+      await vi.waitFor(() =>
         expect(store.getState()).toMatchObject({
+          sessions,
           sessionListLoading: false,
           sessionListHydrating: false,
-        });
-      });
+        }),
+      );
       const refreshing = store.refreshSession();
       await vi.waitFor(() => expect(reads).toBe(1));
       const removing =
-        method === "delete"
-          ? store.deleteSession("s1")
-          : store.clearHiddenSessions(["s1", "s2"]);
-      await vi.waitFor(() => expect(deleting).toBe(true));
-      oldRead.resolve({
-        status: 409,
-        body: { error: "That session is being deleted" },
-      });
-      await refreshing;
-      expect(store.getState().error).toBeNull();
+        method === "clear"
+          ? store.clearHiddenSessions(targets)
+          : store.deleteSession("s1");
+      await requested.promise;
       await store.refreshSession();
       expect(reads).toBe(1);
+
+      const rejectOldRead = () =>
+        oldRead.resolve({
+          status: 409,
+          body: { error: "That session is being deleted" },
+        });
+      if (result !== "committed") {
+        rejectOldRead();
+        await refreshing;
+        expect(store.getState().error).toBeNull();
+      }
       deletion.resolve();
       await removing;
-      await vi.waitFor(() => expect(reads).toBe(2));
-      expect(store.getState()).toMatchObject({
-        sessionId: "s1",
-        error: null,
-        sessionDeleteError: expect.stringContaining("Trash unavailable"),
-      });
+      if (result === "committed") {
+        rejectOldRead();
+        await refreshing;
+        expect(store.getState()).toMatchObject({
+          sessionId: null,
+          error: null,
+        });
+        expect(
+          store.getState().notices.every((notice) => notice.kind === "info"),
+        ).toBe(true);
+      } else {
+        await vi.waitFor(() => expect(reads).toBe(2));
+        expect(store.getState()).toMatchObject({
+          sessionId: "s1",
+          error: null,
+          sessionDeleteError: expect.stringContaining("Trash unavailable"),
+        });
+      }
     },
   );
 
@@ -394,150 +293,79 @@ describe("session deletion ownership", () => {
     expect(deleteCalled).toBe(true);
   });
 
-  it("preserves a newer setting when deletion returns an older preference snapshot", async () => {
-    const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
-    const { promise: deleteGate, resolve: releaseDelete } = deferred<void>();
-    const { promise: started, resolve: deleteStarted } = deferred<void>();
-    const patches: Record<string, unknown>[] = [];
-    let deleted = false;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot(),
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] },
-          }),
-        };
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        const patch = jsonBody(init);
-        patches.push(patch);
-        return { body: { ...DEFAULT_PREFS, ...patch } };
-      }
-      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
-        deleteStarted();
-        await deleteGate;
-        deleted = true;
-        return {
-          body: {
-            sessionId: "s2",
-            disposition: "trashed",
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: [] },
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions")) {
-        const sessions = deleted ? rows.slice(0, 1) : rows;
-        return {
-          body: sessionPage(sessions, sessions.length),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+  it.each(["delete", "clear"] as const)(
+    "reconciles %s without discarding a newer setting or the other session's draft",
+    async (method) => {
+      const active = activeSnapshot({ sessionId: "s1" });
+      active.sessionStatuses.s2 = { runState: "idle", indicator: "completed" };
+      const rows = [sessionSummary({ id: "s1" }), sessionSummary({ id: "s2" })];
+      const initial = {
+        ...DEFAULT_PREFS,
+        pinnedSessionIds: ["s2"],
+        hiddenSessionIds: ["s2"],
+      };
+      const deletion = deferred<void>();
+      const requested = deferred<void>();
+      const patches: Record<string, unknown>[] = [];
+      let deleted = false;
+      installFetch(async (url, init) => {
+        if (url.startsWith("/api/bootstrap"))
+          return {
+            body: bootstrapPayload({ snapshot: active, preferences: initial }),
+          };
+        if (url.startsWith("/api/preferences") && init.method === "PATCH") {
+          const patch = jsonBody(init);
+          patches.push(patch);
+          return { body: { ...initial, ...patch } };
+        }
+        if (
+          (url === "/api/sessions/s2" && init.method === "DELETE") ||
+          url === "/api/sessions/clear-hidden"
+        ) {
+          requested.resolve();
+          await deletion.promise;
+          deleted = true;
+          const outcome = { sessionId: "s2", disposition: "trashed" };
+          return {
+            body: {
+              ...(method === "clear" ? { deleted: [outcome] } : outcome),
+              preferences: DEFAULT_PREFS,
+            },
+          };
+        }
+        if (url.startsWith("/api/sessions/by-id"))
+          return { body: { sessions: deleted ? [] : [rows[1]] } };
+        if (url.startsWith("/api/sessions")) {
+          const sessions = deleted ? rows.slice(0, 1) : rows;
+          return { body: sessionPage(sessions, sessions.length) };
+        }
+        return baseRoutes(url, init);
+      });
+      const { store } = await initStore();
+      await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(2));
+      setSessionDraft("s1", "keep this draft");
+      setSessionDraft("s2", "deleted draft");
 
-    const deleting = store.deleteSession("s2");
-    await started;
-    store.setTheme("dark");
-    store.toggleSessionPin("s1");
-    expect(store.getState().prefs.pinnedSessionIds).toEqual([]);
-    await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
-    expect(patches.some((patch) => "pinnedSessionIds" in patch)).toBe(false);
-    releaseDelete();
-
-    await expect(deleting).resolves.toBe("trashed");
-    expect(store.getState().prefs).toMatchObject({
-      theme: "dark",
-      hiddenSessionIds: [],
-    });
-  });
-
-  it("preserves a newer setting when clearing Hidden returns an older preference snapshot", async () => {
-    const row = sessionSummary({ id: "s2" });
-    const { promise: clearGate, resolve: releaseClear } = deferred<void>();
-    const { promise: started, resolve: clearStarted } = deferred<void>();
-    const patches: Record<string, unknown>[] = [];
-    let deleted = false;
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot(),
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] },
-          }),
-        };
-      if (url.startsWith("/api/preferences") && init.method === "PATCH") {
-        const patch = jsonBody(init);
-        patches.push(patch);
-        return { body: { ...DEFAULT_PREFS, ...patch } };
-      }
-      if (url.startsWith("/api/sessions/clear-hidden")) {
-        clearStarted();
-        await clearGate;
-        deleted = true;
-        return {
-          body: {
-            deleted: [{ sessionId: "s2", disposition: "trashed" }],
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: [] },
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions")) {
-        const sessions = deleted ? [] : [row];
-        return {
-          body: sessionPage(sessions, sessions.length),
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(1));
-
-    const clearing = store.clearHiddenSessions(["s2"]);
-    await started;
-    store.setTheme("dark");
-    await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
-    releaseClear();
-
-    await expect(clearing).resolves.toMatchObject({
-      deleted: [{ sessionId: "s2", disposition: "trashed" }],
-    });
-    expect(store.getState().prefs).toMatchObject({
-      theme: "dark",
-      hiddenSessionIds: [],
-    });
-  });
-
-  it("keeps local session state intact when deletion is refused", async () => {
-    const row = sessionSummary({ id: "s2", title: "Archived" });
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot(),
-            preferences: { ...DEFAULT_PREFS, hiddenSessionIds: ["s2"] },
-          }),
-        };
-      if (url.startsWith("/api/sessions/s2") && init.method === "DELETE") {
-        return { status: 409, body: { error: "Session is still running" } };
-      }
-      if (url.startsWith("/api/sessions/by-id"))
-        return { body: { sessions: [row] } };
-      if (url.startsWith("/api/sessions"))
-        return { body: sessionPage([row], 1) };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(1));
-    setSessionDraft("s2", "keep me");
-
-    await expect(store.deleteSession("s2")).resolves.toBeNull();
-    expect(store.getState().sessions).toHaveLength(1);
-    expect(store.getState().prefs.hiddenSessionIds).toEqual(["s2"]);
-    expect(sessionDraft("s2")).toBe("keep me");
-    expect(store.getState().error).toBeNull();
-    expect(store.getState().sessionDeleteError).toBe(
-      "Session is still running",
-    );
-  });
+      const removing =
+        method === "clear"
+          ? store.clearHiddenSessions(["s2"])
+          : store.deleteSession("s2");
+      await requested.promise;
+      store.setTheme("dark");
+      store.toggleSessionPin("s1");
+      await vi.waitFor(() => expect(patches).toContainEqual({ theme: "dark" }));
+      expect(patches.some((patch) => "pinnedSessionIds" in patch)).toBe(false);
+      deletion.resolve();
+      await removing;
+      expect(store.getState().sessions.map(({ id }) => id)).toEqual(["s1"]);
+      expect(store.getState().sessionStatuses).not.toHaveProperty("s2");
+      expect(store.getState().prefs).toMatchObject({
+        theme: "dark",
+        pinnedSessionIds: [],
+        hiddenSessionIds: [],
+      });
+      expect(sessionDraft("s1")).toBe("keep this draft");
+      expect(sessionDraft("s2")).toBe("");
+    },
+  );
 });

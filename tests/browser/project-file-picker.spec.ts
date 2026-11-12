@@ -15,12 +15,8 @@ for (const touch of [false, true]) {
       page,
     }) => {
       await pairedPage(page);
-      if (touch)
-        await page.getByRole("button", { name: "Toggle navigation" }).tap();
-      await page
-        .locator(".nav__row-main")
-        .filter({ hasText: "Review extension event lifecycle" })
-        .click();
+      await openFixtureSession(page, /Review extension event lifecycle/);
+      await page.evaluate(() => document.fonts.ready);
       const trigger = page.getByRole("button", {
         name: "Add project files",
         exact: true,
@@ -43,39 +39,29 @@ for (const touch of [false, true]) {
       );
       expect(bounds.x).toBeGreaterThanOrEqual(16);
       expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewport.width - 16);
-      if (!touch) expect(Math.abs(bounds.x - anchor.x)).toBeLessThan(1);
+      if (!touch) {
+        const left = Math.min(anchor.x, viewport.width - 16 - bounds.width);
+        expect(Math.abs(bounds.x - left)).toBeLessThan(1);
+      }
 
       if (!touch) {
         const hovered = list.getByRole("option").nth(1);
-        const keyboardHighlight = await list
-          .locator(".picker__row--active")
-          .evaluate((el) => getComputedStyle(el).backgroundColor);
         await hovered.hover();
-        await expect(menu.locator(".picker__row--active")).toHaveCount(0);
-        await expect(hovered).toHaveCSS("background-color", keyboardHighlight);
-        await page.mouse.move(viewport.width - 8, 400);
-        await expect(hovered).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-        await expect(search).toBeFocused();
-        await expect(menu).toBeVisible();
-        await hovered.hover();
+        await expect(search).not.toHaveAttribute("aria-activedescendant", /.+/);
         await search.press("ArrowDown");
-        await expect(hovered).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-        await expect(list.getByRole("option").nth(2)).toHaveClass(
-          /picker__row--active/,
-        );
-        await page.mouse.move(viewport.width - 8, 400);
-        await expect(list.getByRole("option").nth(2)).toHaveClass(
-          /picker__row--active/,
+        await expect(search).toHaveAttribute(
+          "aria-activedescendant",
+          (await list.getByRole("option").nth(2).getAttribute("id"))!,
         );
       }
 
       if (touch) await search.tap();
       await expect(search).toBeFocused();
-      await search.press("ArrowUp");
-      await search.press("ArrowUp");
-      await search.press("ArrowUp");
+      for (let index = 0; index < 4; index++) await search.press("ArrowUp");
       const lastId = (await search.getAttribute("aria-activedescendant"))!;
-      await expect(page.locator(`[id="${lastId}"]`)).toBeInViewport();
+      const chosen = page.locator(`[id="${lastId}"]`);
+      await expect(chosen).toBeInViewport();
+      const path = (await chosen.getAttribute("title"))!;
       await expect
         .poll(() => list.evaluate((el) => el.scrollTop))
         .toBeGreaterThan(0);
@@ -94,6 +80,37 @@ for (const touch of [false, true]) {
       await hidden.press("Escape");
       await expect(menu).toHaveCount(0);
       await expect(trigger).toBeFocused();
+
+      await trigger.click();
+      const attach = page.getByRole("button", {
+        name: "Attach files",
+        description: "Attach, paste, or drop files",
+        exact: true,
+      });
+      await attach.focus();
+      await expect(menu).toHaveCount(0);
+      await expect(attach).toBeFocused();
+      if (touch) return;
+
+      const remove = page.getByRole("button", {
+        name: `Remove ${path}`,
+        exact: true,
+      });
+      const send = page.getByRole("button", {
+        name: "Send message",
+        exact: true,
+      });
+      await expect(remove).toBeVisible();
+      const accepted = page.waitForResponse(
+        (response) => response.url().endsWith("/api/prompt") && response.ok(),
+      );
+      await send.click();
+      expect((await accepted).request().postDataJSON()).toMatchObject({
+        message: "",
+        projectFiles: [path],
+        expectedViewId: expect.any(String),
+      });
+      await expect(remove).toHaveCount(0);
     });
   });
 }
@@ -143,5 +160,27 @@ test("keeps the project-file search field still while results refresh @cross-bro
   expect(Math.abs((await search.boundingBox())!.y - initialTop)).toBeLessThan(
     1,
   );
+  await expect(search).toBeFocused();
+
+  const second = options.nth(1);
+  const third = options.nth(2);
+  await search.press("ArrowDown");
+  await expect(search).toHaveAttribute(
+    "aria-activedescendant",
+    (await second.getAttribute("id"))!,
+  );
+  await search.press("End");
+  await expect(search).toHaveJSProperty("selectionStart", "candidate".length);
+  await search.press("Home");
+  await expect(search).toHaveJSProperty("selectionStart", 0);
+  await search.press("Enter");
+  await expect(second).toBeDisabled();
+  await search.press("ArrowDown");
+  await expect(search).toHaveAttribute(
+    "aria-activedescendant",
+    (await third.getAttribute("id"))!,
+  );
+  await search.press("Tab");
+  await expect(third).toBeDisabled();
   await expect(search).toBeFocused();
 });

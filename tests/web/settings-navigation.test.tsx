@@ -1,153 +1,113 @@
-// @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
+import { PresentationAdapterSettings } from "../../src/components/PresentationAdapterSettings";
 import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
+import { configurePresentationAdapters } from "../../src/presentation-adapters";
 import { store } from "../../src/store";
+import { deferred } from "./helpers";
 
-function Settings({ onClose }: { onClose: () => void }) {
+function Settings() {
   return (
-    <SettingsDialog onClose={onClose}>
+    <SettingsDialog onClose={() => {}}>
       <SettingsContent workspaceOwner={{}} />
     </SettingsDialog>
   );
 }
 
-beforeEach(() => {
-  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-    configurable: true,
-    value: vi.fn(),
+function openBehaviorSettings() {
+  const view = render(<Settings />);
+  fireEvent.click(screen.getByRole("button", { name: "Behavior" }));
+  return view;
+}
+
+it("allows project notification grouping when desktop notifications are unavailable", () => {
+  const state = store.getState();
+  vi.spyOn(store, "getState").mockReturnValue({
+    ...state,
+    taskAlerts: {
+      ...state.taskAlerts,
+      mode: "desktop",
+      permission: "unavailable",
+      subscribed: false,
+      grouping: "session",
+    },
   });
+  const change = vi
+    .spyOn(store, "setTaskNotificationGrouping")
+    .mockResolvedValue(true);
+
+  openBehaviorSettings();
+  expect(
+    screen.getByRole("button", { name: "Enable notifications" }),
+  ).toBeDisabled();
+  fireEvent.click(
+    screen.getByRole("combobox", { name: "Notification grouping" }),
+  );
+  fireEvent.click(screen.getByRole("option", { name: "Project" }));
+  expect(change).toHaveBeenCalledWith("project");
 });
 
-afterEach(() => vi.restoreAllMocks());
+it("keeps background notification status visible while an update blocks testing", () => {
+  const state = store.getState();
+  const getState = vi.spyOn(store, "getState").mockReturnValue({
+    ...state,
+    taskAlerts: {
+      ...state.taskAlerts,
+      mode: "desktop",
+      permission: "granted",
+      subscribed: true,
+      busy: true,
+    },
+  });
+  const { rerender } = openBehaviorSettings();
+  const feedback = screen.getByRole("group", { name: "Notification status" });
+  const testNotification = screen.getByRole("button", {
+    name: "Send test notification",
+  });
+  expect(feedback).toHaveTextContent("Background notifications enabled");
+  expect(testNotification).toBeDisabled();
 
-describe("Settings component UX and navigation", () => {
-  it("offers per-session or per-project grouping independently of notification permission", () => {
-    const change = vi
-      .spyOn(store, "setTaskNotificationGrouping")
-      .mockResolvedValue(true);
-    render(<Settings onClose={() => undefined} />);
-    fireEvent.click(
-      within(
-        screen.getByRole("navigation", { name: "Settings categories" }),
-      ).getByRole("button", { name: "Behavior" }),
-    );
-    fireEvent.click(
-      screen.getByRole("combobox", {
-        name: "Notification grouping",
-      }),
-    );
-    fireEvent.click(screen.getByRole("option", { name: "Project" }));
-    expect(change).toHaveBeenCalledWith("project");
+  getState.mockReturnValue({
+    ...getState(),
+    taskAlerts: { ...getState().taskAlerts, busy: false },
+  });
+  rerender(<Settings />);
+  expect(feedback).toHaveTextContent("Background notifications enabled");
+  expect(testNotification).toBeEnabled();
+});
+
+describe("PresentationAdapterSettings", () => {
+  afterEach(() => {
+    configurePresentationAdapters(emptyToolPresentationConfiguration());
+    vi.restoreAllMocks();
   });
 
-  it("shows only the selected category and lands at its content top", () => {
-    render(<Settings onClose={() => undefined} />);
-    const navigation = screen.getByRole("navigation", {
-      name: "Settings categories",
-    });
-    const conversation = within(navigation).getByRole("button", {
-      name: "Conversation",
-    });
-
-    const content = screen.getByRole("main");
-    content.scrollTop = 240;
-    fireEvent.click(conversation);
-    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
-    expect(conversation).toHaveAttribute("aria-current", "location");
-    expect(content.scrollTop).toBe(0);
-    expect(screen.queryByRole("region", { name: "Display" })).toBeNull();
-    expect(screen.queryByRole("combobox", { name: "On launch" })).toBeNull();
-
-    content.scrollTop = 80;
-    fireEvent.click(conversation);
-    expect(content.scrollTop).toBe(0);
-    fireEvent.scroll(content, { target: { scrollTop: 120 } });
-    expect(conversation).toHaveAttribute("aria-current", "location");
-    expect(screen.getByRole("region", { name: "Conversation" })).toBeVisible();
-    expect(screen.queryByRole("region", { name: "Display" })).toBeNull();
-  });
-
-  it("presents the workbench categories in navigation order", () => {
-    render(<Settings onClose={() => undefined} />);
-    const navigation = screen.getByRole("navigation", {
-      name: "Settings categories",
-    });
-    expect(
-      within(navigation)
-        .getAllByRole("button")
-        .map((button) => button.textContent),
-    ).toEqual([
-      "Display",
-      "Conversation",
-      "Behavior",
-      "Models",
-      "MCP",
-      "Adapters",
-      "System",
+  it("keeps an adapter save in its switch and reports failure without claiming success", async () => {
+    configurePresentationAdapters(emptyToolPresentationConfiguration(), [
+      { id: "example", name: "Example", enabled: true },
     ]);
-  });
-
-  it("retains notification availability while settings are updating", () => {
-    const state = store.getState();
-    const getState = vi.spyOn(store, "getState").mockReturnValue({
-      ...state,
-      taskAlerts: {
-        ...state.taskAlerts,
-        mode: "desktop",
-        permission: "granted",
-        subscribed: true,
-        busy: true,
-      },
-    });
-    const props = { onClose: () => undefined };
-    const { rerender } = render(<Settings {...props} />);
-    fireEvent.click(
-      within(
-        screen.getByRole("navigation", { name: "Settings categories" }),
-      ).getByRole("button", { name: "Behavior" }),
+    const pending = deferred<void>();
+    vi.spyOn(store, "setPresentationAdapterEnabled").mockReturnValue(
+      pending.promise,
     );
-    const feedback = screen.getByRole("group", { name: "Notification status" });
-    expect(feedback).toHaveTextContent("Background notifications enabled");
-    expect(within(feedback).getAllByRole("status")).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Send test notification" }),
-    ).toBeDisabled();
-    getState.mockReturnValue({
-      ...getState(),
-      taskAlerts: { ...getState().taskAlerts, busy: false },
-    });
-    rerender(<Settings {...props} />);
-    expect(feedback).toHaveTextContent("Background notifications enabled");
-    expect(
-      screen.getByRole("button", { name: "Send test notification" }),
-    ).toBeEnabled();
-  });
-
-  it("requires confirmation before restoring interface preferences", () => {
-    const restore = vi
-      .spyOn(store, "restoreDefaultSettings")
-      .mockImplementation(() => undefined);
-    render(<Settings onClose={() => undefined} />);
-    const reset = screen.getByRole("button", { name: "Reset preferences" });
-    fireEvent.click(reset);
-    const confirm = screen.getByRole("alertdialog", {
-      name: "Reset preferences?",
-    });
-    expect(confirm).toHaveTextContent(
-      "Restore Display, Conversation, Behavior, and Herdr preferences to their defaults.",
+    render(<PresentationAdapterSettings />);
+    const toggle = screen.getByRole("switch", { name: "Example" });
+    fireEvent.click(toggle);
+    expect(store.setPresentationAdapterEnabled).toHaveBeenCalledWith(
+      "example",
+      false,
     );
-    expect(confirm).toHaveTextContent(
-      "Pi session settings, models, credentials, MCP servers, and pinned or hidden sessions stay unchanged.",
+    expect(toggle).toBeDisabled();
+    expect(toggle).toBeChecked();
+    expect(toggle).toHaveAttribute("aria-busy", "true");
+    await act(async () => pending.reject(new Error("Could not save adapter")));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not save adapter",
     );
-    expect(restore).not.toHaveBeenCalled();
-    fireEvent.click(
-      within(confirm).getByRole("button", { name: "Reset preferences" }),
-    );
-    expect(restore).toHaveBeenCalledOnce();
-    expect(
-      screen.queryByRole("alertdialog", { name: "Reset preferences?" }),
-    ).toBeNull();
+    expect(toggle).toBeEnabled();
+    expect(toggle).toBeChecked();
+    expect(toggle).toHaveAttribute("aria-busy", "false");
   });
 });

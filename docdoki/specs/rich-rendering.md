@@ -15,8 +15,7 @@ covers:
   - tests/web/rich-text.test.tsx
   - tests/web/rich-text-streaming.test.tsx
   - tests/web/rich-text-worker.test.tsx
-  - tests/web/rich-text-parser-client.test.ts
-  - tests/browser/{tool-presentations,filesystem-files,custom-message,rich-text-layout}.spec.ts
+  - tests/browser/{rich-text-delimiters,filesystem-files,custom-message,rich-text-layout}.spec.ts
   - tests/fixtures/rich-text-benchmark.tsx
   - scripts/benchmark-rich-text.mjs
 ---

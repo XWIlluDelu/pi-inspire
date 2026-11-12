@@ -3,9 +3,9 @@ import {
   decodeTerminalInputFrame,
   encodeTerminalServerDataFrame,
   type TerminalClientControlMessage,
-  type TerminalDescriptor,
   type TerminalServerControlMessage,
 } from "../../../shared/terminal-contracts";
+import { terminalDescriptor } from "../../web/fixtures/terminal-descriptor";
 
 /** Own the complete terminal stream; never mix fixture output with a native PTY. */
 export async function terminalTransportFixture(
@@ -16,32 +16,16 @@ export async function terminalTransportFixture(
   const catalogEpoch = "browser-terminal-fixture";
   let revision = 1;
   const terminals = ids.map((id) => {
-    const descriptor: TerminalDescriptor = {
+    const descriptor = terminalDescriptor(id, cwd, {
       catalogEpoch,
       catalogRevision: revision,
-      id,
-      projectCwd: cwd,
-      title: id,
       titleSource: "user",
       profileId: "fixture",
       shellLabel: "Fixture",
-      currentCwd: cwd,
       currentCommand: "",
-      commandRunning: false,
-      status: "running",
-      exitCode: null,
-      signal: null,
-      cols: 80,
-      rows: 24,
-      resizeRevision: 0,
       outputEpoch: `output-${id}`,
-      firstOutputOffset: 0,
-      nextOutputOffset: 0,
       viewerCount: 0,
-      hasOwner: true,
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    };
+    });
     const sockets = new Set<WebSocketRoute>();
     const output: Buffer[] = [];
     const inputs: string[] = [];

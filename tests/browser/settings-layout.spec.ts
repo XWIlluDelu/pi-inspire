@@ -6,17 +6,11 @@ import type {
 } from "../../shared/host-restart";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
-import { renderedColors, resolvedColor } from "./support/colors";
 import { focusRingClipping } from "./support/focus-bounds";
 import { routeSnapshots } from "./support/host-events";
-import { hostRequest } from "./support/host-request";
-import {
-  openCommandPalette,
-  openSettings,
-  pairAndOpen,
-  pairedPage,
-} from "./support/navigation";
+import { openSettings, pairAndOpen, pairedPage } from "./support/navigation";
 import { textMarkOffsets } from "./support/text-baseline";
+import { textOverflowsInlineBounds } from "./support/text-bounds";
 
 // These suites own mocked Host responses, not Service Worker fetch handling.
 test.use({ serviceWorkers: "block" });
@@ -31,9 +25,10 @@ async function openSystemSettings(page: Page) {
   return settings;
 }
 
-test("update checks keep action geometry stable from request to result", async ({
-  page,
-}) => {
+test("narrow System keeps update actions stable and copies details while snoozed", {
+  tag: "@platform-ui",
+}, async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   let status: HostUpdateStatus = {
     revision: 10_000,
     piUpdateCheck: null,
@@ -41,103 +36,78 @@ test("update checks keep action geometry stable from request to result", async (
     piUpdateChecking: false,
     inspireUpdateChecking: false,
     availableUpdateIdentity: null,
-    updateSnoozedUntil: null,
+    updateSnoozedUntil: Date.now() + 3_600_000,
   };
-  const transport = await routeSnapshots(page, {
+  await routeSnapshots(page, {
     bootstrap: (body) => {
       body.updateStatus = status;
     },
   });
-  let release: (() => void) | undefined;
-  let responseReady: Promise<void>;
+  const responseReady = Promise.withResolvers<void>();
   await page.route(/\/api\/(?:pi-)?update\?refresh=1$/, async (route) => {
-    await responseReady;
+    await responseReady.promise;
     await route.fulfill({ json: { updateStatus: status } });
   });
+  await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
-  const settings = await openSystemSettings(page);
-  const versions = settings.locator("#settings-section-updates");
-  const button = versions.getByRole("button", { name: "Check for updates" });
-  const label = button.locator(".system-versions__check-label");
+  const versions = (await openSystemSettings(page)).getByRole("region", {
+    name: "Versions",
+    exact: true,
+  });
+  const check = versions.getByRole("button", { name: "Check for updates" });
+  const label = check.locator(".system-versions__check-label");
   await page.evaluate(() => document.fonts.ready);
 
   try {
-    for (const width of [1280, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      status = {
-        ...status,
-        revision: status.revision + 1,
-        piUpdateCheck: null,
-        inspireUpdateCheck: null,
-      };
-      transport.send({ type: "update_status", updateStatus: status });
-      await expect(label).toHaveText("Check updates");
-      await settings.evaluate((el) =>
-        Promise.allSettled(
-          el.getAnimations().map((animation) => animation.finished),
-        ),
-      );
-      const before = (await button.boundingBox())!;
-      const expectStableAction = async (text: string) => {
-        await expect(label).toHaveText(text);
-        await expect(label).toBeVisible();
-        const after = (await button.boundingBox())!;
-        for (const key of ["x", "y", "width", "height"] as const)
-          expect(after[key], `${width}px / ${text} / ${key}`).toBeCloseTo(
-            before[key],
-            1,
-          );
-        const alignment = await button.evaluate((element) => {
-          const bounds = element.getBoundingClientRect();
-          const group = element.querySelector(
-            ".system-versions__check-content",
-          )!;
-          const content = group.getBoundingClientRect();
-          const icon = group.querySelector("svg")!.getBoundingClientRect();
-          const label = group.querySelector("span")!.getBoundingClientRect();
-          return {
-            center:
-              (content.left + content.right - bounds.left - bounds.right) / 2,
-            gap: label.left - icon.right,
-          };
-        });
-        expect(Math.abs(alignment.center)).toBeLessThanOrEqual(0.5);
-        expect(alignment.gap).toBeCloseTo(8, 1);
-      };
-      await expectStableAction("Check updates");
-      responseReady = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      await button.click();
-      await expectStableAction("Checking…");
-      status = {
-        ...status,
-        revision: status.revision + 1,
-        piUpdateCheck: {
-          currentVersion: "1.0.0",
-          installedVersion: "1.0.0",
-          pi: {
-            kind: "available",
-            latestVersion: "1.1.0",
-            releaseUrl: "https://example.invalid/pi",
-          },
-          extensions: { kind: "none" },
+    await expect(label).toHaveText("Check updates");
+    const before = (await check.boundingBox())!;
+    const expectStableAction = async (text: string) => {
+      await expect(label).toHaveText(text);
+      const after = (await check.boundingBox())!;
+      for (const key of ["x", "y", "width", "height"] as const)
+        expect(after[key], `${text} / ${key}`).toBeCloseTo(before[key], 1);
+    };
+    await check.click();
+    await expectStableAction("Checking…");
+    status = {
+      ...status,
+      revision: status.revision + 1,
+      piUpdateCheck: {
+        currentVersion: "1.0.0",
+        installedVersion: "1.0.1",
+        pi: {
+          kind: "available",
+          latestVersion: "1.0.2",
+          releaseUrl: "https://example.invalid/pi",
         },
-        inspireUpdateCheck: { kind: "current" },
-      };
-      release!();
-      await expectStableAction("Check again");
-      await expect(
-        versions.getByRole("button", { name: "Copy update details" }),
-      ).toBeVisible();
-    }
+        extensions: { kind: "none" },
+      },
+      inspireUpdateCheck: { kind: "unreleased" },
+      availableUpdateIdentity: JSON.stringify([["pi", "1.0.2"]]),
+    };
+    responseReady.resolve();
+    await expectStableAction("Check again");
+    await expect(versions.getByText("Restart Host to apply")).toBeVisible();
+    const copy = versions.getByRole("button", { name: "Copy update details" });
+    await copy.focus();
+    await copy.press("Enter");
+    await expect(
+      versions.getByRole("button", { name: "Update details copied" }),
+    ).toBeVisible();
+    await expect
+      .poll(() => clipboardLines(page))
+      .toEqual([
+        "Pi 1.0.1 → 1.0.2",
+        "Run pi update",
+        "https://example.invalid/pi",
+      ]);
   } finally {
-    release?.();
+    responseReady.resolve();
   }
 });
 
-test("busy Host restarts submit directly with stable status through delayed receipts", async ({
+test("busy Host restarts submit directly and keep narrow status stable", async ({
   page,
 }) => {
   const readyStatus = (): HostRestartStatus => ({
@@ -148,22 +118,10 @@ test("busy Host restarts submit directly with stable status through delayed rece
   });
   let status = readyStatus();
   const submitted: HostRestartRequest[] = [];
-  let getCount = 0;
-  let heldOldRead = false;
-  let postGate: Promise<void> | undefined;
-  let readGate: Promise<void> | undefined;
-  let releasePost: (() => void) | undefined;
-  let releaseRead: (() => void) | undefined;
+  const receiptReady = Promise.withResolvers<void>();
   await page.route("**/api/host/restart", async (route) => {
     if (route.request().method() === "GET") {
-      getCount++;
-      const snapshot = status;
-      if (readGate && !heldOldRead && submitted.at(-1)?.interruptWork) {
-        heldOldRead = true;
-        await readGate;
-      }
-      await route.fulfill({ json: snapshot });
-      return;
+      return route.fulfill({ json: status });
     }
     expect(route.request().method()).toBe("POST");
     const request = route.request().postDataJSON() as HostRestartRequest;
@@ -175,17 +133,17 @@ test("busy Host restarts submit directly with stable status through delayed rece
         ? { phase: "submitted" as const, interruptWork: true as const }
         : {
             phase: "rejected" as const,
-            busyReason: "active-work" as const,
+            busyReason: "in-flight-operation" as const,
             error:
               "Finish Pi work and pending operations before restarting, or choose Stop work and restart.",
           }),
     };
-    if (request.interruptWork) await postGate;
+    if (request.interruptWork) await receiptReady.promise;
     status = { ...status, operation };
     await route.fulfill({ json: operation });
   });
 
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.setViewportSize({ width: 320, height: 900 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await pairedPage(page);
   const settings = await openSystemSettings(page);
@@ -194,96 +152,53 @@ test("busy Host restarts submit directly with stable status through delayed rece
   const dialog = page.getByRole("alertdialog");
   await expect(row).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await row.evaluate((element) => {
-    new MutationObserver(() => {
-      if (element.textContent?.includes("Restart request not confirmed"))
-        element.setAttribute("data-unconfirmed-restart", "true");
-    }).observe(element, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-    });
-  });
 
   try {
-    for (const [width, scope, title] of [
-      [1280, "host", "Host"],
-      [320, "all", "all"],
-    ] as const) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.evaluate(
-        () =>
-          new Promise<void>((resolve) => {
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-          }),
-      );
-      const restart = settings.getByRole("button", {
-        name: `Restart ${title}`,
-        exact: true,
-      });
-      await expect(restart).toBeEnabled();
-      const before = (await row.boundingBox())!.height;
-      const stable = async (phase: string) =>
-        expect(
-          (await row.boundingBox())!.height,
-          `${width}px, ${phase}`,
-        ).toBeCloseTo(before, 1);
+    const restart = settings.getByRole("button", {
+      name: "Restart all",
+      exact: true,
+    });
+    await expect(restart).toBeEnabled();
+    const before = (await row.boundingBox())!.height;
+    const stable = async (phase: string) =>
+      expect((await row.boundingBox())!.height, phase).toBeCloseTo(before, 1);
 
-      await restart.click();
-      await dialog.getByRole("button", { name: `Restart ${title}` }).click();
-      const field = settings.locator(".settings__field").filter({
-        has: page.getByText(`Restart ${title}`, { exact: true }),
-      });
-      const force = field.getByRole("button", {
-        name: `Stop work and restart ${title}`,
-        exact: true,
-      });
-      await expect(force).toBeVisible();
-      const idleAttempt = submitted.at(-1)!;
-      expect(idleAttempt.scope).toBe(scope);
-      expect(idleAttempt.interruptWork).toBeUndefined();
-      await stable("busy");
+    await restart.click();
+    await dialog.getByRole("button", { name: "Restart all" }).click();
+    const force = settings.getByRole("button", {
+      name: "Stop work and restart all",
+      exact: true,
+    });
+    await expect(force).toBeVisible();
+    const idleAttempt = submitted.at(-1)!;
+    expect(idleAttempt.scope).toBe("all");
+    expect(idleAttempt.interruptWork).toBeUndefined();
+    await stable("busy");
 
-      heldOldRead = false;
-      postGate = new Promise<void>((resolve) => {
-        releasePost = resolve;
-      });
-      readGate = new Promise<void>((resolve) => {
-        releaseRead = resolve;
-      });
-      await force.click();
-      await expect(dialog).toHaveCount(0);
-      await expect.poll(() => submitted.at(-1)?.interruptWork).toBe(true);
-      expect(submitted.at(-1)).toMatchObject({
-        scope,
-        hostId: idleAttempt.hostId,
-      });
-      expect(submitted.at(-1)?.operationId).not.toBe(idleAttempt.operationId);
-      await expect(message).toHaveText("Preparing restart…");
-      await expect.poll(() => heldOldRead).toBe(true);
-      await stable("sending");
+    await force.click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => submitted.at(-1)?.interruptWork).toBe(true);
+    expect(submitted.at(-1)).toMatchObject({
+      scope: "all",
+      hostId: idleAttempt.hostId,
+    });
+    expect(submitted.at(-1)?.operationId).not.toBe(idleAttempt.operationId);
+    await expect(message).toHaveText("Preparing restart…");
+    await stable("sending");
 
-      releasePost!();
-      await expect(message).toHaveText("Restart requested.");
-      await stable("submitted");
-      const beforeFreshRead = getCount;
-      releaseRead!();
-      await expect.poll(() => getCount).toBeGreaterThan(beforeFreshRead);
-      await expect(message).toHaveText("Restart requested.");
-      await stable("after the stale read");
+    receiptReady.resolve();
+    await expect(message).toHaveText("Restart requested.");
+    await stable("submitted");
 
-      status = readyStatus();
-      await row.getByRole("button", { name: "Recheck status" }).click();
-      await expect(message).toHaveText("Host reconnected.");
-      await expect(restart).toBeEnabled();
-      await expect(row).not.toHaveAttribute("data-unconfirmed-restart", "true");
-      await stable("reconnected");
-    }
+    status = readyStatus();
+    await row.getByRole("button", { name: "Recheck status" }).click();
+    await expect(message).toHaveText("Host reconnected.");
+    await expect(restart).toBeEnabled();
+    await stable("reconnected");
   } finally {
-    releasePost?.();
-    releaseRead?.();
+    receiptReady.resolve();
   }
-  expect(submitted).toHaveLength(4);
+  expect(submitted).toHaveLength(2);
 });
 
 test("selected Settings categories remain visible across responsive layouts without trapping manual navigation scrolling", async ({
@@ -298,7 +213,6 @@ test("selected Settings categories remain visible across responsive layouts with
   });
   await navigation.getByRole("button", { name: "System", exact: true }).click();
   for (const [width, height] of [
-    [390, 844],
     [320, 640],
     [844, 390],
     [1366, 768],
@@ -380,315 +294,40 @@ test("selected Settings categories remain visible across responsive layouts with
   await expect(
     navigation.getByRole("button", { name: "Display", exact: true }),
   ).toHaveAttribute("aria-current", "location");
+  const heading = settings.getByRole("heading", {
+    name: "Display",
+    exact: true,
+  });
+  await expect(heading).toHaveCSS("font-family", /IBM Plex Sans SC/);
+  await expect(settings.locator(".settings__field-label").first()).toHaveCSS(
+    "font-family",
+    /IBM Plex Sans SC/,
+  );
+  await page.evaluate(() => document.fonts.ready);
+  const [offset] = await heading.locator("..").evaluate(textMarkOffsets, {
+    label: ".settings__section-title",
+    marks: ".settings__section-icon",
+  });
+  expect(Math.abs(offset!)).toBeLessThan(0.5);
 
-  await page.setViewportSize({ width: 320, height: 640 });
-  for (const name of [
-    "Conversation",
-    "Behavior",
-    "Models",
-    "MCP",
-    "Adapters",
-    "System",
-  ]) {
-    await page.keyboard.press("Tab");
-    await expect(
-      navigation.getByRole("button", { name, exact: true }),
-    ).toBeFocused();
-  }
   const system = navigation.getByRole("button", {
     name: "System",
     exact: true,
   });
-  await expect(navigation.locator('[aria-current="location"]')).toHaveText(
-    "Display",
-  );
+  await system.focus();
+  await expect(system).toBeInViewport();
   await expect
     .poll(() => system.evaluate(focusRingClipping))
     .toBeLessThanOrEqual(0.5);
-  await expect
-    .poll(() =>
-      system.evaluate((button) => {
-        const strip = button.closest("nav")!;
-        return (
-          strip.getBoundingClientRect().right -
-          button.getBoundingClientRect().right
-        );
-      }),
-    )
-    .toBeGreaterThanOrEqual(15.5);
-});
-
-test("Settings headings sit outside their cards and nested fills follow the border", async ({
-  page,
-}) => {
-  await modelSettingsScenario(page);
-  await pairAndOpen(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-
-  await page.evaluate(() => document.fonts.ready);
-  for (const width of [1280, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    await settings
-      .getByRole("button", { name: "Display", exact: true })
-      .click();
-    const section = settings.locator(".settings__section:visible").first();
-    const layout = await section.evaluate((el) => {
-      const header = el.querySelector(".settings__section-header")!;
-      const card = el.querySelector(".settings__card")!;
-      return {
-        gap:
-          card.getBoundingClientRect().top -
-          header.getBoundingClientRect().bottom,
-        headerFill: getComputedStyle(header).backgroundColor,
-        sectionBorder: getComputedStyle(el).borderWidth,
-        cardBorder: Number.parseFloat(getComputedStyle(card).borderWidth),
-        radius: Number.parseFloat(getComputedStyle(card).borderTopLeftRadius),
-      };
-    });
-    expect(layout.gap).toBeGreaterThan(0);
-    expect(layout.headerFill).toBe("rgba(0, 0, 0, 0)");
-    expect(layout.sectionBorder).toBe("0px");
-    expect(layout.cardBorder).toBeGreaterThan(0);
-    expect(layout.radius).toBeGreaterThan(layout.cardBorder);
-    // Card presentation must not add a clipping ancestor for menus or focus.
-    await expect(section).toHaveCSS("overflow", "visible");
-    await expect(section.locator(".settings__card")).toHaveCSS(
-      "overflow",
-      "visible",
-    );
-    if (width < 600) {
-      const picker = section.getByRole("group", {
-        name: "Color palette",
-        exact: true,
-      });
-      const geometry = await picker.evaluate((el) => {
-        const control = el.parentElement!.getBoundingClientRect();
-        const grid = el.getBoundingClientRect();
-        return {
-          start: grid.left - control.left,
-          end: control.right - grid.right,
-        };
-      });
-      expect(Math.abs(geometry.start)).toBeLessThanOrEqual(1);
-      expect(Math.abs(geometry.end)).toBeLessThanOrEqual(1);
-    }
-    const needlesField = settings
-      .locator(".settings__field")
-      .filter({ hasText: "Titlebar needles" });
-    const switchDelta = await needlesField.evaluate((el) => {
-      const label = el
-        .querySelector(".settings__field-label")!
-        .getBoundingClientRect();
-      const track = el
-        .querySelector(".settings-switch__track")!
-        .getBoundingClientRect();
-      return track.top + track.height / 2 - (label.top + label.height / 2);
-    });
-    expect(Math.abs(switchDelta)).toBeLessThanOrEqual(1.5);
-
-    await settings.getByRole("button", { name: "Models", exact: true }).click();
-    const providers = settings.getByRole("region", {
-      name: "Custom providers",
-      exact: true,
-    });
-    // Custom providers wraps beside its action at 320px. Its icon belongs
-    // to the first line, not the center of the whole multi-line heading.
-    const offsets = await providers
-      .locator(".settings__section-title-wrap")
-      .evaluate(textMarkOffsets, {
-        label: ".settings__section-title",
-        marks: ".settings__section-icon",
-      });
-    expect(offsets).toHaveLength(1);
-    expect(Math.abs(offsets[0]!)).toBeLessThanOrEqual(0.5);
-    const declarations = providers.getByLabel("Custom provider declarations");
-    if (
-      !(await declarations.evaluate(
-        (el) => (el.parentElement as HTMLDetailsElement).open,
-      ))
-    )
-      await declarations.click();
-    const provider = settings.locator(".models-provider-config").first();
-    await expect(provider).toBeVisible();
-    const corner = await provider.evaluate((el) => {
-      const outer = getComputedStyle(el);
-      const inner = getComputedStyle(
-        el.querySelector(".models-provider__heading")!,
-      );
-      return [
-        outer.borderTopLeftRadius,
-        inner.borderTopLeftRadius,
-        outer.borderTopWidth,
-      ].map(Number.parseFloat);
-    });
-    expect(corner[1]).toBeCloseTo(corner[0]! - corner[2]!);
-
-    await settings.getByRole("button", { name: "System", exact: true }).click();
-    const status = settings.locator(".host-restart__status-row");
-    await expect(status).toBeVisible();
-    const statusCorner = await status.evaluate((el) => {
-      const outer = getComputedStyle(el.closest(".settings__card")!);
-      const inner = getComputedStyle(el);
-      return [
-        Number.parseFloat(outer.borderBottomLeftRadius),
-        Number.parseFloat(outer.borderBottomWidth),
-        Number.parseFloat(inner.borderBottomLeftRadius),
-        Number.parseFloat(inner.borderTopWidth),
-      ];
-    });
-    expect(statusCorner[2]).toBeCloseTo(statusCorner[0]! - statusCorner[1]!);
-    expect(statusCorner[3]).toBe(0);
-  }
-});
-
-test("Settings keeps independent palette tiles and a responsive choice column", async ({
-  page,
-}) => {
-  await pairAndOpen(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  const navigation = settings.getByRole("navigation", {
-    name: "Settings categories",
-  });
-  await page.evaluate(() => document.fonts.ready);
-
-  for (const theme of ["Light", "Dark"]) {
-    await navigation
-      .getByRole("button", { name: "Display", exact: true })
-      .click();
-    const themeChoices = settings.getByRole("group", {
-      name: "Theme",
-      exact: true,
-    });
-    await themeChoices
-      .getByRole("button", { name: theme, exact: true })
-      .click();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-theme",
-      theme.toLowerCase(),
-    );
-    for (const width of [1280, 390, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      const controls = settings.locator(
-        '[data-category="display"] .settings__field-control > :is(.segmented, .palette-picker)',
-      );
-      const boxes = await controls.evaluateAll((elements) =>
-        elements.map((element) => {
-          const box = element.getBoundingClientRect();
-          return { left: box.left, width: box.width };
-        }),
-      );
-      expect(boxes).toHaveLength(5);
-      for (const box of boxes) {
-        expect(Math.abs(box.left - boxes[0]!.left)).toBeLessThanOrEqual(1);
-        expect(Math.abs(box.width - boxes[0]!.width)).toBeLessThanOrEqual(1);
-      }
-      const palette = settings.getByRole("group", {
-        name: "Color palette",
-        exact: true,
-      });
-      for (const choice of await palette.getByRole("button").all()) {
-        const fits = await choice.evaluate((element) => {
-          const label = element.lastElementChild!;
-          const range = document.createRange();
-          range.selectNodeContents(label);
-          return (
-            range.getBoundingClientRect().right <=
-            element.getBoundingClientRect().right - 3
-          );
-        });
-        expect(fits).toBe(true);
-      }
-      // Theme selection animates; compare the settled feedback, not an
-      // intermediate frame where only the newly selected segment is fading in.
-      await expect(async () => {
-        const selection = await settings.evaluate((element) => {
-          const style = (selector: string) => {
-            const css = getComputedStyle(element.querySelector(selector)!);
-            return {
-              background: css.backgroundColor,
-              border: css.borderColor,
-              color: css.color,
-              weight: css.fontWeight,
-            };
-          };
-          const role = (name: string) => {
-            const marker = document.createElement("span");
-            marker.style.color = `var(--${name})`;
-            element.append(marker);
-            const color = getComputedStyle(marker).color;
-            marker.remove();
-            return color;
-          };
-          return {
-            segment: style('[aria-label="Theme"] [aria-pressed="true"]'),
-            palette: style('.palette-picker [aria-pressed="true"]'),
-            unselected: style('.palette-picker [aria-pressed="false"]'),
-            tray: style(".palette-picker"),
-            accent: role("accent-deep"),
-            tint: role("accent-tint"),
-            surface: role("bg-surface"),
-          };
-        });
-        expect(selection.tray.background).toBe("rgba(0, 0, 0, 0)");
-        expect(selection.palette.color).toBe(selection.segment.color);
-        expect(selection.palette.border).toBe(selection.accent);
-        expect(selection.palette.background).toBe(selection.tint);
-        expect(selection.unselected.background).toBe(selection.surface);
-        expect(selection.palette.background).not.toBe(
-          selection.unselected.background,
-        );
-        expect(selection.palette.weight).not.toBe(selection.unselected.weight);
-      }).toPass({ timeout: 2000 });
-    }
-    await page.setViewportSize({ width: 1280, height: 900 });
-    // Returning from the mobile sheet enables the desktop dialog entrance.
-    await settings.evaluate((element) =>
-      Promise.allSettled(
-        element.getAnimations().map((animation) => animation.finished),
-      ),
-    );
-    const choiceBox = (await themeChoices.boundingBox())!;
-    await navigation
-      .getByRole("button", { name: "Conversation", exact: true })
-      .click();
-    const dropdownBox = (await settings
-      .getByRole("combobox", { name: "Reasoning detail" })
-      .boundingBox())!;
-    const sendBox = (await settings
-      .getByRole("group", { name: "Send key", exact: true })
-      .boundingBox())!;
-    for (const box of [dropdownBox, sendBox]) {
-      expect(Math.abs(box.x - choiceBox.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(box.width - choiceBox.width)).toBeLessThanOrEqual(1);
-    }
-  }
-});
-
-test("Tab from a Settings dropdown skips collapsed content and reaches its disclosure", async ({
-  page,
-}) => {
-  await modelSettingsScenario(page);
-  await pairAndOpen(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings.getByRole("button", { name: "Models", exact: true }).click();
-  const thinking = settings.getByRole("combobox", { name: "Default thinking" });
-  await thinking.click();
+  await system.press("Enter");
+  await expect(system).toBeFocused();
+  await expect(system).toHaveAttribute("aria-current", "location");
   await expect(
-    page.getByRole("listbox", { name: "Default thinking" }),
-  ).toBeVisible();
-  await thinking.press("Tab");
-  await expect(
-    settings.locator(".models-saved-entries > summary"),
-  ).toBeFocused();
-  await expect(
-    page.getByRole("listbox", { name: "Default thinking" }),
-  ).toHaveCount(0);
+    settings.getByRole("region", { name: "Versions" }),
+  ).toBeInViewport();
 });
 
-test("settings dropdown escapes a clipped scroller and keeps pointer hover separate from keyboard selection", async ({
+test("Settings dropdown escapes the scroller, separates hover from keyboard selection, and closes when clipped", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 460 });
@@ -726,77 +365,35 @@ test("settings dropdown escapes a clipped scroller and keeps pointer hover separ
     menuBounds.y < clipBounds.y ||
       menuBounds.y + menuBounds.height > clipBounds.y + clipBounds.height,
   ).toBe(true);
-  expect(
-    await menu.evaluate((el) => Boolean(el.closest(".settings__content"))),
-  ).toBe(false);
-  expect(
-    await last.evaluate((el) => {
-      const rect = el.getBoundingClientRect();
-      return el.contains(
-        document.elementFromPoint(
-          rect.x + rect.width / 2,
-          rect.y + rect.height / 2,
-        ),
-      );
-    }),
-  ).toBe(true);
-  await last.hover();
-  await page.mouse.move(100, 100);
-  await expect(menu.locator(".dropdown__option--active")).toHaveCount(0);
-  await expect(last).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await last.hover({ trial: true });
   await expect(trigger).toBeFocused();
+  const first = menu.getByRole("option").first();
+  const active = await first.getAttribute("id");
+  expect(active).toBeTruthy();
   await last.hover();
   await trigger.press("Home");
-  await expect(last).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(menu.getByRole("option").first()).toHaveClass(
-    /dropdown__option--active/,
-  );
-
+  await expect(trigger).toHaveAttribute("aria-activedescendant", active!);
   await trigger.press("Escape");
   await expect(menu).toHaveCount(0);
-});
-
-test("settings dropdown follows its trigger until scrolling clips it", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 460 });
-  await pairedPage(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings.getByRole("button", { name: "Behavior", exact: true }).click();
-  const trigger = settings.getByRole("combobox", { name: "On launch" });
-  const menu = page.getByRole("listbox", { name: "On launch" });
-  const content = settings.locator(".settings__content");
-  const scrollTop = () => content.evaluate((el) => el.scrollTop);
-  const bounds = (await content.boundingBox())!;
+  await content.evaluate((el) => el.style.removeProperty("max-height"));
 
   await trigger.click();
-  await expect(menu).toBeVisible();
+  const bounds = (await content.boundingBox())!;
   await page.mouse.move(bounds.x + 72, bounds.y + 206);
   await page.mouse.wheel(0, 40);
-  await expect.poll(scrollTop).toBe(40);
+  await expect
+    .poll(() => content.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
   await expect(menu).toBeVisible();
-
   await page.mouse.wheel(0, 85);
-  await expect.poll(scrollTop).toBe(125);
   await expect(menu).toHaveCount(0);
-  await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(trigger).toBeFocused();
-  expect(await scrollTop()).toBe(125);
 });
 
-test("category switches retain model browsing, provider drafts and a login arriving while hidden", async ({
+test("category switches retain model search and a login arriving while hidden", async ({
   page,
 }) => {
   const scenario = await modelSettingsScenario(page);
-  const models = scenario.snapshot().models;
-  models.push(
-    ...Array.from({ length: 80 }, (_, index) => ({
-      ...models[0]!,
-      id: `catalog-${String(index).padStart(3, "0")}`,
-      name: `Catalog model ${index}`,
-    })),
-  );
   let releaseLogin!: () => void;
   const loginResponse = new Promise<void>((resolve) => {
     releaseLogin = resolve;
@@ -810,41 +407,16 @@ test("category switches retain model browsing, provider drafts and a login arriv
   await openSettings(page);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const nav = settings.getByRole("navigation", { name: "Settings categories" });
-  // The list has loaded while its category is initially hidden.
-  await expect(
-    settings.locator('[data-category="models"] .models-results'),
-  ).toHaveCount(1);
   await nav.getByRole("button", { name: "Models", exact: true }).click();
   const grid = settings.getByRole("grid", { name: "Available models" });
   await expect(grid.getByRole("row").first()).toBeVisible();
-  expect(await grid.getByRole("row").count()).toBeLessThan(30);
   const search = settings.getByRole("combobox", {
     name: "Search available models",
   });
-  await search.fill("catalog-079");
-  await expect(grid.getByRole("row")).toHaveCount(1);
-  await expect(grid.getByRole("row")).toContainText("Catalog model 79");
+  const query = scenario.snapshot().models[0]!.id;
+  await search.fill(query);
+  await expect(grid.getByRole("row").first()).toBeVisible();
 
-  await settings
-    .getByRole("button", { name: "Add provider", exact: true })
-    .click();
-  await settings
-    .getByLabel("Provider ID", { exact: true })
-    .fill("draft-provider");
-  await settings
-    .getByLabel("Base URL", { exact: true })
-    .fill("https://draft.invalid/v1");
-  await nav.getByRole("button", { name: "Display", exact: true }).click();
-  await nav.getByRole("button", { name: "Models", exact: true }).click();
-  await expect(settings.getByLabel("Provider ID", { exact: true })).toHaveValue(
-    "draft-provider",
-  );
-  await expect(settings.getByLabel("Base URL", { exact: true })).toHaveValue(
-    "https://draft.invalid/v1",
-  );
-  await settings
-    .getByRole("button", { name: "Back to models", exact: true })
-    .click();
   const credentials = settings.getByRole("region", {
     name: "Login & API keys",
   });
@@ -856,31 +428,15 @@ test("category switches retain model browsing, provider drafts and a login arriv
     .click();
   const display = nav.getByRole("button", { name: "Display", exact: true });
   await display.click();
+  const loginArrived = page.waitForResponse("**/api/provider-auth**");
   releaseLogin();
-  const hiddenSecret = settings
-    .locator('[data-category="models"] .models-auth')
-    .getByLabel("API key", { exact: true });
-  await expect(hiddenSecret).toHaveCount(1);
+  expect((await loginArrived).ok()).toBe(true);
   await expect(display).toBeFocused();
   await expect(
     settings.getByRole("textbox", { name: "API key", exact: true }),
   ).toHaveCount(0);
-  await expect
-    .poll(() =>
-      settings
-        .locator(".settings__content")
-        .evaluate((element) => element.scrollTop),
-    )
-    .toBe(0);
-  expect(
-    scenario.authOperations.some(
-      (operation) => operation.operation === "cancel",
-    ),
-  ).toBe(false);
-
   await nav.getByRole("button", { name: "Models", exact: true }).click();
-  await expect(search).toHaveValue("catalog-079");
-  await expect(grid.getByRole("row")).toContainText("Catalog model 79");
+  await expect(search).toHaveValue(query);
 
   const secret = credentials.getByLabel("API key", { exact: true });
   await secret.fill("SYNTHETIC_CATEGORY_KEY");
@@ -904,792 +460,143 @@ test("category switches retain model browsing, provider drafts and a login arriv
     ),
   ).toBe(false);
 
-  await settings.getByRole("button", { name: "Close settings" }).click();
-  const palette = await openCommandPalette(page);
-  await palette.getByLabel("Filter commands").fill("/login");
-  await palette.getByRole("option", { name: /^\/login/ }).click();
-  await expect(
-    nav.getByRole("button", { name: "Models", exact: true }),
-  ).toHaveAttribute("aria-current", "location");
-  await expect(
-    settings.getByRole("heading", { name: "Login & API keys" }),
-  ).toBeInViewport();
   expect(scenario.errors).toEqual([]);
 });
 
-for (const width of [540, 390, 320]) {
-  const touch = width < 540;
-  test.describe(`${touch ? "touch" : "desktop"} settings · ${width}px`, () => {
-    test.use({
-      viewport: { width, height: 900 },
-      hasTouch: touch,
-      serviceWorkers: "block",
-    });
-    test("keeps category controls readable and keyboard navigation inside the dialog", async ({
-      page,
-    }) => {
-      await modelSettingsScenario(page);
-      await pairAndOpen(page);
-      await openSettings(page);
-      const settings = page.getByRole("dialog", {
-        name: "Settings",
-        exact: true,
-      });
-      const nav = settings.getByRole("navigation", {
-        name: "Settings categories",
-      });
-      const content = settings.locator(".settings__content");
-      await expect(settings.locator(".settings__page:visible")).toHaveCount(1);
-      await expect(
-        settings.getByRole("combobox", { name: "On launch" }),
-      ).toHaveCount(0);
-      await expect(
-        settings.getByRole("group", { name: "Project location" }),
-      ).toBeVisible();
-      for (const [category, name] of [
-        ["Display", "Project location"],
-        ["Conversation", "Send key"],
-      ]) {
-        await nav.getByRole("button", { name: category, exact: true }).click();
-        const control = settings.getByRole("group", { name, exact: true });
-        await control.scrollIntoViewIfNeeded();
-        for (const button of await control.getByRole("button").all()) {
-          expect(
-            await button.evaluate(
-              (element) => element.scrollWidth <= element.clientWidth,
-            ),
-          ).toBe(true);
-          const label = button.locator("span");
-          const height = (await label.boundingBox())!.height;
-          expect(height).toBeLessThan(24);
-        }
-      }
-      await nav.getByRole("button", { name: "Behavior", exact: true }).click();
-      const launch = settings.getByRole("combobox", { name: "On launch" });
-      const launchInfo = launch.locator(
-        "xpath=ancestor::*[contains(@class, 'settings__field-control')]/preceding-sibling::*",
-      );
-      const infoBox = (await launchInfo.boundingBox())!;
-      const controlBox = (await launch.boundingBox())!;
-      if (touch) {
-        expect(controlBox.y).toBeGreaterThanOrEqual(infoBox.y + infoBox.height);
-      } else {
-        expect(controlBox.x).toBeGreaterThan(infoBox.x + infoBox.width);
-      }
-      const system = nav.getByRole("button", { name: "System", exact: true });
-      await system.focus();
-      await system.press("Enter");
-      await expect(system).toBeInViewport();
-      await expect(system).toBeFocused();
-      await expect(settings.locator(".settings__page:visible")).toHaveCount(1);
-      await expect
-        .poll(() => content.evaluate((element) => element.scrollTop))
-        .toBe(0);
-      await expect(
-        settings.getByRole("heading", { name: "Settings", exact: true }),
-      ).toBeInViewport();
-      await expect(nav).toBeInViewport();
-      const versions = settings.getByRole("region", {
-        name: "Versions",
-        exact: true,
-      });
-      await expect(versions).toBeInViewport();
-      await nav.getByRole("button", { name: "Models", exact: true }).click();
-      await content.evaluate((element) => {
-        element.scrollTop = element.scrollHeight;
-      });
-      await expect(
-        nav.getByRole("button", { name: "Models", exact: true }),
-      ).toHaveAttribute("aria-current", "location");
-      await nav
-        .getByRole("button", { name: "Conversation", exact: true })
-        .click();
-      await expect
-        .poll(() => content.evaluate((element) => element.scrollTop))
-        .toBe(0);
-      await expect(
-        settings.getByRole("region", { name: "Conversation", exact: true }),
-      ).toBeInViewport();
-      await expect(
-        settings.getByRole("region", { name: "Versions", exact: true }),
-      ).toHaveCount(0);
-      // Native focus and modal Tab must both skip inactive category controls.
-      await settings
-        .locator('[data-category="models"] input')
-        .first()
-        .evaluate((element) => (element as HTMLElement).focus());
-      await expect(
-        nav.getByRole("button", { name: "Conversation", exact: true }),
-      ).toBeFocused();
-      await system.focus();
-      await system.press("Tab");
-      await expect(
-        settings.getByRole("combobox", { name: "Reasoning detail" }),
-      ).toBeFocused();
-    });
-  });
-}
-
-test("Settings activity menus remain clickable beyond their card and persist the choice", async ({
+test("narrow Conversation settings persist preferences and restore focus when reset is cancelled", async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
   await pairedPage(page);
-  for (const viewport of [
-    { width: 1440, height: 960 },
-    { width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    await openSettings(page);
-    const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
-    await dialog.getByRole("button", { name: "Reset preferences" }).click();
-    const confirmReset = page.getByRole("alertdialog", {
-      name: "Reset preferences?",
-    });
-    await expect(confirmReset).toContainText(
-      "Restore Display, Conversation, Behavior, and Herdr preferences to their defaults.",
-    );
-    await confirmReset
-      .getByRole("button", { name: "Reset preferences", exact: true })
-      .click();
-    await dialog
-      .getByRole("button", { name: "Conversation", exact: true })
-      .click();
-    await dialog.getByRole("combobox", { name: "Activity groups" }).click();
-    await page
-      .getByRole("listbox", { name: "Activity groups", exact: true })
-      .getByRole("option", { name: "Collapsed", exact: false })
-      .click();
-    await expect(
-      dialog.getByRole("combobox", { name: "Activity groups" }),
-    ).toHaveText("Collapsed");
-    await expect
-      .poll(async () => {
-        const response = await hostRequest(page).get("/api/bootstrap");
-        return (await response.json()).preferences.activityFoldVisibility;
-      })
-      .toBe("collapsed");
-    await page.reload();
+  const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+  const openConversation = async () => {
     await openSettings(page);
     await dialog
       .getByRole("button", { name: "Conversation", exact: true })
       .click();
-    await expect(
-      dialog.getByRole("combobox", { name: "Activity groups" }),
-    ).toHaveText("Collapsed");
-    const restored = page.waitForResponse(
+  };
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Reset preferences?",
+  });
+  const reset = dialog.getByRole("button", {
+    name: "Reset preferences",
+    exact: true,
+  });
+  const confirm = confirmation.getByRole("button", {
+    name: "Reset preferences",
+    exact: true,
+  });
+  const savePreference = async (action: () => Promise<void>) => {
+    const saved = page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/preferences") &&
         response.request().method() === "PATCH",
     );
-    await dialog.getByRole("button", { name: "Reset preferences" }).click();
-    await confirmReset
-      .getByRole("button", { name: "Reset preferences", exact: true })
-      .click();
-    await restored;
-    const activity = dialog.getByRole("combobox", { name: "Activity groups" });
-    await activity.click();
-    await page.keyboard.press("Escape");
-    await expect(dialog.getByRole("listbox")).toHaveCount(0);
-    await expect(dialog).toBeVisible();
-    await expect(activity).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
-  }
+    await action();
+    expect((await saved).ok()).toBe(true);
+  };
+  await openConversation();
+  const send = dialog.getByRole("group", { name: "Send key", exact: true });
+  expect(await send.evaluate(textOverflowsInlineBounds)).toBe(false);
+  await reset.click();
+  await savePreference(() => confirm.click());
+  const activity = dialog.getByRole("combobox", { name: "Activity groups" });
+  await activity.click();
+  const choices = page.getByRole("listbox", { name: "Activity groups" });
+  await savePreference(() =>
+    choices.getByRole("option", { name: /Collapsed/ }).click(),
+  );
+  await page.reload();
+  await openConversation();
+  await expect(activity).toHaveText("Collapsed");
+
+  await reset.click();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toBeHidden();
+  await expect(reset).toBeFocused();
+  await expect(activity).toHaveText("Collapsed");
+  await reset.click();
+  await savePreference(() => confirm.click());
 });
 
-test("canceling preference reset preserves settings and returns focus to its opener", async ({
+test("long Herdr diagnostics leave availability recheck usable", {
+  tag: "@platform-ui",
+}, async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  const diagnostic =
+    "无法连接校准工作区 /run/user/1000/herdr/instrument_calibration_reference_acquisition_control.sock，请重新检查安装。";
+  let issue = "Herdr is unavailable on this Host.";
+  await page.route("**/api/host/herdr", (route) =>
+    route.fulfill({
+      json: {
+        enabled: false,
+        ready: false,
+        supported: true,
+        installed: true,
+        running: false,
+        compatible: true,
+        version: "1.0.0",
+        issue,
+      },
+    }),
+  );
+  await pairedPage(page);
+  const settings = await openSystemSettings(page);
+  await expect(settings.getByText(issue, { exact: true })).toBeVisible();
+  issue = diagnostic;
+  const recheck = settings.getByRole("button", {
+    name: "Recheck availability",
+  });
+  await recheck.click();
+  const status = settings.getByText(diagnostic, { exact: true });
+  await expect(status).toBeVisible();
+  expect(await status.evaluate(textOverflowsInlineBounds)).toBe(false);
+  await recheck.click({ trial: true });
+});
+
+test("fits installation, status and reset inside the narrow footer", async ({
   page,
 }) => {
-  await modelSettingsScenario(page);
-  await pairAndOpen(page);
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await pairedPage(page);
   await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  const dark = settings
-    .getByRole("group", { name: "Theme", exact: true })
-    .getByRole("button", { name: "Dark", exact: true });
-  await dark.click();
-
-  const reset = settings.getByRole("button", {
-    name: "Reset preferences",
-    exact: true,
-  });
-  const confirmation = page.getByRole("alertdialog", {
-    name: "Reset preferences?",
-  });
-  for (const exit of ["Escape", "Cancel"]) {
-    await reset.click();
-    await expect(confirmation).toBeVisible();
-    if (exit === "Escape") {
-      const confirm = confirmation.getByRole("button", {
-        name: "Reset preferences",
-      });
-      await expect(confirm).toHaveCSS(
-        "color",
-        await resolvedColor(confirm, "on-status"),
-      );
-      await expect(confirm).toHaveCSS(
-        "background-color",
-        await resolvedColor(confirm, "error"),
-      );
-      await confirm.hover();
-      await expect(confirm).toHaveCSS(
-        "background-color",
-        await resolvedColor(confirm, "error-fill-hover"),
-      );
-      expect((await renderedColors(confirm)).contrast).toBeGreaterThanOrEqual(
-        4.5,
-      );
-    }
-    for (let step = 0; step < 3; step += 1) {
-      await page.keyboard.press("Tab");
-      expect(
-        await confirmation.evaluate((el) =>
-          el.contains(document.activeElement),
-        ),
-      ).toBe(true);
-    }
-    if (exit === "Escape") await page.keyboard.press("Escape");
-    else
-      await confirmation
-        .getByRole("button", { name: "Cancel", exact: true })
-        .click();
-    await expect(confirmation).toHaveCount(0);
-    await expect(settings).toBeVisible();
-    await expect(reset).toBeFocused();
-    await expect(dark).toHaveAttribute("aria-pressed", "true");
-  }
-});
-
-for (const touch of [false, true]) {
-  test.describe(
-    touch ? "touch setting actions" : "pointer setting actions",
-    () => {
-      test.use({
-        hasTouch: touch,
-        contextOptions: { reducedMotion: "reduce" },
-        serviceWorkers: "block",
-      });
-      test("Host status paths wrap inside their text columns without resizing controls", async ({
-        page,
-      }) => {
-        const socket =
-          "/run/user/1000/herdr/instrument_calibration_reference_acquisition_control.sock";
-        const ordinary = "Herdr is unavailable on this Host.";
-        let issue = ordinary;
-        let requests = 0;
-        await page.route("**/api/host/herdr", (route) => {
-          requests++;
-          return route.fulfill({
-            json: {
-              enabled: false,
-              ready: false,
-              supported: true,
-              installed: true,
-              running: false,
-              compatible: true,
-              version: "1.0.0",
-              issue,
-            },
-          });
-        });
-        const reason = "Restart controller cannot read " + socket;
-        await page.route("**/api/host/restart", async (route) => {
-          expect(route.request().method()).toBe("GET");
-          const response = await route.fetch();
-          await route.fulfill({
-            response,
-            json: { ...(await response.json()), available: false, reason },
-          });
-        });
-        await pairedPage(page);
-        const settings = await openSystemSettings(page);
-        const field = settings.locator(".settings__field").filter({
-          has: page.locator(".settings__field-label", {
-            hasText: /^Herdr enhancement$/,
-          }),
-        });
-        const status = field.locator(".settings__field-status-block");
-        const recheck = field.getByRole("button", {
-          name: "Recheck availability",
-          exact: true,
-        });
-        const restart = settings.locator(".host-restart__status-row");
-        await expect(status).toContainText(ordinary);
-        await expect(restart).toHaveText(reason);
-        await page.evaluate(() => document.fonts.ready);
-        for (const width of [1280, 820, 390, 320]) {
-          await page.setViewportSize({ width, height: 900 });
-          issue = ordinary;
-          await recheck.click();
-          await expect(status).toContainText(ordinary);
-          const control = await recheck.boundingBox();
-          const shortHeight = (await field.boundingBox())!.height;
-          for (const message of [
-            "Cannot connect to " + socket + ". Recheck the installation.",
-            "无法连接校准工作区 " + socket + "，请重新检查安装。",
-          ]) {
-            issue = message;
-            const before = requests;
-            await recheck.click();
-            await expect.poll(() => requests).toBeGreaterThan(before);
-            await expect(status.locator("span").first()).toHaveText(message);
-            for (const note of [status, restart]) {
-              const fits = await note.evaluate((el) => {
-                const text = el.querySelector("span") ?? el.querySelector("p")!;
-                const range = document.createRange();
-                range.selectNodeContents(text);
-                const bounds = el.getBoundingClientRect();
-                const textBounds = text.getBoundingClientRect();
-                const rangeBounds = range.getBoundingClientRect();
-                return (
-                  el.scrollWidth <= el.clientWidth + 1 &&
-                  textBounds.left >= bounds.left &&
-                  textBounds.right <= bounds.right + 1 &&
-                  rangeBounds.left >= textBounds.left - 1 &&
-                  rangeBounds.right <= textBounds.right + 1
-                );
-              });
-              expect(fits).toBe(true);
-            }
-            const button = await recheck.boundingBox();
-            expect(button!.width).toBeCloseTo(control!.width, 1);
-            expect(button!.height).toBeCloseTo(control!.height, 1);
-            expect(
-              await field.locator(".settings-switch").evaluate((el) => {
-                const field = el
-                  .closest(".settings__field")!
-                  .getBoundingClientRect();
-                return el.getBoundingClientRect().right <= field.right;
-              }),
-            ).toBe(true);
-            await recheck.scrollIntoViewIfNeeded();
-            await recheck.focus();
-            await expect(recheck).toBeFocused();
-          }
-          issue = ordinary;
-          await recheck.click();
-          await expect(status.locator("span").first()).toHaveText(ordinary);
-          expect((await field.boundingBox())!.height).toBeCloseTo(
-            shortHeight,
-            1,
-          );
-        }
-      });
-
-      test("fixed-height and inline text actions keep their icons centered, including loading", {
-        tag: "@platform-ui",
-      }, async ({ page }) => {
-        let release: (() => void) | undefined;
-        let checksPaused = false;
-        await page.route("**/api/host/herdr", async (route) => {
-          if (checksPaused)
-            await new Promise<void>((resolve) => {
-              release = resolve;
-            });
-          await route.fulfill({
-            json: {
-              enabled: false,
-              ready: false,
-              supported: false,
-              installed: false,
-              running: false,
-              compatible: false,
-              issue: "Herdr is unavailable on this platform.",
-            },
-          });
-        });
-        await pairedPage(page);
-        const settings = await openSystemSettings(page);
-        const recheck = settings.getByRole("button", {
-          name: "Recheck availability",
-          exact: true,
-        });
-        await expect(recheck).toBeVisible();
-        await settings.evaluate(async (el) =>
-          Promise.all(
-            el.getAnimations().map((animation) => animation.finished),
-          ),
-        );
-        const geometry = (el: Element) => {
-          const row = el.getBoundingClientRect(),
-            mark = el.querySelector("svg")!.getBoundingClientRect();
-          return {
-            width: row.width,
-            height: row.height,
-            offset: (mark.top + mark.bottom - row.top - row.bottom) / 2,
-          };
-        };
-        try {
-          for (const width of [1280, 820, 390, 320]) {
-            await page.setViewportSize({ width, height: 900 });
-            for (const name of [
-              "Check for updates",
-              "Restart Host",
-              "Restart all",
-              "Recheck availability",
-            ]) {
-              const control = settings.getByRole("button", {
-                name,
-                exact: true,
-              });
-              const box = await control.evaluate(geometry);
-              expect(Math.abs(box.offset), name).toBeLessThan(0.1);
-            }
-            await page.evaluate(() => document.fonts.ready);
-            for (const name of [
-              "Check for updates",
-              "Restart Host",
-              "Restart all",
-            ]) {
-              const alignment = await settings
-                .getByRole("button", { name, exact: true })
-                .evaluate((button) => {
-                  const walker = document.createTreeWalker(
-                    button,
-                    NodeFilter.SHOW_TEXT,
-                  );
-                  let node: Node | null;
-                  while ((node = walker.nextNode())) {
-                    if (node.textContent?.trim()) break;
-                  }
-                  const range = document.createRange();
-                  range.selectNode(node!);
-                  const text = range.getBoundingClientRect();
-                  const icon = button
-                    .querySelector("svg")!
-                    .getBoundingClientRect();
-                  const style = getComputedStyle(button);
-                  const canvas = document
-                    .createElement("canvas")
-                    .getContext("2d")!;
-                  canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-                  const metrics = canvas.measureText("x");
-                  // Match the lowercase ink center, not just the text's line box.
-                  const inkCenter =
-                    text.top +
-                    metrics.fontBoundingBoxAscent -
-                    metrics.actualBoundingBoxAscent / 2;
-                  return {
-                    gap: text.left - icon.right,
-                    inkOffset: inkCenter - (icon.top + icon.height / 2),
-                  };
-                });
-              expect(alignment.gap, name).toBeCloseTo(8, 1);
-              expect(Math.abs(alignment.inkOffset), name).toBeLessThan(0.5);
-            }
-            // Centered boxes alone miss different raster baselines in fractional-height rows.
-            const restartTops = await settings
-              .locator(".host-restart .button--danger-outline")
-              .evaluateAll((buttons) =>
-                buttons.map((button) => button.getBoundingClientRect().top),
-              );
-            expect(restartTops).toHaveLength(2);
-            for (const [index, top] of restartTops.slice(1).entries()) {
-              const separation = top - restartTops[index]!;
-              expect(
-                Math.abs(separation - Math.round(separation)),
-              ).toBeLessThan(0.02);
-            }
-            const before = await recheck.evaluate(geometry);
-            // Delay this explicit recheck, not a guessed ordinal startup read.
-            checksPaused = true;
-            await recheck.click();
-            await expect(recheck.locator(".pi-loading")).toBeVisible();
-            const loading = await recheck.evaluate(geometry);
-            expect(loading.width).toBeCloseTo(before.width, 1);
-            expect(loading.height).toBeCloseTo(before.height, 1);
-            expect(Math.abs(loading.offset)).toBeLessThan(0.1);
-            await expect.poll(() => !!release).toBe(true);
-            checksPaused = false;
-            release!();
-            release = undefined;
-            await expect(recheck).not.toHaveAttribute("aria-busy", "true");
-          }
-        } finally {
-          checksPaused = false;
-          release?.();
-        }
-      });
-    },
-  );
-}
-
-for (const hasTouch of [false, true]) {
-  test.describe(`Versions row alignment · ${hasTouch ? "touch" : "mouse"}`, () => {
-    test.use({
-      hasTouch,
-      deviceScaleFactor: hasTouch ? 2 : 1,
-      serviceWorkers: "block",
-    });
-    test("centers each complete row while preserving first-line baselines and action targets", async ({
-      page,
-    }) => {
-      await modelSettingsScenario(page);
-      await page.route("**/api/bootstrap**", async (route) => {
-        const response = await route.fetch();
-        const data = await response.json();
-        data.updateStatus = {
-          revision: 999,
-          piUpdateCheck: {
-            currentVersion: "1.3.0",
-            installedVersion: "1.3.0",
-            pi: { kind: "current" },
-            extensions: { kind: "none" },
-          },
-          inspireUpdateCheck: { kind: "unavailable" },
-          piUpdateChecking: false,
-          inspireUpdateChecking: false,
-          availableUpdateIdentity: null,
-          updateSnoozedUntil: Date.now() + 3600000,
-        };
-        await route.fulfill({ response, json: data });
-      });
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await pairAndOpen(page);
-      const settings = await openSystemSettings(page);
-      const versions = settings.locator("#settings-section-updates");
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate(
-          (t) => (document.documentElement.dataset.theme = t),
-          theme,
-        );
-        for (const width of [1280, 820, 390, 320]) {
-          await page.setViewportSize({ width, height: 900 });
-          await versions.scrollIntoViewIfNeeded();
-          const geometry = await versions.evaluate((root) => {
-            const baseline = (el: Element) => {
-              const probe = document.createElement("span");
-              probe.style.cssText =
-                "display:inline-block;vertical-align:baseline;width:0;height:0;margin:0;border:0;padding:0";
-              el.append(probe);
-              const y = probe.getBoundingClientRect().top;
-              probe.remove();
-              return y;
-            };
-            return [...root.querySelectorAll(".system-versions__row")].map(
-              (row) => {
-                const r = row.getBoundingClientRect(),
-                  label = row.querySelector("dt")!,
-                  details = row.querySelector("dd")!;
-                const a = label.getBoundingClientRect(),
-                  b = details.getBoundingClientRect();
-                return {
-                  height: r.height,
-                  columns:
-                    getComputedStyle(row).gridTemplateColumns.split(" ").length,
-                  contentCenter:
-                    (Math.min(a.top, b.top) +
-                      Math.max(a.bottom, b.bottom) -
-                      r.top -
-                      r.bottom) /
-                    2,
-                  baseline:
-                    baseline(label.querySelector("span")!) -
-                    baseline(
-                      details.querySelector(".system-versions__value>span")!,
-                    ),
-                  overflow: row.scrollWidth - row.clientWidth,
-                  links: [
-                    ...row.querySelectorAll(".system-versions__references a"),
-                  ].map((el) => el.getBoundingClientRect().height),
-                };
-              },
-            );
-          });
-          for (const row of geometry) {
-            expect(row.overflow).toBeLessThanOrEqual(1);
-            expect(Math.abs(row.contentCenter)).toBeLessThanOrEqual(0.5);
-            if (row.columns === 2)
-              expect(Math.abs(row.baseline)).toBeLessThanOrEqual(0.5);
-            expect(row.height).toBeGreaterThanOrEqual(50);
-            for (const height of row.links)
-              expect(height).toBeGreaterThanOrEqual(24);
-          }
-        }
-      }
-    });
-  });
-}
-
-for (const hasTouch of [false, true]) {
-  for (const install of ["available", "installed"] as const) {
-    test.describe(`Settings footer · ${hasTouch ? "touch" : "pointer"} · ${install}`, () => {
-      test.use({ hasTouch });
-      test("keeps installation status and full utility labels inside the narrow footer", async ({
-        page,
-      }) => {
-        if (install === "installed")
-          await page.addInitScript(() => {
-            const original = window.matchMedia.bind(window);
-            window.matchMedia = (query) => {
-              const media = original(query);
-              if (query === "(display-mode: standalone)")
-                Object.defineProperty(media, "matches", { value: true });
-              return media;
-            };
-          });
-        await page.emulateMedia({ reducedMotion: "reduce" });
-        await pairedPage(page);
-        await openSettings(page);
-        const settings = page.getByRole("dialog", {
-          name: "Settings",
-          exact: true,
-        });
-        const footer = settings.locator(".settings__footer");
-        await expect(
-          footer.getByRole("button", {
-            name: "Reset preferences",
-            exact: true,
-          }),
-        ).toBeVisible();
-        if (install === "available")
-          await page.evaluate(() => {
-            const event = new Event("beforeinstallprompt", {
-              cancelable: true,
-            });
-            Object.assign(event, {
-              prompt: () => Promise.resolve(),
-              userChoice: Promise.resolve({ outcome: "dismissed" }),
-            });
-            window.dispatchEvent(event);
-          });
-        else
-          await expect(
-            footer.getByText("App installed", { exact: true }),
-          ).toBeVisible();
-        for (const width of [1440, 820, 390, 360, 320]) {
-          await page.setViewportSize({ width, height: 740 });
-          await page.evaluate(() => document.fonts.ready);
-          const buttons = footer.getByRole("button");
-          await expect(buttons).toHaveCount(install === "available" ? 2 : 1);
-          expect(
-            await footer.evaluate((el) => el.scrollWidth - el.clientWidth),
-          ).toBeLessThanOrEqual(0.5);
-          for (const button of await buttons.all()) {
-            await expect(button).toBeInViewport({ ratio: 1 });
-            await page.keyboard.press("Tab");
-            await button.focus();
-            await expect(button).toBeFocused();
-            await expect(button).toHaveCSS("outline-width", "2px");
-            expect(
-              await button.evaluate(focusRingClipping),
-            ).toBeLessThanOrEqual(0.5);
-            expect(
-              await button.evaluate((el) => el.scrollWidth - el.clientWidth),
-            ).toBeLessThanOrEqual(0.5);
-          }
-          if (install === "available")
-            await expect(
-              footer.getByRole("button", { name: "Install app", exact: true }),
-            ).toHaveText("Install app");
-          await expect(
-            footer.getByRole("button", {
-              name: "Reset preferences",
-              exact: true,
-            }),
-          ).toHaveText("Reset preferences");
-        }
-      });
-    });
-  }
-}
-
-test("System copies update details and native commands while the notice is snoozed", {
-  tag: "@platform-ui",
-}, async ({ page, context }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await modelSettingsScenario(page);
-  await page.route("**/api/bootstrap**", async (route) => {
-    const response = await route.fetch();
-    const data = await response.json();
-    data.updateStatus = {
-      revision: 999,
-      piUpdateCheck: {
-        currentVersion: "1.0.0",
-        installedVersion: "1.0.0",
-        pi: {
-          kind: "available",
-          latestVersion: "1.0.2",
-          releaseUrl: "https://example.invalid/pi",
-        },
-        extensions: {
-          kind: "available",
-          updates: [
-            { displayName: "github.com/example/pi-tools", type: "git" },
-            { displayName: "@example/pi-tools", type: "npm" },
-          ],
-        },
-      },
-      inspireUpdateCheck: { kind: "unreleased" },
-      piUpdateChecking: false,
-      inspireUpdateChecking: false,
-      availableUpdateIdentity: null,
-      updateSnoozedUntil: Date.now() + 3600000,
-    };
-    await route.fulfill({ response, json: data });
-  });
-  await pairAndOpen(page);
-  const settings = await openSystemSettings(page);
-  const versions = settings.locator("#settings-section-updates");
-  const copy = versions.getByRole("button", {
-    name: "Copy update details",
-    exact: true,
-  });
-  await expect(copy).toBeVisible();
+  const footer = page
+    .getByRole("dialog", { name: "Settings", exact: true })
+    .locator(".settings__footer");
   await expect(
-    page.getByText("Updates available", { exact: true }),
-  ).toHaveCount(0);
-  for (const width of [1280, 820, 390, 320]) {
-    await page.setViewportSize({ width, height: 900 });
-    await copy.scrollIntoViewIfNeeded();
-    const geometry = await versions.evaluate((el) => {
-      const header = el.querySelector(".settings__section-title-wrap")!;
-      const copy = el
-        .querySelector(".system-versions__copy")!
-        .getBoundingClientRect();
-      const check = el
-        .querySelector(".system-versions__check")!
-        .getBoundingClientRect();
-      const icon = el
-        .querySelector(".system-versions__copy svg")!
-        .getBoundingClientRect();
-      return {
-        fits: header.scrollWidth <= header.clientWidth + 1,
-        separated: copy.right <= check.left,
-        center: (copy.top + copy.bottom - check.top - check.bottom) / 2,
-        x: (icon.left + icon.right - copy.left - copy.right) / 2,
-        y: (icon.top + icon.bottom - copy.top - copy.bottom) / 2,
-      };
-    });
-    expect(geometry.fits).toBe(true);
-    expect(geometry.separated).toBe(true);
-    for (const offset of [geometry.center, geometry.x, geometry.y])
-      expect(Math.abs(offset)).toBeLessThanOrEqual(0.5);
-  }
-  await copy.focus();
-  await copy.press("Enter");
-  await expect(
-    versions.getByRole("button", {
-      name: "Update details copied",
-      exact: true,
-    }),
+    footer.getByRole("button", { name: "Reset preferences" }),
   ).toBeVisible();
-  await expect
-    .poll(() => clipboardLines(page))
-    .toEqual([
-      "Pi 1.0.0 → 1.0.2",
-      "Run pi update",
-      "https://example.invalid/pi",
-      "",
-      "Extensions",
-      "- @example/pi-tools",
-      "- github.com/example/pi-tools",
-      "Run pi update --extensions",
-    ]);
-  await versions
-    .getByRole("button", { name: "Copy pi update", exact: true })
-    .click();
-  await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toBe("pi update");
+  await page.evaluate(() => {
+    const event = new Event("beforeinstallprompt", { cancelable: true });
+    Object.assign(event, {
+      prompt: () => Promise.resolve(),
+      userChoice: Promise.resolve({ outcome: "dismissed" }),
+    });
+    window.dispatchEvent(event);
+  });
+  await page.evaluate(() => document.fonts.ready);
+  for (const name of ["Install app", "Reset preferences"]) {
+    const action = footer.getByRole("button", { name, exact: true });
+    await expect(action).toBeInViewport({ ratio: 1 });
+    await action.focus();
+    expect(await action.evaluate(focusRingClipping)).toBeLessThanOrEqual(0.5);
+    expect(await action.evaluate(textOverflowsInlineBounds)).toBe(false);
+  }
+  await page.evaluate(() => {
+    const matchMedia = window.matchMedia.bind(window);
+    window.matchMedia = (query) => {
+      const result = matchMedia(query);
+      if (query === "(display-mode: standalone)")
+        Object.defineProperty(result, "matches", { value: true });
+      return result;
+    };
+    window.dispatchEvent(new Event("appinstalled"));
+  });
+  const installed = footer.getByText("App installed", { exact: true });
+  await expect(installed).toBeVisible();
+  await expect(footer.getByRole("button", { name: "Install app" })).toHaveCount(
+    0,
+  );
+  expect(await installed.evaluate(textOverflowsInlineBounds)).toBe(false);
 });

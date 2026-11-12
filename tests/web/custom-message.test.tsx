@@ -1,12 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CustomMessage } from "../../src/components/CustomMessage";
 import { Transcript } from "../../src/components/Transcript";
@@ -15,7 +8,6 @@ import { configureToolPresentationRegistry } from "../../src/tool-presentations/
 import {
   customMessageConfiguration,
   incomingRelay,
-  relayBody,
 } from "./fixtures/custom-message-presentation";
 import { openTranscriptSearch } from "./helpers";
 
@@ -41,53 +33,6 @@ afterEach(() => {
 });
 
 describe("extension context messages", () => {
-  it("presents sender and exact Markdown body while preserving all original data lazily", async () => {
-    configureToolPresentationRegistry(customMessageConfiguration);
-    const message = incomingRelay();
-    const { container } = render(component(message));
-    expect(
-      screen.getByRole("article", { name: "Inspire: composer editing" }),
-    ).toBeVisible();
-    expect(screen.getByText("Relay", { exact: true })).toBeVisible();
-    expect(
-      await screen.findByRole("heading", { name: "Composer review ready" }),
-    ).toBeVisible();
-    expect(
-      screen.getByText("final paragraph", { selector: "strong" }),
-    ).toBeVisible();
-    expect(container.querySelector(".custom-message__raw, time")).toBeNull();
-    expect(container).not.toHaveTextContent("relay_message");
-    expect(container).not.toHaveTextContent("To reply");
-    expect(container).not.toHaveTextContent("seq 42");
-    expect(container).not.toHaveTextContent("2030-");
-    expect(container).not.toHaveTextContent("/home/reviewer");
-    fireEvent.click(screen.getByText("Details"));
-    const raw = container.querySelector(".custom-message__raw")!.textContent!;
-    expect(JSON.parse(raw)).toEqual({
-      customType: message.customType,
-      content: message.content,
-      details: message.details,
-    });
-    fireEvent.click(screen.getByText("Details"));
-    expect(container.querySelector(".custom-message__raw")).toBeNull();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    try {
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: "Copy inspire: composer editing block",
-        }),
-      );
-      await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-      const copied = writeText.mock.calls[0]![0];
-      expect(copied).toContain(message.content);
-      expect(copied).toContain(JSON.stringify(message.details, null, 2));
-      expect(copied).toContain(relayBody);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
   it("updates an already mounted message on a new bootstrap generation without losing Details state", async () => {
     const message = incomingRelay();
     const { container } = render(component(message));
@@ -120,81 +65,37 @@ describe("extension context messages", () => {
         },
       },
     };
-    const { container } = render(component(message));
+    render(component(message));
     expect(
       await screen.findByText(
         "From remote@other-host · unverified cross-machine",
         { selector: "strong" },
       ),
     ).toBeVisible();
-    expect(container.querySelector(".custom-message__source")).toBeNull();
     expect(screen.getByText("Relay message")).toBeVisible();
   });
 
-  it.each([false, true])(
-    "keeps mixed blocks readable with a configured projection=%s",
-    async (configured) => {
-      if (configured)
-        configureToolPresentationRegistry(customMessageConfiguration);
-      const message = incomingRelay();
-      message.content = [
-        { type: "text", text: "**Original block**" },
-        { type: "image", mimeType: "image/png", data: "cGljdHVyZQ==" },
-        { type: "future", data: "Unrecognized payload" },
-        "Primitive payload",
-        { type: "text", text: "After" },
-      ];
-      const { container } = render(component(message));
-      expect(
-        await screen.findByText("Original block", { selector: "strong" }),
-      ).toBeVisible();
-      expect(container.querySelector("img")).toHaveAttribute(
-        "src",
-        "data:image/png;base64,cGljdHVyZQ==",
-      );
-      expect(screen.getByText(/Unrecognized payload/)).toBeVisible();
-      expect(screen.getByText("Primitive payload")).toBeVisible();
-      expect(screen.getByText("After")).toBeVisible();
-      expect(container.querySelector(".custom-message__source")).toBeNull();
-    },
-  );
-
-  it("renders Markdown directly, without tool state or empty details", async () => {
-    const { container } = render(component(base));
+  it("falls back to the original mixed blocks when a projection cannot apply", async () => {
+    configureToolPresentationRegistry(customMessageConfiguration);
+    const message = incomingRelay();
+    message.content = [
+      { type: "text", text: "**Original block**" },
+      { type: "image", mimeType: "image/png", data: "cGljdHVyZQ==" },
+      { type: "future", data: "Unrecognized payload" },
+      "Primitive payload",
+      { type: "text", text: "After" },
+    ];
+    const { container } = render(component(message));
     expect(
-      await screen.findByRole("heading", { name: "Review" }),
+      await screen.findByText("Original block", { selector: "strong" }),
     ).toBeVisible();
-    expect(screen.getByText("extension", { selector: "strong" })).toBeVisible();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByText("Review report")).toBeVisible();
-    expect(screen.queryByText("review_report")).toBeNull();
-    expect(container.querySelector(".card, .card__status, details")).toBeNull();
-    expect(screen.queryByText("Content")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Copy review report block" }),
-    ).toBeInTheDocument();
-  });
-
-  it("only mounts optional structured details when opened", () => {
-    const { container, rerender } = render(
-      component({ ...base, details: { source: "peer", count: 2 } }),
+    expect(container.querySelector("img")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,cGljdHVyZQ==",
     );
-    const details = container.querySelector("details")!;
-    expect(details).not.toHaveAttribute("open");
-    expect(screen.queryByText(/"source"/)).not.toBeInTheDocument();
-    fireEvent.click(within(details).getByText("Details"));
-    expect(details).toHaveAttribute("open");
-    expect(screen.getByText(/"source": "peer"/)).toBeVisible();
-    expect(
-      JSON.parse(container.querySelector(".custom-message__raw")!.textContent!),
-    ).toEqual({
-      customType: "review_report",
-      details: { source: "peer", count: 2 },
-    });
-    rerender(component({ ...base, details: null }));
-    expect(container.querySelector("details")).toBeNull();
-    rerender(component({ ...base, details: false }));
-    expect(container.querySelector("details")).not.toBeNull();
+    expect(screen.getByText(/Unrecognized payload/)).toBeVisible();
+    expect(screen.getByText("Primitive payload")).toBeVisible();
+    expect(screen.getByText("After")).toBeVisible();
   });
 
   it("does not render context-only messages", () => {

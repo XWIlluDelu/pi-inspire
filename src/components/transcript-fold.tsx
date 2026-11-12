@@ -54,9 +54,11 @@ export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
  * have to expand a group just to learn whether something went wrong.
  * Deferred ranges contribute presence only; their tools are not yet known.
  */
-export function summarizeActivityText(
-  telemetry: readonly ActivityTelemetryItem[],
-): { steps: string; tools: string; failed: number } {
+function summarizeActivityText(telemetry: readonly ActivityTelemetryItem[]): {
+  steps: string;
+  tools: string;
+  failed: number;
+} {
   const total = telemetry.length;
   const counts = new Map<string, number>();
   let thinking = 0;

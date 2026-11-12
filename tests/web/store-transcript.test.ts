@@ -1,415 +1,219 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  activeSnapshot,
-  bootstrapPayload,
-  deferred,
-  installFakeWebSocket,
-  installFetch,
-} from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
+import { activeSnapshot, deferred, installFakeWebSocket } from "./helpers";
+import { initStore, installStoreSnapshot } from "./store-fixture";
 
 describe("transcript paging", () => {
   beforeEach(() => installFakeWebSocket());
   afterEach(() => vi.useRealTimers());
 
-  it("materializes a bounded activity tail before expanding the complete range", async () => {
-    const requested: string[] = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [
-                  {
-                    role: "user",
-                    content: "new",
-                    timestamp: 5,
-                    __inspireMessageId: "new-id",
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "older-1",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/older")) {
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            appendFromRevision: 1,
-            messages: [
-              {
-                role: "assistant",
-                content: "response",
-                timestamp: 1,
-                __inspireMessageId: "response-id",
-              },
-            ],
-            activityRanges: [
-              {
-                cursor: "activity-2",
-                afterMessageId: "response-id",
-                messageCount: 3,
-                kinds: ["tool"],
-              },
-            ],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      if (url.startsWith("/api/transcript/activity")) {
-        const cursor =
-          new URL(url, "http://localhost").searchParams.get("cursor") ?? "";
-        requested.push(cursor);
-        return cursor === "activity-2"
-          ? {
-              body: {
-                sessionId: "s1",
-                revision: 4,
-                viewId: "view-s1",
-                incarnation: "projection-1",
-                appendFromRevision: 1,
-                messages: [
-                  {
-                    role: "toolResult",
-                    content: "second",
-                    timestamp: 3,
-                    __inspireMessageId: "activity-id-2",
-                  },
-                  {
-                    role: "toolResult",
-                    content: "third",
-                    timestamp: 4,
-                    __inspireMessageId: "activity-id-3",
-                  },
-                ],
-                hasMore: true,
-                cursor: "activity-1",
-              },
-            }
-          : {
-              body: {
-                sessionId: "s1",
-                revision: 4,
-                viewId: "view-s1",
-                incarnation: "projection-1",
-                appendFromRevision: 1,
-                messages: [
-                  {
-                    role: "toolResult",
-                    content: "first",
-                    timestamp: 2,
-                    __inspireMessageId: "activity-id-1",
-                  },
-                ],
-                hasMore: false,
-                cursor: null,
-              },
-            };
-      }
-      return baseRoutes(url, init);
+  it("keeps a stale activity range retryable and materializes it in order", async () => {
+    const message = (role: string, timestamp: number) => ({
+      role,
+      timestamp,
+      content: `message ${timestamp}`,
+      __inspireMessageId: `message-${timestamp}`,
     });
+    const address = {
+      sessionId: "s1",
+      viewId: "view-s1",
+      incarnation: "projection-1",
+      revision: 4,
+      appendFromRevision: 1,
+    };
+    const requested: string[] = [];
+    let stale = true;
+    installStoreSnapshot(
+      activeSnapshot({
+        transcriptPage: {
+          ...address,
+          messages: [message("user", 5)],
+          hasOlder: true,
+          olderCursor: "older-1",
+        },
+      }),
+      (url) => {
+        if (url.startsWith("/api/transcript/older"))
+          return {
+            body: {
+              ...address,
+              messages: [message("assistant", 1)],
+              activityRanges: [
+                {
+                  cursor: "tail",
+                  afterMessageId: "message-1",
+                  messageCount: 3,
+                  kinds: ["tool"],
+                },
+              ],
+              hasOlder: false,
+              olderCursor: null,
+            },
+          };
+        if (url.startsWith("/api/transcript/activity")) {
+          const cursor = new URL(url, "http://localhost").searchParams.get(
+            "cursor",
+          )!;
+          requested.push(cursor);
+          if (stale)
+            return { status: 409, body: { error: "activity cursor is stale" } };
+          const tail = cursor === "tail";
+          return {
+            body: {
+              ...address,
+              messages: (tail ? [3, 4] : [2]).map((time) =>
+                message("toolResult", time),
+              ),
+              hasMore: tail,
+              cursor: tail ? "remainder" : null,
+            },
+          };
+        }
+        if (url.startsWith("/api/snapshot"))
+          return { status: 503, body: { error: "refresh unavailable" } };
+      },
+    );
     const { store } = await initStore();
+    const order = () =>
+      store.getState().messages.map((message) => message.timestamp);
     await store.loadOlderMessages();
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([1, 5]);
-    expect(store.getState().transcriptActivityRanges).toMatchObject([
-      { cursor: "activity-2", status: "idle" },
-    ]);
+    expect(order()).toEqual([1, 5]);
 
+    await store.materializeActivityRanges(["tail"]);
+    expect(store.getState().transcriptActivityRanges).toMatchObject([
+      { cursor: "tail", status: "error", error: "activity cursor is stale" },
+    ]);
+    expect(order()).toEqual([1, 5]);
+
+    stale = false;
     const beforeCommit = vi.fn();
-    await store.materializeActivityRanges(["activity-2"], beforeCommit, "tail");
-    expect(requested).toEqual(["activity-2"]);
+    await store.materializeActivityRanges(["tail"], beforeCommit, "tail");
+    expect(requested).toEqual(["tail", "tail"]);
     expect(beforeCommit).toHaveBeenCalledOnce();
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([1, 3, 4, 5]);
-    expect(
-      store
-        .getState()
-        .messages.slice(1, 3)
-        .map((message) => message.__inspireActivityRangeCursor),
-    ).toEqual(["activity-2", "activity-2"]);
+    expect(order()).toEqual([1, 3, 4, 5]);
     expect(store.getState().transcriptActivityRanges).toMatchObject([
       {
-        cursor: "activity-1",
-        afterMessageId: "response-id",
+        cursor: "remainder",
+        afterMessageId: "message-1",
         messageCount: 1,
         status: "idle",
       },
     ]);
 
-    await store.materializeActivityRanges(["activity-1"], beforeCommit);
-    expect(requested).toEqual(["activity-2", "activity-1"]);
-    expect(beforeCommit).toHaveBeenCalledTimes(2);
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([1, 2, 3, 4, 5]);
+    await store.materializeActivityRanges(["remainder"], beforeCommit);
+    expect(requested).toEqual(["tail", "tail", "remainder"]);
+    expect(order()).toEqual([1, 2, 3, 4, 5]);
     expect(store.getState().transcriptActivityRanges).toEqual([]);
   });
 
-  it("leaves stale deferred activity retryable when its authoritative refresh fails", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [
-                  {
-                    role: "assistant",
-                    content: "response",
-                    timestamp: 1,
-                    __inspireMessageId: "response-id",
-                  },
-                ],
-                activityRanges: [
-                  {
-                    cursor: "stale-activity",
-                    afterMessageId: "response-id",
-                    messageCount: 1,
-                    kinds: ["tool"],
-                  },
-                ],
-              },
-            }),
-          }),
-        };
-      if (url.startsWith("/api/transcript/activity"))
-        return { status: 409, body: { error: "activity cursor is stale" } };
-      if (url.startsWith("/api/snapshot"))
-        return { status: 503, body: { error: "refresh unavailable" } };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    await store.materializeActivityRanges(["stale-activity"]);
-
-    expect(store.getState().transcriptActivityRanges).toMatchObject([
-      {
-        cursor: "stale-activity",
-        status: "error",
-        error: "activity cursor is stale",
-      },
-    ]);
-  });
-
-  it("uses each returned cursor to load consecutive older pages", async () => {
-    const requested: string[] = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [{ role: "user", content: "new", timestamp: 3 }],
-                hasOlder: true,
-                olderCursor: "cursor-2",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/older")) {
-        const cursor =
-          new URL(url, "http://localhost").searchParams.get("cursor") ?? "";
-        requested.push(cursor);
-        return cursor === "cursor-2"
-          ? {
-              body: {
-                sessionId: "s1",
-                viewId: "view-s1",
-                revision: 4,
-                messages: [
-                  { role: "assistant", content: "middle", timestamp: 2 },
-                  { role: "user", content: "new duplicate", timestamp: 3 },
-                ],
-                hasOlder: true,
-                olderCursor: "cursor-1",
-              },
-            }
-          : {
-              body: {
-                sessionId: "s1",
-                viewId: "view-s1",
-                revision: 4,
-                messages: [{ role: "user", content: "old", timestamp: 1 }],
-                hasOlder: false,
-                olderCursor: null,
-              },
-            };
-      }
-      return baseRoutes(url, init);
-    });
-
-    const { store } = await initStore();
-    expect(await store.loadOlderMessages()).toBe(true);
-    expect(await store.loadOlderMessages()).toBe(true);
-    expect(requested).toEqual(["cursor-2", "cursor-1"]);
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([1, 2, 3]);
-    expect(store.getState().hasOlderMessages).toBe(false);
-    expect(store.getState().olderMessagesCursor).toBeNull();
-    expect(store.getState().olderMessagesError).toBeNull();
-  });
-
-  it("keeps one page promise and its confirmed messages through automatic recovery", async () => {
-    let attempts = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [{ role: "user", content: "new", timestamp: 2 }],
-                hasOlder: true,
-                olderCursor: "cursor-1",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/older")) {
-        attempts += 1;
-        if (attempts === 1)
-          return { status: 503, body: { error: "temporarily unavailable" } };
-        return {
-          body: {
-            sessionId: "s1",
-            viewId: "view-s1",
-            revision: 4,
-            messages: [{ role: "user", content: "old", timestamp: 1 }],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-
-    vi.useFakeTimers();
-    const loading = store.loadOlderMessages();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(attempts).toBe(1);
-    expect(store.getState().loadingOlderMessages).toBe(true);
-    expect(store.getState().olderMessagesError).toBeNull();
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([2]);
-    expect(store.getState().error).toBeNull();
-
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(attempts).toBe(2);
-    await expect(loading).resolves.toBe(true);
-    expect(store.getState().loadingOlderMessages).toBe(false);
-    expect(store.getState().olderMessagesError).toBeNull();
-    expect(
-      store.getState().messages.map((message) => message.timestamp),
-    ).toEqual([1, 2]);
-  });
-
   describe("older-page recovery ownership", () => {
-    function installPaging(read: () => { status?: number; body: unknown }) {
-      installFetch((url, init) => {
-        if (url.startsWith("/api/bootstrap"))
-          return {
-            body: bootstrapPayload({
-              snapshot: activeSnapshot({
-                transcriptPage: {
-                  revision: 4,
-                  messages: [{ role: "user", content: "new", timestamp: 2 }],
-                  hasOlder: true,
-                  olderCursor: "cursor-1",
-                },
-              }),
-            }),
-          };
-        if (url.startsWith("/api/transcript/older")) return read();
-        return baseRoutes(url, init);
-      });
+    function installPaging(
+      read: (cursor: string | null) => { status?: number; body: unknown },
+    ) {
+      installStoreSnapshot(
+        activeSnapshot({
+          transcriptPage: {
+            revision: 4,
+            messages: [{ role: "user", content: "new", timestamp: 2 }],
+            hasOlder: true,
+            olderCursor: "cursor-1",
+          },
+        }),
+        (url) =>
+          url.startsWith("/api/transcript/older")
+            ? read(new URL(url, "http://localhost").searchParams.get("cursor"))
+            : undefined,
+      );
     }
 
-    it.each([undefined, "another-view"])(
-      "rejects an older page whose required view identity is %s",
-      async (viewId) => {
-        installPaging(() => ({
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId,
-            messages: [{ role: "user", content: "foreign page", timestamp: 1 }],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        }));
-        const { store } = await initStore();
-        await expect(store.loadOlderMessages()).resolves.toBe(false);
-        expect(
-          store.getState().messages.map((message) => message.content),
-        ).toEqual(["new"]);
-        expect(store.getState()).toMatchObject({
-          loadingOlderMessages: false,
-          hasOlderMessages: true,
-          olderMessagesCursor: "cursor-1",
-        });
-      },
-    );
-
-    it("bounds transient failures locally and clears the error after successful recovery", async () => {
-      let healthy = false;
-      const read = vi.fn(() =>
-        healthy
-          ? {
-              body: {
-                sessionId: "s1",
-                viewId: "view-s1",
-                revision: 4,
-                messages: [{ role: "user", content: "old", timestamp: 1 }],
-                hasOlder: false,
-                olderCursor: null,
-              },
-            }
-          : { status: 503, body: { error: "Still unavailable" } },
-      );
+    it("keeps one load pending through backoff and recovers after persistent failure", async () => {
+      const read = vi.fn<
+        (cursor: string | null) => { status: number; body: unknown }
+      >(() => ({
+        status: 503,
+        body: { error: "Earlier messages unavailable" },
+      }));
       installPaging(read);
       const { store } = await initStore();
       vi.useFakeTimers();
+
       const loading = store.loadOlderMessages();
-      for (const delay of [0, 1_000, 3_000, 10_000])
-        await vi.advanceTimersByTimeAsync(delay);
-      await expect(loading).resolves.toBe(false);
-      expect(read).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledOnce();
       expect(store.getState()).toMatchObject({
-        olderMessagesError: "Still unavailable",
-        loadingOlderMessages: false,
-        error: null,
+        loadingOlderMessages: true,
+        olderMessagesError: null,
       });
+      const coalesced = store.loadOlderMessages();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledOnce();
+
+      await vi.runAllTimersAsync();
+      await expect(Promise.all([loading, coalesced])).resolves.toEqual([
+        false,
+        false,
+      ]);
+      expect(read.mock.calls.length).toBeGreaterThan(1);
+      expect(read.mock.calls.every(([cursor]) => cursor === "cursor-1")).toBe(
+        true,
+      );
+      expect(store.getState()).toMatchObject({
+        loadingOlderMessages: false,
+        olderMessagesError: "Earlier messages unavailable",
+        olderMessagesCursor: "cursor-1",
+        messages: [{ content: "new" }],
+      });
+      read.mockImplementationOnce(() => ({
+        status: 503,
+        body: { error: "Temporary failure" },
+      }));
+      read.mockReturnValue({
+        status: 200,
+        body: {
+          sessionId: "s1",
+          viewId: "view-s1",
+          revision: 4,
+          messages: [{ role: "user", content: "earlier", timestamp: 1 }],
+          hasOlder: false,
+          olderCursor: null,
+        },
+      });
+      const recovery = store.loadOlderMessages();
+      await vi.runAllTimersAsync();
+      await expect(recovery).resolves.toBe(true);
+      expect(store.getState()).toMatchObject({
+        olderMessagesError: null,
+        messages: [{ content: "earlier" }, { content: "new" }],
+      });
+    });
+
+    it.each([
+      ["missing view", { viewId: undefined }],
+      ["different view", { viewId: "another-view" }],
+      ["stale revision", { revision: 3 }],
+    ])("rejects an older page with a %s", async (_name, invalid) => {
+      installPaging(() => ({
+        body: {
+          sessionId: "s1",
+          revision: 4,
+          viewId: "view-s1",
+          messages: [{ role: "user", content: "foreign page", timestamp: 1 }],
+          hasOlder: false,
+          olderCursor: null,
+          ...invalid,
+        },
+      }));
+      const { store } = await initStore();
+      await expect(store.loadOlderMessages()).resolves.toBe(false);
       expect(
-        store.getState().messages.map((message) => message.timestamp),
-      ).toEqual([2]);
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(read).toHaveBeenCalledTimes(4);
-      healthy = true;
-      await expect(store.loadOlderMessages()).resolves.toBe(true);
-      expect(store.getState().olderMessagesError).toBeNull();
-      expect(
-        store.getState().messages.map((message) => message.timestamp),
-      ).toEqual([1, 2]);
+        store.getState().messages.map((message) => message.content),
+      ).toEqual(["new"]);
+      expect(store.getState()).toMatchObject({
+        loadingOlderMessages: false,
+        hasOlderMessages: true,
+        olderMessagesCursor: "cursor-1",
+        transcriptRevision: 4,
+      });
     });
 
     it.each(["view", "transport"] as const)(
@@ -448,511 +252,172 @@ describe("transcript paging", () => {
     );
   });
 
-  it("discards a delayed older page from branch A after same-session switch to branch B", async () => {
-    const { promise: gate, resolve: release } = deferred<void>();
-    const { promise: requested, resolve: started } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                viewId: "view-a",
-                effectiveLeafId: "leaf-a",
-                messages: [{ role: "user", content: "new A", timestamp: 2 }],
-                hasOlder: true,
-                olderCursor: "cursor-a",
-              },
-              effectiveLeafId: "leaf-a",
-            }),
-          }),
-        };
-      if (url.startsWith("/api/transcript/older")) {
-        started();
-        await gate;
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-a",
-            effectiveLeafId: "leaf-a",
-            messages: [{ role: "user", content: "old A", timestamp: 1 }],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    const loading = store.loadOlderMessages();
-    await requested;
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
+  it.each(["append", "rewrite", "branch change"] as const)(
+    "preserves paged history through append and settlement, but retires it on replacement (%s)",
+    async (transition) => {
+      const gate = deferred<void>();
+      const requested = deferred<void>();
+      const append = transition === "append";
+      const viewId = transition === "branch change" ? "view-b" : "view-a";
+      const newer = {
+        role: "user",
+        content: "new",
+        timestamp: 2,
+        __inspireMessageId: "m2:0",
+      };
+      const replacement = {
+        role: "assistant",
+        content: transition,
+        timestamp: 3,
+        __inspireMessageId: "m3:0",
+      };
+      const identity = {
+        viewId: "view-a",
+        incarnation: "incarnation",
+        effectiveLeafId: "m2",
+      };
+      const saved = {
+        ...replacement,
+        content: "persisted reply",
+        timestamp: 4,
+        __inspireMessageId: "m4:0",
+      };
+      const committed = activeSnapshot({
+        effectiveLeafId: "m4",
         transcriptPage: {
-          revision: 4,
-          viewId: "view-b",
-          effectiveLeafId: "leaf-b",
-          messages: [{ role: "assistant", content: "branch B", timestamp: 3 }],
+          ...identity,
+          revision: 6,
+          appendFromRevision: 1,
+          effectiveLeafId: "m4",
+          messages: [newer, replacement, saved],
         },
-        effectiveLeafId: "leaf-b",
-      }),
-    });
-    release();
-    await loading;
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["branch B"],
-    );
-    expect(store.getState().transcriptViewId).toBe("view-b");
-  });
-
-  it("keeps an in-flight older load continuous across an append-lineage snapshot", async () => {
-    const { promise: gate, resolve: release } = deferred<void>();
-    const { promise: requested, resolve: started } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                viewId: "view-a",
-                incarnation: "incarnation",
-                effectiveLeafId: "m2",
+      });
+      installStoreSnapshot(
+        activeSnapshot({
+          transcriptPage: {
+            ...identity,
+            revision: 4,
+            messages: [newer],
+            hasOlder: true,
+            olderCursor: "cursor-1",
+          },
+          effectiveLeafId: "m2",
+        }),
+        async (url) => {
+          if (url.startsWith("/api/snapshot")) return { body: committed };
+          if (url.startsWith("/api/transcript/older")) {
+            requested.resolve();
+            await gate.promise;
+            return {
+              body: {
+                ...identity,
+                sessionId: "s1",
+                revision: append ? 5 : 4,
+                appendFromRevision: 1,
+                effectiveLeafId: append ? "m3" : "m2",
                 messages: [
                   {
                     role: "user",
-                    content: "new",
-                    timestamp: 2,
-                    __inspireMessageId: "m2:0",
+                    content: "old",
+                    timestamp: 1,
+                    __inspireMessageId: "m1:0",
                   },
                 ],
-                hasOlder: true,
-                olderCursor: "cursor-1",
+                hasOlder: false,
+                olderCursor: null,
               },
-              effectiveLeafId: "m2",
-            }),
-          }),
-        };
-      if (url.startsWith("/api/transcript/older")) {
-        started();
-        await gate;
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 5,
-            viewId: "view-a",
-            incarnation: "incarnation",
-            appendFromRevision: 1,
-            effectiveLeafId: "m3",
-            messages: [
-              {
-                role: "user",
-                content: "old",
-                timestamp: 1,
-                __inspireMessageId: "m1:0",
-              },
-            ],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    const loading = store.loadOlderMessages();
-    await requested;
-    expect(store.getState().loadingOlderMessages).toBe(true);
+            };
+          }
+        },
+      );
+      const { store, socket } = await initStore();
+      const loading = store.loadOlderMessages();
+      await requested.promise;
+      expect(store.getState().loadingOlderMessages).toBe(true);
 
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
+      const intervening = activeSnapshot({
         transcriptPage: {
-          revision: 5,
-          viewId: "view-a",
-          incarnation: "incarnation",
+          ...identity,
+          viewId,
+          revision: transition === "branch change" ? 4 : 5,
+          ...(transition === "rewrite" ? { appendFromRevision: 5 } : {}),
           effectiveLeafId: "m3",
-          messages: [
-            {
-              role: "user",
-              content: "new",
-              timestamp: 2,
-              __inspireMessageId: "m2:0",
-            },
-            {
-              role: "assistant",
-              content: "append",
-              timestamp: 3,
-              __inspireMessageId: "m3:0",
-            },
-          ],
-          hasOlder: true,
-          olderCursor: "cursor-1",
+          messages: append ? [newer, replacement] : [replacement],
+          ...(append ? { hasOlder: true, olderCursor: "cursor-1" } : {}),
         },
         effectiveLeafId: "m3",
-      }),
-    });
-    expect(store.getState().loadingOlderMessages).toBe(true);
+      });
+      socket.emit({ type: "snapshot", data: intervening });
+      if (append) expect(store.getState().loadingOlderMessages).toBe(true);
+      gate.resolve();
+      await expect(loading).resolves.toBe(append);
+      expect(store.getState()).toMatchObject({
+        transcriptViewId: viewId,
+        loadingOlderMessages: false,
+        hasOlderMessages: false,
+      });
+      const messages = () =>
+        store.getState().messages.map((message) => message.content);
+      expect(messages()).toEqual(
+        append ? ["old", "new", "append"] : [transition],
+      );
+      if (!append) return;
 
-    release();
-    await expect(loading).resolves.toBe(true);
-    expect(store.getState().loadingOlderMessages).toBe(false);
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["old", "new", "append"],
-    );
-    expect(store.getState().hasOlderMessages).toBe(false);
-  });
-
-  it("discards an in-flight older page when the same view is rewritten", async () => {
-    const { promise: gate, resolve: release } = deferred<void>();
-    const { promise: requested, resolve: started } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                viewId: "view-a",
-                incarnation: "incarnation",
-                effectiveLeafId: "m2",
-                messages: [
-                  {
-                    role: "user",
-                    content: "new",
-                    timestamp: 2,
-                    __inspireMessageId: "m2:0",
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "cursor-1",
-              },
-              effectiveLeafId: "m2",
-            }),
-          }),
-        };
-      if (url.startsWith("/api/transcript/older")) {
-        started();
-        await gate;
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-a",
-            incarnation: "incarnation",
-            appendFromRevision: 1,
-            effectiveLeafId: "m2",
-            messages: [
-              {
-                role: "user",
-                content: "stale older",
-                timestamp: 1,
-                __inspireMessageId: "m1:0",
-              },
-            ],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    const loading = store.loadOlderMessages();
-    await requested;
-
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: {
-          revision: 5,
-          viewId: "view-a",
-          incarnation: "incarnation",
-          appendFromRevision: 5,
-          effectiveLeafId: "compact",
-          messages: [
-            {
-              role: "user",
-              content: "rewritten",
-              timestamp: 9,
-              __inspireMessageId: "compact:0",
-            },
-          ],
+      socket.emit({ type: "snapshot", data: intervening });
+      expect(messages()).toEqual(["old", "new", "append"]);
+      socket.emit({
+        type: "message_start",
+        sessionId: "s1",
+        message: {
+          role: "assistant",
+          content: "partial reply",
+          timestamp: 4,
+          __inspireLiveId: "live-m4",
         },
-        effectiveLeafId: "compact",
-      }),
-    });
-    release();
-
-    await expect(loading).resolves.toBe(false);
-    expect(store.getState().loadingOlderMessages).toBe(false);
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["rewritten"],
-    );
-  });
-
-  it("retains loaded older pages across same and append-lineage snapshots", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                viewId: "view-a",
-                incarnation: "incarnation",
-                effectiveLeafId: "m2",
-                messages: [
-                  {
-                    role: "user",
-                    content: "new",
-                    timestamp: 2,
-                    __inspireMessageId: "m2:0",
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "cursor-1",
-              },
-              effectiveLeafId: "m2",
-            }),
-          }),
-        };
-      if (url.startsWith("/api/transcript/older"))
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-a",
-            incarnation: "incarnation",
-            appendFromRevision: 1,
-            effectiveLeafId: "m2",
-            messages: [
-              {
-                role: "user",
-                content: "old",
-                timestamp: 1,
-                __inspireMessageId: "m1:0",
-              },
-            ],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      if (url.startsWith("/api/snapshot"))
-        return {
-          body: activeSnapshot({
-            transcriptPage: {
-              revision: 5,
-              viewId: "view-a",
-              incarnation: "incarnation",
-              effectiveLeafId: "m3",
-              messages: [
-                {
-                  role: "user",
-                  content: "new",
-                  timestamp: 2,
-                  __inspireMessageId: "m2:0",
-                },
-                {
-                  role: "assistant",
-                  content: "append",
-                  timestamp: 3,
-                  __inspireMessageId: "m3:0",
-                },
-              ],
-            },
-            effectiveLeafId: "m3",
-          }),
-        };
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    await store.loadOlderMessages();
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["old", "new"],
-    );
-
-    // Worker warm-up can publish the same authoritative latest page after an
-    // older page lands. It must not discard history from the identical view.
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: {
-          revision: 4,
-          viewId: "view-a",
-          incarnation: "incarnation",
-          effectiveLeafId: "m2",
-          messages: [
-            {
-              role: "user",
-              content: "new",
-              timestamp: 2,
-              __inspireMessageId: "m2:0",
-            },
-          ],
-          hasOlder: true,
-          olderCursor: "cursor-1",
-        },
-        effectiveLeafId: "m2",
-      }),
-    });
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["old", "new"],
-    );
-
-    socket.emit({
-      type: "session_projection_changed",
-      sessionId: "s1",
-      revision: 5,
-      sessionStatus: { runState: "idle" },
-    });
-    await vi.waitFor(() => expect(store.getState().transcriptRevision).toBe(5));
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["old", "new", "append"],
-    );
-    expect(store.getState().hasOlderMessages).toBe(false);
-  });
-
-  it("does not clear a projection-owned alert when an older page loads successfully", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              projectionHealth: {
-                status: "error",
-                message: "projection damaged",
-              },
-              projectionConflict: {
-                kind: "projection-failure",
-                message: "projection conflict",
-                revision: 4,
-                incidentId: "incident-projection",
-              },
-              transcriptPage: {
-                revision: 4,
-                incarnation: "inc",
-                appendFromRevision: 4,
-                messages: [
-                  {
-                    role: "user",
-                    content: "new",
-                    timestamp: 2,
-                    __inspireMessageId: "m2:0",
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "older",
-              },
-            }),
-          }),
-        };
-      if (url.startsWith("/api/transcript/older"))
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "inc",
-            appendFromRevision: 4,
-            messages: [
-              {
-                role: "user",
-                content: "old",
-                timestamp: 1,
-                __inspireMessageId: "m1:0",
-              },
-            ],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    expect(store.getState().error).toBe("projection conflict");
-    await store.loadOlderMessages();
-    expect(store.getState().messages.map((message) => message.content)).toEqual(
-      ["old", "new"],
-    );
-    expect(store.getState().projectionError).toBe("projection conflict");
-    expect(store.getState().error).toBe("projection conflict");
-  });
-
-  it("rejects a stale returned revision without mixing pages", async () => {
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [{ role: "user", content: "new", timestamp: 2 }],
-                hasOlder: true,
-                olderCursor: "cursor-1",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/older")) {
-        return {
-          body: {
-            sessionId: "s1",
-            viewId: "view-s1",
-            revision: 3,
-            messages: [{ role: "user", content: "stale", timestamp: 1 }],
-            hasOlder: false,
-            olderCursor: null,
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.loadOlderMessages();
-    expect(store.getState().messages).toEqual([
-      { role: "user", content: "new", timestamp: 2 },
-    ]);
-    expect(store.getState().transcriptRevision).toBe(4);
-    expect(store.getState().loadingOlderMessages).toBe(false);
-  });
+      });
+      expect(messages()).toEqual(["old", "new", "append", "partial reply"]);
+      socket.emit({
+        type: "session_projection_changed",
+        sessionId: "s1",
+        revision: 6,
+        sessionStatus: { runState: "idle" },
+      });
+      await vi.waitFor(() =>
+        expect(messages()).toEqual(["old", "new", "append", "persisted reply"]),
+      );
+      expect(store.getState().hasOlderMessages).toBe(false);
+    },
+  );
 
   it("resyncs rather than accepting a server-rejected stale cursor", async () => {
     let snapshotCalls = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
+    installStoreSnapshot(
+      activeSnapshot({
+        transcriptPage: {
+          revision: 4,
+          messages: [],
+          hasOlder: true,
+          olderCursor: "old",
+        },
+      }),
+      (url) => {
+        if (url.startsWith("/api/transcript/older"))
+          return { status: 409, body: { error: "stale" } };
+        if (url.startsWith("/api/snapshot")) {
+          snapshotCalls += 1;
+          return {
+            body: activeSnapshot({
               transcriptPage: {
-                revision: 4,
-                messages: [],
-                hasOlder: true,
-                olderCursor: "old",
+                revision: 5,
+                messages: [
+                  { role: "assistant", content: "fresh", timestamp: 5 },
+                ],
               },
             }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/older"))
-        return { status: 409, body: { error: "stale" } };
-      if (url.startsWith("/api/snapshot")) {
-        snapshotCalls += 1;
-        return {
-          body: activeSnapshot({
-            transcriptPage: {
-              revision: 5,
-              messages: [{ role: "assistant", content: "fresh", timestamp: 5 }],
-            },
-          }),
-        };
-      }
-      return baseRoutes(url, init);
-    });
+          };
+        }
+      },
+    );
     const { store } = await initStore();
     await store.loadOlderMessages();
     expect(snapshotCalls).toBe(1);

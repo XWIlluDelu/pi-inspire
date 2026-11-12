@@ -40,9 +40,6 @@ test("unavailable-project history keeps its reading surface at desktop and phone
       page.getByRole("menuitem", { name, exact: true }),
     ).toBeDisabled();
   await page.getByRole("menuitem", { name: "More actions" }).click();
-  await expect(
-    page.getByRole("menuitem", { name: "Copy resume command", exact: true }),
-  ).toHaveCount(0);
   await page
     .getByRole("menuitem", { name: "Export session…", exact: true })
     .click();
@@ -57,28 +54,47 @@ test("unavailable-project history keeps its reading surface at desktop and phone
     exportDialog.getByRole("radio", { name: /JSONL/ }),
   ).toBeChecked();
   await expect(exportDialog).toContainText("Saved branch");
+  const downloaded = page.waitForEvent("download");
   await exportDialog
-    .getByRole("button", { name: "Cancel", exact: true })
+    .getByRole("button", { name: "Download", exact: true })
     .click();
+  expect((await downloaded).suggestedFilename()).toMatch(/\.jsonl$/);
+  await expect(exportDialog).toHaveCount(0);
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await observeClipboardWrites(page);
   const resumePalette = await openCommandPalette(page);
-  const copyResume = resumePalette.getByRole("option", {
-    name: /^Copy resume command\b/,
-  });
-  await expect(copyResume).toHaveCount(0);
-  await resumePalette.getByLabel("Filter commands").fill("Copy resume command");
+  await page.route(
+    "**/api/sessions/resume-command?*",
+    async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        response,
+        json: { ...(await response.json()), projectDirectoryMissing: true },
+      });
+    },
+    { times: 1 },
+  );
+  const filter = resumePalette.getByLabel("Filter commands");
+  await filter.fill("resume command");
+  await expect(resumePalette.getByRole("option").first()).toHaveText(
+    /Copy resume command/,
+  );
   const resumeResponse = page.waitForResponse(
     "**/api/sessions/resume-command?*",
   );
-  await copyResume.click();
+  await filter.press("Enter");
   const { command } = await (await resumeResponse).json();
   expect(command).toContain("pi --session");
   await expect
     .poll(() => page.evaluate(() => window.gestureClipboardWrites.at(-1)?.text))
     .toBe(command);
   await expect(resumePalette).toBeHidden();
+  await expect(
+    page.getByText(
+      /Run it in the new project folder and choose Fork in Pi 1\.5\.2 or later/,
+    ),
+  ).toBeVisible();
 
   const palette = await openCommandPalette(page);
   await palette.getByLabel("Filter commands").fill("history");

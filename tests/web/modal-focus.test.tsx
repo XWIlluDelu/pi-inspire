@@ -3,7 +3,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { SettingsContent } from "../../src/components/Settings";
 import { SettingsDialog } from "../../src/components/SettingsDialog";
 import {
   recoverModalFocus,
@@ -61,111 +60,34 @@ describe("modal focus ownership", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("cycles Tab within a modal and restores its opener", async () => {
+  it("traps Tab and restores the opener after StrictMode effect replay", async () => {
     const opener = document.createElement("button");
     document.body.append(opener);
     opener.focus();
 
     const user = userEvent.setup();
     const view = render(
-      <SettingsDialog onClose={() => undefined}>
-        <SettingsContent workspaceOwner={{}} />
-      </SettingsDialog>,
-    );
-    const dialog = screen.getByRole("dialog", { name: "Settings" });
-    const first = screen.getByRole("button", { name: "Close settings" });
-    const last = screen.getByRole("button", { name: "Reset preferences" });
-    expect(document.activeElement).toBe(first);
-
-    last.focus();
-    await user.tab();
-    expect(document.activeElement).toBe(first);
-
-    first.focus();
-    await user.tab({ shift: true });
-    expect(document.activeElement).toBe(last);
-
-    opener.focus();
-    expect(dialog.contains(document.activeElement)).toBe(true);
-
-    view.unmount();
-    await Promise.resolve();
-    expect(document.activeElement).toBe(opener);
-    opener.remove();
-  });
-
-  it("preserves the opener across StrictMode effect replay", async () => {
-    const opener = document.createElement("button");
-    document.body.append(opener);
-    opener.focus();
-    const view = render(
       <StrictMode>
         <SettingsDialog onClose={() => undefined}>
-          <button type="button">Inside</button>
+          <button type="button">Apply preference</button>
         </SettingsDialog>
       </StrictMode>,
     );
-    await Promise.resolve();
-    expect(
-      screen.getByRole("button", { name: "Close settings" }),
-    ).toHaveFocus();
+    const first = screen.getByRole("button", { name: "Close settings" });
+    const last = screen.getByRole("button", { name: "Apply preference" });
+    expect(first).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(last).toHaveFocus();
+    await user.tab();
+    expect(first).toHaveFocus();
+    opener.focus();
+    expect(screen.getByRole("dialog")).toContainElement(
+      document.activeElement as HTMLElement,
+    );
     view.unmount();
     await Promise.resolve();
     expect(opener).toHaveFocus();
     opener.remove();
-  });
-
-  it("keeps a dialog above a responsive drawer that becomes modal later", async () => {
-    function ResponsiveLayers() {
-      const [drawerOpen, setDrawerOpen] = useState(false);
-      const [dialogOpen, setDialogOpen] = useState(true);
-      const drawer = useModalFocus<HTMLDivElement>(
-        drawerOpen,
-        undefined,
-        () => setDrawerOpen(false),
-        "drawer",
-      );
-      const dialog = useModalFocus<HTMLDivElement>(dialogOpen, undefined, () =>
-        setDialogOpen(false),
-      );
-      return (
-        <>
-          {drawerOpen ? (
-            <div
-              ref={drawer}
-              role="dialog"
-              aria-label="Resources"
-              tabIndex={-1}
-            >
-              <button type="button">Resource action</button>
-            </div>
-          ) : null}
-          {dialogOpen ? (
-            <div ref={dialog} role="dialog" aria-label="Settings" tabIndex={-1}>
-              <button type="button" onClick={() => setDrawerOpen(!drawerOpen)}>
-                Resize
-              </button>
-              <button type="button">Preference</button>
-            </div>
-          ) : null}
-        </>
-      );
-    }
-    render(<ResponsiveLayers />);
-    const resize = screen.getByRole("button", { name: "Resize" });
-    resize.focus();
-    fireEvent.click(resize);
-    expect(document.activeElement).toBe(resize);
-    fireEvent.click(resize);
-    await Promise.resolve();
-    expect(document.activeElement).toBe(resize);
-    fireEvent.click(resize);
-    fireEvent.keyDown(resize, { key: "Escape" });
-    await Promise.resolve();
-    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
-    expect(screen.getByRole("dialog", { name: "Resources" })).toContainElement(
-      document.activeElement as HTMLElement,
-    );
   });
 
   it.each([false, true])(
