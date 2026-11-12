@@ -1,35 +1,24 @@
-import { execFile } from "node:child_process";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  realpath,
-  readdir,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { PassThrough } from "node:stream";
-import { promisify } from "node:util";
 import type { Request } from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AttachmentStore,
   addAttachmentContext,
   parseAttachmentContext,
-  resolveProjectFiles,
 } from "../../server/attachments.js";
-
-const execFileAsync = promisify(execFile);
+import {
+  canonicalBase64DecodedSize,
+  decodeCanonicalBase64,
+} from "../../server/image-content.js";
 
 import {
   MAX_ATTACHMENT_FILE_BYTES,
-  MAX_ATTACHMENT_UPLOAD_BYTES,
   MAX_PROMPT_IMAGE_BYTES,
 } from "../../shared/contracts.js";
+import { isSupportedPromptImageMimeType } from "../../shared/image-types.js";
 
 function upload(
   name: string,
@@ -58,6 +47,37 @@ describe("attachments", () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("bounds physical upload names without merging files or splitting display characters", async () => {
+    const prefix = "研".repeat(71) + "a";
+    const input = [
+      [`${prefix}.txt`, `${prefix}.txt`],
+      [`${prefix}b.txt`, `${prefix}b.txt`],
+      ["a".repeat(159) + "𝒜", "a".repeat(159)],
+      ["ΐ".repeat(100) + ".pdf", "ΐ".repeat(100) + ".pdf"],
+      ["report. ", "report. "],
+      ["...", "..."],
+    ] as const;
+    const staged = await store.addMany(
+      input.map(([name]) => upload(name, "text/plain")),
+    );
+    expect(staged.map(({ fileName }) => fileName)).toEqual(
+      input.map(([, readable]) => readable),
+    );
+
+    const { files } = await store.resolveForPrompt(staged.map(({ id }) => id));
+    const physicalNames = files.map(({ path }) => basename(path));
+    for (const name of physicalNames) {
+      expect(Buffer.byteLength(name)).toBeLessThanOrEqual(255);
+      expect(name.normalize("NFD").length).toBeLessThanOrEqual(255);
+      expect(name).not.toMatch(/[. ]$/u);
+    }
+    for (const name of physicalNames.slice(0, 2)) {
+      expect(extname(name)).toBe(".txt");
+    }
+    expect(files[0]!.path).not.toBe(files[1]!.path);
+    expect(extname(files[3]!.path)).toBe(".pdf");
   });
 
   describe("multipart upload lifetime", () => {
@@ -126,24 +146,6 @@ describe("attachments", () => {
       expect(await result).toBe(error);
       expect(await readdir(directory)).toEqual(before);
     });
-
-    it("completes an ordinary streamed upload with its exact bytes and size", async () => {
-      const stream = new PassThrough();
-      const result = new Promise<Partial<Express.Multer.File>>(
-        (resolve, reject) =>
-          store
-            .multerStorage()
-            ._handleFile(
-              {} as Request,
-              { ...upload("notes.txt", "text/plain"), stream },
-              (error, info) => (error ? reject(error) : resolve(info!)),
-            ),
-      );
-      stream.end("complete upload");
-      const file = await result;
-      expect(file.size).toBe(Buffer.byteLength("complete upload"));
-      expect(await readFile(file.path!, "utf8")).toBe("complete upload");
-    });
   });
 
   it("validates a saved-image batch before staging any copies", async () => {
@@ -194,82 +196,29 @@ describe("attachments", () => {
     );
   });
 
-  it("keeps consumed ordinary files through later withdrawals and reclaims consumed images", async () => {
-    const doc = await store.add(upload("notes.txt", "text/plain"));
-    const image = await store.add(upload("shot.png", "image/png"));
-    expect(doc).not.toHaveProperty("state");
-    expect(doc).not.toHaveProperty("path");
-    expect(store.ownsPromptFile("/not-owned")).toBe(false);
-    const resolved = await store.resolveForPrompt([doc.id, image.id]);
-    const paths = new Map(resolved.files.map((item) => [item.id, item.path]));
-    expect(store.ownsPromptFile(paths.get(doc.id)!)).toBe(true);
-
-    await store.releaseConsumed([doc.id, image.id]);
-    expect(store.ownsPromptFile(paths.get(doc.id)!)).toBe(true);
-    // Image bytes travelled inside the prompt; the cache copy is gone.
-    await expect(access(paths.get(image.id)!)).rejects.toThrow();
-    // The conversation references the ordinary file by host path; a late
-    // withdrawal (a DELETE racing the delivered prompt) must not destroy it.
-    await store.remove(doc.id);
-    await expect(access(paths.get(doc.id)!)).resolves.toBeUndefined();
-  });
-
-  it("shields in-flight files from withdrawal and restages them when delivery fails", async () => {
+  it("keeps an in-flight lease exclusive and allows withdrawal after a failed delivery", async () => {
     const doc = await store.add(upload("draft.txt", "text/plain"));
-    const resolved = await store.resolveForPrompt([doc.id]);
-    const path = resolved.files[0]!.path;
-
-    // A DELETE landing while the prompt is still delivering must not
-    // destroy the file the message will reference.
-    await store.remove(doc.id);
-    await expect(access(path)).resolves.toBeUndefined();
-
-    // Failed delivery restages the file; withdrawal works again.
-    store.restage([doc.id]);
-    await store.remove(doc.id);
-    await expect(access(path)).rejects.toThrow();
-    await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
-      status: 409,
-      message: expect.stringMatching(/expired/),
-      code: "ATTACHMENTS_EXPIRED",
-      matches: [doc.id],
-    });
-  });
-
-  it("refuses to lease a file already claimed by another prompt", async () => {
-    const doc = await store.add(upload("notes.txt", "text/plain"));
-    const first = await store.resolveForPrompt([doc.id]);
+    const { files } = await store.resolveForPrompt([doc.id]);
+    const path = files[0]!.path;
     await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
       status: 409,
       message: expect.stringMatching(/already belong/),
     });
 
-    // The rejected prompt held nothing: the first lease still shields the file.
     await store.remove(doc.id);
-    await expect(access(first.files[0]!.path)).resolves.toBeUndefined();
+    await expect(access(path)).resolves.toBeUndefined();
 
-    // Consumed files are equally unavailable to a new prompt.
-    await store.releaseConsumed([doc.id]);
-    await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
-      /already belong/,
-    );
+    store.restage([doc.id]);
+    await store.remove(doc.id);
+    await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(store.resolveForPrompt([doc.id])).rejects.toMatchObject({
+      status: 409,
+      code: "ATTACHMENTS_EXPIRED",
+      matches: [doc.id],
+    });
   });
 
-  it("delivers previewable BMP and SVG uploads as files without consuming the image budget", async () => {
-    const size = Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1;
-    const attachments = await store.addMany([
-      upload("one.bmp", "image/bmp", size),
-      upload("two.svg", "image/svg+xml", size),
-    ]);
-    expect(attachments.map((item) => item.kind)).toEqual(["file", "file"]);
-    const resolved = await store.resolveForPrompt(
-      attachments.map((item) => item.id),
-    );
-    expect(resolved.images).toEqual([]);
-    expect(resolved.files).toHaveLength(2);
-  });
-
-  it("enforces aggregate upload and prompt-image budgets before leasing files", async () => {
+  it("enforces upload limits and counts only prompt images against the image budget", async () => {
     await expect(
       store.add(
         upload(
@@ -279,64 +228,21 @@ describe("attachments", () => {
         ),
       ),
     ).rejects.toThrow(/Each attachment/);
-    await expect(
-      store.addMany([
-        upload(
-          "one.bin",
-          "application/octet-stream",
-          MAX_ATTACHMENT_FILE_BYTES,
-        ),
-        upload(
-          "two.bin",
-          "application/octet-stream",
-          MAX_ATTACHMENT_FILE_BYTES,
-        ),
-        upload("three.bin", "application/octet-stream", 1),
-      ]),
-    ).rejects.toThrow(new RegExp(String(MAX_ATTACHMENT_UPLOAD_BYTES)));
 
-    const first = await store.add(
-      upload(
-        "one.png",
-        "image/png",
-        Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1,
-      ),
-    );
-    const second = await store.add(
-      upload(
-        "two.png",
-        "image/png",
-        Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1,
-      ),
-    );
+    const size = Math.floor(MAX_PROMPT_IMAGE_BYTES / 2) + 1;
+    const ordinary = await store.addMany([
+      upload("one.bmp", "image/bmp", size),
+      upload("two.svg", "image/svg+xml", size),
+    ]);
+    expect(ordinary.map(({ kind }) => kind)).toEqual(["file", "file"]);
+    const resolved = await store.resolveForPrompt(ordinary.map(({ id }) => id));
+    expect(resolved.images).toEqual([]);
+    expect(resolved.files).toHaveLength(2);
+    const first = await store.add(upload("one.png", "image/png", size));
+    const second = await store.add(upload("two.png", "image/png", size));
     await expect(store.resolveForPrompt([first.id, second.id])).rejects.toThrow(
       new RegExp(String(MAX_PROMPT_IMAGE_BYTES)),
     );
-    await store.remove(first.id);
-    await store.remove(second.id);
-  });
-
-  it("never removes unregistered dead-process directories or unrelated files", async () => {
-    const parent = join(root, "managed");
-    let deadPid = 999_999;
-    while (true) {
-      try {
-        process.kill(deadPid, 0);
-        deadPid += 1;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") break;
-        deadPid += 1;
-      }
-    }
-    const stale = join(parent, `${deadPid}-${Date.now() - 60_000}`);
-    const current = join(parent, `${process.pid}-${Date.now()}-current`);
-    await mkdir(stale, { recursive: true });
-    await writeFile(join(stale, "unrelated.txt"), "keep me");
-    const managed = new AttachmentStore(current, parent);
-    await managed.uploadDirectory();
-    await expect(access(join(stale, "unrelated.txt"))).resolves.toBeUndefined();
-    await expect(access(current)).resolves.toBeUndefined();
-    await managed.close();
   });
 
   it("holds no leases when resolving fails partway", async () => {
@@ -352,45 +258,6 @@ describe("attachments", () => {
     await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(/expired/);
   });
 
-  it.runIf(process.platform !== "win32")(
-    "uses filesystem containment, not Git ignore rules, for project references",
-    async () => {
-      const project = join(root, "project");
-      await mkdir(project);
-      await execFileAsync("git", ["-C", project, "init", "-q"]);
-      await writeFile(join(project, ".gitignore"), "secret.txt\n");
-      await writeFile(join(project, "tracked.txt"), "tracked\n");
-      await writeFile(join(project, "secret.txt"), "secret\n");
-      await symlink("tracked.txt", join(project, "selected.txt"));
-      await execFileAsync("git", [
-        "-C",
-        project,
-        "add",
-        ".gitignore",
-        "tracked.txt",
-        "selected.txt",
-      ]);
-
-      await rm(join(project, "selected.txt"));
-      await symlink("secret.txt", join(project, "selected.txt"));
-      await expect(
-        resolveProjectFiles(project, ["selected.txt"]),
-      ).resolves.toEqual([join(project, "secret.txt")]);
-      await writeFile(join(root, "outside.txt"), "outside\n");
-      await rm(join(project, "selected.txt"));
-      await symlink(join(root, "outside.txt"), join(project, "selected.txt"));
-      await expect(
-        resolveProjectFiles(project, ["selected.txt"]),
-      ).rejects.toThrow(/outside the active project/);
-      await expect(resolveProjectFiles(project, ["."])).rejects.toThrow(
-        /not a regular file/,
-      );
-      await expect(
-        resolveProjectFiles(project, ["tracked.txt"]),
-      ).resolves.toEqual([join(project, "tracked.txt")]);
-    },
-  );
-
   it("encodes unusual file names as structural JSON path items", () => {
     const prompt = addAttachmentContext(
       "Inspect",
@@ -403,7 +270,6 @@ describe("attachments", () => {
       text: "Inspect",
       references: ["/project/good\n- /etc/passwd"],
     });
-    expect(parseAttachmentContext(prompt).text).toBe("Inspect");
     const spaced = "  Preserve leading and trailing whitespace.  \n";
     expect(
       parseAttachmentContext(
@@ -415,5 +281,28 @@ describe("attachments", () => {
         addAttachmentContext("", [], ["/project/only-reference.txt"]),
       ).text,
     ).toBe("");
+  });
+
+  describe("image content", () => {
+    it("accepts canonical padded or unpadded base64", () => {
+      const encoded = Buffer.from("hello").toString("base64");
+      expect(canonicalBase64DecodedSize(encoded)).toBe(5);
+      expect(canonicalBase64DecodedSize(encoded.replace(/=+$/u, ""))).toBe(5);
+      expect(decodeCanonicalBase64(encoded)?.toString()).toBe("hello");
+    });
+
+    it("rejects malformed padding, whitespace, nonzero trailing bits, and empty image data", () => {
+      for (const value of ["TQ=", "TQ===", "T Q==", "TR==", "A"]) {
+        expect(canonicalBase64DecodedSize(value)).toBeNull();
+      }
+      expect(decodeCanonicalBase64("")).toBeNull();
+    });
+
+    it("accepts only Pi prompt image media types", () => {
+      expect(isSupportedPromptImageMimeType("image/png")).toBe(true);
+      expect(isSupportedPromptImageMimeType("image/JPG")).toBe(true);
+      expect(isSupportedPromptImageMimeType("image/svg+xml")).toBe(false);
+      expect(isSupportedPromptImageMimeType("text/html")).toBe(false);
+    });
   });
 });

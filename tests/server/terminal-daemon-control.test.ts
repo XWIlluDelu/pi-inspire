@@ -158,8 +158,10 @@ it("refuses duplicate startup with a non-retrying exit without altering the list
   }
 }, 30_000);
 
-it("status is observational and invalid commands never create an authority", async () => {
+it("restarts only the authenticated scoped owner, stops actual PTYs, and restores tabs without execution", async () => {
   const f = await fixture();
+  const other = await fixture();
+  let clients: TerminalDaemonClient[] = [];
   try {
     expect((await f.cli("status")).stdout).toContain(
       "No terminal daemon endpoint",
@@ -180,19 +182,6 @@ it("status is observational and invalid commands never create an authority", asy
         true,
       ),
     ).rejects.toThrow("external OS terminal");
-    await expect(f.cli("stop", "--unexpected")).rejects.toMatchObject({
-      code: 64,
-    });
-  } finally {
-    await f.cleanup();
-  }
-}, 45_000);
-
-it("restarts only the authenticated scoped owner, stops actual PTYs, and restores tabs without execution", async () => {
-  const f = await fixture();
-  const other = await fixture();
-  let clients: TerminalDaemonClient[] = [];
-  try {
     await mkdir(join(f.directory, "project with spaces"));
     const first = await f.start();
     const independent = await other.start();
@@ -236,7 +225,8 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
       { sendData() {}, sendControl() {}, close() {} },
     );
     const command =
-      "require('fs').writeFileSync(process.env.INSPIRE_TEST_CHILD_PID_FILE,String(process.pid));setInterval(()=>{},1000)";
+      "if(process.platform!=='win32')process.on('SIGHUP',()=>{});" +
+      "require('fs').writeFileSync(process.env.INSPIRE_TEST_CHILD_PID_FILE,JSON.stringify({pid:process.pid,id:process.env.INSPIRE_TERMINAL_ID,term:process.env.TERM,color:process.env.COLORTERM,program:process.env.TERM_PROGRAM}));setInterval(()=>{},1000)";
     const executable =
       process.platform === "win32"
         ? JSON.stringify(process.execPath)
@@ -248,9 +238,16 @@ it("restarts only the authenticated scoped owner, stops actual PTYs, and restore
     let ownedPid = 0;
     await vi.waitFor(
       async () => {
-        ownedPid = Number(
+        const child = JSON.parse(
           await readFile(f.environment.INSPIRE_TEST_CHILD_PID_FILE!, "utf8"),
         );
+        expect(child).toMatchObject({
+          id: terminal.id,
+          term: "xterm-256color",
+          color: "truecolor",
+          program: "Inspire",
+        });
+        ownedPid = child.pid;
         expect(ownedPid).toBeGreaterThan(0);
       },
       { timeout: 10_000 },

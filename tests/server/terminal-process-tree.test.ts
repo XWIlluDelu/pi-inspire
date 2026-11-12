@@ -27,49 +27,30 @@ function fixture() {
 }
 
 describe("birth-bound terminal process-tree cleanup", () => {
-  it("cleans a captured HUP-resistant child after root exit, never the old root or group", async () => {
+  it("keeps a captured child through root drain and retires recycled process identities", async () => {
     const f = fixture();
     await f.tree.signal("SIGHUP");
     expect(f.inspector.signal).toHaveBeenCalledWith(101, "SIGHUP");
     expect(f.inspector.signal).toHaveBeenCalledWith(-100, "SIGHUP");
+
     vi.mocked(f.inspector.signal).mockClear();
     vi.mocked(f.inspector.descendants).mockClear();
-    f.exit();
-    f.births.set(100, "unrelated-new-root");
+    // The native root PID has already recycled while onExit is still pending.
+    f.births.set(100, "new-root");
     await f.tree.signal("SIGKILL");
     expect(f.inspector.descendants).not.toHaveBeenCalled();
     expect(f.inspector.signal).toHaveBeenCalledExactlyOnceWith(101, "SIGKILL");
-    f.births.delete(101);
-    expect(await f.tree.waitForExit(0)).toBe(true);
-  });
 
-  it("refuses a recycled descendant PID and a recycled-root's new children", async () => {
-    const f = fixture();
-    await f.tree.signal("SIGHUP");
-    vi.mocked(f.inspector.signal).mockClear();
-    vi.mocked(f.inspector.descendants).mockClear();
     f.exit();
-    f.births.set(100, "new-root");
     f.births.set(101, "new-child");
     vi.mocked(f.inspector.descendants).mockResolvedValue([
       { pid: 102, birth: "unrelated-root-child" },
     ]);
-    f.births.set(102, "unrelated-root-child");
+    vi.mocked(f.inspector.signal).mockClear();
     await f.tree.signal("SIGKILL");
     expect(f.inspector.descendants).not.toHaveBeenCalled();
     expect(f.inspector.signal).not.toHaveBeenCalled();
     expect(await f.tree.waitForExit(0)).toBe(true);
-  });
-
-  it("does not trust stale running state while native onExit is draining", async () => {
-    const f = fixture();
-    await f.tree.signal("SIGHUP");
-    vi.mocked(f.inspector.signal).mockClear();
-    vi.mocked(f.inspector.descendants).mockClear();
-    f.births.set(100, "new-root");
-    await f.tree.signal("SIGKILL");
-    expect(f.inspector.descendants).not.toHaveBeenCalled();
-    expect(f.inspector.signal).toHaveBeenCalledExactlyOnceWith(101, "SIGKILL");
   });
 
   it("retains a denied descendant for retry and does not equate kill with confirmed exit", async () => {

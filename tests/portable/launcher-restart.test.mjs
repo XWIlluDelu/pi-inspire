@@ -1,26 +1,29 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import {
-  isolatedProcessOptions,
-  signalProcessTree,
-} from "../../server/process-tree.mjs";
 import {
   createLauncherRestartClient,
   createLauncherRestartSupervisor,
   HOST_RESTART_EXIT_CODE,
 } from "../../server/launcher-restart.mjs";
+import {
+  isolatedProcessOptions,
+  signalProcessTree,
+} from "../../server/process-tree.mjs";
+import {
+  directLauncherEnvironment,
+  preparePackagedLauncher,
+} from "../fixtures/packaged-launcher.mjs";
 
 function fixture(options = {}) {
   const parent = new EventEmitter();
   const child = new EventEmitter();
-  const state = { stopping: false, committed: false, dropReply: false };
+  const state = { stopping: false, committed: false };
   parent.connected = child.connected = true;
   child.send = (message, callback) => {
     queueMicrotask(() => {
@@ -31,7 +34,7 @@ function fixture(options = {}) {
   };
   parent.send = (message, callback) => {
     queueMicrotask(() => {
-      if (!state.dropReply) child.emit("message", message);
+      child.emit("message", message);
       callback?.(null);
     });
     return true;
@@ -104,25 +107,20 @@ test("unsupported, disconnected, and ownerless channels never acquire restart au
   assert.equal(ownerless.listenerCount("disconnect"), 0);
 });
 
-test("failed commit does not send a restart request", async (t) => {
-  const f = fixture();
-  t.after(f.close);
-  assert.deepEqual(await f.client.request(async () => false), {
-    code: 1,
-    issued: false,
-  });
-  assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
-});
-
-test("a disconnected launcher during commit cannot receive a restart request", async (t) => {
-  const f = fixture();
-  t.after(f.close);
-  const result = await f.client.request(async () => {
-    f.child.connected = false;
-    return true;
-  });
-  assert.deepEqual(result, { code: 1, issued: false });
-  assert.equal(f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null), false);
+test("never asks the supervisor to replace the Host after failed commit or pre-send disconnect", async (t) => {
+  for (const disconnect of [false, true]) {
+    const f = fixture();
+    t.after(f.close);
+    const result = await f.client.request(async () => {
+      if (disconnect) f.child.connected = false;
+      return disconnect;
+    });
+    assert.deepEqual(result, { code: 1, issued: false });
+    assert.equal(
+      f.supervisor.shouldRestart(HOST_RESTART_EXIT_CODE, null),
+      false,
+    );
+  }
 });
 
 test("ownership is checked after commit and failed ownership proves non-issuance", async (t) => {
@@ -207,29 +205,8 @@ test("channel loss after commit is uncertain and is never retried automatically"
 
 async function launcherFixture(t, mode) {
   const root = await mkdtemp(join(tmpdir(), "inspire-launcher-handoff-"));
-  const build = join(root, "build", "server");
-  await mkdir(build, { recursive: true });
-  await mkdir(join(root, "dist"));
-  await cp(resolve("inspire.mjs"), join(root, "inspire.mjs"));
-  for (const file of [
-    "file-lock",
-    "instance-state",
-    "instance-control",
-    "launcher-restart",
-    "npm-command",
-    "platform-paths",
-    "platform-environment",
-    "process-tree",
-    "static-asset-cache",
-    "user-environment",
-  ])
-    await cp(resolve("server", `${file}.mjs`), join(build, `${file}.mjs`));
-  await writeFile(join(root, "package.json"), '{"type":"module"}');
-  await writeFile(join(root, "dist", "index.html"), "");
-  await writeFile(join(build, "terminal-daemon-entry.js"), "");
-  await writeFile(
-    join(build, "index.js"),
-    `
+  await preparePackagedLauncher(root, {
+    host: `
     import { appendFile, readFile, writeFile } from "node:fs/promises";
     import { createLauncherRestartClient, HOST_RESTART_EXIT_CODE } from "./launcher-restart.mjs";
     await appendFile(process.env.TEST_LAUNCHES, "started\\n");
@@ -242,26 +219,13 @@ async function launcherFixture(t, mode) {
       await new Promise(resolve => setTimeout(resolve, 10));
     process.exit(HOST_RESTART_EXIT_CODE);
   `,
-  );
-  const probe = createServer();
-  await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
-  const port = probe.address().port;
-  await new Promise((resolve) => probe.close(resolve));
+  });
   const env = {
-    ...process.env,
-    HOME: root,
-    USERPROFILE: root,
-    XDG_RUNTIME_DIR: join(root, "runtime"),
-    INSPIRE_HOST: "127.0.0.1",
-    INSPIRE_PORT: String(port),
-    INSPIRE_STATE_PATH: join(root, "instance.json"),
-    INSPIRE_OPEN: "0",
-    INSPIRE_ENVIRONMENT: "inherit",
+    ...(await directLauncherEnvironment(root)),
     TEST_LAUNCHES: join(root, "launches"),
     TEST_READY: join(root, "ready"),
     TEST_MODE: mode,
   };
-  delete env.SYSTEMD_EXEC_PID;
   const child = spawn(process.execPath, [join(root, "inspire.mjs")], {
     cwd: root,
     env,

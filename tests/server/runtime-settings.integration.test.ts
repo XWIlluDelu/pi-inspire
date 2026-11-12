@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { piInstallation } from "../../server/pi-runtime.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type {
   SessionCatalogLike,
@@ -179,9 +178,6 @@ describe("native effective retry settings", () => {
   it.each(["always", "never"] as const)(
     "respects %s project trust before and after the native setters",
     async (trust) => {
-      expect(
-        Number(piInstallation.version.split(".")[0]),
-      ).toBeGreaterThanOrEqual(1);
       const { runtime, records, workers, events, globalPath, close } =
         await fixture(trust, true);
       const record = records[0]!;

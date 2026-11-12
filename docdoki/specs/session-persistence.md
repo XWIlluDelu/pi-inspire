@@ -10,9 +10,9 @@ covers:
   - server/persisted-json.ts
   - server/resources.ts
   - tests/server/runtime*.test.ts
-  - tests/server/session-{projection*,preview,jsonl}.test.ts
+  - tests/server/session-projection*.test.ts
   - scripts/benchmark-projection-reads.mjs
-  - tests/server/pi-{rpc,compat.integration}.test.ts
+  - tests/server/pi-{rpc,compat.integration,startup.integration}.test.ts
 ---
 
 # Session persistence and worker ownership

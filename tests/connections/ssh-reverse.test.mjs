@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import {
-  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -10,18 +9,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   parseSshReverseConfig,
   sshCommandArguments,
   sshFailureSummary,
-  sshReverseServiceBelongsToRoot,
 } from "../../connections/ssh-reverse/runner.mjs";
 
-const temporary = [];
+import { preparePackagedLauncher } from "../fixtures/packaged-launcher.mjs";
 
-const runner = resolve("connections/ssh-reverse/runner.mjs");
+const temporary = [];
 
 afterEach(async () => {
   await Promise.all(
@@ -32,24 +30,6 @@ afterEach(async () => {
 });
 
 describe("ssh-reverse connection module", () => {
-  it("accepts a small explicit connection configuration", () => {
-    expect(
-      parseSshReverseConfig(
-        [
-          "INSPIRE_SSH_TARGET=relay@example.test",
-          "INSPIRE_SSH_REMOTE_PORT=14587",
-          "INSPIRE_SSH_LOCAL_PORT=4588",
-          "INSPIRE_SSH_IDENTITY_FILE=/home/demo/.ssh/inspire-tunnel",
-        ].join("\n"),
-      ),
-    ).toEqual({
-      target: "relay@example.test",
-      remotePort: 14587,
-      localPort: 4588,
-      identityFile: "/home/demo/.ssh/inspire-tunnel",
-    });
-  });
-
   it("rejects shell-like, duplicate, and unknown configuration", () => {
     expect(() =>
       parseSshReverseConfig(
@@ -68,66 +48,41 @@ describe("ssh-reverse connection module", () => {
     ).toThrow("UNSAFE");
   });
 
-  it.runIf(process.platform !== "win32")(
-    "does not let one checkout claim another checkout's user service",
-    () => {
-      const unit = [
-        "[Service]",
-        "WorkingDirectory=/srv/inspire-a",
-        "ExecStart=/usr/bin/node /srv/inspire-a/runner.mjs --root /srv/inspire-a supervise",
-        "",
-      ].join("\n");
-
-      expect(sshReverseServiceBelongsToRoot(unit, "/srv/inspire-a")).toBe(true);
-      expect(sshReverseServiceBelongsToRoot(unit, "/srv/inspire-b")).toBe(
-        false,
-      );
-      expect(
-        sshReverseServiceBelongsToRoot(
-          "[Service]\nWorkingDirectory=/srv/INS\\xce\\xa0RE\\x20review\n",
-          "/srv/INSΠRE review",
-        ),
-      ).toBe(true);
-    },
-  );
-
   it.runIf(process.platform === "linux")(
-    "does not control an active user service owned by another checkout",
+    "dispatches packaged and aliased connections and only replaces its own service",
     async () => {
-      const fixture = await mkdtemp(join(tmpdir(), "inspire ssh service-"));
+      const fixture = await mkdtemp(join(tmpdir(), "inspire-ssh-package-"));
       temporary.push(fixture);
-      const root = join(fixture, "current");
+      const root = join(fixture, "INSΠRE review");
+      const alias = join(fixture, "package-link");
       const configHome = join(fixture, "config");
+      const unitPath = join(
+        configHome,
+        "systemd",
+        "user",
+        "inspire-connection-ssh-reverse.service",
+      );
       const bin = join(fixture, "bin");
       const log = join(fixture, "systemctl.log");
+      const config = join(fixture, "direct.env");
       await Promise.all([
-        mkdir(join(root, ".inspire", "connections"), { recursive: true }),
+        mkdir(root),
+        mkdir(bin),
         mkdir(join(configHome, "systemd", "user"), { recursive: true }),
-        mkdir(bin, { recursive: true }),
       ]);
-      const config = join(root, ".inspire", "connections", "ssh-reverse.env");
-      await writeFile(
-        config,
-        "INSPIRE_SSH_TARGET=example\nINSPIRE_SSH_REMOTE_PORT=14587\nINSPIRE_SSH_LOCAL_PORT=65534\n",
-        { mode: 0o600 },
-      );
-      await writeFile(
-        join(
-          configHome,
-          "systemd",
-          "user",
-          "inspire-connection-ssh-reverse.service",
+      await preparePackagedLauncher(root);
+      await Promise.all([
+        ...["connections", "deploy/systemd"].map((directory) =>
+          cp(resolve(directory), join(root, directory), { recursive: true }),
         ),
-        "[Service]\nWorkingDirectory=/another/checkout\nExecStart=/another/runner\n",
-      );
-      const systemctl = join(bin, "systemctl");
-      await writeFile(
-        systemctl,
-        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"\ncase "$*" in\n  *is-active*) exit 0 ;;\nesac\nexit 0\n`,
-      );
-      await chmod(systemctl, 0o700);
+        symlink(root, alias, "dir"),
+        writeFile(
+          join(bin, "systemctl"),
+          '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SYSTEMCTL_LOG"\n',
+          { mode: 0o700 },
+        ),
+      ]);
       const environment = {
-        ...process.env,
         HOME: fixture,
         XDG_CONFIG_HOME: configHome,
         XDG_STATE_HOME: join(fixture, "state"),
@@ -136,117 +91,103 @@ describe("ssh-reverse connection module", () => {
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         SYSTEMCTL_LOG: log,
       };
-
-      for (const action of ["start", "stop", "restart", "install-service"]) {
-        const result = spawnSync(
+      const dispatch = (
+        action,
+        path = root,
+        overrides = {},
+        name = "ssh-reverse",
+      ) =>
+        spawnSync(
           process.execPath,
-          [runner, "--root", root, action],
+          path === root
+            ? [join(root, "inspire.mjs"), "connection", name, action]
+            : [
+                join(root, "connections", "dispatch.mjs"),
+                "--root",
+                path,
+                name,
+                action,
+              ],
           {
             encoding: "utf8",
-            env: environment,
+            timeout: 5_000,
+            env: { ...environment, ...overrides },
           },
         );
+
+      const invalid = dispatch("init", root, {}, "../ssh-reverse");
+      expect(invalid.status).toBe(1);
+      expect(invalid.stderr).toContain("Connection name is not valid");
+      const aliasConfig = join(fixture, "alias.env");
+      for (const [path, target] of [
+        [root, config],
+        [alias, aliasConfig],
+      ]) {
+        const result = dispatch("init", path, {
+          INSPIRE_SSH_REVERSE_CONFIG: target,
+        });
+        expect(result.status, result.stderr).toBe(0);
+        expect(await readFile(target, "utf8")).toContain(
+          "INSPIRE_SSH_REMOTE_PORT=14587",
+        );
+      }
+      await writeFile(
+        config,
+        "INSPIRE_SSH_TARGET=example\nINSPIRE_SSH_REMOTE_PORT=14587\n",
+      );
+      const foreignUnit =
+        "[Service]\nWorkingDirectory=/another/checkout\nExecStart=/another/runner\n";
+      await writeFile(unitPath, foreignUnit);
+      for (const action of ["start", "stop", "restart", "install-service"]) {
+        const result = dispatch(action);
         expect(result.status, `${action}: ${result.stderr}`).not.toBe(0);
       }
-      const status = spawnSync(
-        process.execPath,
-        [runner, "--root", root, "status"],
-        { encoding: "utf8", env: environment },
-      );
+      const status = dispatch("status");
       expect(status.status).not.toBe(0);
-      expect(status.stdout, status.stderr).toContain(
-        "SSH reverse connection: not running.",
-      );
+      expect(status.stdout).toContain("SSH reverse connection: not running.");
       expect(status.stderr).toContain("active for another installation");
-
-      const calls = (await readFile(log, "utf8")).trim().split("\n");
-      expect(calls).toHaveLength(5);
-      expect(calls.every((call) => call.includes("is-active"))).toBe(true);
-    },
-  );
-
-  it.each(["direct", "directory alias"])(
-    "loads runtime support from the installed package layout through %s",
-    async (entry) => {
-      const fixture = await mkdtemp(join(tmpdir(), "inspire-ssh-package-"));
-      temporary.push(fixture);
-      const packageRoot = join(fixture, "package");
-      const files = [
-        [
-          "connections/ssh-reverse/runner.mjs",
-          "connections/ssh-reverse/runner.mjs",
-        ],
-        ["deploy/systemd/install.mjs", "deploy/systemd/install.mjs"],
-        ["deploy/systemd/control.mjs", "deploy/systemd/control.mjs"],
-        ...[
-          "file-lock",
-          "instance-state",
-          "instance-control",
-          "platform-environment",
-          "process-tree",
-        ].map((name) => [`server/${name}.mjs`, `build/server/${name}.mjs`]),
-      ];
-      await Promise.all(
-        files.map(async ([source, destination]) => {
-          const path = join(packageRoot, destination);
-          await mkdir(dirname(path), { recursive: true });
-          await cp(resolve(source), path);
-        }),
+      expect(await readFile(unitPath, "utf8")).toBe(foreignUnit);
+      expect(await readFile(log, "utf8")).not.toMatch(
+        /^--user (?:start|stop|restart|enable|disable|daemon-reload)\b/mu,
       );
-      let entryRoot = packageRoot;
-      if (entry === "directory alias") {
-        entryRoot = join(fixture, "package-link");
-        await symlink(
-          packageRoot,
-          entryRoot,
-          process.platform === "win32" ? "junction" : "dir",
-        );
-      }
-      const config = join(fixture, "connection.env");
-      const result = spawnSync(
-        process.execPath,
-        [
-          join(entryRoot, "connections/ssh-reverse/runner.mjs"),
-          "--root",
-          entryRoot,
-          "init",
-        ],
-        {
-          encoding: "utf8",
-          timeout: 5_000,
-          env: {
-            ...process.env,
-            HOME: fixture,
-            XDG_CONFIG_HOME: join(fixture, "config"),
-            XDG_STATE_HOME: join(fixture, "state"),
-            INSPIRE_SSH_REVERSE_CONFIG: config,
-          },
-        },
+
+      const workingDirectory = `WorkingDirectory=${join(fixture, "INS\\xce\\xa0RE\\x20review")}`;
+      await writeFile(
+        unitPath,
+        `[Service]\n${workingDirectory}\nExecStart=/old/runner\n`,
       );
-      expect(result.status, result.stderr).toBe(0);
-      expect(await readFile(config, "utf8")).toContain(
-        "INSPIRE_SSH_REMOTE_PORT=14587",
+      const install = dispatch("install-service");
+      expect(install.status, install.stderr).toBe(0);
+      expect(await readFile(unitPath, "utf8")).toContain(workingDirectory);
+      expect(await readFile(log, "utf8")).toMatch(
+        /--user daemon-reload\n--user restart inspire-connection-ssh-reverse\.service\n$/u,
       );
     },
   );
 
-  it("always requests a loopback-only remote listener", () => {
-    const arguments_ = sshCommandArguments(
-      {
-        target: "relay",
-        remotePort: 14587,
-        localPort: 4587,
-        identityFile: undefined,
-      },
-      { controlPath: "/private/control", background: true },
+  it("turns explicit configuration into a loopback-only SSH command", () => {
+    const settings = [
+      "INSPIRE_SSH_TARGET=relay@example.test",
+      "INSPIRE_SSH_REMOTE_PORT=14587",
+      "INSPIRE_SSH_LOCAL_PORT=4588",
+    ].join("\n");
+    const args = (extra = "") =>
+      sshCommandArguments(parseSshReverseConfig(settings + extra));
+    const ordinary = args();
+    expect(ordinary).toEqual(
+      expect.arrayContaining([
+        "127.0.0.1:14587:127.0.0.1:4588",
+        "ExitOnForwardFailure=yes",
+        "ConnectTimeout=10",
+        "ServerAliveInterval=15",
+        "ServerAliveCountMax=3",
+      ]),
     );
-    expect(arguments_).toContain("127.0.0.1:14587:127.0.0.1:4587");
-    expect(arguments_).toContain("ExitOnForwardFailure=yes");
-    expect(arguments_).toContain("ConnectTimeout=10");
-    expect(arguments_).toContain("ServerAliveInterval=15");
-    expect(arguments_).toContain("ServerAliveCountMax=3");
-    expect(arguments_).not.toContain("Compression=yes");
-    expect(arguments_).not.toContain("IdentitiesOnly=yes");
+    expect(ordinary.at(-1)).toBe("relay@example.test");
+    const identity = "/home/demo/.ssh/tunnel";
+    expect(args(`\nINSPIRE_SSH_IDENTITY_FILE=${identity}`)).toEqual(
+      expect.arrayContaining([identity, "IdentitiesOnly=yes"]),
+    );
   });
 
   it.each([
@@ -261,16 +202,5 @@ describe("ssh-reverse connection module", () => {
     ["client_loop: send disconnect: Broken pipe", "connection was interrupted"],
   ])("classifies SSH failure layers: %s", (stderr, expected) => {
     expect(sshFailureSummary(stderr)).toContain(expected);
-  });
-
-  it("uses an explicit identity only when configured", () => {
-    const arguments_ = sshCommandArguments({
-      target: "relay",
-      remotePort: 14587,
-      localPort: 4587,
-      identityFile: "/home/demo/.ssh/tunnel",
-    });
-    expect(arguments_).toContain("/home/demo/.ssh/tunnel");
-    expect(arguments_).toContain("IdentitiesOnly=yes");
   });
 });

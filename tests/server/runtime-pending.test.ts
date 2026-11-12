@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
+import { projectPendingQueues } from "../../server/runtime-pending.js";
 import { RuntimeController } from "../../server/runtime.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
-import { PreviewProjection } from "./fixtures/preview-projection.js";
+import {
+  MAX_PENDING_MESSAGES,
+  MAX_PENDING_PREVIEW_CHARS,
+  parsePendingMessageSummary,
+  parsePendingQueues,
+} from "../../shared/contracts.js";
 import {
   catalog,
   deferredSignal,
@@ -10,32 +16,27 @@ import {
   FakeRpc,
   initializeRuntimeFixture,
   preview,
-  previewSnapshot,
   record,
   schedulingRuntime,
   trackedAttachmentStore,
+  trackRuntime,
   upload,
   waitForReady,
 } from "./fixtures/runtime.js";
 
-function pendingEntry(id: string, text: string) {
-  return {
-    id,
-    textPreview: text,
-    textLength: text.length,
-    textTruncated: false,
-  };
-}
-
 async function queuedImageFixture() {
   const store = trackedAttachmentStore();
   const queue = { steering: [] as string[], followUp: [] as string[] };
-  let worker!: FakeRpc;
-  const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, {
-    createProcess: (options) => {
-      worker = new FakeRpc(options);
+  const { runtime, workers } = schedulingRuntime({
+    attachments: store,
+    configure(worker) {
       queue.steering = [];
       queue.followUp = [];
+      const publishQueue = () =>
+        worker.emit("event", {
+          type: "queue_update",
+          ...structuredClone(queue),
+        });
       worker.responseOverrides.set(
         "prompt",
         (command: Record<string, unknown>) => {
@@ -45,10 +46,7 @@ async function queuedImageFixture() {
                 ? queue.steering
                 : queue.followUp;
             texts.push(String(command.message));
-            worker.emit("event", {
-              type: "queue_update",
-              ...structuredClone(queue),
-            });
+            publishQueue();
           }
           return {};
         },
@@ -57,616 +55,278 @@ async function queuedImageFixture() {
         const result = structuredClone(queue);
         queue.steering = [];
         queue.followUp = [];
-        worker.emit("event", { type: "queue_update", ...queue });
+        publishQueue();
         return result;
       });
-      return worker as unknown as PiRpcProcess;
     },
-    openSessionProjection: preview,
   });
   await runtime.openSession("a");
   await waitForReady(runtime);
-  worker.emit("event", { type: "agent_start" });
+  workers[0]!.emit("event", { type: "agent_start" });
   return {
     runtime,
     store,
     queue,
+    get worker() {
+      return workers.at(-1)!;
+    },
+  };
+}
+
+const savedImage = {
+  data: Buffer.from("saved pixels").toString("base64"),
+  mimeType: "image/png",
+};
+
+function recalledImageFixture() {
+  const store = trackedAttachmentStore();
+  let worker!: FakeRpc;
+  const runtime = new RuntimeController(catalog([record("a", "/tmp")]), store, {
+    createProcess(options) {
+      worker = new FakeRpc(options);
+      return worker as unknown as PiRpcProcess;
+    },
+    openSessionProjection: (session) =>
+      preview(session, [
+        messageEntry("original", null, {
+          role: "user",
+          timestamp: 1,
+          content: [{ type: "image", ...savedImage }],
+        }),
+      ]),
+  });
+  return {
+    runtime,
+    store,
     get worker() {
       return worker;
     },
   };
 }
 
+import { messageEntry } from "./fixtures/session-jsonl.js";
+
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("RuntimeController Pending input and recovery", () => {
-  it.each(["recover", "abort"] as const)(
-    "includes original Host-deferred images in %s, including image-only input",
-    async (action) => {
+  it.each([
+    { action: "return", unavailable: true, caption: "caption" },
+    { action: "stop", unavailable: true, caption: "caption" },
+    { action: "stop", unavailable: false, caption: "" },
+  ] as const)(
+    "handles Host-held images on $action (metadata unavailable=$unavailable)",
+    async ({ action, unavailable, caption }) => {
       const attachments = trackedAttachmentStore();
       const f = schedulingRuntime({ attachments });
-      try {
-        await f.runtime.openSession("a");
-        await waitForReady(f.runtime);
-        const image = await attachments.add(
-          upload("original.png", "image/png"),
-        );
-        f.worker.emit("event", { type: "compaction_start", reason: "auto" });
-        f.worker.responseOverrides.set("get_state", () => ({
+      trackRuntime(f.runtime);
+      await f.runtime.openSession("a");
+      await waitForReady(f.runtime);
+      const image = await attachments.add(upload("original.png", "image/png"));
+      f.worker.emit("event", { type: "compaction_start", reason: "auto" });
+      f.worker.responseOverrides.set("get_state", () => ({
+        sessionId: "a",
+        isCompacting: true,
+        isStreaming: false,
+      }));
+      const delivery = f.runtime
+        .prompt({
           sessionId: "a",
-          isCompacting: true,
-          isStreaming: false,
-        }));
-        const delivery = f.runtime
-          .prompt({
-            sessionId: "a",
-            message: "",
-            behavior: "followUp",
-            attachmentIds: [image.id],
-          })
-          .catch((error) => error);
-        await vi.waitFor(async () =>
-          expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(
-            1,
-          ),
+          message: caption,
+          behavior: "followUp",
+          attachmentIds: [image.id],
+        })
+        .catch((error) => error);
+      await vi.waitFor(async () =>
+        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
+      );
+      const metadata = vi.spyOn(attachments, "pendingImageAttachments");
+      if (unavailable)
+        metadata.mockImplementation(() => {
+          throw new Error("image unavailable");
+        });
+      if (action === "return") {
+        await expect(f.runtime.recoverPending("a")).rejects.toThrow(
+          "image unavailable",
         );
-        const result =
-          action === "recover"
-            ? await f.runtime.recoverPending("a")
-            : await f.runtime.abort("a");
-        expect(result).toMatchObject({
-          steering: [],
-          followUp: [""],
+        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
+        metadata.mockRestore();
+      }
+      const receipt =
+        action === "return"
+          ? await f.runtime.recoverPending("a")
+          : await f.runtime.abort("a");
+      if (unavailable && action === "stop") {
+        expect(receipt).toMatchObject({ error: "image unavailable" });
+        expect(f.worker.stops).toBe(1);
+        expect(await delivery).toBeInstanceOf(Error);
+      } else {
+        expect(receipt).toMatchObject({
+          followUp: [caption],
           attachments: [image],
         });
         expect(await delivery).toMatchObject({
           code: "PROMPT_RECOVERED",
           recoveredAttachments: [image],
         });
-        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
-        expect(
-          (await attachments.imagePreview(image.id)).bytes.length,
-        ).toBeGreaterThan(0);
-      } finally {
-        await f.runtime.close();
       }
+      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
+      expect((await attachments.imagePreview(image.id)).bytes.toString()).toBe(
+        "payload",
+      );
     },
   );
 
-  it("stages recalled Host-deferred images for both receipt observers", async () => {
-    const attachments = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      attachments,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: async (session) => {
-          const snapshot = await previewSnapshot(session);
-          snapshot.transcriptPage.messages = [
-            {
-              role: "user",
-              __inspireHistoryEntryId: "original",
-              timestamp: 1,
-              content: [
-                {
-                  type: "image",
-                  mimeType: "image/png",
-                  data: Buffer.from("saved pixels").toString("base64"),
-                },
-              ],
-            },
-          ];
-          return new PreviewProjection(session.id, snapshot);
-        },
-      },
-    );
+  it("returns, copies and clears Host-held compaction input, then delivers only new input", async () => {
+    const gate = deferredSignal();
+    const f = recalledImageFixture();
+    const { runtime, store } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
-      worker.emit("event", { type: "compaction_start", reason: "auto" });
-      worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        isCompacting: true,
-        isStreaming: false,
-      }));
-      const snapshot = await runtime.snapshot();
-      const delivery = runtime
-        .prompt({
-          sessionId: "a",
-          message: "",
-          behavior: "followUp",
-          historyArtifacts: {
-            viewId: snapshot.active!.transcriptPage.viewId,
-            incarnation: snapshot.active!.transcriptPage.incarnation ?? null,
-            effectiveLeafId: null,
-            imageReferences: ["pi-history-image://original/0"],
-            fileReferences: [],
-          },
-        })
-        .catch((error) => error);
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      const recovered = await runtime.recoverPending("a");
-      expect(recovered.attachments).toHaveLength(1);
-      expect(
-        (
-          await attachments.imagePreview(recovered.attachments![0]!.id)
-        ).bytes.toString(),
-      ).toBe("saved pixels");
-      expect(await delivery).toMatchObject({
-        code: "PROMPT_RECOVERED",
-        recoveredAttachments: recovered.attachments,
-      });
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("keeps Host-held input queued if image handoff preparation fails", async () => {
-    const attachments = trackedAttachmentStore();
-    const f = schedulingRuntime({ attachments });
-    try {
-      await f.runtime.openSession("a");
-      await waitForReady(f.runtime);
-      const image = await attachments.add(upload("original.png", "image/png"));
-      f.worker.emit("event", { type: "compaction_start", reason: "auto" });
-      f.worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        isCompacting: true,
-        isStreaming: false,
-      }));
-      const delivery = f.runtime
-        .prompt({
-          sessionId: "a",
-          message: "caption",
-          behavior: "followUp",
-          attachmentIds: [image.id],
-        })
-        .catch((error) => error);
-      await vi.waitFor(async () =>
-        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      const metadata = vi
-        .spyOn(attachments, "pendingImageAttachments")
-        .mockImplementationOnce(() => {
-          throw new Error("image unavailable");
-        });
-      await expect(f.runtime.recoverPending("a")).rejects.toThrow(
-        "image unavailable",
-      );
-      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
-      metadata.mockRestore();
-      expect(await f.runtime.recoverPending("a")).toMatchObject({
-        followUp: ["caption"],
-        attachments: [image],
-      });
-      expect(await delivery).toMatchObject({
-        code: "PROMPT_RECOVERED",
-        recoveredAttachments: [image],
-      });
-    } finally {
-      await f.runtime.close();
-    }
-  });
-
-  it("still retires Stop's worker if Host image preparation cannot complete", async () => {
-    const attachments = trackedAttachmentStore();
-    const f = schedulingRuntime({ attachments });
-    try {
-      await f.runtime.openSession("a");
-      await waitForReady(f.runtime);
-      const image = await attachments.add(upload("original.png", "image/png"));
-      f.worker.emit("event", { type: "compaction_start", reason: "auto" });
-      f.worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        isCompacting: true,
-        isStreaming: false,
-      }));
-      const delivery = f.runtime
-        .prompt({
-          sessionId: "a",
-          message: "caption",
-          behavior: "followUp",
-          attachmentIds: [image.id],
-        })
-        .catch((error) => error);
-      await vi.waitFor(async () =>
-        expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      vi.spyOn(attachments, "pendingImageAttachments").mockImplementation(
-        () => {
-          throw new Error("image unavailable");
-        },
-      );
-      expect(await f.runtime.abort("a")).toMatchObject({
-        error: "image unavailable",
-      });
-      expect(f.worker.stops).toBe(1);
-      expect((await f.runtime.snapshot()).pendingQueues?.totalCount).toBe(0);
-      expect(await delivery).toBeInstanceOf(Error);
-      expect(
-        (await attachments.imagePreview(image.id)).bytes.length,
-      ).toBeGreaterThan(0);
-    } finally {
-      await f.runtime.close();
-    }
-  });
-
-  it("keeps observed pending input across reconnect and settlement, clearing it only on queue removal or worker replacement", async () => {
-    const store = trackedAttachmentStore();
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-
-    const initialRevision = (await runtime.snapshot()).pendingQueues!.revision;
-    const longPendingText = "x".repeat(600);
-    f.worker.emit("event", {
-      type: "queue_update",
-      steering: ["first", longPendingText],
-      followUp: ["later"],
-    });
-    expect((await runtime.snapshot()).pendingQueues).toEqual({
-      totalCount: 3,
-      totalImageCount: 0,
-      revision: initialRevision + 1,
-      steering: [
-        pendingEntry("text-steer-0", "first"),
-        {
-          ...pendingEntry(
-            "text-steer-1",
-            `${"x".repeat(384)}\n…\n${"x".repeat(125)}`,
-          ),
-          textLength: 600,
-          textTruncated: true,
-        },
-      ],
-      followUp: [pendingEntry("text-followUp-0", "later")],
-    });
-
-    const observed = await runtime.snapshot();
-    f.worker.emit("event", {
-      type: "queue_update",
-      steering: ["unverified", false],
-      followUp: [],
-    });
-    expect((await runtime.snapshot()).pendingQueues).toEqual(
-      observed.pendingQueues,
-    );
-    await expect(
-      runtime.pendingText({
-        sessionId: "a",
-        viewId: observed.active!.transcriptPage.viewId!,
-        revision: observed.pendingQueues!.revision,
-        itemId: "text-steer-0",
-      }),
-    ).rejects.toThrow(/Complete pending text is unavailable/);
-
-    f.worker.emit("event", {
-      type: "queue_update",
-      steering: Array.from({ length: 1_001 }, (_, index) => `steer-${index}`),
-      followUp: ["bounded-out"],
-    });
-    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
-      totalCount: 1_002,
-      revision: initialRevision + 2,
-      steering: { length: 1_000 },
-      followUp: [],
-    });
-
-    f.worker.emit("event", { type: "agent_settled" });
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).pendingQueues).toMatchObject({
-        totalCount: 1_002,
-        revision: initialRevision + 3,
-        steering: { length: 1_000 },
-        followUp: [],
-      }),
-    );
-
-    f.worker.emit("event", {
-      type: "queue_update",
-      steering: ["stale"],
-      followUp: [],
-    });
-    const beforeReplacement = (await runtime.snapshot()).pendingQueues!
-      .revision;
-    f.worker.emit("exit", new Error("replacement required"));
-    const replaced = (await runtime.snapshot()).pendingQueues!;
-    expect(replaced).toMatchObject({
-      totalCount: 0,
-      steering: [],
-      followUp: [],
-    });
-    expect(replaced.revision).toBeGreaterThan(beforeReplacement);
-    await runtime.close();
-  });
-
-  it("copies uploaded and recalled images without delivering compaction input, then clears and resumes Pending", async () => {
-    let worker!: FakeRpc;
-    const compactGate = deferredSignal();
-    let streaming = false;
-    const store = trackedAttachmentStore();
-    const saved = {
-      data: Buffer.from("saved image").toString("base64"),
-      mimeType: "image/png",
-    };
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: async (session) => {
-          const value = await previewSnapshot(session);
-          return new PreviewProjection(session.id, {
-            ...value,
-            transcriptPage: {
-              ...value.transcriptPage,
-              messages: [
-                {
-                  role: "user",
-                  __inspireHistoryEntryId: "original",
-                  content: [{ type: "image", ...saved }],
-                  timestamp: 1,
-                },
-              ],
-            },
-          });
-        },
-      },
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      const history = await runtime.composerHistory("a", 0);
-      worker.responseOverrides.set("compact", () => compactGate.promise);
-      worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        sessionFile: worker.sessionPath,
-        isStreaming: streaming,
-        isCompacting: false,
-        thinkingLevel: "medium",
-        model: { provider: "test", id: "model" },
-      }));
-      worker.responseOverrides.set("prompt", () => {
-        streaming = true;
-        return {};
-      });
-      const compact = runtime.nativeCommand({
+      const { worker } = f;
+      worker.responseOverrides.set("compact", () => gate.promise);
+      const compacting = runtime.nativeCommand({
         sessionId: "a",
         command: "compact",
       });
       await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.type === "compact"),
-        ).toBe(true),
+        expect(worker.commands).toContainEqual(
+          expect.objectContaining({ type: "compact" }),
+        ),
       );
-      const firstImage = await store.add(upload("first.png", "image/png"));
-      const secondImage = await store.add(upload("second.png", "image/png"));
-      const doc = await store.add(upload("notes.txt", "text/plain"));
-      const prepare = vi.spyOn(store, "resolveForPrompt");
+
+      const page = (await runtime.snapshot()).active!.transcriptPage;
+      const queueSavedImage = () =>
+        runtime
+          .prompt({
+            sessionId: "a",
+            message: "",
+            behavior: "followUp",
+            historyArtifacts: {
+              viewId: page.viewId,
+              incarnation: page.incarnation ?? null,
+              effectiveLeafId: page.effectiveLeafId ?? null,
+              imageReferences: ["pi-history-image://original/0"],
+              fileReferences: [],
+            },
+          })
+          .catch((error: unknown) => error);
+      const waitForQueue = (count: number) =>
+        vi.waitFor(async () => {
+          const { pendingQueues } = await runtime.snapshot();
+          expect(pendingQueues?.totalCount).toBe(count);
+          return pendingQueues!;
+        });
+      const recalledDelivery = queueSavedImage();
+      const steering = ["first steer", "second steer"];
+      const textDeliveries = steering.map((message) =>
+        runtime
+          .prompt({ sessionId: "a", message, behavior: "steer" })
+          .catch((error: unknown) => error),
+      );
+      await waitForQueue(3);
+      const returned = await runtime.recoverPending("a");
+      expect(returned).toMatchObject({ steering, followUp: [""] });
+      expect(returned.attachments).toHaveLength(1);
+      expect(await recalledDelivery).toMatchObject({
+        code: "PROMPT_RECOVERED",
+        recoveredAttachments: returned.attachments,
+      });
+      for (const receipt of await Promise.all(textDeliveries))
+        expect(receipt).toMatchObject({ code: "PROMPT_RECOVERED" });
+      expect(
+        (
+          await store.imagePreview(returned.attachments![0]!.id)
+        ).bytes.toString(),
+      ).toBe("saved pixels");
+
+      const [first, second, file] = await store.addMany([
+        upload("first.png", "image/png"),
+        upload("second.png", "image/png"),
+        upload("notes.txt", "text/plain"),
+      ]);
       const removed = [
-        runtime.prompt({
-          sessionId: "a",
-          message: "remove me",
-          behavior: "steer",
-          attachmentIds: [
-            secondImage.id,
-            doc.id,
-            firstImage.id,
-            secondImage.id,
-          ],
-        }),
-        runtime.prompt({
-          sessionId: "a",
-          message: "",
-          behavior: "followUp",
-          historyArtifacts: {
-            viewId: history.viewId,
-            incarnation: history.incarnation ?? null,
-            effectiveLeafId: history.effectiveLeafId ?? null,
-            imageReferences: history.entries[0]!.images.map(
-              (image) => image.reference,
-            ),
-            fileReferences: [],
-          },
-        }),
-        runtime.prompt({
-          sessionId: "a",
-          message: "remove me",
-          behavior: "followUp",
-          attachmentIds: [doc.id],
-        }),
-      ].map((promise) => promise.catch((error: unknown) => error));
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(3),
-      );
-      const pending = await runtime.snapshot();
+        runtime
+          .prompt({
+            sessionId: "a",
+            message: "Remove me",
+            behavior: "steer",
+            attachmentIds: [second!.id, file!.id, first!.id, second!.id],
+          })
+          .catch((error: unknown) => error),
+        queueSavedImage(),
+      ];
+      const queue = await waitForQueue(2);
       const copy = {
         sessionId: "a",
-        viewId: pending.active!.transcriptPage.viewId,
-        revision: pending.pendingQueues!.revision,
+        viewId: page.viewId,
+        revision: queue.revision,
       };
-      await expect(
-        runtime.pendingText({ ...copy, itemId: "host-steer-0" }),
-      ).resolves.toEqual({
-        text: "remove me",
-        imageAttachmentIds: [secondImage.id, firstImage.id],
-      });
-      await expect(
-        runtime.pendingText({ ...copy, itemId: "host-followUp-0" }),
-      ).resolves.toEqual({
-        text: "",
-        images: [saved],
-      });
-      await expect(
-        runtime.pendingText({ ...copy, itemId: "host-followUp-1" }),
-      ).resolves.toEqual({ text: "remove me" });
+      const recalled = { ...copy, itemId: queue.followUp[0]!.id };
       await expect(runtime.pendingText(copy)).resolves.toEqual({
-        text: "1. remove me\n2. \n3. remove me",
+        text: "1. Remove me\n2. ",
         images: [
-          { attachmentId: secondImage.id },
-          { attachmentId: firstImage.id },
-          saved,
+          { attachmentId: second!.id },
+          { attachmentId: first!.id },
+          savedImage,
         ],
       });
-      expect((await runtime.snapshot()).pendingQueues).toEqual(
-        pending.pendingQueues,
-      );
-      expect(prepare).not.toHaveBeenCalled();
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toEqual([]);
-      // Copy did not lease staging; withdrawing an original still removes it.
-      await store.remove(secondImage.id);
+      await store.remove(second!.id);
       await expect(runtime.pendingText(copy)).rejects.toThrow(
         "Original pending images are unavailable",
       );
-      await expect(
-        runtime.pendingText({ ...copy, itemId: "host-followUp-0" }),
-      ).resolves.toEqual({ text: "", images: [saved] });
+      await expect(runtime.pendingText(recalled)).resolves.toEqual({
+        text: "",
+        images: [savedImage],
+      });
+
       await runtime.clearPending("a");
-      expect(await Promise.all(removed)).toEqual(
-        removed.map(() => expect.objectContaining({ code: "PROMPT_CLEARED" })),
-      );
+      for (const result of await Promise.all(removed))
+        expect(result).toMatchObject({ code: "PROMPT_CLEARED" });
       await expect(runtime.pendingText(copy)).rejects.toThrow(
         "Pending input changed",
       );
-      const first = runtime.prompt({
+
+      const fresh = runtime.prompt({
         sessionId: "a",
-        message: "start",
+        message: "Fresh input",
         behavior: "steer",
       });
-      const second = runtime.prompt({
-        sessionId: "a",
-        message: "later",
-        behavior: "followUp",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(2),
-      );
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toEqual([]);
+      await waitForQueue(1);
+      const delivered = () =>
+        worker.commands.filter(({ type }) => type === "prompt");
+      expect(delivered()).toEqual([]);
       worker.emit("event", {
         type: "compaction_end",
         reason: "manual",
         result: {},
       });
-      compactGate.resolve();
-      await compact;
-      await Promise.all([first, second]);
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toMatchObject([
-        { message: "start" },
-        { message: "later", streamingBehavior: "followUp" },
-      ]);
+      gate.resolve();
+      await Promise.all([compacting, fresh]);
+      expect(delivered()).toMatchObject([{ message: "Fresh input" }]);
     } finally {
-      compactGate.resolve();
+      gate.resolve();
       await runtime.close();
     }
   });
 
-  it("does not overtake the original prompt while auto-compaction runs in preflight", async () => {
-    let worker!: FakeRpc;
-    const firstGate = deferredSignal();
-    let streaming = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      worker.responseOverrides.set(
-        "prompt",
-        (command: Record<string, unknown>) =>
-          command.message === "first" ? firstGate.promise : {},
-      );
-      worker.responseOverrides.set("get_state", () => ({
-        sessionId: "a",
-        sessionFile: worker.sessionPath,
-        isStreaming: streaming,
-        isCompacting: false,
-      }));
-      const first = runtime.prompt({ sessionId: "a", message: "first" });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.type === "prompt"),
-        ).toBe(true),
-      );
-      worker.emit("event", { type: "compaction_start", reason: "threshold" });
-      const queued = runtime.prompt({
-        sessionId: "a",
-        message: "follow",
-        behavior: "followUp",
-      });
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1),
-      );
-      worker.emit("event", {
-        type: "compaction_end",
-        reason: "threshold",
-        result: {},
-      });
-      await new Promise<void>((done) => setImmediate(done));
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(1);
-      streaming = true;
-      firstGate.resolve();
-      await Promise.all([first, queued]);
-      expect(
-        worker.commands.filter((command) => command.type === "prompt"),
-      ).toMatchObject([
-        { message: "first" },
-        { message: "follow", streamingBehavior: "followUp" },
-      ]);
-    } finally {
-      firstGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("lets queued input and Clear bypass a blocked extension receipt", async () => {
-    let worker!: FakeRpc;
+  it("keeps Clear and later input independent of blocked extension and Steer receipts", async () => {
     const extensionGate = deferredSignal();
     const steeringGate = deferredSignal();
     let streaming = false;
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          worker.responseOverrides.set("get_commands", () => ({
-            commands: [{ name: "slow", source: "extension" }],
-          }));
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
+    const f = schedulingRuntime({
+      configure(worker) {
+        worker.responseOverrides.set("get_commands", {
+          commands: [{ name: "slow", source: "extension" }],
+        });
       },
-    );
+    });
+    const { runtime } = f;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
+      const { worker } = f;
       await runtime.snapshot();
       worker.responseOverrides.set("get_state", () => ({
         sessionId: "a",
@@ -729,6 +389,8 @@ describe("RuntimeController Pending input and recovery", () => {
         { message: "live", streamingBehavior: "steer" },
         { message: "more", streamingBehavior: "followUp" },
       ]);
+      await runtime.clearPending("a");
+      expect((await runtime.snapshot()).runState).toBe("running");
       steeringGate.resolve();
       await Promise.all([steering, following]);
       extensionGate.resolve();
@@ -740,160 +402,100 @@ describe("RuntimeController Pending input and recovery", () => {
     }
   });
 
-  it("does not make a slow steer receipt block the next steer or Clear", async () => {
-    let worker!: FakeRpc;
-    const slowGate = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      worker.emit("event", { type: "agent_start" });
-      worker.responseOverrides.set(
-        "prompt",
-        (command: Record<string, unknown>) =>
-          command.message === "slow" ? slowGate.promise : {},
-      );
-      const slow = runtime.prompt({
-        sessionId: "a",
-        message: "slow",
-        behavior: "steer",
-      });
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.message === "slow"),
-        ).toBe(true),
-      );
-      const next = runtime.prompt({
-        sessionId: "a",
-        message: "next",
-        behavior: "followUp",
-      });
-      await runtime.clearPending("a");
-      await vi.waitFor(() =>
-        expect(
-          worker.commands.some((command) => command.message === "next"),
-        ).toBe(true),
-      );
-      slowGate.resolve();
-      await Promise.all([slow, next]);
-    } finally {
-      slowGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("copies full pending text beyond display limits without mutating queues", async () => {
+  it("keeps bounded Pending visible while Copy requires the full queue at its current revision", async () => {
     const f = schedulingRuntime();
     const { runtime } = f;
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      const longText = `${"x".repeat(70_000)}END\n\n${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
-      const steering = [
-        longText,
-        ...Array.from({ length: 1001 }, (_, index) => `steer-${index}`),
-      ];
-      f.worker.emit("event", {
-        type: "queue_update",
-        steering,
-        followUp: ["hidden follow"],
-      });
-      const snapshot = await runtime.snapshot();
-      const request = {
-        sessionId: "a",
-        viewId: snapshot.active!.transcriptPage.viewId,
-        revision: snapshot.pendingQueues!.revision,
-      };
-      expect(snapshot.pendingQueues!.steering).toHaveLength(1000);
-      expect(snapshot.pendingQueues!.steering[0]!.textPreview).toContain(
-        "report.csv",
-      );
-      expect(snapshot.pendingQueues!.steering[0]!.textPreview).not.toContain(
-        "/demo/",
-      );
-      await expect(
-        runtime.pendingText({ ...request, itemId: "text-steer-0" }),
-      ).resolves.toEqual({ text: longText });
-      const { text: all } = await runtime.pendingText(request);
-      expect(all).toContain(longText.replace(/\n/g, "\n   "));
-      expect(all).toContain("1003. hidden follow");
-      expect((await runtime.snapshot()).pendingQueues).toEqual(
-        snapshot.pendingQueues,
-      );
-      expect(
-        f.worker.commands.some(
-          ({ type }) => type === "clear_queue" || type === "abort",
-        ),
-      ).toBe(false);
-      f.worker.emit("event", {
-        type: "queue_update",
-        steering: steering.slice(1),
-        followUp: ["hidden follow"],
-      });
-      await expect(
-        runtime.pendingText({ ...request, itemId: "text-steer-0" }),
-      ).rejects.toThrow("Pending input changed");
-      const settled = new Promise<void>((resolveSettled) =>
-        runtime.on("event", (event) => {
-          if (event.type === "agent_settled") resolveSettled();
-        }),
-      );
-      f.worker.emit("event", { type: "agent_settled", messages: [] });
-      await settled;
-      for (let index = 0; index < request.revision; index++)
-        f.worker.emit("event", {
-          type: "queue_update",
-          steering: ["different run, same coordinate"],
-          followUp: [],
-        });
-      await expect(
-        runtime.pendingText({ ...request, itemId: "text-steer-0" }),
-      ).rejects.toThrow("Pending input changed");
-      f.worker.emit("event", {
-        type: "queue_update",
-        steering: ["preview"],
-        followUp: [42],
-      });
-      const changed = await runtime.snapshot();
-      await expect(
-        runtime.pendingText({
-          ...request,
-          revision: changed.pendingQueues!.revision,
-        }),
-      ).rejects.toThrow("Complete pending text is unavailable");
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    const longText = `${"x".repeat(70_000)}END\n\n${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
+    const steering = [
+      longText,
+      ...Array.from({ length: 1001 }, (_, index) => `steer-${index}`),
+    ];
+    f.worker.emit("event", {
+      type: "queue_update",
+      steering,
+      followUp: ["hidden follow"],
+    });
+    const snapshot = await runtime.snapshot();
+    const firstRow = snapshot.pendingQueues!.steering[0]!;
+    const request = {
+      sessionId: "a",
+      viewId: snapshot.active!.transcriptPage.viewId,
+      revision: snapshot.pendingQueues!.revision,
+    };
+    expect(snapshot.pendingQueues).toMatchObject({
+      totalCount: 1003,
+    });
+    expect(snapshot.pendingQueues!.steering.length).toBeLessThan(
+      steering.length,
+    );
+    expect(firstRow.textPreview).toContain("report.csv");
+    expect(firstRow.textPreview).not.toContain("/demo/");
+    const readFirst = () =>
+      runtime.pendingText({ ...request, itemId: firstRow.id });
+    await expect(readFirst()).resolves.toEqual({ text: longText });
+    const { text: all } = await runtime.pendingText(request);
+    expect(all).toContain(longText.replace(/\n/g, "\n   "));
+    expect(all).toContain("1003. hidden follow");
+    expect((await runtime.snapshot()).pendingQueues).toEqual(
+      snapshot.pendingQueues,
+    );
+    f.worker.emit("event", {
+      type: "queue_update",
+      steering: ["unverified"],
+      followUp: [42],
+    });
+    expect((await runtime.snapshot()).pendingQueues).toEqual(
+      snapshot.pendingQueues,
+    );
+    await expect(runtime.pendingText(request)).rejects.toThrow(
+      "Complete pending text is unavailable",
+    );
+    f.worker.emit("event", {
+      type: "queue_update",
+      steering: steering.slice(1),
+      followUp: ["hidden follow"],
+    });
+    await expect(readFirst()).rejects.toThrow("Pending input changed");
+    const settled = new Promise<void>((resolveSettled) =>
+      runtime.on("event", (event) => {
+        if (event.type === "agent_settled") resolveSettled();
+      }),
+    );
+    f.worker.emit("event", { type: "agent_settled", messages: [] });
+    await settled;
+    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
+      totalCount: 1002,
+    });
+    f.worker.emit("event", {
+      type: "queue_update",
+      steering: ["different run, same coordinate"],
+      followUp: [],
+    });
+    await expect(readFirst()).rejects.toThrow("Pending input changed");
+    const current = await runtime.snapshot();
+    f.worker.emit("exit", new Error("replacement required"));
+    expect((await runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
+    await expect(
+      runtime.pendingText({
+        ...request,
+        viewId: current.active!.transcriptPage.viewId,
+        revision: current.pendingQueues!.revision,
+      }),
+    ).rejects.toThrow("Pending input changed");
   });
 
   it("does not make dequeue wait behind a suspended pre-prompt hook", async () => {
-    let worker!: FakeRpc;
+    const f = schedulingRuntime();
+    const { runtime } = f;
     const hook = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
     let sending: Promise<unknown> | undefined;
     try {
       await runtime.openSession("a");
       await waitForReady(runtime);
+      const { worker } = f;
       worker.responseOverrides.set("prompt", () => hook.promise);
       sending = runtime
         .prompt({ sessionId: "a", message: "suspended hook" })
@@ -913,41 +515,6 @@ describe("RuntimeController Pending input and recovery", () => {
     } finally {
       hook.resolve();
       await sending;
-      await runtime.close();
-    }
-  });
-
-  it("recovers only unconsumed Pi texts, all Steer before Queue, without stopping", async () => {
-    const f = schedulingRuntime();
-    const { runtime } = f;
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      f.worker.emit("event", { type: "agent_start" });
-      f.worker.emit("event", {
-        type: "queue_update",
-        steering: ["consumed", "left"],
-        followUp: ["later"],
-      });
-      f.worker.responseOverrides.set("clear_queue", () => {
-        f.worker.emit("event", {
-          type: "queue_update",
-          steering: [],
-          followUp: [],
-        });
-        return { steering: ["left"], followUp: ["later"] };
-      });
-      await expect(runtime.recoverPending("a")).resolves.toEqual({
-        steering: ["left"],
-        followUp: ["later"],
-      });
-      expect((await runtime.snapshot()).pendingQueues!.totalCount).toBe(0);
-      expect((await runtime.snapshot()).runState).toBe("running");
-      expect(f.worker.stops).toBe(0);
-      expect(f.worker.commands.some(({ type }) => type === "abort")).toBe(
-        false,
-      );
-    } finally {
       await runtime.close();
     }
   });
@@ -1021,448 +588,464 @@ describe("RuntimeController Pending input and recovery", () => {
     },
   );
 
-  it.each(["steer", "followUp"] as const)(
-    "restores known queued %s images, then recovers identical text quietly",
-    async (mode) => {
-      const f = await queuedImageFixture();
-      try {
-        const image = await f.store.add(upload("queued.png", "image/png"));
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: "same text",
-          behavior: mode,
-          attachmentIds: [image.id],
-        });
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: "other mode",
-          behavior: mode === "steer" ? "followUp" : "steer",
-        });
-        const expected =
-          mode === "steer"
-            ? { steering: ["same text"], followUp: ["other mode"] }
-            : { steering: ["other mode"], followUp: ["same text"] };
-        const recovered =
-          mode === "steer"
-            ? await f.runtime.recoverPending("a")
-            : await f.runtime.abort("a");
-        expect(recovered).toEqual({
-          ...expected,
-          attachments: [image],
-        });
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: "same text",
-          behavior: mode,
-        });
-        await expect(f.runtime.recoverPending("a")).resolves.toEqual(
-          mode === "steer"
-            ? { steering: ["same text"], followUp: [] }
-            : { steering: [], followUp: ["same text"] },
-        );
-      } finally {
-        await f.runtime.close();
-      }
-    },
-  );
-
-  it.each(["same text", ""])(
-    "does not warn after consuming an image input with text %j",
-    async (text) => {
-      const f = await queuedImageFixture();
-      try {
-        const image = await f.store.add(upload("queued.png", "image/png"));
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: text,
-          behavior: "steer",
-          attachmentIds: [image.id],
-        });
-        const command = f.worker.commands.findLast(
-          ({ type }) => type === "prompt",
-        )!;
-        // Pi removes nonempty text before message_start; image-only captions
-        // can remain in its public queue projection even after settlement.
-        if (text) f.queue.steering = [];
-        f.worker.emit("event", { type: "queue_update", ...f.queue });
-        f.worker.emit("event", {
-          type: "message_start",
-          message: {
-            role: "user",
-            content: [{ type: "text", text }, ...(command.images as object[])],
-            timestamp: 1,
-          },
-        });
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: text || "text only",
-          behavior: "steer",
-        });
-        await expect(f.runtime.recoverPending("a")).resolves.toEqual({
-          steering: [text || "text only"],
-          followUp: [],
-        });
-      } finally {
-        await f.runtime.close();
-      }
-    },
-  );
-
   it("does not warn when image consumption races recovery of identical text-only input", async () => {
     const f = await queuedImageFixture();
-    try {
-      const image = await f.store.add(upload("queued.png", "image/png"));
-      await f.runtime.prompt({
-        sessionId: "a",
-        message: "same text",
-        behavior: "steer",
-        attachmentIds: [image.id],
-      });
-      const command = f.worker.commands.findLast(
-        ({ type }) => type === "prompt",
-      )!;
-      await f.runtime.prompt({
-        sessionId: "a",
-        message: "same text",
-        behavior: "steer",
-      });
-      f.worker.responseOverrides.set("clear_queue", () => {
-        f.worker.emit("event", {
-          type: "queue_update",
-          steering: ["same text"],
-          followUp: [],
-        });
-        f.worker.emit("event", {
-          type: "message_start",
-          message: {
-            role: "user",
-            content: [
-              { type: "text", text: "same text" },
-              ...(command.images as object[]),
-            ],
-            timestamp: 1,
-          },
-        });
-        f.worker.emit("event", {
-          type: "queue_update",
-          steering: [],
-          followUp: [],
-        });
-        return { steering: ["same text"], followUp: [] };
-      });
-      await expect(f.runtime.recoverPending("a")).resolves.toEqual({
+    trackRuntime(f.runtime);
+    const image = await f.store.add(upload("queued.png", "image/png"));
+    await f.runtime.prompt({
+      sessionId: "a",
+      message: "same text",
+      behavior: "steer",
+      attachmentIds: [image.id],
+    });
+    const command = f.worker.commands.findLast(
+      ({ type }) => type === "prompt",
+    )!;
+    await f.runtime.prompt({
+      sessionId: "a",
+      message: "same text",
+      behavior: "steer",
+    });
+    f.worker.responseOverrides.set("clear_queue", () => {
+      f.worker.emit("event", {
+        type: "queue_update",
         steering: ["same text"],
         followUp: [],
       });
-    } finally {
-      await f.runtime.close();
-    }
+      f.worker.emit("event", {
+        type: "message_start",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "same text" },
+            ...(command.images as object[]),
+          ],
+          timestamp: 1,
+        },
+      });
+      f.worker.emit("event", {
+        type: "queue_update",
+        steering: [],
+        followUp: [],
+      });
+      return { steering: ["same text"], followUp: [] };
+    });
+    await expect(f.runtime.recoverPending("a")).resolves.toEqual({
+      steering: ["same text"],
+      followUp: [],
+    });
   });
 
   it("preserves pending image recovery when settlement arrives before the clear receipt", async () => {
     const f = await queuedImageFixture();
-    try {
-      const image = await f.store.add(upload("queued.png", "image/png"));
-      await f.runtime.prompt({
+    trackRuntime(f.runtime);
+    const image = await f.store.add(upload("queued.png", "image/png"));
+    await f.runtime.prompt({
+      sessionId: "a",
+      message: "still pending",
+      behavior: "followUp",
+      attachmentIds: [image.id],
+    });
+    const pending = (await f.runtime.snapshot()).pendingQueues!;
+    expect(pending.followUp[0]).toEqual({
+      id: "text-followUp-0",
+      textPreview: "still pending",
+      textLength: "still pending".length,
+      textTruncated: false,
+      imageCount: 1,
+      imageAttachmentIds: [image.id],
+    });
+    expect((await f.store.imagePreview(image.id)).bytes.toString()).toBe(
+      "payload",
+    );
+    const snapshot = await f.runtime.snapshot();
+    expect(
+      await f.runtime.pendingText({
         sessionId: "a",
-        message: "still pending",
-        behavior: "followUp",
-        attachmentIds: [image.id],
-      });
-      const pending = (await f.runtime.snapshot()).pendingQueues!;
-      expect(pending.followUp[0]).toEqual({
-        id: "text-followUp-0",
-        textPreview: "still pending",
-        textLength: "still pending".length,
-        textTruncated: false,
-        imageCount: 1,
-        imageAttachmentIds: [image.id],
-      });
-      expect((await f.store.imagePreview(image.id)).bytes.toString()).toBe(
-        "payload",
-      );
-      const snapshot = await f.runtime.snapshot();
-      expect(
-        await f.runtime.pendingText({
-          sessionId: "a",
-          viewId: snapshot.active!.transcriptPage.viewId,
-          revision: pending.revision,
-        }),
-      ).toEqual({
-        text: "1. still pending",
-        imageAttachmentIds: [image.id],
-      });
-      expect((await f.runtime.snapshot()).pendingQueues).toEqual(pending);
-      f.worker.responseOverrides.set("clear_queue", () => {
-        const input = structuredClone(f.queue);
-        f.queue.steering = [];
-        f.queue.followUp = [];
-        f.worker.emit("event", { type: "queue_update", ...f.queue });
-        f.worker.emit("event", { type: "agent_settled" });
-        return input;
-      });
-      await expect(f.runtime.recoverPending("a")).resolves.toEqual({
-        steering: [],
-        followUp: ["still pending"],
-        attachments: [image],
-      });
-      expect((await f.store.imagePreview(image.id)).bytes.toString()).toBe(
-        "payload",
-      );
-    } finally {
-      await f.runtime.close();
-    }
+        viewId: snapshot.active!.transcriptPage.viewId,
+        revision: pending.revision,
+      }),
+    ).toEqual({
+      text: "1. still pending",
+      imageAttachmentIds: [image.id],
+    });
+    expect((await f.runtime.snapshot()).pendingQueues).toEqual(pending);
+    f.worker.responseOverrides.set("clear_queue", () => {
+      const input = structuredClone(f.queue);
+      f.queue.steering = [];
+      f.queue.followUp = [];
+      f.worker.emit("event", { type: "queue_update", ...f.queue });
+      f.worker.emit("event", { type: "agent_settled" });
+      return input;
+    });
+    await expect(f.runtime.recoverPending("a")).resolves.toEqual({
+      steering: [],
+      followUp: ["still pending"],
+      attachments: [image],
+    });
+    expect((await f.store.imagePreview(image.id)).bytes.toString()).toBe(
+      "payload",
+    );
   });
 
   it.each(["clear", "retire"] as const)(
     "forgets image-risk evidence when input is removed by %s",
     async (boundary) => {
       const f = await queuedImageFixture();
+      trackRuntime(f.runtime);
+      const image = await f.store.add(upload("queued.png", "image/png"));
+      await f.runtime.prompt({
+        sessionId: "a",
+        message: "same text",
+        behavior: "followUp",
+        attachmentIds: [image.id],
+      });
+      if (boundary === "clear") await f.runtime.clearPending("a");
+      else {
+        f.worker.emit("exit", new Error("fixture worker retired"));
+        await vi.waitFor(() => expect(f.worker.stops).toBe(1));
+        await f.runtime.prompt({ sessionId: "a", message: "new run" });
+        await waitForReady(f.runtime);
+      }
+      f.worker.emit("event", { type: "agent_start" });
+      await f.runtime.prompt({
+        sessionId: "a",
+        message: "same text",
+        behavior: "followUp",
+      });
+      await expect(f.runtime.recoverPending("a")).resolves.toEqual({
+        steering: [],
+        followUp: ["same text"],
+      });
+    },
+  );
+
+  it.each(["stopped", "unconfirmed retirement", "unreadable queue"] as const)(
+    "recovers Pi input before Stop and refuses concurrent delivery (%s)",
+    async (outcome) => {
+      const { runtime, workers } = schedulingRuntime();
+      const clearGate = deferredSignal();
+      await runtime.openSession("a");
+      await waitForReady(runtime);
+      const worker = workers[0]!;
+      const recovery = {
+        steering: ["recover steer"],
+        followUp: ["recover follow"],
+      };
+      const unreadable = outcome === "unreadable queue";
+      const unconfirmed = outcome === "unconfirmed retirement";
+      const retirementError = new Error("retirement unconfirmed");
+      const stop = vi.spyOn(worker, "stop");
       try {
-        const image = await f.store.add(upload("queued.png", "image/png"));
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: "same text",
-          behavior: "followUp",
-          attachmentIds: [image.id],
+        worker.emit("event", { type: "agent_start" });
+        worker.responseOverrides.set("clear_queue", async () => {
+          await clearGate.promise;
+          if (unreadable) throw new Error("queue read failed");
+          worker.emit("event", {
+            type: "queue_update",
+            steering: [],
+            followUp: [],
+          });
+          return recovery;
         });
-        if (boundary === "clear") await f.runtime.clearPending("a");
-        else {
-          f.worker.emit("exit", new Error("fixture worker retired"));
-          await vi.waitFor(() => expect(f.worker.stops).toBe(1));
-          await f.runtime.prompt({ sessionId: "a", message: "new run" });
-          await waitForReady(f.runtime);
+        if (unconfirmed) {
+          worker.responseOverrides.set("abort", () => {
+            throw new Error("abort transport lost");
+          });
+          stop.mockRejectedValueOnce(retirementError);
         }
-        f.worker.emit("event", { type: "agent_start" });
-        await f.runtime.prompt({
-          sessionId: "a",
-          message: "same text",
-          behavior: "followUp",
-        });
-        await expect(f.runtime.recoverPending("a")).resolves.toEqual({
-          steering: [],
-          followUp: ["same text"],
-        });
+
+        const stopping = runtime.abort("a");
+        await vi.waitFor(() =>
+          expect(worker.commands).toContainEqual(
+            expect.objectContaining({ type: "clear_queue" }),
+          ),
+        );
+        await expect(
+          runtime.prompt({
+            sessionId: "a",
+            message: "new input",
+            behavior: "followUp",
+          }),
+        ).rejects.toThrow("Stop is in progress");
+        clearGate.resolve();
+        const receipt = await stopping;
+        if (unreadable) {
+          expect(receipt.error).toBe("queue read failed");
+          expect(worker.stops).toBe(1);
+        } else {
+          expect(receipt).toMatchObject(recovery);
+          expect(receipt.error).toBe(
+            unconfirmed ? retirementError.message : undefined,
+          );
+        }
+        expect(
+          worker.commands
+            .map(({ type }) => type)
+            .filter(
+              (type) =>
+                type === "clear_queue" || type === "abort" || type === "prompt",
+            ),
+        ).toEqual(unreadable ? ["clear_queue"] : ["clear_queue", "abort"]);
       } finally {
-        await f.runtime.close();
+        clearGate.resolve();
+        stop.mockRestore();
+        if (unconfirmed) await worker.stop();
+        await runtime.close().catch((error: unknown) => {
+          if (error !== retirementError) throw error;
+        });
       }
     },
   );
 
-  it("recovers mixed Host-held input without resuming it when compaction ends", async () => {
-    const f = schedulingRuntime();
-    const { runtime } = f;
-    try {
+  it.each(["Clear", "Return"] as const)(
+    "%s uses the current Pi queue boundary and preserves later admissions",
+    async (action) => {
+      const f = schedulingRuntime();
+      const { runtime } = f;
+      trackRuntime(runtime);
       await runtime.openSession("a");
       await waitForReady(runtime);
-      f.worker.responseOverrides.set("get_state", {
-        sessionId: "a",
-        sessionFile: f.worker.sessionPath,
-        isStreaming: false,
-        isCompacting: true,
-      });
-      f.worker.emit("event", { type: "compaction_start", reason: "manual" });
-      const requests = [
-        runtime.prompt({
-          sessionId: "a",
-          message: "queue one",
-          behavior: "followUp",
-        }),
-        runtime.prompt({
-          sessionId: "a",
-          message: "steer one",
-          behavior: "steer",
-        }),
-        runtime.prompt({
-          sessionId: "a",
-          message: "steer two",
-          behavior: "steer",
-        }),
-      ].map((promise) => promise.catch((error: unknown) => error));
-      await vi.waitFor(async () =>
-        expect((await runtime.snapshot()).pendingQueues!.totalCount).toBe(3),
-      );
-      await expect(runtime.recoverPending("a")).resolves.toEqual({
-        steering: ["steer one", "steer two"],
-        followUp: ["queue one"],
-      });
-      expect(await Promise.all(requests)).toEqual(
-        Array.from({ length: 3 }, () =>
-          expect.objectContaining({ code: "PROMPT_RECOVERED" }),
-        ),
-      );
+      f.worker.emit("event", { type: "agent_start" });
+      const observed: Array<Record<string, unknown>> = [];
+      runtime.on("event", (event) => observed.push(event));
       f.worker.emit("event", {
-        type: "compaction_end",
-        reason: "manual",
-        result: {},
+        type: "queue_update",
+        steering: ["consumed"],
+        followUp: ["still queued"],
       });
-      await new Promise<void>((done) => setImmediate(done));
-      expect(
-        f.worker.commands.some(
-          ({ type }) => type === "prompt" || type === "abort",
-        ),
-      ).toBe(false);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("clears Pi input before Stop and refuses delivery while stopping", async () => {
-    let worker!: FakeRpc;
-    const clearGate = deferredSignal();
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      trackedAttachmentStore(),
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
-      },
-    );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      worker.emit("event", { type: "agent_start" });
-      worker.responseOverrides.set("clear_queue", async () => {
-        await clearGate.promise;
-        worker.emit("event", {
+      expect(observed.at(-1)).toMatchObject({
+        type: "queue_update",
+        pendingQueues: { totalCount: 2 },
+      });
+      expect(observed.at(-1)).not.toHaveProperty("steering");
+      expect(observed.at(-1)).not.toHaveProperty("followUp");
+      f.worker.responseOverrides.set("clear_queue", () => {
+        // Pi consumed the steer, dequeued the follow-up, then admitted a new item.
+        f.worker.emit("event", {
           type: "queue_update",
-          steering: [],
+          steering: ["new"],
           followUp: [],
         });
-        return { steering: ["recover steer"], followUp: ["recover follow"] };
+        return { steering: [], followUp: ["still queued"] };
       });
-      const abort = runtime.abort("a");
-      await vi.waitFor(() =>
-        expect(worker.commands.some(({ type }) => type === "clear_queue")).toBe(
-          true,
-        ),
-      );
-      await expect(
-        runtime.prompt({
-          sessionId: "a",
-          message: "new input",
-          behavior: "followUp",
+      if (action === "Return") {
+        await expect(runtime.recoverPending("a")).resolves.toEqual({
+          steering: [],
+          followUp: ["still queued"],
+        });
+      } else {
+        await runtime.clearPending("a");
+      }
+      expect(await runtime.snapshot()).toMatchObject({
+        runState: "running",
+        pendingQueues: {
+          totalCount: 1,
+          steering: [{ textPreview: "new" }],
+          followUp: [],
+        },
+      });
+    },
+  );
+});
+
+describe("Pending wire contracts", () => {
+  const summary = {
+    id: "text-steer-0",
+    textPreview: "continue",
+    textLength: 8,
+    textTruncated: false,
+  };
+
+  it("bounds visible rows and counts omitted images across both owners when known", () => {
+    const pi = {
+      steering: Array.from(
+        { length: MAX_PENDING_MESSAGES + 1 },
+        (_, index) => ({
+          text: index ? "" : "first",
+          ...(index === MAX_PENDING_MESSAGES ? { imageCount: 2 } : {}),
         }),
-      ).rejects.toThrow("Stop is in progress");
-      clearGate.resolve();
-      await expect(abort).resolves.toEqual({
-        steering: ["recover steer"],
-        followUp: ["recover follow"],
-      });
-      expect(
-        worker.commands
-          .filter(({ type }) => type === "clear_queue" || type === "abort")
-          .map(({ type }) => type),
-      ).toEqual(["clear_queue", "abort"]);
-      expect(worker.commands.some(({ type }) => type === "prompt")).toBe(false);
-    } finally {
-      clearGate.resolve();
-      await runtime.close();
-    }
-  });
-
-  it("returns already recovered input even if subsequent Stop retirement fails", async () => {
-    const f = schedulingRuntime();
-    try {
-      await f.runtime.openSession("a");
-      await waitForReady(f.runtime);
-      f.worker.emit("event", { type: "agent_start" });
-      f.worker.responseOverrides.set("clear_queue", () => ({
-        steering: ["keep this handoff"],
-        followUp: [],
-      }));
-      f.worker.responseOverrides.set("abort", () => {
-        throw new Error("abort transport lost");
-      });
-      const stop = vi
-        .spyOn(f.worker, "stop")
-        .mockRejectedValueOnce(new Error("retirement unconfirmed"));
-      await expect(f.runtime.abort("a")).resolves.toMatchObject({
-        steering: ["keep this handoff"],
-        followUp: [],
-        error: "retirement unconfirmed",
-      });
-      stop.mockRestore();
-    } finally {
-      await f.worker.stop();
-      await f.runtime.close().catch(() => {});
-    }
-  });
-
-  it("reports unavailable recovery and hard-stops instead of aborting with a live queue", async () => {
-    const f = schedulingRuntime();
-    const { runtime } = f;
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      f.worker.emit("event", { type: "agent_start" });
-      f.worker.responseOverrides.set("clear_queue", () => {
-        throw new Error("queue read failed");
-      });
-      await expect(runtime.abort("a")).resolves.toMatchObject({
-        error: "queue read failed",
-      });
-      expect(f.worker.stops).toBe(1);
-      expect(f.worker.commands.some(({ type }) => type === "abort")).toBe(
-        false,
-      );
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("clears the public Pi queue at its current boundary without rewriting newer projections", async () => {
-    const store = trackedAttachmentStore();
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    const forwarded: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) =>
-      forwarded.push(event as Record<string, unknown>),
-    );
-
-    f.worker.emit("event", {
-      type: "queue_update",
-      steering: ["first"],
-      followUp: ["later"],
-    });
-    expect(forwarded.at(-1)).toMatchObject({
-      type: "queue_update",
-      pendingQueues: { totalCount: 2, revision: expect.any(Number) },
-    });
-    expect(forwarded.at(-1)).not.toHaveProperty("steering");
-    expect(forwarded.at(-1)).not.toHaveProperty("followUp");
-    f.worker.responseOverrides.set("clear_queue", () => {
-      // Pi consumed 'first' before the operation, cleared 'later', then
-      // another producer queued new work before the HTTP receipt arrived.
-      f.worker.emit("event", {
-        type: "queue_update",
-        steering: [],
-        followUp: [],
-      });
-      f.worker.emit("event", {
-        type: "queue_update",
-        steering: ["new"],
-        followUp: [],
-      });
-      return { steering: [], followUp: ["later"] };
-    });
-    await expect(runtime.clearPending("a")).resolves.toBeUndefined();
-    expect(
-      f.worker.commands.filter((command) => command.type === "clear_queue"),
-    ).toEqual([{ type: "clear_queue" }]);
-    expect((await runtime.snapshot()).pendingQueues).toMatchObject({
-      totalCount: 1,
-      steering: [{ textPreview: "new" }],
+      ),
       followUp: [],
+    };
+    const host = { message: "", behavior: "followUp" as const };
+    const merged = projectPendingQueues(pi, [{ ...host, imageCount: 3 }], 3);
+    expect(merged).toMatchObject({
+      revision: 4,
+      totalCount: MAX_PENDING_MESSAGES + 2,
+      totalImageCount: 5,
     });
-    expect(f.worker.commands.some((command) => command.type === "abort")).toBe(
-      false,
+    expect(merged.steering).toHaveLength(MAX_PENDING_MESSAGES);
+    expect(merged.followUp).toEqual([]);
+    expect(merged.steering[0]).toMatchObject({
+      textPreview: "first",
+      textLength: 5,
+      textTruncated: false,
+    });
+    expect(parsePendingQueues(merged)).toEqual(merged);
+    expect(
+      projectPendingQueues(pi, [{ ...host, imageCount: null }], 0)
+        .totalImageCount,
+    ).toBeUndefined();
+  });
+
+  it.each(["Review this report", ""])(
+    "projects file references consistently in Pi and Host queues for %j",
+    (text) => {
+      const trailer = `${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
+      const message = text ? `${text}\n\n${trailer}` : trailer;
+      const preview = text ? `${text}\n\nreport.csv` : "report.csv";
+      const queue = projectPendingQueues(
+        { steering: [{ text: message }], followUp: [] },
+        [{ message, behavior: "followUp", imageCount: 0 }],
+        0,
+      );
+      const expected = {
+        textPreview: preview,
+        textLength: preview.length,
+        textTruncated: false,
+      };
+      expect(queue.steering[0]).toMatchObject(expected);
+      expect(queue.followUp[0]).toMatchObject(expected);
+      expect(parsePendingQueues(queue)).toEqual(queue);
+    },
+  );
+
+  it("rejects invalid image counts and accepts unknown totals", () => {
+    const base = {
+      revision: 1,
+      totalCount: 1,
+      steering: [{ ...summary, imageCount: 2 }],
+      followUp: [],
+    };
+    for (const totalImageCount of [-1, 1.5, "2", 1])
+      expect(parsePendingQueues({ ...base, totalImageCount })).toBeNull();
+    expect(parsePendingQueues({ ...base, totalImageCount: 2 })).not.toBeNull();
+    expect(parsePendingQueues(base)).not.toBeNull();
+  });
+
+  it.each([
+    {
+      label: "multiline input",
+      text: "first line\nsecond line\nthird line\nhidden middle\nfinal line\n",
+      preview: "first line\nsecond line\nthird line\n…\nfinal line",
+    },
+    {
+      label: "Unicode at the cut boundaries",
+      text: `A${"🧭".repeat(300)}Z`,
+      ends: ["A", "Z"],
+    },
+    {
+      label: "short text",
+      text: "短い🧭\nfull text",
+      preview: "短い🧭\nfull text",
+    },
+  ])(
+    "keeps both ends or the whole $label in Pi and Host previews",
+    ({ text, preview, ends }) => {
+      const merged = projectPendingQueues(
+        { steering: [{ text }], followUp: [] },
+        [{ message: text, behavior: "followUp", imageCount: 0 }],
+        0,
+      );
+      const summary = merged.steering[0]!;
+      expect(summary).toMatchObject({
+        textLength: text.length,
+        textTruncated: preview !== text,
+      });
+      if (preview !== undefined) expect(summary.textPreview).toBe(preview);
+      else {
+        const parts = summary.textPreview.split("\n…\n");
+        expect(parts).toHaveLength(2);
+        const [head, tail] = parts as [string, string];
+        expect(head.startsWith(ends![0]!)).toBe(true);
+        expect(tail.endsWith(ends![1]!)).toBe(true);
+        expect(text.startsWith(head)).toBe(true);
+        expect(text.endsWith(tail)).toBe(true);
+        expect(summary.textPreview.length).toBeLessThanOrEqual(
+          MAX_PENDING_PREVIEW_CHARS,
+        );
+        expect(summary.textPreview).not.toMatch(/\p{Surrogate}/u);
+      }
+      expect(merged.followUp[0]).toMatchObject({
+        textPreview: summary.textPreview,
+        textLength: summary.textLength,
+        textTruncated: summary.textTruncated,
+      });
+      expect(parsePendingQueues(merged)).toEqual(merged);
+    },
+  );
+
+  it.each([
+    ["an invalid identifier", { ...summary, id: "x".repeat(129) }],
+    ["a mismatched truncation marker", { ...summary, textTruncated: true }],
+    ["a fractional length", { ...summary, textLength: 8.5 }],
+    ["a zero image count", { ...summary, imageCount: 0 }],
+    ["a fractional image count", { ...summary, imageCount: 1.5 }],
+    ["a nonnumeric image count", { ...summary, imageCount: "2" }],
+    [
+      "image bodies in place of handles",
+      {
+        ...summary,
+        imageCount: 1,
+        imageAttachmentIds: ["data:image/png;base64,AAAA"],
+      },
+    ],
+    [
+      "image handles without a matching count",
+      {
+        ...summary,
+        imageCount: 2,
+        imageAttachmentIds: ["12345678-1234-1234-1234-123456789012"],
+      },
+    ],
+  ])("rejects %s", (_name, value) => {
+    expect(parsePendingMessageSummary(value)).toBeNull();
+  });
+
+  it("preserves known image handles without labeling unknown empty rows or embedding bytes", () => {
+    const ids = [
+      "12345678-1234-1234-1234-123456789012",
+      "12345678-1234-1234-1234-123456789013",
+    ];
+    const queue = projectPendingQueues(
+      {
+        steering: [
+          { text: "", imageCount: 2, imageAttachmentIds: ids },
+          { text: "" },
+        ],
+        followUp: [{ text: "caption", imageCount: 1 }],
+      },
+      [],
+      0,
     );
-    await runtime.close();
+    expect(parsePendingQueues(queue)).toEqual(queue);
+    expect(queue.steering[0]).toMatchObject({
+      textPreview: "",
+      textLength: 0,
+      imageCount: 2,
+      imageAttachmentIds: ids,
+    });
+    expect(queue.steering[1]).not.toHaveProperty("imageCount");
+    expect(queue.steering[1]).not.toHaveProperty("imageAttachmentIds");
+    expect(queue.followUp[0]).toMatchObject({
+      textPreview: "caption",
+      imageCount: 1,
+    });
+  });
+
+  it("rejects duplicate coordinates and invalid totals", () => {
+    const queue = {
+      revision: 1,
+      totalCount: 2,
+      steering: [summary],
+      followUp: [summary],
+    };
+    expect(parsePendingQueues(queue)).toBeNull();
+    for (const totalCount of [-1, 0, 0.5, undefined]) {
+      expect(
+        parsePendingQueues({ ...queue, followUp: [], totalCount }),
+      ).toBeNull();
+    }
   });
 });

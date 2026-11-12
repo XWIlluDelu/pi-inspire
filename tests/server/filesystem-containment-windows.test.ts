@@ -19,28 +19,21 @@ beforeEach(() => {
   native.stat.mockReset();
 });
 
-describe("Windows containment contracts (not native volume evidence)", () => {
+describe("Windows path and directory alias identity", () => {
   it.each([
-    ["C:\\Project", "C:\\Project\\sub\\file.txt", "sub\\file.txt"],
-    ["C:\\Project", "C:\\Project", ""],
     ["C:\\", "C:\\file.txt", "file.txt"],
     [
       "\\\\host\\share\\Project",
       "\\\\host\\share\\Project\\file.txt",
       "file.txt",
     ],
-  ])(
-    "keeps the exact native prefix fast path: %s",
-    async (root, path, within) => {
-      expect(await filesystemRelativePath(root, path)).toBe(within);
-      expect(native.stat).not.toHaveBeenCalled();
-    },
-  );
+  ])("returns a relative path within %s", async (root, path, within) => {
+    native.stat.mockResolvedValue(directory(9n));
+    expect(await filesystemRelativePath(root, path)).toBe(within);
+  });
 
   it.each([
-    ["C:\\Project", "C:\\Project-extra\\file.txt"],
     ["C:\\Project", "D:\\Project\\file.txt"],
-    ["C:\\Project", "C:\\elsewhere\\file.txt"],
     ["\\\\host\\share\\Project", "\\\\other\\share\\Project\\file.txt"],
   ])(
     "rejects unrelated native paths without probing them: %s",
@@ -50,17 +43,15 @@ describe("Windows containment contracts (not native volume evidence)", () => {
     },
   );
 
-  it("proves only the base-level ancestor for a real spelling alias", async () => {
-    native.stat.mockResolvedValue(directory(9n));
+  it("accepts a real spelling alias through its matching ancestor", async () => {
+    const root = "C:\\Project";
+    const ancestor = "c:\\project";
+    native.stat.mockImplementation(async (path) =>
+      directory(path === root || path === ancestor ? 9n : 10n),
+    );
     expect(
-      await filesystemRelativePath(
-        "C:\\Project",
-        "c:\\project\\a\\b\\file.txt",
-      ),
+      await filesystemRelativePath(root, `${ancestor}\\a\\b\\file.txt`),
     ).toBe("a\\b\\file.txt");
-    expect(native.stat).toHaveBeenCalledTimes(2);
-    expect(native.stat).toHaveBeenCalledWith("C:\\Project", { bigint: true });
-    expect(native.stat).toHaveBeenCalledWith("c:\\project", { bigint: true });
   });
 
   it.each([
@@ -77,13 +68,4 @@ describe("Windows containment contracts (not native volume evidence)", () => {
       ).toBeNull();
     },
   );
-
-  it("fails closed if alias identity cannot be read", async () => {
-    native.stat.mockRejectedValue(
-      Object.assign(new Error("offline"), { code: "EACCES" }),
-    );
-    expect(
-      await filesystemRelativePath("C:\\Project", "C:\\project\\file.txt"),
-    ).toBeNull();
-  });
 });

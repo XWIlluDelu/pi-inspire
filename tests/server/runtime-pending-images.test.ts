@@ -95,18 +95,16 @@ describe("worker-bound pending image ownership", () => {
       buffer,
     } as Express.Multer.File);
     const resolved = await store.resolveForPrompt([image.id]);
-    const delivery = await owner.begin(
+    await owner.begin(
       "steer",
       "prepared only",
       resolved.images,
       [image.id],
       [],
     );
-    expect(owner.isPrepared(delivery)).toBe(true);
     const clear = owner.beginClear({ received: false });
     owner.observeQueue(queue);
     expect(await owner.finishClear(clear, queue, true)).toEqual({});
-    expect(owner.isPrepared(delivery)).toBe(false);
     expect((await store.imagePreview(image.id)).bytes).toEqual(buffer);
     await owner.dispose();
     expect((await store.imagePreview(image.id)).bytes).toEqual(buffer);
@@ -157,84 +155,39 @@ describe("worker-bound pending image ownership", () => {
     }
   });
 
-  it("uses bytes to correct Pi's caption-only cross-mode consumption", async () => {
-    const follow = await enqueue("followUp", "same", "follow image");
-    const steer = await enqueue("steer", "same", "steer image");
-    queue.steering = [];
-    owner.observeQueue(queue); // Pi picks the Steer caption although Queue actually starts.
-    owner.observeMessage(follow.message);
-    const { clear, input } = boundary();
-    expect(await owner.finishClear(clear, input, true)).toEqual({
-      attachments: [steer.attachment],
-    });
-    await expect(
-      store.imagePreview(follow.attachment.id),
-    ).rejects.toMatchObject({ status: 404 });
-    await expect(
-      store.imagePreview(steer.attachment.id),
-    ).resolves.toBeDefined();
-  });
+  it.each(["raw message", "persisted append"] as const)(
+    "corrects Pi's caption-only cross-mode consumption using the %s",
+    async (evidence) => {
+      const follow = await enqueue("followUp", "same", "follow image");
+      const steer = await enqueue("steer", "same", "steer image");
+      queue.steering = [];
+      owner.observeQueue(queue); // Pi reports the Steer caption even though Queue started.
+      if (evidence === "raw message") owner.observeMessage(follow.message);
 
-  it("does not restore consumed image-only input despite Pi's stale empty-text row", async () => {
-    const consumed = await enqueue("steer", "", "first image");
-    const pending = await enqueue("steer", "", "second image");
-    expect(owner.observeMessage(consumed.message)).toBe(true);
-    expect(owner.project()).toEqual({
-      steering: [
-        {
-          text: "",
-          imageCount: 1,
-          imageAttachmentIds: [pending.attachment.id],
-        },
-      ],
-      followUp: [],
-    });
-    const { clear, input } = boundary();
-    expect(input.steering).toEqual(["", ""]);
-    expect(owner.clearedInput(clear, input)).toEqual({
-      steering: [""],
-      followUp: [],
-    });
-    expect(await owner.finishClear(clear, input, true)).toEqual({
-      attachments: [pending.attachment],
-    });
-  });
+      const { clear, input } = boundary();
+      if (evidence === "persisted append") {
+        messages = [follow.message];
+        await owner.corroborate(clear);
+      }
+      expect(await owner.finishClear(clear, input, true)).toEqual({
+        attachments: [steer.attachment],
+      });
+      // In the append case this is the first raw event for an already consumed row.
+      if (evidence === "persisted append") owner.observeMessage(follow.message);
+      await expect(
+        store.imagePreview(follow.attachment.id),
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        store.imagePreview(steer.attachment.id),
+      ).resolves.toBeDefined();
+    },
+  );
 
-  it("keeps consumed-row evidence across settlement and later admissions, without labeling external rows", async () => {
-    const consumed = await enqueue("steer", "", "first image");
-    owner.observeMessage(consumed.message);
-    owner.settled();
-    const pending = await enqueue("steer", "", "second image");
-    queue.followUp.push(""); // External Pi row, no Inspire-owned image evidence.
-    owner.observeQueue(queue);
-    expect(owner.project()).toEqual({
-      steering: [
-        {
-          text: "",
-          imageCount: 1,
-          imageAttachmentIds: [pending.attachment.id],
-        },
-      ],
-      followUp: [{ text: "" }],
-    });
-    const { clear, input } = boundary();
-    expect(owner.clearedInput(clear, input)).toEqual({
-      steering: [""],
-      followUp: [""],
-    });
-    expect(await owner.finishClear(clear, input, true)).toEqual({
-      attachments: [pending.attachment],
-    });
-    await expect(
-      store.imagePreview(consumed.attachment.id),
-    ).rejects.toMatchObject({ status: 404 });
-    expect(owner.project()).toEqual({ steering: [], followUp: [] });
-  });
-
-  it("preserves duplicate-image multiplicity while removing exactly one consumed message", async () => {
+  it("projects one remaining duplicate image and leaves external rows unclassified", async () => {
     const consumed = await enqueue("steer", "same", "same image");
     const pending = await enqueue("steer", "same", "same image");
     queue.steering.shift();
+    queue.followUp.push("external row");
     owner.observeQueue(queue);
     owner.observeMessage(consumed.message);
     expect(owner.project()).toEqual({
@@ -245,9 +198,13 @@ describe("worker-bound pending image ownership", () => {
           imageAttachmentIds: [pending.attachment.id],
         },
       ],
-      followUp: [],
+      followUp: [{ text: "external row" }],
     });
     const { clear, input } = boundary();
+    expect(owner.clearedInput(clear, input)).toEqual({
+      steering: ["same"],
+      followUp: ["external row"],
+    });
     expect(await owner.finishClear(clear, input, true)).toEqual({
       attachments: [pending.attachment],
     });
@@ -264,35 +221,6 @@ describe("worker-bound pending image ownership", () => {
     expect(
       await owner.finishClear(secondClear.clear, secondClear.input, true),
     ).toEqual({ attachments: [late.attachment] });
-  });
-
-  it("corroborates appended consumption without double-consuming a later raw event", async () => {
-    const follow = await enqueue("followUp", "same", "follow image");
-    const steer = await enqueue("steer", "same", "steer image");
-    queue.steering = [];
-    owner.observeQueue(queue);
-    const { clear, input } = boundary();
-    messages = [follow.message];
-    await owner.corroborate(clear);
-    expect(await owner.finishClear(clear, input, true)).toEqual({
-      attachments: [steer.attachment],
-    });
-    owner.observeMessage(follow.message);
-    await expect(
-      store.imagePreview(steer.attachment.id),
-    ).resolves.toBeDefined();
-  });
-
-  it("recovers unchanged input while an unrelated identical-caption message_start is delayed", async () => {
-    await enqueue("followUp", "same", "already starting image");
-    queue.followUp = [];
-    owner.observeQueue(queue); // No alternative same-caption row existed at consumption.
-    const pending = await enqueue("steer", "same", "still pending image");
-    const { clear, input } = boundary();
-    await owner.corroborate(clear);
-    expect(await owner.finishClear(clear, input, true)).toEqual({
-      attachments: [pending.attachment],
-    });
   });
 
   it("warns without guessing when a delayed start leaves genuine cross-mode image ambiguity", async () => {

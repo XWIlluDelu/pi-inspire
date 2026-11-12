@@ -1,278 +1,166 @@
 // @vitest-environment jsdom
-import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteSessionDraft, sessionDraft } from "../../src/session-drafts";
 import {
   closeHostApiFixture,
   hostApiFixture,
-  token,
 } from "../server/fixtures/host-api";
 import {
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
-  installFetch,
   jsonBody,
-  type RouteResponse,
   TEST_HOST_AUTHORITY,
 } from "../web/helpers";
-import { baseRoutes, initStore } from "../web/store-fixture";
+import { initStore, installStoreRoutes } from "../web/store-fixture";
+import { forwardHostRequests } from "./host-requests";
 
 describe("Pending intent and receipt lifecycle", () => {
   let f: Awaited<ReturnType<typeof hostApiFixture>>;
+  let forward: ReturnType<typeof forwardHostRequests>;
   beforeEach(async () => {
     installFakeWebSocket();
     deleteSessionDraft("s1");
     f = await hostApiFixture();
+    forward = forwardHostRequests(f.application);
   });
   afterEach(async () => {
     vi.useRealTimers();
     await closeHostApiFixture(f);
   });
 
-  async function forward(
-    url: string,
-    init: RequestInit,
-  ): Promise<RouteResponse> {
-    const path = url.replace(TEST_HOST_AUTHORITY, f.application.authorityId);
-    const response =
-      init.method === "POST"
-        ? await request(f.application.server)
-            .post(path)
-            .set("Authorization", `Bearer ${token}`)
-            .send({ ...jsonBody(init), authorityId: f.application.authorityId })
-        : await request(f.application.server)
-            .get(path)
-            .set("Authorization", `Bearer ${token}`);
-    return {
-      status: response.status,
-      body: response.body,
-      headers: {
-        ...response.headers,
-        "x-inspire-authority": TEST_HOST_AUTHORITY,
-      },
-    };
-  }
-
-  it.each(
-    (["recover", "abort"] as const).flatMap((action) =>
-      (["success", "failed", "retired"] as const).map((outcome) => ({
-        action,
-        outcome,
-      })),
-    ),
-  )(
-    "finishes $action after socket resume observes a $outcome recovery whose POST response is still pending",
-    async ({ action, outcome }) => {
+  it.each(["success", "failed", "unavailable"] as const)(
+    "resumes a held Return response when the receipt is %s",
+    async (receipt) => {
       const delivery = deferred<void>();
       const admitted = deferred<void>();
-      const recover = vi
-        .spyOn(f.runtime, "recoverPending")
-        .mockResolvedValue({ steering: [], followUp: [] });
-      const abort = vi
-        .spyOn(f.runtime, "abort")
-        .mockResolvedValue({ steering: [], followUp: [] });
-      const execute = action === "recover" ? recover : abort;
-      if (outcome === "failed")
-        execute.mockRejectedValue(new Error("confirmed recovery failure"));
+      const recover = vi.spyOn(f.runtime, "recoverPending");
+      if (receipt === "failed")
+        recover.mockRejectedValue(new Error("confirmed recovery failure"));
       else
-        execute.mockResolvedValue({
+        recover.mockResolvedValue({
           steering: ["reclaimed input"],
           followUp: [],
         });
-      const heldPath =
-        action === "recover" ? "/api/pending/recover" : "/api/control/abort";
-      const fetch = installFetch(async (url, init) => {
-        if (url === heldPath) {
+
+      const receiptReads = vi.fn();
+      const fetch = installStoreRoutes(async (url, init) => {
+        if (url === "/api/pending/recover") {
           const response = await forward(url, init);
           admitted.resolve();
           await delivery.promise;
           return response;
         }
-        if (
-          url === "/api/pending/recover" ||
-          url.startsWith("/api/pending/operations/")
-        )
-          return forward(url, init);
-        return baseRoutes(url, init);
+        if (url.startsWith("/api/pending/operations/")) {
+          receiptReads();
+          return receipt === "unavailable"
+            ? {
+                status: 503,
+                body: { error: "receipt observation unavailable" },
+              }
+            : forward(url, init);
+        }
       });
       const { store } = await initStore();
       const generation = store.getState().transportGeneration;
-      let completed = false;
-      const operation = (
-        action === "recover" ? store.recoverPending() : store.abort()
-      ).then((result) => {
-        completed = true;
-        return result;
-      });
+      const operation = store.recoverPending();
+      const expectedDraft = receipt === "failed" ? "" : "reclaimed input";
       try {
         await admitted.promise;
-        if (outcome === "retired") {
-          vi.useFakeTimers({ toFake: ["Date"] });
-          vi.setSystemTime(Date.now() + 16 * 60_000);
-        }
         store.recoverConnection("online");
         await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
         FakeWebSocket.instances[1]!.open();
-        expect(store.getState().transportGeneration).toBe(generation);
+
+        if (receipt === "unavailable") {
+          await vi.waitFor(() => expect(receiptReads).toHaveBeenCalledOnce());
+          expect(store.getState().pendingAction).toBe("recover");
+          expect(store.getState().notices).toEqual([]);
+          delivery.resolve();
+        }
+        await expect(operation).resolves.toBe(receipt !== "failed");
+        expect(store.getState()).toMatchObject({
+          pendingAction: null,
+          transportGeneration: generation,
+        });
         expect(recover).toHaveBeenCalledOnce();
-        await vi.waitFor(() => expect(completed).toBe(true));
-        if (action === "recover")
-          expect(await operation).toBe(outcome === "success");
-        expect(store.getState().pendingAction).toBeNull();
-        expect(abort).toHaveBeenCalledTimes(action === "abort" ? 1 : 0);
-        expect(sessionDraft("s1")).toBe(
-          outcome === "success" ? "reclaimed input" : "",
-        );
+        expect(sessionDraft("s1")).toBe(expectedDraft);
         const notices = store.getState().notices;
-        expect(notices).toHaveLength(outcome === "success" ? 0 : 1);
+        expect(notices).toHaveLength(receipt === "failed" ? 1 : 0);
         expect(
           fetch.mock.calls.filter(([url]) =>
             String(url).startsWith("/api/bootstrap"),
           ),
         ).toHaveLength(1);
-        // Late success or rejection of the original POST cannot restore twice
-        // or replace the already observed terminal outcome with another notice.
+
         delivery.resolve();
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         expect(store.getState().notices).toEqual(notices);
       } finally {
         delivery.resolve();
         await operation;
-        expect(sessionDraft("s1")).toBe(
-          outcome === "success" ? "reclaimed input" : "",
-        );
+      }
+      expect(sessionDraft("s1")).toBe(expectedDraft);
+      if (receipt === "failed") {
+        recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
+        expect(await store.recoverPending()).toBe(true);
+        expect(recover).toHaveBeenCalledTimes(2);
+        expect(sessionDraft("s1")).toBe("new input");
       }
     },
   );
 
-  it("keeps the original recovery pending when a resumed receipt read fails transiently", async () => {
-    const delivery = deferred<void>();
-    const admitted = deferred<void>();
-    let receiptReads = 0;
-    vi.spyOn(f.runtime, "recoverPending").mockResolvedValue({
-      steering: ["original completion"],
-      followUp: [],
-    });
-    installFetch(async (url, init) => {
-      if (url === "/api/pending/recover") {
-        const response = await forward(url, init);
-        admitted.resolve();
-        await delivery.promise;
-        return response;
-      }
-      if (url.startsWith("/api/pending/operations/")) {
-        receiptReads += 1;
-        return {
-          status: 503,
-          body: { error: "receipt observation unavailable" },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    let completed = false;
-    const operation = store.recoverPending().then((result) => {
-      completed = true;
-      return result;
-    });
-    try {
-      await admitted.promise;
-      store.recoverConnection("online");
-      await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
-      FakeWebSocket.instances[1]!.open();
-      await vi.waitFor(() => expect(receiptReads).toBe(1));
-      expect(completed).toBe(false);
-      expect(store.getState().pendingAction).toBe("recover");
-      expect(store.getState().notices).toEqual([]);
-      delivery.resolve();
-      await expect(operation).resolves.toBe(true);
-      expect(sessionDraft("s1")).toBe("original completion");
-      expect(store.getState().pendingAction).toBeNull();
-    } finally {
-      delivery.resolve();
-      await operation;
-    }
-  });
-
-  it("ends a matched failed execution so later explicit Returns can address new input", async () => {
+  it("requires matched Host proof to retire a failed Return intent", async () => {
     const recover = vi
       .spyOn(f.runtime, "recoverPending")
-      .mockRejectedValueOnce(new Error("transient failure"));
+      .mockResolvedValue({ steering: ["retained"], followUp: [] });
     const ids: string[] = [];
-    installFetch(async (url, init) => {
+    let observing = false;
+    installStoreRoutes(async (url, init) => {
       if (url === "/api/pending/recover") {
         ids.push(String(jsonBody(init).operationId));
+        const response = await forward(url, init);
+        if (observing) return response;
+        return {
+          status: 500,
+          body: { error: "observation failed" },
+          headers: {
+            "X-Inspire-Authority": TEST_HOST_AUTHORITY,
+            ...(ids.length === 2
+              ? {
+                  "X-Inspire-Pending-Operation": "unmatched-operation",
+                  "X-Inspire-Pending-Outcome": "failed",
+                }
+              : {}),
+          },
+        };
+      }
+      if (url.startsWith("/api/pending/operations/")) {
+        if (!observing) throw new TypeError("receipt unavailable");
         return forward(url, init);
       }
-      if (url.startsWith("/api/pending/operations/")) return forward(url, init);
-      return baseRoutes(url, init);
     });
     const { store } = await initStore();
+    // An ordinary HTTP refusal and proof for another operation are both inconclusive.
     expect(await store.recoverPending()).toBe(false);
+    expect(ids).toHaveLength(1);
+    expect(await store.recoverPending()).toBe(false);
+    expect(ids).toEqual([ids[0], ids[0]]);
+    observing = true;
+    expect(await store.recoverPending()).toBe(true);
+    expect(ids).toEqual([ids[0], ids[0], ids[0]]);
     expect(recover).toHaveBeenCalledOnce();
-    recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
-    expect(await store.recoverPending()).toBe(true);
-    expect(await store.recoverPending()).toBe(true);
-    expect(recover).toHaveBeenCalledTimes(3);
-    expect(new Set(ids).size).toBe(3);
+    expect(sessionDraft("s1")).toBe("retained");
   });
-
-  it.each([undefined, "unmatched-operation"])(
-    "keeps the retry identity for an unproven 500 (%s), without automatic mutation replay",
-    async (proof) => {
-      const recover = vi
-        .spyOn(f.runtime, "recoverPending")
-        .mockResolvedValue({ steering: ["retained"], followUp: [] });
-      const ids: string[] = [];
-      let observing = false;
-      installFetch(async (url, init) => {
-        if (url === "/api/pending/recover") {
-          ids.push(String(jsonBody(init).operationId));
-          if (ids.length === 1) {
-            await forward(url, init);
-            return {
-              status: 500,
-              body: { error: "observation failed" },
-              headers: {
-                "X-Inspire-Authority": TEST_HOST_AUTHORITY,
-                ...(proof
-                  ? {
-                      "X-Inspire-Pending-Operation": proof,
-                      "X-Inspire-Pending-Outcome": "failed",
-                    }
-                  : {}),
-              },
-            };
-          }
-          return forward(url, init);
-        }
-        if (url.startsWith("/api/pending/operations/")) {
-          if (!observing) throw new TypeError("receipt unavailable");
-          return forward(url, init);
-        }
-        return baseRoutes(url, init);
-      });
-      const { store } = await initStore();
-      expect(await store.recoverPending()).toBe(false);
-      expect(ids).toHaveLength(1);
-      observing = true;
-      expect(await store.recoverPending()).toBe(true);
-      expect(ids[1]).toBe(ids[0]);
-      expect(recover).toHaveBeenCalledOnce();
-      expect(sessionDraft("s1")).toBe("retained");
-    },
-  );
 
   it("ends retired observation without redispatching its tombstone, then accepts a new explicit Return", async () => {
     let lost = true;
-    const ids: string[] = [];
+    const requests: Record<string, unknown>[] = [];
     const recover = vi
       .spyOn(f.runtime, "recoverPending")
       .mockResolvedValue({ steering: ["original"], followUp: [] });
-    installFetch(async (url, init) => {
+    installStoreRoutes(async (url, init) => {
       if (url === "/api/pending/recover") {
-        ids.push(String(jsonBody(init).operationId));
+        requests.push(jsonBody(init));
         const response = await forward(url, init);
         if (lost) throw new TypeError("lost response");
         return response;
@@ -281,7 +169,6 @@ describe("Pending intent and receipt lifecycle", () => {
         if (lost) throw new TypeError("lost receipt");
         return forward(url, init);
       }
-      return baseRoutes(url, init);
     });
     const { store } = await initStore();
     expect(await store.recoverPending()).toBe(false);
@@ -292,18 +179,17 @@ describe("Pending intent and receipt lifecycle", () => {
     expect(recover).toHaveBeenCalledOnce();
     recover.mockResolvedValue({ steering: ["current queue"], followUp: [] });
     expect(await store.recoverPending()).toBe(true);
-    expect(ids[0]).toBe(ids[1]);
-    expect(ids[2]).not.toBe(ids[0]);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[2]?.operationId).not.toBe(requests[0]?.operationId);
     expect(sessionDraft("s1")).toBe("current queue");
     const retired = await forward("/api/pending/recover", {
       method: "POST",
-      body: JSON.stringify({
-        authorityId: TEST_HOST_AUTHORITY,
-        sessionId: "s1",
-        operationId: ids[0],
-      }),
+      body: JSON.stringify(requests[0]),
     });
-    expect(retired.status).toBe(409);
+    expect(retired).toMatchObject({
+      status: 409,
+      body: { code: "PENDING_OPERATION_RESULT_RETIRED" },
+    });
     expect(recover).toHaveBeenCalledTimes(2);
   });
 
@@ -317,7 +203,7 @@ describe("Pending intent and receipt lifecycle", () => {
         steering: [++posts === 1 ? "old queue" : "new queue"],
         followUp: [],
       }));
-    installFetch(async (url, init) => {
+    installStoreRoutes(async (url, init) => {
       if (url === "/api/pending/recover") {
         ids.push(String(jsonBody(init).operationId));
         const response = await forward(url, init);
@@ -328,7 +214,6 @@ describe("Pending intent and receipt lifecycle", () => {
         if (!readOld) throw new TypeError("lost receipt");
         return forward(url, init);
       }
-      return baseRoutes(url, init);
     });
     const { store, socket } = await initStore();
     expect(await store.recoverPending()).toBe(false);

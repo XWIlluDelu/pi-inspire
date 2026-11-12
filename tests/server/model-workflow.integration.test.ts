@@ -7,40 +7,12 @@ import {
   queryModelMetadata,
 } from "../../server/model-metadata.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
-import { SessionManager } from "../../server/pi-runtime.js";
 import { RuntimeController } from "../../server/runtime.js";
 import { SessionCatalog } from "../../server/session-catalog.js";
 import { modelWorkflowFixture } from "./fixtures/model-workflow.js";
+import { deferredSignal } from "./fixtures/runtime.js";
 
 const roots: string[] = [];
-function retainedRouter(cwd: string, sessions: string) {
-  const manager = SessionManager.create(cwd, sessions);
-  manager.appendModelChange("project-router", "auto");
-  manager.appendThinkingLevelChange("high");
-  manager.appendMessage({
-    role: "user",
-    content: "retained turn",
-    timestamp: 1,
-  });
-  manager.appendMessage({
-    role: "assistant",
-    api: "openai-completions",
-    provider: "project-native",
-    model: "a",
-    content: [{ type: "text", text: "Readable retained reply" }],
-    timestamp: 2,
-    stopReason: "stop",
-    usage: {
-      input: 10,
-      output: 5,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 15,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-  });
-  return manager;
-}
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(
@@ -48,142 +20,23 @@ afterEach(async () => {
   );
 });
 
-it("keeps retained history and known models available when one startup extension cannot load", async () => {
-  const f = await modelWorkflowFixture();
-  roots.push(f.root);
-  const manager = retainedRouter(f.trusted, f.sessions);
-  const path = manager.getSessionFile()!;
-  const original = await readFile(path, "utf8");
-  await writeFile(
-    join(f.trusted, ".pi/extensions/project.ts"),
-    'export default function () { throw new Error("Broken startup extension"); }',
-  );
-  const query = vi.fn(queryModelMetadata);
-  const metadata = new ModelMetadataCatalog(query);
-  const factory = vi.fn(() => {
-    throw new Error("Pi startup unavailable");
-  });
-  const runtime = new RuntimeController(
-    new SessionCatalog(f.trusted),
-    new AttachmentStore(join(f.root, "uploads")),
-    { createProcess: factory },
-  ).setModelMetadataCatalog(metadata);
-  try {
-    const snapshot = await runtime.snapshot(manager.getSessionId());
-    expect(snapshot.active).toMatchObject({
-      model: null,
-      modelDiscovery: "loading",
-      projectionHealth: { status: "ok" },
-      transcriptPage: {
-        messages: [
-          { role: "user", content: "retained turn" },
-          { role: "assistant", provider: "project-native", model: "a" },
-        ],
-      },
-    });
-    expect(snapshot.active?.availableModels).toBeUndefined();
-    expect(snapshot.runState).toBe("idle");
-    expect(factory).not.toHaveBeenCalled();
-    const opened = await runtime.openSession(manager.getSessionId());
-    expect(opened.active?.model).toBeNull();
-    expect(opened.active?.transcriptPage.messages).toEqual(
-      snapshot.active?.transcriptPage.messages,
-    );
-    expect((await runtime.branchTree(manager.getSessionId())).nodes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "message", role: "assistant" }),
-      ]),
-    );
-    expect(await readFile(path, "utf8")).toBe(original);
-    await expect(metadata.read(f.trusted)).resolves.toMatchObject({
-      warning:
-        "Some Pi extensions could not load; their models may be unavailable.",
-      models: expect.arrayContaining([
-        expect.objectContaining({ provider: "global-native", id: "a" }),
-      ]),
-    });
-    expect(
-      (await runtime.snapshot(manager.getSessionId())).active,
-    ).toMatchObject({
-      model: { provider: "project-native", id: "a" },
-      availableModels: expect.arrayContaining([
-        expect.objectContaining({ provider: "global-native", id: "a" }),
-      ]),
-      projectionHealth: { status: "ok" },
-    });
-  } finally {
-    await runtime.close();
-    await Promise.allSettled(query.mock.results.map((result) => result.value));
-  }
-}, 30_000);
-
-it("opens retained transcript before deferred metadata and resolves New inheritance from that source without starting another worker", async () => {
-  const f = await modelWorkflowFixture();
-  roots.push(f.root);
-  const manager = retainedRouter(f.trusted, f.sessions);
-  const id = manager.getSessionId();
-  const path = manager.getSessionFile()!;
-  const original = await readFile(path, "utf8");
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const query = vi.fn(async (cwd: string) => {
-    await gate;
-    return queryModelMetadata(cwd);
-  });
-  const metadata = new ModelMetadataCatalog(query);
-  const attachments = new AttachmentStore(join(f.root, "uploads"));
-  const factory = vi.fn(() => {
-    throw new Error("Pi startup unavailable");
-  });
-  const runtime = new RuntimeController(
-    new SessionCatalog(f.trusted),
-    attachments,
-    { createProcess: factory },
-  ).setModelMetadataCatalog(metadata);
-  try {
-    const opened = await runtime.openSession(id);
-    expect(opened.active).toMatchObject({
-      model: null,
-      modelDiscovery: "loading",
-      projectionHealth: { status: "ok" },
-      transcriptPage: { messages: [{ role: "user" }, { role: "assistant" }] },
-    });
-    expect(query).toHaveBeenCalledTimes(1);
-    const inherited = runtime.refreshModels(id, true);
-    release();
-    const result = await inherited;
-    expect(result.selection).toMatchObject({
-      model: { provider: "project-router", id: "auto", virtual: true },
-      thinkingLevel: "high",
-    });
-    expect((await runtime.snapshot(id)).active?.model).toEqual(
-      result.selection?.model,
-    );
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(await readFile(path, "utf8")).toBe(original);
-    expect(await readFile(f.events, "utf8")).not.toMatch(
-      /session_start|agent_start|request|route/,
-    );
-  } finally {
-    release();
-    await runtime.close();
-    await query.mock.results[0]?.value.catch(() => undefined);
-    await attachments.close();
-  }
-}, 30_000);
-
 it("keeps native virtual selection/effort across replies, real navigation, copies and read-only recovery while context remains physical", async () => {
   const f = await modelWorkflowFixture();
   roots.push(f.root);
   const attachments = new AttachmentStore(join(f.root, "uploads"));
   const catalog = new SessionCatalog(f.trusted);
-  const metadata = new ModelMetadataCatalog();
+  const metadataGate = deferredSignal();
+  let cold = false;
+  const query = vi.fn(async (cwd: string) => {
+    if (cold) await metadataGate.promise;
+    return queryModelMetadata(cwd);
+  });
+  const metadata = new ModelMetadataCatalog(query);
   const workers: PiRpcProcess[] = [];
   const makeRuntime = () =>
     new RuntimeController(catalog, attachments, {
       createProcess: (options) => {
+        if (cold) throw new Error("Pi startup unavailable");
         const worker = new PiRpcProcess({
           ...options,
           args: [
@@ -329,39 +182,73 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
     });
     await runtime.close();
     expect(workers.every((worker) => worker.pid === null)).toBe(true);
+    const original = await readFile(path, "utf8");
+    const modelCalls = async () =>
+      (await readFile(f.events, "utf8"))
+        .split("\n")
+        .filter((line) =>
+          /:(session_start|agent_start|request|route)$/.test(line),
+        );
+    const callsBefore = await modelCalls();
     metadata.invalidate();
+    query.mockClear();
+    cold = true;
     runtime = makeRuntime();
     const workerCount = workers.length;
-    const initialReadonly = await runtime.snapshot(id);
+    const initialReadonly = await runtime.openSession(id);
     expect(initialReadonly.active).toMatchObject({
       model: null,
       modelDiscovery: "loading",
+      projectionHealth: { status: "ok" },
+      transcriptPage: {
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "user",
+            content: [{ type: "text", text: "first routed turn" }],
+          }),
+          expect.objectContaining({
+            role: "assistant",
+            provider: "project-native",
+          }),
+        ]),
+      },
     });
-    const inherited = await runtime.refreshModels(id, true);
+    const inheriting = runtime.refreshModels(id, true);
+    metadataGate.resolve();
+    const inherited = await inheriting;
     const readonly = await runtime.snapshot(id);
-    expect(readonly.active?.model).toMatchObject(selected);
-    expect(inherited.selection?.model).toEqual(readonly.active?.model);
-    expect(readonly.active?.thinkingLevel).toBe("high");
-    expect(workers).toHaveLength(workerCount);
-    // Native recovery only retains the virtual choice while its definition is
-    // registered. Removing it restores the last physical response, not the
-    // unavailable model_change identity.
-    const projectExtension = join(f.trusted, ".pi/extensions/project.ts");
-    await writeFile(
-      projectExtension,
-      (await readFile(projectExtension, "utf8")).replace(
-        '"project");',
-        '"project", false);',
-      ),
-    );
-    metadata.invalidate();
-    await runtime.refreshModels(id, true);
-    expect((await runtime.snapshot(id)).active?.model).toEqual({
-      provider: "project-native",
-      id: "b",
+    expect(inherited.selection).toMatchObject({
+      model: selected,
+      thinkingLevel: "high",
     });
+    expect(readonly.active).toMatchObject({
+      model: inherited.selection?.model,
+      thinkingLevel: "high",
+    });
+    expect(query).toHaveBeenCalledExactlyOnceWith(f.trusted);
+
+    // A missing extension definition retires the saved router identity, but
+    // keeps the physical response and all models that could still load.
+    await writeFile(
+      join(f.trusted, ".pi/extensions/project.ts"),
+      'export default () => { throw new Error("Broken startup extension"); };',
+    );
+    expect(await runtime.refreshModels(id, true)).toMatchObject({
+      warning:
+        "Some Pi extensions could not load; their models may be unavailable.",
+      selection: { model: { provider: "project-native", id: "b" } },
+      models: expect.arrayContaining([
+        expect.objectContaining({ provider: "global-native", id: "a" }),
+      ]),
+    });
+    expect((await runtime.snapshot(id)).active?.projectionHealth.status).toBe(
+      "ok",
+    );
+    expect(await readFile(path, "utf8")).toBe(original);
+    expect(await modelCalls()).toEqual(callsBefore);
     expect(workers).toHaveLength(workerCount);
   } finally {
+    metadataGate.resolve();
     await runtime.close();
     await attachments.close();
   }

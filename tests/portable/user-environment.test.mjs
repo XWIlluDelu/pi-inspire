@@ -13,10 +13,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import {
-  resolveLaunchEnvironment,
   independentProcessEnvironment,
+  resolveLaunchEnvironment,
   systemdEnvironmentArguments,
 } from "../../server/user-environment.mjs";
+import {
+  directLauncherEnvironment,
+  preparePackagedLauncher,
+} from "../fixtures/packaged-launcher.mjs";
 
 const directories = [];
 const posix = process.platform !== "win32";
@@ -44,6 +48,21 @@ async function fixture(rc = "") {
   };
 }
 
+async function packagedEnvironmentProbe(root) {
+  const entry = "process.stdout.write(JSON.stringify(process.env));";
+  await preparePackagedLauncher(root, { host: entry, terminal: entry });
+  const environment = await directLauncherEnvironment(root);
+  return (mode, exports) =>
+    JSON.parse(
+      execFileSync(process.execPath, [join(root, "inspire.mjs"), mode], {
+        cwd: root,
+        env: { ...environment, ...exports },
+        encoding: "utf8",
+        timeout: 15_000,
+      }),
+    );
+}
+
 test("a detached terminal does not inherit its Host's service incarnation or socket activation", () => {
   const environment = {
     PATH: "/custom/bin",
@@ -63,22 +82,21 @@ test("a detached terminal does not inherit its Host's service incarnation or soc
   assert.equal(environment.NOTIFY_SOCKET, "/host/notify");
 });
 
-test("direct launches preserve caller environment without invoking a shell on any platform", async () => {
+test("direct Host and terminal launches preserve caller exports without probing a shell", async () => {
+  const { home } = await fixture();
+  const launch = await packagedEnvironmentProbe(home);
   const environment = {
-    PATH: "/custom/bin",
     SHELL: "/missing/shell",
-    NODE_ENV: "",
     CUSTOM: "value",
   };
-  for (const platform of ["linux", "darwin", "win32"]) {
-    const result = await resolveLaunchEnvironment(environment, { platform });
-    assert.deepEqual(result, environment);
-    assert.notEqual(result, environment);
+  for (const mode of ["host", "terminal-daemon"]) {
+    for (const nodeEnv of [undefined, "test", ""]) {
+      const result = launch(mode, { ...environment, NODE_ENV: nodeEnv });
+      assert.equal(result.NODE_ENV, nodeEnv);
+      assert.equal(result.CUSTOM, "value");
+      assert.equal(result.PATH, process.env.PATH);
+    }
   }
-  assert.deepEqual(
-    await resolveLaunchEnvironment(environment, { service: false }),
-    environment,
-  );
   assert.deepEqual(
     await resolveLaunchEnvironment(
       { ...environment, INSPIRE_ENVIRONMENT: "inherit" },
@@ -115,7 +133,7 @@ test("invalid modes and unsupported shell discovery fail explicitly", async () =
   }
 });
 
-test("service discovery honors interactive login setup, unsets, and arbitrary exported values", {
+test("service discovery honors the explicit login shell, unsets, and arbitrary exports", {
   skip: !bash,
 }, async () => {
   const f = await fixture(`
@@ -134,7 +152,10 @@ printf 'initialized\\n' >> "$HOME/probes"
   await chmod(tool, 0o755);
   const environment = {
     ...f.environment,
+    SHELL: "/missing/shell",
+    INSPIRE_SHELL: "/bin/bash",
     REMOVE_ME: "remove this",
+    NODE_ENV: "",
     INSPIRE_PORT: "4567",
     INVOCATION_ID: "service-identity",
     PWD: "/caller",
@@ -143,17 +164,16 @@ printf 'initialized\\n' >> "$HOME/probes"
   delete environment.INSPIRE_ENVIRONMENT;
   const result = await resolveLaunchEnvironment(environment, { service: true });
   assert.equal(result.PATH, `${f.home}/.local/bin:/usr/bin:/bin`);
+  assert.equal(result.SHELL, "/bin/bash");
   assert.equal(result.MULTILINE, "line one\nline two=你好");
   assert.equal(result.HTTPS_PROXY, "http://example.invalid:1234");
   assert.equal(result.REMOVE_ME, undefined);
-  assert.equal(result.NODE_ENV, undefined);
+  assert.equal(result.NODE_ENV, "");
   assert.equal(result.INSPIRE_PORT, "4567");
   assert.equal(result.INVOCATION_ID, "service-identity");
   assert.equal(result.PWD, "/caller");
   assert.equal(result.SHLVL, "2");
   assert.equal(result.INSPIRE_RESOLVING_ENVIRONMENT, undefined);
-  assert.equal(result.TERM, undefined);
-  assert.equal(result.INSPIRE_ENVIRONMENT, "inherit");
   assert.equal(
     execFileSync("user-tool", [], { env: result, encoding: "utf8" }),
     "user-tool-found",
@@ -164,32 +184,19 @@ printf 'initialized\\n' >> "$HOME/probes"
   );
   assert.equal(await readFile(join(f.home, "probes"), "utf8"), "initialized\n");
   assert.equal(environment.REMOVE_ME, "remove this");
-});
 
-test("discovery preserves a caller-supplied NODE_ENV, including the empty value", {
-  skip: !bash,
-}, async () => {
-  const f = await fixture();
-  for (const NODE_ENV of ["", "development", "production", "test"]) {
-    const result = await resolveLaunchEnvironment({
-      ...f.environment,
-      NODE_ENV,
+  const launch = await packagedEnvironmentProbe(f.home);
+  for (const mode of ["host", "terminal-daemon"]) {
+    const child = launch(mode, {
+      INSPIRE_ENVIRONMENT: "shell",
+      INSPIRE_SHELL: "/bin/bash",
+      SHELL: "/missing/shell",
+      REMOVE_ME: "remove this",
     });
-    assert.equal(result.NODE_ENV, NODE_ENV);
+    assert.equal(child.PATH, result.PATH);
+    assert.equal(child.MULTILINE, result.MULTILINE);
+    assert.equal(child.REMOVE_ME, undefined);
   }
-});
-
-test("an explicit shell path takes precedence over SHELL", {
-  skip: !bash,
-}, async () => {
-  const f = await fixture("export DISCOVERED=yes\n");
-  const result = await resolveLaunchEnvironment({
-    ...f.environment,
-    SHELL: "/missing/shell",
-    INSPIRE_SHELL: "/bin/bash",
-  });
-  assert.equal(result.DISCOVERED, "yes");
-  assert.equal(result.SHELL, "/bin/bash");
 });
 
 test("startup failures and missing exports do not expose shell output or accept partial environment", {

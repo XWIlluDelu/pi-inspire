@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   link,
+  mkdir,
   mkdtemp,
   readdir,
   rm,
@@ -94,29 +95,7 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     expect(await registry.forSession("one", "/work/other.jsonl")).toEqual([]);
   });
 
-  it("reads only the asked process's records for its liveness and current session", async () => {
-    const root = await directory();
-    const own = await record();
-    await save(root, own);
-    // Another process's dead record: only a full scan reads and removes it.
-    const other = await save(
-      root,
-      await record({ pid: process.ppid, processIdentity: "linux:gone" }),
-    );
-    const registry = new AttachControlRegistry(root);
-    expect(await registry.forProcess(process.pid, own.processIdentity)).toEqual(
-      {
-        alive: true,
-        records: [own],
-      },
-    );
-    expect(await registry.alive(process.pid, "linux:another-birth")).toBe(
-      false,
-    );
-    expect(await readdir(root)).toContain(other);
-  });
-
-  it("rechecks process identity for ownership even after an observation", async () => {
+  it("scopes process lookups and checks ownership again after exit", async () => {
     const root = await directory();
     const child = spawn(process.execPath, [
       "-e",
@@ -129,7 +108,19 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
         processIdentity: await processIdentity(child.pid!),
       });
       const name = await save(root, live);
+      const stale = await save(
+        root,
+        await record({ processIdentity: "linux:gone" }),
+      );
       const registry = new AttachControlRegistry(root);
+      expect(await registry.forProcess(live.pid, live.processIdentity)).toEqual(
+        {
+          alive: true,
+          records: [live],
+        },
+      );
+      expect(await registry.alive(live.pid, "linux:another-birth")).toBe(false);
+      expect(await readdir(root)).toContain(stale);
       expect(await registry.observe()).toEqual([live]);
 
       const exit = once(child, "exit");
@@ -166,11 +157,12 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     expect(await registry.forSession("another", file)).toEqual([]);
   });
 
-  it("shares a recent scan among observers while session lookup stays fresh", async () => {
-    const root = await directory();
+  it("caches an empty observation while writer admission immediately sees a new registry", async () => {
+    const root = join(await directory(), "not-created-yet");
     const registry = new AttachControlRegistry(root);
     vi.useFakeTimers({ toFake: ["Date"] });
     expect(await registry.observe()).toEqual([]);
+    await mkdir(root);
     const live = await record();
     await save(root, live);
     expect(await registry.observe()).toEqual([]);
@@ -179,11 +171,6 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
     );
     vi.advanceTimersByTime(1_000);
     expect(await registry.observe()).toEqual([live]);
-  });
-
-  it("treats a missing directory as no instances", async () => {
-    const registry = new AttachControlRegistry(join(await directory(), "none"));
-    expect(await registry.observe()).toEqual([]);
   });
 
   it("verifies reported ancestors while retaining uncertainty when Pi cannot answer", async () => {
@@ -240,31 +227,27 @@ describe.skipIf(process.platform === "win32")("AttachControlRegistry", () => {
 });
 
 describe("takeoverCandidate", () => {
-  it("chooses the branch's available endpoint over an ancestor or a presence-only record", async () => {
+  it("prefers the current branch for explicit takeover and requires one idle owner for automatic takeover", async () => {
     const current = await record({ endpoint: "/work/current" });
     const ancestor = await record({ leafId: "old", endpoint: "/work/old" });
-    const presenceOnly = await record();
-    const match = (leaf: string | null) =>
-      leaf === "leaf" ? "continues" : "possible";
-    expect(takeoverCandidate([ancestor, presenceOnly, current], match)).toBe(
-      current,
-    );
-    expect(takeoverCandidate([ancestor], match)).toBe(ancestor);
-    expect(takeoverCandidate([presenceOnly], match)).toBeUndefined();
-  });
-
-  it("only automatically takes over a single plausible idle instance with an endpoint", async () => {
-    const idle = await record({ endpoint: "/work/idle" });
-    const busy = await record({ endpoint: "/work/busy", activity: "working" });
-    const endpointless = await record({ leafId: "ancestor" });
-    const unrelated = await record({ leafId: "sibling" });
+    const presenceOnly = await record({ leafId: "old" });
+    const busy = { ...current, activity: "working" as const };
+    const unrelated = { ...presenceOnly, leafId: "sibling" };
     const match = (leaf: string | null) => {
       if (leaf === "leaf") return "continues";
-      return leaf === "ancestor" ? "possible" : "other";
+      return leaf === "old" ? "possible" : "other";
     };
-    expect(takeoverCandidate([idle, unrelated], match, true)).toBe(idle);
     expect(
-      takeoverCandidate([idle, endpointless], match, true),
+      takeoverCandidate(
+        [ancestor, { ...presenceOnly, leafId: current.leafId }, current],
+        match,
+      ),
+    ).toBe(current);
+    expect(takeoverCandidate([ancestor], match)).toBe(ancestor);
+    expect(takeoverCandidate([presenceOnly], match)).toBeUndefined();
+    expect(takeoverCandidate([current, unrelated], match, true)).toBe(current);
+    expect(
+      takeoverCandidate([current, presenceOnly], match, true),
     ).toBeUndefined();
     expect(takeoverCandidate([busy], match, true)).toBeUndefined();
   });
@@ -327,19 +310,23 @@ describe("AttachControlConnection", () => {
     await expect(connection.read()).resolves.toEqual({ ended: "unreachable" });
   });
 
-  it("ends the binding at once, saying whether the process exited or moved to another session", async () => {
-    const live = await record({ endpoint: "/nonexistent/attach.sock" });
-    const registry = {
-      forProcess: vi.fn(async () => ({ alive: false, records: [] })),
-    } as unknown as AttachControlRegistry;
-    const connection = new AttachControlConnection(registry, live, 60_000);
-    await expect(connection.read()).resolves.toEqual({ ended: "exited" });
-    vi.mocked(registry.forProcess).mockResolvedValue({
-      alive: true,
-      records: [{ ...live, sessionFile: "/work/other.jsonl" }],
-    });
-    await expect(connection.read()).resolves.toEqual({ ended: "left-session" });
-  });
+  it.each(["exited", "left-session"] as const)(
+    "ends the binding immediately when the owner has %s",
+    async (ended) => {
+      const live = await record({ endpoint: "/nonexistent/attach.sock" });
+      const registry = {
+        forProcess: async () =>
+          ended === "exited"
+            ? { alive: false, records: [] }
+            : {
+                alive: true,
+                records: [{ ...live, sessionFile: "/work/other.jsonl" }],
+              },
+      } as unknown as AttachControlRegistry;
+      const connection = new AttachControlConnection(registry, live, 60_000);
+      await expect(connection.read()).resolves.toEqual({ ended });
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "distinguishes a lost or invalid reply from an explicit refusal or a failed connect",

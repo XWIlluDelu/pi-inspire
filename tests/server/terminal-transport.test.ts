@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,115 +8,42 @@ import { WebSocket } from "ws";
 import { createInspireServer } from "../../server/app.js";
 import { PreferencesStore } from "../../server/preferences.js";
 import { ResourceStore } from "../../server/resources.js";
-import type {
-  TerminalAttachment,
-  TerminalAttachmentSink,
-  TerminalAttachOptions,
-  TerminalService,
-} from "../../server/terminal-service.js";
-import type {
-  TerminalCatalogResponse,
-  TerminalDescriptor,
-  TerminalMutationMethod,
-  TerminalServiceSettings,
+import { TerminalServiceError } from "../../server/terminal-service.js";
+import {
+  decodeTerminalServerDataFrame,
+  encodeTerminalInputFrame,
+  type TerminalDescriptor,
 } from "../../shared/terminal-contracts.js";
-import { encodeTerminalInputFrame } from "../../shared/terminal-contracts.js";
 import { hostServices } from "../fixtures/host-services.js";
 import { pairedBrowser, socketAdmission } from "./fixtures/host-api.js";
 import { closeWithoutPeerAck, rawWebSocket } from "./fixtures/raw-websocket.js";
+import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
 const token = "terminal-transport-token";
-const terminal: TerminalDescriptor = {
-  catalogEpoch: "catalog-1",
-  catalogRevision: 1,
-  id: "terminal-1",
-  projectCwd: "/tmp/project",
-  title: "Bash",
-  titleSource: "automatic",
-  profileId: "bash",
-  shellLabel: "Bash",
-  currentCwd: "/tmp/project",
-  currentCommand: "bash",
-  commandRunning: false,
-  status: "running",
-  exitCode: null,
-  signal: null,
-  cols: 100,
-  rows: 30,
-  resizeRevision: 0,
-  outputEpoch: "epoch-1",
-  firstOutputOffset: 0,
-  nextOutputOffset: 0,
-  viewerCount: 0,
-  hasOwner: false,
-  createdAt: "2026-01-01T00:00:00.000Z",
-  updatedAt: "2026-01-01T00:00:00.000Z",
-};
 
-class FakeTerminalService implements TerminalService {
-  private readonly epoch = randomUUID();
-  async operationEpoch() {
-    return this.epoch;
-  }
-  async operate<Result>(method: TerminalMutationMethod): Promise<Result> {
-    expect(method).toBe("remove");
-    return { catalogEpoch: "catalog-1", revision: 2 } as Result;
-  }
-  readonly input = vi.fn();
-  readonly controls = vi.fn();
-  readonly detach = vi.fn();
-  readonly close = vi.fn(async () => {});
-  attachedOptions: TerminalAttachOptions | null = null;
-
-  list(): TerminalCatalogResponse {
-    return {
-      catalogEpoch: "catalog-1",
-      revision: 1,
-      terminals: [terminal],
-      profiles: [],
-    };
-  }
-  getSettings(): TerminalServiceSettings {
-    return { persistOutput: false, historyRetentionDays: 30 };
-  }
-  async attach(
-    options: TerminalAttachOptions,
-    sink: TerminalAttachmentSink,
-  ): Promise<TerminalAttachment> {
-    this.attachedOptions = options;
-    sink.sendControl({
-      type: "attached",
-      terminal,
-      attachmentId: "attachment-1",
-      writable: true,
-      ownerToken: "owner-1",
-      nextInputSequence: 1,
-      replay: "snapshot",
-    });
-    sink.sendControl({ type: "replay_complete", nextOutputOffset: 0 });
-    return {
-      id: "attachment-1",
-      terminalId: terminal.id,
-      writeInput: this.input,
-      control: this.controls,
-      detach: this.detach,
-    };
-  }
+function attachRequest(ticket: string) {
+  return { type: "attach", ticket, clientId: "browser", cols: 100, rows: 30 };
 }
 
-describe("terminal HTTP and WebSocket transport", () => {
-  let temporary: string;
+async function expectUpgradeRefused(url: string, origin?: string) {
+  const socket = new WebSocket(url, { origin });
+  const [, response] = await once(socket, "unexpected-response");
+  response.resume();
+  expect(response.statusCode).toBe(401);
+}
+
+describe("terminal Host and daemon transport", () => {
+  let backend: Awaited<ReturnType<typeof terminalDaemonFixture>>;
   let application: ReturnType<typeof createInspireServer>;
-  let terminalService: FakeTerminalService;
   let baseUrl: string;
 
   beforeEach(async () => {
-    temporary = await mkdtemp(join(tmpdir(), "inspire-terminal-transport-"));
-    terminalService = new FakeTerminalService();
+    backend = await terminalDaemonFixture();
+    const { directory } = backend;
     application = createInspireServer({
       token,
-      ...hostServices(temporary),
-      preferences: new PreferencesStore(join(temporary, "preferences.json")),
+      ...hostServices(directory),
+      preferences: new PreferencesStore(join(directory, "preferences.json")),
       resources: new ResourceStore(),
       git: {
         status: async () => ({ kind: "not-repository" }),
@@ -132,246 +58,345 @@ describe("terminal HTTP and WebSocket transport", () => {
           reason: "no-changes",
         }),
       },
-      terminal: terminalService,
+      terminal: backend.client,
       version: "test",
       piVersion: "test",
-      distDir: join(temporary, "missing-dist"),
+      distDir: join(directory, "missing-dist"),
     });
-    await new Promise<void>((resolve) =>
-      application.server.listen(0, "127.0.0.1", resolve),
-    );
-    const address = application.server.address() as AddressInfo;
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    application.server.listen(0, "127.0.0.1");
+    await once(application.server, "listening");
+    baseUrl = `http://127.0.0.1:${(application.server.address() as AddressInfo).port}`;
   });
 
   afterEach(async () => {
-    await application.close();
-    await rm(temporary, { recursive: true, force: true });
+    await application?.close();
+    await backend?.close();
   });
 
-  it("keeps terminal APIs authenticated", async () => {
-    await request(application.server).get("/api/terminals").expect(401);
+  const headers = (bearer: string) => ({
+    Authorization: `Bearer ${bearer}`,
+    Origin: baseUrl,
+  });
+  const browser = () => pairedBrowser(application.server, baseUrl, token);
+  const attachTicket = async (
+    bearer: string,
+    terminalId: string,
+  ): Promise<string> => {
     const response = await request(application.server)
-      .get("/api/terminals")
-      .set("Authorization", `Bearer ${token}`)
+      .post(`/api/terminals/${terminalId}/attach-ticket`)
+      .set(headers(bearer))
       .expect(200);
-    expect(response.body.terminals).toEqual([terminal]);
-    await request(application.server).get("/api/terminal-settings").expect(401);
-    await request(application.server)
-      .get("/api/terminal-settings")
-      .set("Authorization", `Bearer ${token}`)
-      .expect(200, { persistOutput: false, historyRetentionDays: 30 });
-    await request(application.server)
-      .patch("/api/terminal-settings")
-      .set("Authorization", `Bearer ${token}`)
-      .send({ historyRetentionDays: 0 })
-      .expect(400);
-    const operate = vi.spyOn(terminalService, "operate");
-    const operation = {
-      id: randomUUID(),
-      epoch: await terminalService.operationEpoch(),
-    };
-    await request(application.server)
-      .delete(`/api/terminals/${terminal.id}`)
-      .set("Authorization", `Bearer ${token}`)
-      .set("X-Terminal-Operation", JSON.stringify(operation))
-      .expect(200, { catalogEpoch: "catalog-1", revision: 2 });
-    expect(operate).toHaveBeenCalledExactlyOnceWith(
-      "remove",
-      { id: terminal.id, force: false },
-      operation,
-    );
+    return response.body.ticket;
+  };
+  const terminalUrl = async (bearer: string) =>
+    `${baseUrl}/terminal?ticket=${await socketAdmission(application.server, baseUrl, bearer, "terminal")}`;
+
+  it("validates every terminal mutation before dispatching it to the daemon", async () => {
+    const { bearer } = await browser();
+    const api = request.agent(application.server).set(headers(bearer));
+    const dispatch = vi.spyOn(backend.manager, "operate");
+    const epoch = await backend.client.operationEpoch();
+    const routes: Array<{
+      method: "post" | "patch" | "delete";
+      path: string;
+      body?: object;
+      invalid?: { path?: string; body?: object };
+    }> = [
+      {
+        method: "post",
+        path: "/api/terminals",
+        body: { cwd: backend.directory },
+        invalid: { body: {} },
+      },
+      {
+        method: "patch",
+        path: "/api/terminals/tab",
+        body: { title: "Title" },
+        invalid: { body: { title: 42 } },
+      },
+      {
+        method: "post",
+        path: "/api/terminals/reorder",
+        body: { cwd: backend.directory, terminalIds: [] },
+        invalid: { body: { cwd: backend.directory, terminalIds: ["bad/id"] } },
+      },
+      {
+        method: "post",
+        path: "/api/terminals/tab/restart",
+        invalid: { path: "/api/terminals/bad%20id/restart" },
+      },
+      {
+        method: "delete",
+        path: "/api/terminals/tab",
+        invalid: { path: "/api/terminals/bad%20id" },
+      },
+      {
+        method: "patch",
+        path: "/api/terminal-settings",
+        body: { persistOutput: true },
+        invalid: { body: { historyRetentionDays: 0 } },
+      },
+      { method: "delete", path: "/api/terminal-history" },
+    ];
+    for (const { method, path, body, invalid } of routes) {
+      const route = `${method.toUpperCase()} ${path}`;
+      const missing = await api[method](path).send(body).expect(400);
+      expect(missing.body.code, route).toBe("terminal_operation_required");
+      if (!invalid) continue;
+      const id = randomUUID();
+      const rejected = await api[method](invalid.path ?? path)
+        .set("X-Terminal-Operation", JSON.stringify({ id, epoch }))
+        .send(invalid.body)
+        .expect(400);
+      expect(rejected.headers["x-terminal-operation"], route).toBe(id);
+      expect(rejected.headers["x-terminal-outcome"], route).toBe("rejected");
+    }
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it.each(["awaiting attach", "attached"] as const)(
-    "drains a terminal peer %s without waiting for a close ACK",
-    async (state) => {
-      const { bearer } = await pairedBrowser(
-        application.server,
-        baseUrl,
-        token,
+  it("drains attached and not-yet-attached peers without waiting for close ACKs", async () => {
+    const { bearer } = await browser();
+    const terminal = await backend.manager.create({ cwd: backend.directory });
+    const attached = await rawWebSocket(await terminalUrl(bearer), {
+      Origin: baseUrl,
+    });
+    let waiting: Awaited<ReturnType<typeof rawWebSocket>> | undefined;
+    try {
+      attached.send(attachRequest(await attachTicket(bearer, terminal.id)));
+      await vi.waitFor(() =>
+        expect(attached.messages).toContainEqual(
+          expect.objectContaining({ type: "replay_complete" }),
+        ),
       );
-      const admission = await socketAdmission(
-        application.server,
-        baseUrl,
-        bearer,
-        "terminal",
+      waiting = await rawWebSocket(await terminalUrl(bearer), {
+        Origin: baseUrl,
+      });
+      let shutdown: Promise<void> | undefined;
+      const close = () => (shutdown ??= application.close());
+      await Promise.all([
+        closeWithoutPeerAck(close, attached),
+        closeWithoutPeerAck(close, waiting),
+      ]);
+      expect(application.server.listening).toBe(false);
+      await vi.waitFor(() =>
+        expect(backend.manager.list().terminals).toMatchObject([
+          { id: terminal.id, viewerCount: 0, status: "running" },
+        ]),
       );
-      const peer = await rawWebSocket(
-        `${baseUrl}/terminal?ticket=${admission}`,
-        {
-          Origin: baseUrl,
-        },
+    } finally {
+      attached.destroy();
+      waiting?.destroy();
+    }
+  });
+
+  it("replays terminal operations and streams bytes through the daemon to the owned PTY", async () => {
+    for (const path of ["/api/terminals", "/api/terminal-settings"])
+      await request(application.server).get(path).expect(401);
+    const { bearer } = await browser();
+    const api = request.agent(application.server).set(headers(bearer));
+    await api
+      .get("/api/terminal-settings")
+      .expect(200, { persistOutput: false, historyRetentionDays: 30 });
+    const {
+      body: { epoch },
+    } = await api.get("/api/terminal-operations").expect(200);
+    const operation = (id: string = randomUUID()) =>
+      JSON.stringify({ id, epoch });
+    const create = (id: string, cwd = backend.directory) =>
+      api
+        .post("/api/terminals")
+        .set("X-Terminal-Operation", operation(id))
+        .send({ cwd, cols: 90, rows: 28 });
+    const createPty = vi.spyOn(backend.manager, "create");
+    const invalidId = randomUUID();
+    const refusal = () =>
+      create(invalidId, "relative/project")
+        .expect(400)
+        .expect("X-Terminal-Outcome", "rejected");
+    const relative = await refusal();
+    expect(relative.body.code).toBe("invalid_cwd");
+    expect((await refusal()).body).toEqual(relative.body);
+    expect(createPty).toHaveBeenCalledOnce();
+
+    const creationId = randomUUID();
+    const accepted = () =>
+      create(creationId)
+        .expect(201)
+        .expect("X-Terminal-Operation", creationId)
+        .expect("X-Terminal-Outcome", "completed");
+    const created = await accepted();
+    expect((await accepted()).body).toEqual(created.body);
+    await create(creationId, join(backend.directory, "another-project"))
+      .expect(409)
+      .expect("X-Terminal-Outcome", "unknown");
+    expect(createPty).toHaveBeenCalledTimes(2);
+
+    const terminal = created.body as TerminalDescriptor;
+    expect(terminal).toMatchObject({ profileId: "bash", cols: 90, rows: 28 });
+    vi.spyOn(backend.manager, "restart").mockRejectedValueOnce(
+      new TerminalServiceError(
+        "terminal_stop_timeout",
+        503,
+        "Exit unconfirmed",
+      ),
+    );
+    await api
+      .post(`/api/terminals/${terminal.id}/restart`)
+      .set("X-Terminal-Operation", operation())
+      .expect(503)
+      .expect("X-Terminal-Outcome", "unknown");
+    const catalog = await api.get("/api/terminals").expect(200);
+    expect(catalog.body.terminals).toMatchObject([
+      { id: terminal.id, status: "running" },
+    ]);
+    await api
+      .patch("/api/terminal-settings")
+      .set("X-Terminal-Operation", operation())
+      .send({ historyRetentionDays: 14 })
+      .expect(200, { persistOutput: false, historyRetentionDays: 14 });
+
+    const socketUrl = (url: string) => url.replace("http:", "ws:");
+    await expectUpgradeRefused(socketUrl(`${baseUrl}/terminal?token=${token}`));
+    const admitted = socketUrl(await terminalUrl(bearer));
+    await expectUpgradeRefused(admitted);
+    await expectUpgradeRefused(admitted, baseUrl.replace("http:", "https:"));
+
+    const sockets: WebSocket[] = [];
+    const connect = async (url: string) => {
+      const socket = new WebSocket(url, { origin: baseUrl });
+      sockets.push(socket);
+      const messages: Array<Record<string, unknown>> = [];
+      const output: string[] = [];
+      socket.on("message", (raw, isBinary) => {
+        if (!isBinary) messages.push(JSON.parse(String(raw)));
+        else
+          output.push(
+            Buffer.from(
+              decodeTerminalServerDataFrame(raw as Buffer).data,
+            ).toString(),
+          );
+      });
+      await once(socket, "open");
+      return { socket, messages, output };
+    };
+    const send = (socket: WebSocket, message: unknown) =>
+      socket.send(JSON.stringify(message));
+    try {
+      vi.spyOn(backend.manager, "attach").mockRejectedValueOnce(
+        new TerminalServiceError(
+          "terminal_busy",
+          409,
+          "Terminal is restarting",
+        ),
       );
-      try {
-        if (state === "attached") {
-          const ticket = await request(application.server)
-            .post(`/api/terminals/${terminal.id}/attach-ticket`)
-            .set("Authorization", `Bearer ${bearer}`)
-            .set("Origin", baseUrl)
-            .expect(200);
-          peer.send({
-            type: "attach",
-            ticket: ticket.body.ticket,
-            clientId: "raw-shutdown-peer",
+      const refused = await connect(admitted);
+      send(
+        refused.socket,
+        attachRequest(await attachTicket(bearer, terminal.id)),
+      );
+      await vi.waitFor(() =>
+        expect(refused.messages).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            code: "terminal_busy",
+            message: "Terminal is restarting",
+          }),
+        ),
+      );
+
+      const attached = await connect(socketUrl(await terminalUrl(bearer)));
+      const ticket = await attachTicket(bearer, terminal.id);
+      send(attached.socket, attachRequest(ticket));
+      await vi.waitFor(() =>
+        expect(attached.messages).toContainEqual(
+          expect.objectContaining({
+            type: "replay_complete",
+          }),
+        ),
+      );
+      expect(attached.messages).toContainEqual(
+        expect.objectContaining({
+          type: "attached",
+          writable: true,
+          nextInputSequence: 1,
+          replay: "snapshot",
+          terminal: expect.objectContaining({
+            id: terminal.id,
             cols: 100,
             rows: 30,
-          });
-          await vi.waitFor(() =>
-            expect(
-              peer.messages.some((frame) => frame.type === "replay_complete"),
-            ).toBe(true),
-          );
-          expect(terminalService.attachedOptions).toMatchObject({
-            terminalId: terminal.id,
-            clientId: "raw-shutdown-peer",
-          });
-        }
-        const expectedDetachCount = state === "attached" ? 1 : 0;
-        terminalService.close.mockImplementation(async () => {
-          expect(terminalService.detach).toHaveBeenCalledTimes(
-            expectedDetachCount,
-          );
-        });
-        await closeWithoutPeerAck(() => application.close(), peer);
-        expect(terminalService.detach).toHaveBeenCalledTimes(
-          expectedDetachCount,
-        );
-        expect(terminalService.close).toHaveBeenCalledOnce();
-        expect(application.server.listening).toBe(false);
-      } finally {
-        peer.destroy();
-      }
-    },
-  );
-
-  it("requires origin-bound socket and attach tickets before forwarding bytes", async () => {
-    const queryOnly = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/terminal?token=${token}`,
-    );
-    const rejectedCode = await new Promise<number>((resolve) => {
-      queryOnly.once("unexpected-response", (_request, response) =>
-        resolve(response.statusCode ?? 0),
+          }),
+        }),
       );
-      queryOnly.once("error", () => undefined);
-    });
-    expect(rejectedCode).toBe(401);
-
-    const { bearer } = await pairedBrowser(application.server, baseUrl, token);
-    const admission = await socketAdmission(
-      application.server,
-      baseUrl,
-      bearer,
-      "terminal",
-    );
-    const socketUrl = `${baseUrl.replace("http", "ws")}/terminal?ticket=${admission}`;
-    const ticketResponse = await request(application.server)
-      .post(`/api/terminals/${terminal.id}/attach-ticket`)
-      .set("Authorization", `Bearer ${bearer}`)
-      .set("Origin", baseUrl)
-      .expect(200);
-    const missingOrigin = new WebSocket(socketUrl, {});
-    const missingOriginStatus = await new Promise<number>((resolve) => {
-      missingOrigin.once("unexpected-response", (_request, response) =>
-        resolve(response.statusCode ?? 0),
+      const pty = backend.spawns[0]!.pty;
+      const input = Buffer.from("echo hello\r");
+      attached.socket.send(encodeTerminalInputFrame(1, input));
+      attached.socket.send(
+        encodeTerminalInputFrame(1, Buffer.from("repeated")),
       );
-      missingOrigin.once("error", () => undefined);
-    });
-    expect(missingOriginStatus).toBe(401);
-
-    const wrongScheme = new WebSocket(socketUrl, {
-      origin: baseUrl.replace("http:", "https:"),
-    });
-    const wrongSchemeStatus = await new Promise<number>((resolve) => {
-      wrongScheme.once("unexpected-response", (_request, response) =>
-        resolve(response.statusCode ?? 0),
+      send(attached.socket, { type: "resize", cols: 110, rows: 35 });
+      await vi.waitFor(() => {
+        expect(
+          attached.messages.filter(({ type }) => type === "input_ack"),
+        ).toEqual([
+          { type: "input_ack", sequence: 1 },
+          { type: "input_ack", sequence: 1 },
+        ]);
+        expect(pty.writes).toEqual([input]);
+        expect(pty.resizes.at(-1)).toEqual([110, 35]);
+      });
+      pty.emitData("daemon output\r\n");
+      await vi.waitFor(() =>
+        expect(attached.output.join("")).toContain("daemon output\r\n"),
       );
-      wrongScheme.once("error", () => undefined);
-    });
-    expect(wrongSchemeStatus).toBe(401);
 
-    const socket = new WebSocket(socketUrl, {
-      origin: baseUrl,
-    });
-    const messages: Array<Record<string, unknown>> = [];
-    socket.on("message", (raw, isBinary) => {
-      if (!isBinary) messages.push(JSON.parse(raw.toString()));
-    });
-    await new Promise<void>((resolve, reject) => {
-      socket.once("open", resolve);
-      socket.once("error", reject);
-    });
-    socket.send(
-      JSON.stringify({
-        type: "attach",
-        ticket: ticketResponse.body.ticket,
-        clientId: "browser-a",
-        cols: 100,
-        rows: 30,
-      }),
-    );
-    await vi.waitFor(() =>
-      expect(
-        messages.some((message) => message.type === "replay_complete"),
-      ).toBe(true),
-    );
-    socket.send(encodeTerminalInputFrame(1, Buffer.from("echo hello\r")));
-    socket.send(JSON.stringify({ type: "resize", cols: 110, rows: 35 }));
-    await vi.waitFor(() => expect(terminalService.input).toHaveBeenCalled());
-
-    expect(terminalService.attachedOptions).toMatchObject({
-      terminalId: terminal.id,
-      clientId: "browser-a",
-    });
-    expect(terminalService.input).toHaveBeenCalledWith(
-      1,
-      Buffer.from("echo hello\r"),
-    );
-    expect(terminalService.controls).toHaveBeenCalledWith({
-      type: "resize",
-      cols: 110,
-      rows: 35,
-    });
-
-    const replayAdmission = await socketAdmission(
-      application.server,
-      baseUrl,
-      bearer,
-      "terminal",
-    );
-    const replay = new WebSocket(
-      `${baseUrl.replace("http", "ws")}/terminal?ticket=${replayAdmission}`,
-      {
-        origin: baseUrl,
-      },
-    );
-    const replayMessages: Array<Record<string, unknown>> = [];
-    replay.on("message", (raw, isBinary) => {
-      if (!isBinary) replayMessages.push(JSON.parse(raw.toString()));
-    });
-    await new Promise<void>((resolve, reject) => {
-      replay.once("open", resolve);
-      replay.once("error", reject);
-    });
-    replay.send(
-      JSON.stringify({
-        type: "attach",
-        ticket: ticketResponse.body.ticket,
-        clientId: "browser-b",
-        cols: 100,
-        rows: 30,
-      }),
-    );
-    await vi.waitFor(() =>
-      expect(
-        replayMessages.some(
-          (message) => message.code === "terminal_ticket_invalid",
+      const replay = await connect(socketUrl(await terminalUrl(bearer)));
+      send(replay.socket, attachRequest(ticket));
+      await vi.waitFor(() =>
+        expect(replay.messages).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            code: "terminal_ticket_invalid",
+          }),
         ),
-      ).toBe(true),
-    );
-    expect(terminalService.attachedOptions?.clientId).toBe("browser-a");
-    replay.close();
-    socket.close();
-    await vi.waitFor(() => expect(terminalService.detach).toHaveBeenCalled());
+      );
+      const viewer = await connect(socketUrl(await terminalUrl(bearer)));
+      send(viewer.socket, {
+        ...attachRequest(await attachTicket(bearer, terminal.id)),
+        clientId: "second-browser",
+      });
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({ type: "attached", writable: false }),
+        ),
+      );
+      viewer.socket.send(encodeTerminalInputFrame(1, Buffer.from("blocked")));
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            code: "terminal_read_only",
+          }),
+        ),
+      );
+
+      send(viewer.socket, { type: "take_control", cols: 130, rows: 50 });
+      await vi.waitFor(() =>
+        expect(attached.messages).toContainEqual(
+          expect.objectContaining({
+            type: "ownership",
+            writable: false,
+            reason: "taken",
+          }),
+        ),
+      );
+      const viewerInput = Buffer.from("echo from second browser\r");
+      viewer.socket.send(encodeTerminalInputFrame(1, viewerInput));
+      await vi.waitFor(() => {
+        expect(pty.writes).toEqual([input, viewerInput]);
+        expect(pty.resizes.at(-1)).toEqual([130, 50]);
+      });
+    } finally {
+      for (const socket of sockets) socket.terminate();
+    }
   });
 });

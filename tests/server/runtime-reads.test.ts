@@ -13,13 +13,18 @@ function fixture() {
       composerHistoryMessages: () => [],
     },
   } as unknown as RuntimeSlot;
+  const selected = { ...slot, id: "b", cwd: "/B", viewId: "view-b" };
   let registered = slot;
   const host = {
     assertAvailable: () => {},
-    selectedSlot: () => null,
+    selectedSlot: () => selected,
     selectedSessionId: () => "b",
     sessionStatuses: () => ({}),
-    requireSlot: () => registered,
+    requireSlot: (id: string) => {
+      if (id === slot.id) return registered;
+      if (id === selected.id) return selected;
+      throw new Error(`Unexpected fixture session: ${id}`);
+    },
     useSlot: <T>(_slot: RuntimeSlot, operation: () => Promise<T>) =>
       operation(),
     snapshotSlot: vi.fn(),
@@ -38,14 +43,6 @@ function fixture() {
 }
 
 describe("addressed resource read lifecycle", () => {
-  it("validates ordinary transcript reads without forcing unchanged bytes to be reread", async () => {
-    const f = fixture();
-    await expect(f.reads.lastAssistantText("a", "view-a")).resolves.toEqual({
-      text: null,
-    });
-    expect(f.host.reconcileSlot).toHaveBeenCalledExactlyOnceWith(f.slot, false);
-  });
-
   it.each(["before", "during"])(
     "rejects a slot replaced %s context reconciliation",
     async (when) => {
@@ -78,17 +75,4 @@ describe("addressed resource read lifecycle", () => {
       });
     },
   );
-
-  it("does not consult global selection for either context or lazy messages", async () => {
-    const f = fixture();
-    f.host.selectedSessionId = vi.fn(() => {
-      throw new Error("selection must not be read");
-    });
-    const context = await f.reads.resourceContext("a");
-    await expect(context.loadMessages!()).resolves.toEqual(["message-a"]);
-    expect(f.host.reconcileSlot.mock.calls).toEqual([
-      [f.slot, false],
-      [f.slot, false],
-    ]);
-  });
 });

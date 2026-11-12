@@ -5,7 +5,6 @@ import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createInspireServer } from "../../server/app.js";
-import { hostServices } from "../fixtures/host-services.js";
 import { registerModelSettingsRoutes } from "../../server/model-settings-routes.js";
 import { ModelRuntime, piInstallation } from "../../server/pi-runtime.js";
 import { PreferencesStore } from "../../server/preferences.js";
@@ -16,6 +15,8 @@ import {
 import { ResourceStore } from "../../server/resources.js";
 import type { RuntimeLike } from "../../server/runtime.js";
 import type { ProviderLoginAttempt } from "../../shared/model-settings.js";
+import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge.js";
+import { hostServices } from "../fixtures/host-services.js";
 
 type NativeRuntime = Awaited<ReturnType<typeof ModelRuntime.create>>;
 let root: string;
@@ -102,7 +103,6 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   service?.close();
-  vi.unstubAllGlobals();
   await rm(root, { recursive: true, force: true });
 });
 async function prompt(attempt: ProviderLoginAttempt, type: string) {
@@ -116,6 +116,37 @@ async function completed(attempt: ProviderLoginAttempt) {
     expect(service.snapshot(attempt.id).status).toBe("completed"),
   );
 }
+async function finishApiKeyLogin(
+  attempt: ProviderLoginAttempt,
+  account: string,
+  key: string,
+) {
+  service.answer(attempt.id, (await prompt(attempt, "text")).id, account);
+  service.answer(attempt.id, (await prompt(attempt, "secret")).id, key);
+  await completed(attempt);
+}
+
+function authRoutes(runtime: Partial<RuntimeLike> = {}) {
+  const app = express();
+  app.use(express.json());
+  registerModelSettingsRoutes(app, {
+    runtime: runtime as RuntimeLike,
+    providerAuth: service,
+  });
+  app.use(
+    (
+      error: Error & { status?: number },
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => res.status(error.status ?? 500).json({ error: error.message }),
+  );
+  return (operation: ProviderAuthOperation, sessionId?: string) =>
+    request(app)
+      .post("/api/provider-auth")
+      .query(sessionId ? { sessionId } : {})
+      .send(operation);
+}
 
 describe("public native provider authentication", () => {
   it("adapts API-key, text, secret, method, device-code and manual inputs without projecting credential values", async () => {
@@ -126,11 +157,7 @@ describe("public native provider authentication", () => {
         ?.methods.map((method) => method.type),
     ).toEqual(["api_key", "oauth"]);
     const attempt = service.start("synthetic", "api_key");
-    let next = await prompt(attempt, "text");
-    service.answer(attempt.id, next.id, "test-account");
-    next = await prompt(attempt, "secret");
-    service.answer(attempt.id, next.id, "synthetic-key-secret");
-    await completed(attempt);
+    await finishApiKeyLogin(attempt, "test-account", "synthetic-key-secret");
     expect(JSON.parse(await readFile(authPath, "utf8")).synthetic).toEqual({
       type: "api_key",
       key: "synthetic-key-secret",
@@ -143,23 +170,21 @@ describe("public native provider authentication", () => {
       "synthetic-key-secret",
     );
     const oauth = service.start("synthetic", "oauth");
-    next = await prompt(oauth, "select");
-    service.answer(oauth.id, next.id, "device");
-    next = await prompt(oauth, "manual_code");
+    service.answer(oauth.id, (await prompt(oauth, "select")).id, "device");
+    const code = await prompt(oauth, "manual_code");
     expect(service.snapshot(oauth.id).events).toContainEqual({
       type: "device_code",
       userCode: "ABCD-EFGH",
       url: "https://example.invalid/device",
     });
-    service.answer(oauth.id, next.id, "one-use-code-secret");
+    service.answer(oauth.id, code.id, "one-use-code-secret");
     await completed(oauth);
-    const metadata = JSON.stringify(await service.providers());
+    const providers = await service.providers();
+    const metadata = JSON.stringify(providers);
     expect(metadata).not.toContain("synthetic-access-secret");
     expect(metadata).not.toContain("synthetic-refresh-secret");
     expect(
-      (await service.providers()).find(
-        (provider) => provider.id === "synthetic",
-      )?.stored,
+      providers.find((provider) => provider.id === "synthetic")?.stored,
     ).toBe("oauth");
     await service.logout("synthetic");
     expect(
@@ -195,11 +220,7 @@ describe("public native provider authentication", () => {
     const replacement = service.start("synthetic", "api_key");
     expect(service.snapshot(old.id).status).toBe("cancelled");
     release();
-    let next = await prompt(replacement, "text");
-    service.answer(replacement.id, next.id, "account");
-    next = await prompt(replacement, "secret");
-    service.answer(replacement.id, next.id, "new-key");
-    await completed(replacement);
+    await finishApiKeyLogin(replacement, "account", "new-key");
     expect(
       JSON.parse(await readFile(authPath, "utf8")).synthetic,
     ).toMatchObject({ type: "api_key", key: "new-key" });
@@ -264,153 +285,188 @@ describe("public native provider authentication", () => {
       if (operation.operation === "cancel") return worker.cancel(operation.id!);
       throw new Error("Unexpected worker operation");
     };
-    const app = express();
-    app.use(express.json());
-    registerModelSettingsRoutes(app, {
-      runtime: {
-        sessionCwd: () => root,
-        providerAuth: dispatch,
-        providerAuthOwner: () => (live ? owner : null),
-      } as unknown as RuntimeLike,
-      providerAuth: service,
-    } as Parameters<typeof registerModelSettingsRoutes>[1]);
-    app.use(
-      (
-        error: Error & { status?: number },
-        _request: express.Request,
-        response: express.Response,
-        _next: express.NextFunction,
-      ) => {
-        response.status(error.status ?? 500).json({ error: error.message });
-      },
-    );
-    const old = await request(app)
-      .post("/api/provider-auth?sessionId=worker-session")
-      .send({ operation: "start", provider: "synthetic", type: "oauth" });
-    expect(old.status).toBe(200);
+    const post = authRoutes({
+      sessionCwd: () => root,
+      providerAuth: dispatch,
+      providerAuthOwner: () => (live ? owner : null),
+    });
+    const {
+      body: { result: old },
+    } = await post(
+      { operation: "start", provider: "synthetic", type: "oauth" },
+      "worker-session",
+    ).expect(200);
     live = false;
     let returned = false;
-    const replacement = request(app)
-      .post("/api/provider-auth")
-      .send({ operation: "start", provider: "synthetic", type: "api_key" })
-      .then((response) => {
-        returned = true;
-        return response;
+    const replacement = post({
+      operation: "start",
+      provider: "synthetic",
+      type: "api_key",
+    }).then((response) => {
+      returned = true;
+      return response;
+    });
+    try {
+      await vi.waitFor(() => expect(stopRequested).toBe(true));
+      expect(returned).toBe(false);
+      stopped();
+      const next = await replacement;
+      expect(next.status).toBe(200);
+      expect(worker.snapshot(old.id).status).toBe("cancelled");
+      const { body } = await post({ operation: "status", id: old.id }).expect(
+        200,
+      );
+      expect(body.result.status).toBe("cancelled");
+      await finishApiKeyLogin(next.body.result, "host-account", "new-host-key");
+      expect(
+        JSON.parse(await readFile(authPath, "utf8")).synthetic,
+      ).toMatchObject({
+        type: "api_key",
+        key: "new-host-key",
       });
-    await vi.waitFor(() => expect(stopRequested).toBe(true));
-    expect(returned).toBe(false);
-    stopped();
-    const next = await replacement;
-    expect(next.status).toBe(200);
-    expect(worker.snapshot(old.body.result.id).status).toBe("cancelled");
-    for (let read = 0; read < 2; read++) {
-      const receipt = await request(app)
-        .post("/api/provider-auth")
-        .send({ operation: "status", id: old.body.result.id });
-      expect(receipt.status).toBe(200);
-      expect(receipt.body.result.status).toBe("cancelled");
+    } finally {
+      stopped();
+      worker.close();
     }
-    const attempt = next.body.result as ProviderLoginAttempt;
-    let input = await prompt(attempt, "text");
-    service.answer(attempt.id, input.id, "host-account");
-    input = await prompt(attempt, "secret");
-    service.answer(attempt.id, input.id, "new-host-key");
-    await completed(attempt);
-    expect(
-      JSON.parse(await readFile(authPath, "utf8")).synthetic,
-    ).toMatchObject({ type: "api_key", key: "new-host-key" });
-    worker.close();
   });
 
-  it.skipIf(!piInstallation.version.startsWith("1."))(
-    "keeps installed Pi remote help positive and method-specific",
-    async () => {
-      const nativeOptions = await service.providers();
-      expect(
-        nativeOptions
-          .find((provider) => provider.id === "openai")
-          ?.methods.find((method) => method.type === "oauth")?.remoteHelp,
-      ).toMatch(/redirect URL/);
-      expect(
-        nativeOptions
-          .find((provider) => provider.id === "synthetic")
-          ?.methods.find((method) => method.type === "oauth")?.remoteHelp,
-      ).toBeUndefined();
-      for (const id of ["openai", "anthropic"]) {
-        const native = runtime.getProvider(id)!;
-        runtime.registerNativeProvider({
-          ...native,
-          auth: {
-            ...native.auth,
-            oauth: {
-              ...native.auth.oauth!,
-              login: async (interaction) => {
-                await interaction.prompt({
-                  type: "select",
-                  message: "Host-bound method",
-                  options: [
-                    { id: "copy_code", label: "Reused native option ID" },
-                  ],
-                });
-                return oauthCredential;
-              },
-              toAuth: async (credential) => ({ apiKey: credential.access }),
-            },
-          },
-        });
-        const existing = new ProviderAuthService(
-          runtime,
-          undefined,
-          undefined,
-          nativeOAuth,
-        );
-        const methods = (await existing.providers()).find(
-          (provider) => provider.id === id,
-        )!.methods;
-        expect(
-          methods.find((method) => method.type === "oauth")?.remoteHelp,
-        ).toBeUndefined();
-        const replaced = service.start(id, "oauth");
-        const choice = await prompt(replaced, "select");
-        expect(choice.options?.[0]?.remoteHelp).toBeUndefined();
-        service.answer(replaced.id, choice.id, "copy_code");
-        await completed(replaced);
-      }
-      const radiusPath = join(root, "radius-models.json");
-      const nativeName = runtime.getProvider("openai")!.auth.oauth!.name;
-      await writeFile(
-        radiusPath,
-        JSON.stringify({
-          providers: {
-            openai: {
-              name: nativeName,
-              baseUrl: "https://radius.example.invalid/v1",
-              oauth: "radius",
-            },
-          },
-        }),
-      );
-      const radius = await ModelRuntime.create({
-        authPath,
-        modelsPath: radiusPath,
-        refreshOnCreate: false,
+  it("keeps settled receipts within a bounded window without evicting pending attempts", async () => {
+    const pending: ProviderLoginAttempt = {
+      id: "pending",
+      provider: "pending",
+      type: "oauth",
+      status: "pending",
+      prompt: null,
+      events: [],
+    };
+    const native = vi
+      .spyOn(service, "request")
+      .mockImplementation(async (operation) => {
+        if (operation.operation === "start") {
+          return {
+            ...pending,
+            id: operation.provider,
+            provider: operation.provider,
+          };
+        }
+        if (operation.operation === "status") {
+          return {
+            ...pending,
+            id: operation.id,
+            provider: operation.id,
+            status: operation.id === pending.id ? "pending" : "completed",
+          };
+        }
+        throw new Error("Unexpected native operation");
       });
-      expect(radius.getError()).toBeUndefined();
-      expect(radius.getRegisteredProviderIds()).not.toContain("openai");
-      expect(radius.getProvider("openai")!.auth.oauth!.name).toBe(nativeName);
-      const configured = new ProviderAuthService(
-        radius,
-        undefined,
-        undefined,
-        nativeOAuth,
-      );
-      const radiusMethod = (await configured.providers())
-        .find((provider) => provider.id === "openai")!
-        .methods.find((method) => method.type === "oauth");
-      expect(radiusMethod).toBeDefined();
-      expect(radiusMethod!.remoteHelp).toBeUndefined();
-    },
-  );
+    const post = authRoutes();
+    const start = (provider: string) =>
+      post({ operation: "start", provider, type: "oauth" }).expect(200);
+    const status = (id: string) => post({ operation: "status", id });
+    const settle = async (provider: string) => {
+      await start(provider);
+      return status(provider).expect(200);
+    };
+    await start(pending.provider);
+    const { body: receipt } = await settle("oldest");
+    native.mockClear();
+    await status("oldest").expect(200, receipt);
+    await post({ operation: "cancel", id: "oldest" }).expect(200, receipt);
+    expect(native).not.toHaveBeenCalled();
+
+    for (let index = 0; index < 20; index++) await settle(`completed-${index}`);
+    const { body: latest } = await settle("latest");
+    await status("oldest").expect(404);
+    await status("latest").expect(200, latest);
+    await status(pending.id).expect(200, { result: pending });
+  });
+
+  it("offers remote help only for matching native providers and login methods", async () => {
+    const openai = runtime.getProvider("openai")!;
+    const oauthMethod = (
+      providers: Awaited<ReturnType<ProviderAuthService["providers"]>>,
+      id: string,
+    ) =>
+      providers
+        .find((provider) => provider.id === id)!
+        .methods.find((method) => method.type === "oauth")!;
+    expect(
+      oauthMethod(await service.providers(), openai.id).remoteHelp,
+    ).toMatch(/redirect URL/);
+
+    const native = service.start("anthropic", "oauth");
+    const next = await prompt(native, "select");
+    expect(
+      next.options?.find((option) => option.id === "copy_code")?.remoteHelp,
+    ).toMatch(/paste.*code/);
+    expect(
+      next.options?.find((option) => option.id === "browser")?.remoteHelp,
+    ).toBeUndefined();
+    service.answer(native.id, next.id, "copy_code");
+    await prompt(native, "manual_code");
+    expect(service.snapshot(native.id).events).toContainEqual(
+      expect.objectContaining({
+        type: "auth_url",
+        url: expect.stringMatching(/^https:/),
+      }),
+    );
+    service.cancel(native.id);
+
+    const anthropic = runtime.getProvider("anthropic")!;
+    runtime.registerNativeProvider({
+      ...anthropic,
+      auth: {
+        ...anthropic.auth,
+        oauth: {
+          ...anthropic.auth.oauth!,
+          login: async (interaction) => {
+            await interaction.prompt({
+              type: "select",
+              message: "Host-bound method",
+              options: [{ id: "copy_code", label: "Reused native option ID" }],
+            });
+            return oauthCredential;
+          },
+        },
+      },
+    });
+    const shadowed = service.start(anthropic.id, "oauth");
+    expect(
+      (await prompt(shadowed, "select")).options?.[0]?.remoteHelp,
+    ).toBeUndefined();
+    service.cancel(shadowed.id);
+
+    const modelsPath = join(root, "models.json");
+    await writeFile(
+      modelsPath,
+      JSON.stringify({
+        providers: {
+          openai: {
+            name: openai.auth.oauth!.name,
+            baseUrl: "https://radius.example.invalid/v1",
+            oauth: "radius",
+          },
+        },
+      }),
+    );
+    const configured = new ProviderAuthService(
+      await ModelRuntime.create({
+        authPath,
+        modelsPath,
+        refreshOnCreate: false,
+      }),
+      undefined,
+      undefined,
+      nativeOAuth,
+    );
+    try {
+      expect(
+        oauthMethod(await configured.providers(), openai.id).remoteHelp,
+      ).toBeUndefined();
+    } finally {
+      configured.close();
+    }
+  });
 
   it("cancels a standalone native login when its Host closes", async () => {
     const application = createInspireServer({
@@ -470,59 +526,4 @@ describe("public native provider authentication", () => {
       "raw-token-secret",
     );
   });
-
-  it.skipIf(!piInstallation.version.startsWith("1."))(
-    "completes installed Pi's real Anthropic copy-code method with a synthetic token transport",
-    async () => {
-      const fetch = vi.fn(
-        async (url: string | URL | Request, init?: RequestInit) => {
-          expect(String(url)).toBe(
-            "https://platform.claude.com/v1/oauth/token",
-          );
-          expect(JSON.parse(String(init?.body))).toMatchObject({
-            grant_type: "authorization_code",
-            code: "fixture-code",
-            redirect_uri: "https://platform.claude.com/oauth/code/callback",
-          });
-          return new Response(
-            JSON.stringify({
-              access_token: "native-access-secret",
-              refresh_token: "native-refresh-secret",
-              expires_in: 3600,
-            }),
-            { status: 200 },
-          );
-        },
-      );
-      vi.stubGlobal("fetch", fetch);
-      const attempt = service.start("anthropic", "oauth");
-      let next = await prompt(attempt, "select");
-      expect(
-        next.options?.find((option) => option.id === "copy_code")?.remoteHelp,
-      ).toMatch(/paste.*code/);
-      expect(
-        next.options?.find((option) => option.id === "browser")?.remoteHelp,
-      ).toBeUndefined();
-      service.answer(attempt.id, next.id, "copy_code");
-      next = await prompt(attempt, "manual_code");
-      const url = new URL(
-        service
-          .snapshot(attempt.id)
-          .events.find((event) => event.type === "auth_url")!.url!,
-      );
-      service.answer(
-        attempt.id,
-        next.id,
-        `fixture-code#${url.searchParams.get("state")}`,
-      );
-      await completed(attempt);
-      expect(fetch).toHaveBeenCalledTimes(1);
-      expect(
-        JSON.parse(await readFile(authPath, "utf8")).anthropic,
-      ).toMatchObject({ type: "oauth", access: "native-access-secret" });
-      expect(JSON.stringify(service.snapshot(attempt.id))).not.toContain(
-        "native-access-secret",
-      );
-    },
-  );
 });

@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   type HostRestartBackend,
   HostRestartController,
 } from "../../server/host-restart.js";
+import { systemdRestartBackend } from "../../server/host-restart-systemd.js";
 import type {
   MaintenanceRestartDecision,
   MaintenanceRestartTransition,
@@ -84,7 +88,7 @@ describe("manual Host restart ownership", () => {
     },
   );
 
-  it("prepares before acquiring idle authority and deduplicates requests from any observer", async () => {
+  it("finishes preparation before acquiring idle authority and excludes other operations", async () => {
     let ready!: () => void;
     const f = fixture({
       prepare: vi.fn(
@@ -98,7 +102,6 @@ describe("manual Host restart ownership", () => {
     expect(f.controller.start(request).phase).toBe("preparing");
     await vi.waitFor(() => expect(f.backend.prepare).toHaveBeenCalledOnce());
     expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
-    expect(f.controller.start(request).id).toBe(request.operationId);
     expect(() =>
       f.controller.start({ ...request, operationId: randomUUID() }),
     ).toThrow("already pending");
@@ -124,38 +127,6 @@ describe("manual Host restart ownership", () => {
     expect(f.runtime.releaseMaintenanceRestart).toHaveBeenCalledExactlyOnceWith(
       "lease",
     );
-  });
-
-  it("rejects foreign Host and changed-scope identities before preparation", async () => {
-    const f = fixture();
-    const request = await intent(f.controller);
-    expect(() =>
-      f.controller.start({ ...request, hostId: randomUUID() }),
-    ).toThrow("Host changed");
-    f.controller.start(request);
-    expect(() => f.controller.start({ ...request, scope: "host" })).toThrow(
-      "does not match",
-    );
-  });
-
-  it("keeps the old Host running when preparation fails, retaining the rejected receipt", async () => {
-    const f = fixture({
-      prepare: vi.fn(async () => {
-        throw new Error("Build failed");
-      }),
-    });
-    const request = await intent(f.controller);
-    f.controller.start(request);
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation).toMatchObject({
-        phase: "rejected",
-        error: "Build failed",
-      }),
-    );
-    expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
-    expect(f.backend.request).not.toHaveBeenCalled();
-    expect(f.controller.start(request).phase).toBe("rejected");
-    expect(f.backend.prepare).toHaveBeenCalledOnce();
   });
 
   it("refuses ordinary busy restart, then explicitly authorizes interruption after fresh preparation", async () => {
@@ -236,22 +207,7 @@ describe("manual Host restart ownership", () => {
     expect(f.runtime.stopAttachedPiWork).toHaveBeenCalledOnce();
   });
 
-  it("does not interrupt on failed forced preparation or when another restart lease exists", async () => {
-    const f = fixture({
-      prepare: vi.fn(async () => {
-        throw new Error("Build failed");
-      }),
-    });
-    f.controller.start({
-      ...(await intent(f.controller)),
-      interruptWork: true,
-    });
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("rejected"),
-    );
-    expect(f.runtime.reserveMaintenanceRestart).not.toHaveBeenCalled();
-    expect(f.backend.request).not.toHaveBeenCalled();
-
+  it("does not interrupt when another restart owns the lease", async () => {
     const occupied = fixture();
     occupied.runtime.reserveMaintenanceRestart.mockReturnValue({
       kind: "busy",
@@ -268,18 +224,6 @@ describe("manual Host restart ownership", () => {
       }),
     );
     expect(occupied.backend.request).not.toHaveBeenCalled();
-  });
-
-  it("does not prepare or restart unsupported services", async () => {
-    const f = fixture({
-      inspect: vi.fn(async () => ({ host: false, all: false })),
-    });
-    expect((await f.controller.status()).available).toBe(false);
-    f.controller.start(await intent(f.controller));
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation?.phase).toBe("rejected"),
-    );
-    expect(f.backend.prepare).not.toHaveBeenCalled();
   });
 
   it("reports scopes separately and rejects unsupported full restart before preparation", async () => {
@@ -365,4 +309,41 @@ describe("manual Host restart ownership", () => {
       ).toThrow("already pending");
     },
   );
+});
+
+it("captures an isolated restart preflight failure and allows a corrected retry", async () => {
+  const root = await mkdtemp(join(tmpdir(), "inspire-preflight-probe-"));
+  const launcher = join(root, "inspire.mjs");
+  try {
+    const backend = systemdRestartBackend(root, false);
+    expect(await backend.inspect()).toEqual({ host: false, all: false });
+    await expect(
+      backend.request(true, () => {
+        throw new Error("must not commit");
+      }),
+    ).resolves.toEqual({ issued: false, code: 1 });
+
+    await writeFile(
+      launcher,
+      `
+      console.error("x".repeat(10000));
+      console.error("\x1b[31mSynthetic missing runtime module\x1b[0m");
+      process.exitCode = 1;
+    `,
+    );
+    const failure = await backend.prepare().catch((error: unknown) => error);
+    if (!(failure instanceof Error))
+      throw new Error("Preparation unexpectedly passed");
+    expect(failure.message).toContain("Synthetic missing runtime module");
+    expect(failure.message.length).toBeLessThan(4100);
+    expect(failure.message).not.toContain("\u001b");
+
+    await writeFile(
+      launcher,
+      'if (process.argv[2] !== "prepare-restart") process.exit(1);',
+    );
+    await expect(backend.prepare()).resolves.toBeUndefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

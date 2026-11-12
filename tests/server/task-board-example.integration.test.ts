@@ -13,60 +13,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-it("restores task state from the selected native branch instead of publishing another branch's work", async () => {
-  const f = await nativeSessionWorkbench(cleanup, {
-    extraExtensions: [resolve("docs/examples/task-board/extension.ts")],
-  });
-  await vi.waitFor(
-    async () =>
-      expect((await f.runtime.snapshot(f.id)).active?.commands).toContainEqual(
-        expect.objectContaining({ name: "demo-tasks-start" }),
-      ),
-    { timeout: 10000 },
-  );
-  const send = (message: string) =>
-    f.runtime.prompt({ sessionId: f.id, message });
-  const board = async () => {
-    const messages = (await f.runtime.snapshot(f.id)).active!.transcriptPage
-      .messages as Array<{ customType?: string; details?: unknown }>;
-    return readTaskBoard(
-      [...messages]
-        .reverse()
-        .find((message) => message.customType === TASK_BOARD_TYPE)?.details,
-    );
-  };
-  await send("/demo-tasks-start");
-  // A second snapshot lets native Edit from here return before this display
-  // while retaining the preceding saved task state on the original branch.
-  await send("/demo-tasks-show");
-  const native = await f.workers[0]!.request<{
-    entries: Array<{ id: string; type: string; customType?: string }>;
-  }>({ type: "get_entries" });
-  const original = [...native.entries]
-    .reverse()
-    .find((entry) => entry.customType === TASK_BOARD_TYPE)!.id;
-  const navigate = async (targetId: string, mode: "edit" | "switch") => {
-    const tree = await f.runtime.branchTree(f.id);
-    await f.runtime.navigateBranch({
-      sessionId: f.id,
-      revision: tree.revision,
-      targetId,
-      mode,
-      summarize: false,
-    });
-  };
-  await navigate("00000004", "edit");
-  await send("/demo-tasks-show");
-  expect((await board())?.tasks).toEqual([]);
-  await navigate(original, "edit");
-  await send("/demo-tasks-show");
-  expect((await board())?.tasks).toHaveLength(3);
-  expect(
-    (await board())?.tasks.every((task) => task.status === "stopped"),
-  ).toBe(true);
-});
-
-it("runs the source DIY example's real commands, notes dialog and session-scoped reload", async () => {
+it("runs native task commands and restores each branch's own task state", async () => {
   const f = await nativeSessionWorkbench(cleanup, {
     extraExtensions: [resolve("docs/examples/task-board/extension.ts")],
   });
@@ -100,6 +47,13 @@ it("runs the source DIY example's real commands, notes dialog and session-scoped
     status: "running",
     capabilities: { stop: true, retry: false, open: true },
   });
+  await send("/demo-tasks-show");
+  const native = await f.workers[0]!.request<{
+    entries: Array<{ id: string; customType?: string }>;
+  }>({ type: "get_entries" });
+  const original = native.entries.findLast(
+    (entry) => entry.customType === TASK_BOARD_TYPE,
+  )!.id;
   await send("/demo-tasks-stop task-1");
   expect((await data()).tasks[0]).toMatchObject({
     status: "stopped",
@@ -128,4 +82,23 @@ it("runs the source DIY example's real commands, notes dialog and session-scoped
     true,
   );
   expect((await data()).tasks[0]!.notes).toBe("Keep these task notes");
+
+  const showBranch = async (targetId: string) => {
+    const tree = await f.runtime.branchTree(f.id);
+    await f.runtime.navigateBranch({
+      sessionId: f.id,
+      revision: tree.revision,
+      targetId,
+      mode: "edit",
+      summarize: false,
+    });
+    await send("/demo-tasks-show");
+    return (await data()).tasks;
+  };
+  expect(await showBranch("00000004")).toEqual([]);
+  const restored = await showBranch(original);
+  expect(restored).toHaveLength(3);
+  expect(restored.map(({ status, notes }) => ({ status, notes }))).toEqual(
+    Array.from({ length: 3 }, () => ({ status: "stopped", notes: "" })),
+  );
 });

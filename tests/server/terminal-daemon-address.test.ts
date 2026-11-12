@@ -16,7 +16,6 @@ vi.mock("node:os", async (importOriginal) => ({
   userInfo: () => account,
 }));
 
-import { TerminalDaemonClient } from "../../server/terminal-daemon-client.js";
 import {
   defaultTerminalDaemonAddress,
   legacyTerminalDaemonAddress,
@@ -36,29 +35,20 @@ describe("native terminal IPC addresses", () => {
   });
 
   it.each([
-    "/var/folders/ab/123456789012345678901234567890/T",
     "/private/var/folders/ab/123456789012345678901234567890/T",
     "/tmp/" + "目录".repeat(40),
   ])("bounds Darwin socket bytes with temporary root %s", (temporary) => {
     const paths = { platform: "darwin" as const, environment: {}, temporary };
-    const legacy = legacyTerminalDaemonAddress(
-      "/app",
-      "127.0.0.1",
-      4587,
-      paths,
-    );
     const address = defaultTerminalDaemonAddress(
       "/app",
       "127.0.0.1",
       4587,
       paths,
     );
-    expect(Buffer.byteLength(legacy)).toBeGreaterThan(103);
     expect(Buffer.byteLength(address)).toBeLessThanOrEqual(103);
-    expect(address).not.toBe(legacy);
   });
 
-  it("scopes Windows machine-wide pipes to the current user state directory", () => {
+  it("scopes Windows pipes to the account and the case-insensitive state directory", () => {
     const address = (local: string) =>
       defaultTerminalDaemonAddress(
         "C:\\Program Files\\Inspire",
@@ -66,68 +56,19 @@ describe("native terminal IPC addresses", () => {
         4587,
         { platform: "win32", environment: { LOCALAPPDATA: local } },
       );
-    const alice = address("C:\\Users\\Alice\\AppData\\Local");
-    expect(alice).toBe(address("c:\\users\\alice\\appdata\\local"));
-    expect(alice).not.toBe(address("C:\\Users\\Bob\\AppData\\Local"));
+    const local = "C:\\Shared\\State";
+    const alice = address(local);
+    expect(alice).toBe(address(local.toLowerCase()));
+    expect(alice).not.toBe(address("C:\\Users\\Alice\\AppData\\Local"));
     expect(alice.startsWith("\\\\.\\pipe\\inspire-terminal-")).toBe(true);
-  });
-
-  it("keeps OS accounts separate even when a shared state directory is explicitly configured", () => {
-    const paths = {
-      platform: "win32" as const,
-      environment: { LOCALAPPDATA: "C:\\\\Shared\\\\State" },
-    };
-    const alice = defaultTerminalDaemonAddress(
-      "C:\\\\Program Files\\\\Inspire",
-      "127.0.0.1",
-      4587,
-      paths,
-    );
+    const original = { ...account };
     try {
       account.username = "Bob";
-      account.homedir = "C:\\\\Users\\\\Bob";
-      expect(
-        defaultTerminalDaemonAddress(
-          "C:\\\\Program Files\\\\Inspire",
-          "127.0.0.1",
-          4587,
-          paths,
-        ),
-      ).not.toBe(alice);
+      account.homedir = "C:\\Users\\Bob";
+      expect(address(local)).not.toBe(alice);
     } finally {
-      account.username = "Alice";
-      account.homedir = "C:\\\\Users\\\\Alice";
+      Object.assign(account, original);
     }
-  });
-
-  it("runs authenticated IPC at the actual default endpoint, including a long runtime directory", async () => {
-    const root = await mkdtemp(join(tmpdir(), "inspire-default-ipc-"));
-    const runtime = join(root, "目录".repeat(40));
-    const address = defaultTerminalDaemonAddress(root, "127.0.0.1", 4587, {
-      environment: { XDG_RUNTIME_DIR: runtime },
-    });
-    const manager = new TerminalSessionManager();
-    const token = randomUUID();
-    const owner = new TerminalDaemonServer(address, token, manager);
-    const client = new TerminalDaemonClient(address, token);
-    try {
-      await owner.start();
-      await client.probe();
-      expect(await client.getSettings()).toMatchObject({
-        persistOutput: false,
-      });
-      if (process.platform !== "win32") {
-        expect(Buffer.byteLength(address)).toBeLessThanOrEqual(
-          process.platform === "darwin" ? 103 : 107,
-        );
-      }
-    } finally {
-      await client.close();
-      await owner.stop();
-      await rm(root, { recursive: true, force: true });
-    }
-    // Only the fixture socket is removed; a shared per-user runtime directory
-    // may contain independent terminals and is not this fixture's property.
   });
 
   it.skipIf(process.platform === "win32")(

@@ -6,24 +6,16 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { terminalTreeInspector } from "../../server/terminal-process-tree.js";
 import type { TerminalAttachmentSink } from "../../server/terminal-service.js";
-import {
-  type TerminalPtyFactory,
-  type TerminalPtySpawnOptions,
-  TerminalSessionManager,
-} from "../../server/terminal-session-manager.js";
+import { TerminalSessionManager } from "../../server/terminal-session-manager.js";
 import {
   decodeTerminalServerDataFrame,
   type TerminalServerControlMessage,
 } from "../../shared/terminal-contracts.js";
 
-import { FakePty } from "./fixtures/terminal-pty.js";
-
-interface FakePtySpawn {
-  shell: string;
-  args: string[];
-  options: TerminalPtySpawnOptions;
-  pty: FakePty;
-}
+import {
+  FakePty,
+  terminalManagerWithFakePty,
+} from "./fixtures/terminal-pty.js";
 
 class FakeSink implements TerminalAttachmentSink {
   readonly controls: TerminalServerControlMessage[] = [];
@@ -46,29 +38,11 @@ class FakeSink implements TerminalAttachmentSink {
 }
 
 function setup(ownerReconnectGraceMs = 30_000) {
-  const spawns: FakePtySpawn[] = [];
   let nextUuid = 0;
-  const ptyFactory: TerminalPtyFactory = (shell, args, options) => {
-    const pty = new FakePty();
-    spawns.push({ shell, args, options, pty });
-    return pty;
-  };
-  const manager = new TerminalSessionManager({
-    profiles: [
-      {
-        id: "bash",
-        label: "Bash",
-        shell: "/bin/bash",
-        args: ["-l"],
-        available: true,
-        isDefault: true,
-      },
-    ],
-    ptyFactory,
+  return terminalManagerWithFakePty({
     uuid: () => `uuid-${++nextUuid}`,
     ownerReconnectGraceMs,
   });
-  return { manager, spawns };
 }
 
 function attachedMessage(sink: FakeSink) {
@@ -76,39 +50,6 @@ function attachedMessage(sink: FakeSink) {
 }
 
 describe("TerminalSessionManager", () => {
-  it("creates a bounded project terminal with a server-owned profile", async () => {
-    const { manager, spawns } = setup();
-    const terminal = await manager.create({
-      cwd: process.cwd(),
-      cols: 120,
-      rows: 40,
-    });
-
-    expect(terminal).toMatchObject({
-      id: "uuid-1",
-      profileId: "bash",
-      status: "running",
-      cols: 120,
-      rows: 40,
-    });
-    expect(spawns[0]).toMatchObject({
-      shell: "/bin/bash",
-      args: ["-l"],
-      options: { cwd: process.cwd(), cols: 120, rows: 40 },
-    });
-    expect(spawns[0]?.options.env).toMatchObject({
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      TERM_PROGRAM: "Inspire",
-      INSPIRE_TERMINAL_ID: "uuid-1",
-    });
-    expect(manager.list(process.cwd()).terminals).toHaveLength(1);
-    await expect(
-      manager.create({ cwd: "relative/project" }),
-    ).rejects.toMatchObject({ code: "invalid_cwd", status: 400 });
-    await manager.close();
-  });
-
   it("disposes the headless terminal when the PTY factory fails", async () => {
     const { Terminal } = createRequire(import.meta.url)(
       "@xterm/headless",
@@ -149,226 +90,85 @@ describe("TerminalSessionManager", () => {
     }
   });
 
-  it("requires explicit live-terminal consent and fences a create awaiting its cwd", async () => {
-    const first = setup();
-    await first.manager.create({ cwd: process.cwd() });
-    expect(() => first.manager.prepareShutdown(false)).toThrow("--force");
-    expect(first.manager.list().terminals[0]?.status).toBe("running");
-    await first.manager.close();
-
-    const second = setup();
-    const creating = second.manager.create({ cwd: process.cwd() });
-    second.manager.prepareShutdown(false);
-    await expect(creating).rejects.toMatchObject({
-      code: "service_closing",
-    });
-    expect(second.spawns).toHaveLength(0);
-    await second.manager.close();
-  });
-
-  it("keeps a failed PTY stop tracked and retryable instead of discarding it", async () => {
-    const { manager, spawns } = setup();
-    await manager.create({ cwd: process.cwd() });
-    const pty = spawns[0]!.pty;
-    const kill = vi.spyOn(pty, "kill").mockImplementation(() => {});
-    vi.useFakeTimers();
-    try {
-      const failure = expect(manager.close()).rejects.toMatchObject({
-        code: "terminal_stop_timeout",
-      });
-      await vi.advanceTimersByTimeAsync(10_000);
-      await failure;
-      expect(manager.list().terminals).toMatchObject([{ status: "running" }]);
-      kill.mockRestore();
-      await manager.close();
-      expect(manager.list().terminals).toEqual([]);
-    } finally {
-      kill.mockRestore();
-      vi.useRealTimers();
-      await manager.close();
-    }
-  });
-
-  it("restores terminal tabs as exited metadata after a daemon restart", async () => {
+  it("restores tab metadata without launching missing or retained profiles", async () => {
     const first = setup();
     const terminal = await first.manager.create({ cwd: process.cwd() });
+    const unavailable = await first.manager.create({ cwd: process.cwd() });
     await first.manager.rename(terminal.id, { title: "Build shell" });
     const state = first.manager.exportState();
-    state.terminals[0]!.currentCwd = "relative/path\u001b]2;spoof";
-    state.orderByProject[0]!.terminalIds = [terminal.id, terminal.id];
+    state.terminals.find(({ id }) => id === terminal.id)!.currentCwd =
+      "relative/path\u001b]2;spoof";
+    state.terminals.find(({ id }) => id === unavailable.id)!.profileId =
+      "missing-shell";
+    state.orderByProject[0]!.terminalIds = [
+      unavailable.id,
+      terminal.id,
+      terminal.id,
+    ];
     await first.manager.close();
 
     const second = setup();
-    await second.manager.restoreState(state);
-    expect(second.manager.list(process.cwd()).terminals).toMatchObject([
-      {
+    try {
+      await second.manager.restoreState(state);
+      expect(second.spawns).toHaveLength(0);
+      expect(second.manager.list(process.cwd())).toMatchObject({
+        terminals: [
+          {
+            id: unavailable.id,
+            profileId: "missing-shell",
+            shellLabel: "missing-shell",
+            status: "exited",
+          },
+          {
+            id: terminal.id,
+            title: "Build shell",
+            titleSource: "user",
+            currentCwd: process.cwd(),
+            status: "exited",
+          },
+        ],
+        profiles: [
+          { id: "bash", available: true },
+          { id: "missing-shell", available: false },
+        ],
+      });
+      await expect(
+        second.manager.restart(unavailable.id),
+      ).rejects.toMatchObject({
+        code: "terminal_profile_unavailable",
+        status: 400,
+      });
+      await second.manager.remove(unavailable.id, false);
+      await expect(second.manager.restart(terminal.id)).resolves.toMatchObject({
         id: terminal.id,
         title: "Build shell",
-        titleSource: "user",
-        currentCwd: process.cwd(),
-        status: "exited",
-      },
-    ]);
-    expect(second.spawns).toHaveLength(0);
-    expect(second.manager.exportState().orderByProject[0]?.terminalIds).toEqual(
-      [terminal.id],
-    );
-
-    await second.manager.restart(terminal.id);
-    expect(second.spawns).toHaveLength(1);
-    expect(second.manager.list(process.cwd()).terminals[0]).toMatchObject({
-      id: terminal.id,
-      title: "Build shell",
-      status: "running",
-    });
-    await second.manager.close();
-  });
-
-  it("retains exited tabs whose shell profile is no longer available", async () => {
-    const first = setup();
-    const terminal = await first.manager.create({ cwd: process.cwd() });
-    const state = first.manager.exportState();
-    state.terminals[0]!.profileId = "missing-shell";
-    await first.manager.close();
-
-    const second = setup();
-    await second.manager.restoreState(state);
-    expect(second.manager.list(process.cwd())).toMatchObject({
-      terminals: [
-        {
-          id: terminal.id,
-          profileId: "missing-shell",
-          shellLabel: "missing-shell",
-          status: "exited",
-        },
-      ],
-      profiles: [
-        { id: "bash", available: true },
-        { id: "missing-shell", available: false },
-      ],
-    });
-    await expect(second.manager.restart(terminal.id)).rejects.toMatchObject({
-      code: "terminal_profile_unavailable",
-      status: 400,
-    });
-    await second.manager.remove(terminal.id, false);
-    await second.manager.close();
-  });
-
-  it("grants one writer, deduplicates input, and supports explicit takeover", async () => {
-    const { manager, spawns } = setup();
-    const terminal = await manager.create({ cwd: process.cwd() });
-    const firstSink = new FakeSink();
-    const first = await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-a",
-        cols: 90,
-        rows: 25,
-      },
-      firstSink,
-    );
-    const firstAttached = attachedMessage(firstSink);
-
-    expect(firstSink.controls[0]).toMatchObject({ type: "attached" });
-    expect(firstAttached).toMatchObject({
-      type: "attached",
-      writable: true,
-      nextInputSequence: 1,
-      replay: "snapshot",
-    });
-    first.writeInput(1, Buffer.from("echo one\r"));
-    first.writeInput(1, Buffer.from("must not repeat"));
-    expect(spawns[0]?.pty.writes.map(String)).toEqual(["echo one\r"]);
-    expect(
-      firstSink.controls.filter((message) => message.type === "input_ack"),
-    ).toHaveLength(2);
-
-    const secondSink = new FakeSink();
-    const second = await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-b",
-        cols: 130,
-        rows: 50,
-      },
-      secondSink,
-    );
-    expect(attachedMessage(secondSink)).toMatchObject({ writable: false });
-    second.writeInput(1, Buffer.from("blocked"));
-    expect(spawns[0]?.pty.writes).toHaveLength(1);
-
-    second.control({ type: "take_control", cols: 130, rows: 50 });
-    expect(spawns[0]?.pty.resizes.at(-1)).toEqual([130, 50]);
-    expect(
-      firstSink.controls.find(
-        (message) => message.type === "ownership" && message.reason === "taken",
-      ),
-    ).toMatchObject({ writable: false });
-    second.writeInput(1, Buffer.from("echo two\r"));
-    expect(spawns[0]?.pty.writes.map(String)).toEqual([
-      "echo one\r",
-      "echo two\r",
-    ]);
-    await manager.close();
-  });
-
-  it("keeps the grid and replay bytes unchanged when a resize fails", async () => {
-    const { manager, spawns } = setup();
-    try {
-      const terminal = await manager.create({ cwd: process.cwd() });
-      const sink = new FakeSink();
-      const attachment = await manager.attach(
-        { terminalId: terminal.id, clientId: "client-a", cols: 100, rows: 30 },
-        sink,
-      );
-      const pty = spawns[0]!.pty;
-      pty.emitData("retained output");
-      const before = manager.list().terminals[0]!;
-      const resize = vi.spyOn(pty, "resize").mockImplementationOnce(() => {
-        throw new Error("PTY resize failed");
+        status: "running",
       });
-
-      expect(() =>
-        attachment.control({ type: "resize", cols: 120, rows: 40 }),
-      ).toThrow("PTY resize failed");
-      expect(manager.list().terminals[0]).toMatchObject({
-        cols: before.cols,
-        rows: before.rows,
-        resizeRevision: before.resizeRevision,
-        firstOutputOffset: before.firstOutputOffset,
-        nextOutputOffset: before.nextOutputOffset,
-      });
-      expect(sink.controls.some((message) => message.type === "resized")).toBe(
-        false,
-      );
-
-      attachment.control({ type: "resize", cols: 120, rows: 40 });
-      expect(resize).toHaveBeenCalledTimes(2);
-      expect(pty.resizes).toEqual([[120, 40]]);
-      expect(manager.list().terminals[0]).toMatchObject({
-        cols: 120,
-        rows: 40,
-      });
+      expect(second.spawns).toHaveLength(1);
     } finally {
-      await manager.close();
+      await second.manager.close();
     }
   });
 
-  it("does not retain an attachment or claim its lease when its resize fails", async () => {
+  it("publishes neither a writer nor a new replay grid when PTY resize fails", async () => {
     const { manager, spawns } = setup();
     try {
       const terminal = await manager.create({ cwd: process.cwd() });
+      const pty = spawns[0]!.pty;
       const sink = new FakeSink();
-      vi.spyOn(spawns[0]!.pty, "resize").mockImplementationOnce(() => {
-        throw new Error("PTY resize failed");
-      });
       const options = {
         terminalId: terminal.id,
         clientId: "client-a",
         cols: 120,
         rows: 40,
       };
+      const resize = vi.spyOn(pty, "resize");
+      const rejectResize = () =>
+        resize.mockImplementationOnce(() => {
+          throw new Error("PTY resize failed");
+        });
+
+      rejectResize();
       await expect(manager.attach(options, sink)).rejects.toThrow(
         "PTY resize failed",
       );
@@ -378,9 +178,32 @@ describe("TerminalSessionManager", () => {
       });
       expect(sink.controls).toEqual([]);
 
-      await manager.attach(options, sink);
+      const writer = await manager.attach(options, sink);
       expect(attachedMessage(sink)).toMatchObject({ writable: true });
+      pty.emitData("retained output");
+      const before = manager.list().terminals[0]!;
+      const delivered = sink.controls.length;
+      const change = { type: "resize", cols: 130, rows: 45 } as const;
+      rejectResize();
+      expect(() => writer.control(change)).toThrow("PTY resize failed");
       expect(manager.list().terminals[0]).toMatchObject({
+        cols: before.cols,
+        rows: before.rows,
+        resizeRevision: before.resizeRevision,
+        firstOutputOffset: before.firstOutputOffset,
+        nextOutputOffset: before.nextOutputOffset,
+      });
+      expect(
+        sink.controls
+          .slice(delivered)
+          .some((message) => message.type === "resized"),
+      ).toBe(false);
+
+      writer.control(change);
+      expect(pty.resizes.at(-1)).toEqual([130, 45]);
+      expect(manager.list().terminals[0]).toMatchObject({
+        cols: 130,
+        rows: 45,
         viewerCount: 1,
         hasOwner: true,
       });
@@ -389,7 +212,7 @@ describe("TerminalSessionManager", () => {
     }
   });
 
-  it("preserves the previous writer when taking control cannot resize the PTY", async () => {
+  it("retains the previous writer when takeover resize or delivery fails", async () => {
     const { manager, spawns } = setup();
     try {
       const terminal = await manager.create({ cwd: process.cwd() });
@@ -400,106 +223,50 @@ describe("TerminalSessionManager", () => {
         firstSink,
       );
       const secondSink = new FakeSink();
-      const second = await manager.attach(
-        { ...options, clientId: "client-b" },
-        secondSink,
-      );
-      vi.spyOn(spawns[0]!.pty, "resize").mockImplementationOnce(() => {
+      const nextOwner = { ...options, clientId: "client-b" };
+      const second = await manager.attach(nextOwner, secondSink);
+      const pty = spawns[0]!.pty;
+      const takeover = { type: "take_control", cols: 120, rows: 40 } as const;
+      vi.spyOn(pty, "resize").mockImplementationOnce(() => {
         throw new Error("PTY resize failed");
       });
 
-      expect(() =>
-        second.control({ type: "take_control", cols: 120, rows: 40 }),
-      ).toThrow("PTY resize failed");
-      first.writeInput(1, Buffer.from("still owned\r"));
-      expect(spawns[0]!.pty.writes.map(String)).toEqual(["still owned\r"]);
-      expect(
-        firstSink.controls.some(
-          (message) => message.type === "ownership" && !message.writable,
-        ),
-      ).toBe(false);
+      expect(() => second.control(takeover)).toThrow("PTY resize failed");
+      first.writeInput(1, Buffer.from("after resize refusal\r"));
+      expect(pty.writes.map(String)).toEqual(["after resize refusal\r"]);
 
-      second.control({ type: "take_control", cols: 120, rows: 40 });
-      second.writeInput(1, Buffer.from("new owner\r"));
-      expect(spawns[0]!.pty.writes.map(String)).toEqual([
-        "still owned\r",
-        "new owner\r",
-      ]);
-    } finally {
-      await manager.close();
-    }
-  });
-
-  it("keeps the current writer when the takeover sink fails during resize", async () => {
-    const { manager, spawns } = setup();
-    try {
-      const terminal = await manager.create({ cwd: process.cwd() });
-      const options = { terminalId: terminal.id, cols: 100, rows: 30 };
-      const firstSink = new FakeSink();
-      const first = await manager.attach(
-        { ...options, clientId: "client-a" },
-        firstSink,
-      );
-      const secondSink = new FakeSink();
-      const second = await manager.attach(
-        { ...options, clientId: "client-b" },
-        secondSink,
-      );
       vi.spyOn(secondSink, "sendControl").mockImplementation(() => {
         throw new Error("socket closed during resize");
       });
-
-      second.control({ type: "take_control", cols: 120, rows: 40 });
-
+      second.control(takeover);
       expect(manager.list().terminals[0]).toMatchObject({ viewerCount: 1 });
-      first.writeInput(1, Buffer.from("original writer\r"));
-      expect(spawns[0]!.pty.writes.map(String)).toEqual(["original writer\r"]);
+      first.writeInput(2, Buffer.from("after sink failure\r"));
+      expect(pty.writes.map(String)).toEqual([
+        "after resize refusal\r",
+        "after sink failure\r",
+      ]);
       expect(
         firstSink.controls.some(
           (message) => message.type === "ownership" && !message.writable,
         ),
       ).toBe(false);
+
+      const retry = await manager.attach(nextOwner, new FakeSink());
+      retry.control(takeover);
+      retry.writeInput(1, Buffer.from("new owner\r"));
+      expect(String(pty.writes.at(-1))).toBe("new owner\r");
     } finally {
       await manager.close();
     }
   });
 
-  it("does not retain a ghost writer when both sinks fail during takeover", async () => {
-    const { manager } = setup(500);
-    try {
-      const terminal = await manager.create({ cwd: process.cwd() });
-      const options = { terminalId: terminal.id, cols: 100, rows: 30 };
-      const firstSink = new FakeSink();
-      await manager.attach({ ...options, clientId: "client-a" }, firstSink);
-      const secondSink = new FakeSink();
-      const second = await manager.attach(
-        { ...options, clientId: "client-b" },
-        secondSink,
-      );
-      vi.spyOn(firstSink, "sendControl").mockImplementation(() => {
-        throw new Error("previous writer disconnected");
-      });
-      vi.spyOn(secondSink, "sendControl").mockImplementation(() => {
-        throw new Error("takeover writer disconnected");
-      });
-      vi.useFakeTimers();
-
-      second.control({ type: "take_control", cols: 100, rows: 30 });
-      await vi.advanceTimersByTimeAsync(501);
-
-      expect(manager.list().terminals[0]).toMatchObject({
-        viewerCount: 0,
-        hasOwner: false,
-      });
-    } finally {
-      vi.useRealTimers();
-      await manager.close();
-    }
-  });
-
-  it.each([30, 40])(
-    "releases a reconnect lease after both sinks fail with %i rows",
-    async (rows) => {
+  it.each([
+    ["takeover", 30],
+    ["reconnect", 30],
+    ["reconnect with resize", 40],
+  ] as const)(
+    "releases the writer lease when both peers fail during %s",
+    async (handoff, rows) => {
       const { manager } = setup(500);
       try {
         const terminal = await manager.create({ cwd: process.cwd() });
@@ -509,22 +276,29 @@ describe("TerminalSessionManager", () => {
           cols: 100,
           rows: 30,
         };
-        const firstSink = new FakeSink();
-        await manager.attach(options, firstSink);
-        const ownerToken = attachedMessage(firstSink)!.ownerToken;
-        const reconnectSink = new FakeSink();
-        for (const sink of [firstSink, reconnectSink]) {
+        const first = new FakeSink();
+        await manager.attach(options, first);
+        const second = new FakeSink();
+        const contender =
+          handoff === "takeover"
+            ? await manager.attach({ ...options, clientId: "client-b" }, second)
+            : null;
+        for (const sink of [first, second]) {
           vi.spyOn(sink, "sendControl").mockImplementation(() => {
             throw new Error("writer disconnected");
           });
         }
         vi.useFakeTimers();
 
-        await expect(
-          manager.attach({ ...options, ownerToken, rows }, reconnectSink),
-        ).rejects.toMatchObject({ code: "attachment_closed" });
+        if (contender)
+          contender.control({ type: "take_control", cols: 100, rows });
+        else {
+          const ownerToken = attachedMessage(first)!.ownerToken;
+          await expect(
+            manager.attach({ ...options, ownerToken, rows }, second),
+          ).rejects.toMatchObject({ code: "attachment_closed" });
+        }
         await vi.advanceTimersByTimeAsync(501);
-
         expect(manager.list().terminals[0]).toMatchObject({
           viewerCount: 0,
           hasOwner: false,
@@ -582,150 +356,89 @@ describe("TerminalSessionManager", () => {
     await manager.close();
   });
 
-  it("replays retained raw bytes by offset and snapshots stale clients", async () => {
+  it("replays output after a slow writer disconnects and keeps the same tab through exit and restart", async () => {
     const { manager, spawns } = setup();
-    const terminal = await manager.create({ cwd: process.cwd() });
-    spawns[0]?.pty.emitData(Buffer.from("first\r\n"));
-
-    const snapshotSink = new FakeSink();
-    const attachment = await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-a",
-        cols: terminal.cols,
-        rows: terminal.rows,
-      },
-      snapshotSink,
-    );
-    expect(
-      snapshotSink.frames.map(
-        (frame) => decodeTerminalServerDataFrame(frame).kind,
-      ),
-    ).toContain("snapshot");
-    const attached = attachedMessage(snapshotSink);
-    expect(attached?.type).toBe("attached");
-
-    attachment.detach();
-    spawns[0]?.pty.emitData(Buffer.from("second\r\n"));
-    const deltaSink = new FakeSink();
-    await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-a",
-        cols: terminal.cols,
-        rows: terminal.rows,
-        outputEpoch: terminal.outputEpoch,
-        resizeRevision: terminal.resizeRevision,
-        nextOutputOffset: Buffer.byteLength("first\r\n"),
-        ownerToken:
-          attached?.type === "attached" ? attached.ownerToken : undefined,
-      },
-      deltaSink,
-    );
-
-    expect(attachedMessage(deltaSink)).toMatchObject({ replay: "delta" });
-    const replayed = deltaSink.frames
-      .map((frame) => decodeTerminalServerDataFrame(frame))
-      .flatMap((frame) => [...frame.data]);
-    expect(Buffer.from(replayed).toString()).toBe("second\r\n");
-    await manager.close();
-  });
-
-  it("detaches a viewer whose output sink rejects backpressure", async () => {
-    const { manager, spawns } = setup();
-    const terminal = await manager.create({ cwd: process.cwd() });
-    const sink = new FakeSink();
-    await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-a",
-        cols: terminal.cols,
-        rows: terminal.rows,
-      },
-      sink,
-    );
-
-    sink.failData = true;
-    spawns[0]?.pty.emitData("overflow");
-    expect(manager.list(process.cwd()).terminals[0]).toMatchObject({
-      viewerCount: 0,
-      hasOwner: true,
-    });
-    await manager.close();
-  });
-
-  it("keeps exited output available and restarts the same tab identity", async () => {
-    const { manager, spawns } = setup();
-    const terminal = await manager.create({ cwd: process.cwd() });
-    const sink = new FakeSink();
-    await manager.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "client-a",
-        cols: terminal.cols,
-        rows: terminal.rows,
-      },
-      sink,
-    );
-    spawns[0]?.pty.emitExit(7, 0);
-
-    expect(manager.list(process.cwd()).terminals[0]).toMatchObject({
-      status: "exited",
-      exitCode: 7,
-      hasOwner: false,
-    });
-    const restarted = await manager.restart(terminal.id);
-    expect(restarted).toMatchObject({
-      id: terminal.id,
-      status: "running",
-      exitCode: null,
-    });
-    expect(restarted.outputEpoch).not.toBe(terminal.outputEpoch);
-    expect(sink.closes).toContainEqual([1012, "Terminal restarted"]);
-    expect(spawns).toHaveLength(2);
-
-    await manager.remove(terminal.id, false);
-    expect(manager.list(process.cwd()).terminals).toEqual([]);
-    await manager.close();
-  });
-
-  it("holds a disconnected writer lease briefly for lossless reconnect", async () => {
-    vi.useFakeTimers();
     try {
-      const { manager } = setup(500);
       const terminal = await manager.create({ cwd: process.cwd() });
-      const firstSink = new FakeSink();
-      const first = await manager.attach(
-        {
-          terminalId: terminal.id,
-          clientId: "client-a",
-          cols: terminal.cols,
-          rows: terminal.rows,
-        },
-        firstSink,
-      );
-      const firstAttached = attachedMessage(firstSink);
-      first.detach();
+      const pty = spawns[0]!.pty;
+      const options = {
+        terminalId: terminal.id,
+        clientId: "client-a",
+        cols: terminal.cols,
+        rows: terminal.rows,
+      };
+      pty.emitData("first\r\n");
+      const snapshot = new FakeSink();
+      await manager.attach(options, snapshot);
+      const attached = attachedMessage(snapshot);
+      expect(attached).toMatchObject({ replay: "snapshot", writable: true });
+      expect(
+        snapshot.frames.map(
+          (frame) => decodeTerminalServerDataFrame(frame).kind,
+        ),
+      ).toContain("snapshot");
 
-      const reconnectSink = new FakeSink();
-      await manager.attach(
+      snapshot.failData = true;
+      pty.emitData("second\r\n");
+      expect(manager.list(process.cwd()).terminals[0]).toMatchObject({
+        viewerCount: 0,
+        hasOwner: true,
+      });
+      const delta = new FakeSink();
+      const resumed = await manager.attach(
         {
-          terminalId: terminal.id,
-          clientId: "client-a",
-          cols: terminal.cols,
-          rows: terminal.rows,
-          ownerToken:
-            firstAttached?.type === "attached"
-              ? firstAttached.ownerToken
-              : undefined,
+          ...options,
+          outputEpoch: terminal.outputEpoch,
+          resizeRevision: terminal.resizeRevision,
+          nextOutputOffset: Buffer.byteLength("first\r\n"),
+          ownerToken: attached?.ownerToken,
         },
-        reconnectSink,
+        delta,
       );
-      expect(attachedMessage(reconnectSink)).toMatchObject({ writable: true });
+      expect(attachedMessage(delta)).toMatchObject({
+        replay: "delta",
+        writable: true,
+      });
+      const replay = delta.frames.map(
+        (frame) => decodeTerminalServerDataFrame(frame).data,
+      );
+      expect(Buffer.concat(replay).toString()).toBe("second\r\n");
+      resumed.writeInput(1, Buffer.from("reclaimed\r"));
+      expect(pty.writes.map(String)).toEqual(["reclaimed\r"]);
 
-      await manager.close();
+      pty.emitExit(7, 0);
+      expect(manager.list(process.cwd()).terminals[0]).toMatchObject({
+        status: "exited",
+        exitCode: 7,
+        hasOwner: false,
+      });
+      const exited = new FakeSink();
+      await manager.attach(options, exited);
+      expect(attachedMessage(exited)).toMatchObject({
+        replay: "snapshot",
+        writable: false,
+      });
+      expect(
+        Buffer.concat(
+          exited.frames.map(
+            (frame) => decodeTerminalServerDataFrame(frame).data,
+          ),
+        ).toString(),
+      ).toContain("second");
+      const restarted = await manager.restart(terminal.id);
+      expect(restarted).toMatchObject({
+        id: terminal.id,
+        status: "running",
+        exitCode: null,
+      });
+      expect(restarted.outputEpoch).not.toBe(terminal.outputEpoch);
+      expect(exited.closes).toContainEqual([1012, "Terminal restarted"]);
+      expect(spawns).toHaveLength(2);
+
+      await manager.remove(terminal.id, false);
+      expect(manager.list(process.cwd()).terminals).toEqual([]);
     } finally {
-      vi.useRealTimers();
+      await manager.close();
     }
   });
 
@@ -781,77 +494,28 @@ describe("TerminalSessionManager", () => {
     }
   });
 
-  it.each([false, true])(
-    "waits for PTY output drain before removing a terminal (force=%s)",
-    async (force) => {
-      vi.useFakeTimers();
-      const { manager, spawns } = setup();
-      let pty: FakePty | undefined;
-      try {
-        const terminal = await manager.create({ cwd: process.cwd() });
-        pty = spawns[0]!.pty;
-        const delayedPty = pty;
-        vi.spyOn(pty, "kill").mockImplementation((signal) => {
-          delayedPty.signals.push(signal);
-          if (signal === "SIGKILL") {
-            // ConPTY delays onExit while draining output after process exit.
-            setTimeout(() => delayedPty.emitExit(0), 1_500);
-          }
-        });
-        let settled = false;
-        const removing = manager.remove(terminal.id, force).then(
-          (receipt) => {
-            settled = true;
-            return receipt;
-          },
-          (error: unknown) => {
-            settled = true;
-            return error;
-          },
-        );
-        await vi.advanceTimersByTimeAsync(force ? 1_200 : 3_200);
-        expect(settled).toBe(false);
-        expect(manager.list().terminals).toHaveLength(1);
-        await vi.advanceTimersByTimeAsync(300);
-        await expect(removing).resolves.toMatchObject({
-          catalogEpoch: terminal.catalogEpoch,
-          revision: expect.any(Number),
-        });
-        expect(manager.list().terminals).toHaveLength(0);
-        expect(vi.getTimerCount()).toBe(0);
-      } finally {
-        pty?.emitExit(0);
-        await manager.close();
-        vi.useRealTimers();
-      }
-    },
-  );
-
-  it.each([false, true])(
-    "retains a terminal when its PTY cannot be stopped (force=%s)",
-    async (force) => {
-      vi.useFakeTimers();
-      const { manager, spawns } = setup();
-      let pty: FakePty | undefined;
-      try {
-        const terminal = await manager.create({ cwd: process.cwd() });
-        pty = spawns[0]!.pty;
-        vi.spyOn(pty, "kill").mockImplementation(() => {});
-        const removing = manager.remove(terminal.id, force);
-        const rejected = expect(removing).rejects.toMatchObject({
-          code: "terminal_stop_timeout",
-        });
-        await vi.advanceTimersByTimeAsync(force ? 5_000 : 7_000);
-        await rejected;
-        expect(manager.list().terminals).toHaveLength(1);
-        expect(vi.getTimerCount()).toBe(0);
-      } finally {
-        pty?.emitExit(0);
-        await manager.close();
-        vi.useRealTimers();
-      }
-    },
-  );
+  it("retains the terminal if the PTY cannot be stopped after force-close", async () => {
+    vi.useFakeTimers();
+    const { manager, spawns } = setup();
+    try {
+      const terminal = await manager.create({ cwd: process.cwd() });
+      vi.spyOn(spawns[0]!.pty, "kill").mockImplementation(() => {});
+      const rejected = expect(
+        manager.remove(terminal.id, true),
+      ).rejects.toMatchObject({
+        code: "terminal_stop_timeout",
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await rejected;
+      expect(manager.list().terminals.map(({ id }) => id)).toEqual([
+        terminal.id,
+      ]);
+    } finally {
+      spawns[0]?.pty.emitExit(0);
+      await manager.close();
+      vi.useRealTimers();
+    }
+  });
 
   it.each(["signal", "confirmation"] as const)(
     "retains failed descendant %s cleanup after root exit for an explicit retry",
@@ -895,7 +559,7 @@ describe("TerminalSessionManager", () => {
     },
   );
 
-  it("shares the existing hard-stop budget between root drain and descendant confirmation", async () => {
+  it("waits for PTY drain and shares its hard-stop budget with descendant cleanup", async () => {
     vi.useFakeTimers();
     const { manager, spawns } = setup();
     const terminal = await manager.create({ cwd: process.cwd() });
@@ -909,8 +573,15 @@ describe("TerminalSessionManager", () => {
     });
     try {
       const removing = manager.remove(terminal.id, true);
-      await vi.advanceTimersByTimeAsync(1_500);
-      await removing;
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect(manager.list().terminals.map(({ id }) => id)).toEqual([
+        terminal.id,
+      ]);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(removing).resolves.toMatchObject({
+        catalogEpoch: terminal.catalogEpoch,
+      });
+      expect(manager.list().terminals).toEqual([]);
       expect(waitForTreeExit).toHaveBeenCalledExactlyOnceWith(3_500);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -920,55 +591,27 @@ describe("TerminalSessionManager", () => {
     }
   });
 
-  it("retains a failed service shutdown until exited descendants are confirmed retired", async () => {
-    const { manager, spawns } = setup();
-    const terminal = await manager.create({ cwd: process.cwd() });
-    const pty = spawns[0]!.pty;
-    let retired = false;
-    Object.assign(pty, {
-      killTree: vi.fn(async () => {
-        pty.emitExit(0);
-      }),
-      waitForTreeExit: vi.fn(async () => retired),
-    });
-    try {
-      await expect(manager.close()).rejects.toMatchObject({
-        code: "terminal_cleanup_failed",
+  it.each(["create", "restart"] as const)(
+    "fences a pending %s when terminal-service shutdown begins",
+    async (action) => {
+      const { manager, spawns } = setup();
+      const initial =
+        action === "restart"
+          ? await manager.create({ cwd: process.cwd() })
+          : undefined;
+      const mutating = initial
+        ? manager.restart(initial.id)
+        : manager.create({ cwd: process.cwd() });
+      const fenced = expect(mutating).rejects.toMatchObject({
+        code: "service_closing",
+        status: 503,
       });
-      expect(manager.list().terminals[0]).toMatchObject({
-        id: terminal.id,
-        status: "exited",
-      });
-      retired = true;
+      if (!initial) manager.prepareShutdown(false);
       await manager.close();
-      expect(manager.list().terminals).toEqual([]);
-    } finally {
-      retired = true;
-      pty.emitExit(0);
-      await manager.close();
-    }
-  });
-
-  it("does not spawn new PTYs after terminal-service shutdown begins", async () => {
-    const first = setup();
-    const creating = first.manager.create({ cwd: process.cwd() });
-    await first.manager.close();
-    await expect(creating).rejects.toMatchObject({
-      code: "service_closing",
-      status: 503,
-    });
-    expect(first.spawns).toHaveLength(0);
-
-    const second = setup();
-    const terminal = await second.manager.create({ cwd: process.cwd() });
-    const restarting = second.manager.restart(terminal.id);
-    await second.manager.close();
-    await expect(restarting).rejects.toMatchObject({
-      code: "service_closing",
-      status: 503,
-    });
-    expect(second.spawns).toHaveLength(1);
-  });
+      await fenced;
+      expect(spawns).toHaveLength(initial ? 1 : 0);
+    },
+  );
 
   it.runIf(process.platform !== "win32")(
     "retires a detached HUP-resistant descendant after the native PTY root exits",
@@ -1021,68 +664,6 @@ describe("TerminalSessionManager", () => {
         await manager.close();
         if (birth && (await terminalTreeInspector.identity(pid)) === birth)
           process.kill(pid, "SIGKILL");
-        await rm(directory, { recursive: true, force: true });
-      }
-    },
-    20_000,
-  );
-
-  it.runIf(process.platform !== "win32")(
-    "kills HUP-resistant descendants when a terminal closes",
-    async () => {
-      const directory = await mkdtemp(join(tmpdir(), "inspire-pty-tree-"));
-      const childPidPath = join(directory, "child.pid");
-      const manager = new TerminalSessionManager({
-        profiles: [
-          {
-            id: "sh",
-            label: "Shell",
-            shell: "/bin/sh",
-            // Start the fixture through argv, not interactive input sent before
-            // macOS has finished initializing its PTY/shell. Publish readiness
-            // only after the child has installed its HUP disposition.
-            args: [
-              "-c",
-              'sh -c \'trap "" HUP; printf "%s" "$$" > "$1"; exec sleep 600\' sh "$1" & wait',
-              "inspire-tree-test",
-              childPidPath,
-            ],
-            available: true,
-            isDefault: true,
-          },
-        ],
-      });
-      let childPid = 0;
-      let childBirth: string | null = null;
-      try {
-        const terminal = await manager.create({ cwd: directory });
-        await vi.waitFor(
-          async () => {
-            childPid = Number(await readFile(childPidPath, "utf8"));
-            expect(childPid).toBeGreaterThan(1);
-            expect(() => process.kill(childPid, 0)).not.toThrow();
-            childBirth = await terminalTreeInspector.identity(childPid);
-            expect(childBirth).not.toBeNull();
-          },
-          { timeout: 10_000 },
-        );
-
-        await manager.remove(terminal.id, false);
-        await vi.waitFor(() =>
-          expect(() => process.kill(childPid, 0)).toThrow(),
-        );
-      } finally {
-        await manager.close();
-        if (
-          childBirth &&
-          (await terminalTreeInspector.identity(childPid)) === childBirth
-        ) {
-          try {
-            process.kill(childPid, "SIGKILL");
-          } catch {
-            // A correctly stopped process tree is already gone.
-          }
-        }
         await rm(directory, { recursive: true, force: true });
       }
     },

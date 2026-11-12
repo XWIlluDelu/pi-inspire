@@ -1,5 +1,12 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -7,8 +14,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HerdrClient } from "../../server/herdr-client.js";
 import { HerdrEnhancement } from "../../server/herdr-enhancement.js";
 import * as workerScopes from "../../server/herdr-process-group.js";
-import { HerdrWorkerObserver } from "../../server/herdr-worker-observer.js";
 import { HerdrWorkerRegistry } from "../../server/herdr-worker-registry.js";
+import { PiRpcProcess } from "../../server/pi-rpc.js";
 
 const directories: string[] = [];
 const enhancements: HerdrEnhancement[] = [];
@@ -70,61 +77,8 @@ afterEach(async () => {
 describe.skipIf(process.platform !== "linux")(
   "Herdr enhancement admission",
   () => {
-    it("keeps the disabled path free of Herdr calls; explicit status inspection is read-only", async () => {
-      const { enhancement, root, probe, restore, closePane, checkScopes } =
-        await harness();
-      await enhancement.initialize();
-      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
-      expect(probe).not.toHaveBeenCalled();
-      expect(restore).not.toHaveBeenCalled();
-      expect(closePane).not.toHaveBeenCalled();
-      expect(checkScopes).not.toHaveBeenCalled();
-      expect(await enhancement.status()).toMatchObject({
-        enabled: false,
-        ready: true,
-        supported: true,
-        installed: true,
-      });
-      expect(probe).toHaveBeenCalledOnce();
-      expect(checkScopes).toHaveBeenCalledOnce();
-    });
-
-    it("reports unavailable scopes, retries failures, and reuses a successful check for workers", async () => {
-      const { enhancement, root, client, checkScopes } = await harness(true);
-      checkScopes.mockRejectedValueOnce(new Error("Scope manager unavailable"));
-      vi.spyOn(client, "createWorkerPane").mockRejectedValue(
-        new Error("Test stops at pane allocation"),
-      );
-      try {
-        await enhancement.initialize();
-        expect(await enhancement.status()).toMatchObject({
-          ready: false,
-          issue: "Scope manager unavailable",
-        });
-        const recovered = await enhancement.status();
-        expect(recovered.ready).toBe(true);
-        expect(recovered.issue).toBeUndefined();
-        for (let i = 0; i < 2; i++) {
-          const worker = await enhancement.createProcess({ cwd: root });
-          await expect(worker.start()).rejects.toThrow(
-            "Test stops at pane allocation",
-          );
-          await worker.stop();
-        }
-        expect(checkScopes).toHaveBeenCalledTimes(2);
-        checkScopes.mockRejectedValue(new Error("Scope manager stopped"));
-        expect(await enhancement.status()).toMatchObject({
-          ready: false,
-          issue: "Scope manager stopped",
-        });
-        expect(checkScopes).toHaveBeenCalledTimes(3);
-      } finally {
-        checkScopes.mockRestore();
-      }
-    });
-
-    it("is ready when the installed server can start on demand", async () => {
-      const { enhancement, probe, checkScopes } = await harness();
+    it("skips Herdr in direct mode and reports availability for an on-demand server", async () => {
+      const { enhancement, root, probe, checkScopes } = await harness();
       probe.mockResolvedValue({
         installed: true,
         running: false,
@@ -132,61 +86,118 @@ describe.skipIf(process.platform !== "linux")(
         version: null,
       });
       await enhancement.initialize();
+      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
+      expect(probe).not.toHaveBeenCalled();
+      expect(checkScopes).not.toHaveBeenCalled();
       expect(await enhancement.status()).toMatchObject({
+        enabled: false,
         ready: true,
-        running: false,
-        compatible: null,
-      });
-      expect(checkScopes).toHaveBeenCalledOnce();
-    });
-
-    it.each([
-      { installed: false, running: false, compatible: null, version: null },
-      { installed: true, running: true, compatible: false, version: "old" },
-      {
+        supported: true,
         installed: true,
         running: false,
         compatible: null,
-        version: null,
-        issue: "Herdr server status could not be read",
-      },
-    ])(
-      "does not report readiness for an unavailable probe: %j",
-      async (status) => {
-        const { enhancement, probe, checkScopes } = await harness();
-        probe.mockResolvedValue(status);
-        await enhancement.initialize();
-        expect((await enhancement.status()).ready).toBe(false);
-        expect(checkScopes).not.toHaveBeenCalled();
-      },
-    );
+      });
+    });
 
-    it("projects only its own live worker and disposes projection on retirement", async () => {
-      const { enhancement, root } = await harness(true);
-      const projection = {
-        update: vi.fn(),
-        dispose: vi.fn(async () => undefined),
-      };
-      const observe = vi
-        .spyOn(HerdrWorkerObserver.prototype, "observe")
-        .mockReturnValue(projection);
+    it("updates enabling readiness as installation and scope availability change", async () => {
+      const { enhancement, probe, checkScopes } = await harness(true);
       try {
         await enhancement.initialize();
-        const rpc = await enhancement.createProcess({ cwd: root });
-        const status = {
-          sessionId: "session-one",
-          runState: "running",
-          needsInput: true,
-        } as const;
-        enhancement.updateWorkerStatus(rpc, status);
-        expect(projection.update).toHaveBeenCalledExactlyOnceWith(status);
-        rpc.emit("exit", new Error("RPC retired before confirmed Pi exit"));
-        expect(projection.dispose).toHaveBeenCalledOnce();
-        enhancement.updateWorkerStatus(rpc, status);
-        expect(projection.update).toHaveBeenCalledOnce();
+        for (const status of [
+          { installed: false, running: false, compatible: null, version: null },
+          { installed: true, running: true, compatible: false, version: "old" },
+          {
+            installed: true,
+            running: false,
+            compatible: null,
+            version: null,
+            issue: "Herdr server status could not be read",
+          },
+        ]) {
+          probe.mockResolvedValueOnce(status);
+          expect(await enhancement.status()).toMatchObject({
+            ...status,
+            ready: false,
+          });
+        }
+        checkScopes.mockRejectedValueOnce(
+          new Error("Scope manager unavailable"),
+        );
+        expect(await enhancement.status()).toMatchObject({
+          ready: false,
+          issue: "Scope manager unavailable",
+        });
+        const recovered = await enhancement.status();
+        expect(recovered.ready).toBe(true);
+        expect(recovered.issue).toBeUndefined();
+        checkScopes.mockRejectedValue(new Error("Scope manager stopped"));
+        expect(await enhancement.status()).toMatchObject({
+          ready: false,
+          issue: "Scope manager stopped",
+        });
       } finally {
-        observe.mockRestore();
+        checkScopes.mockRestore();
       }
+    });
+
+    it("reports only owned pane status until RPC retires, leaving cleanup to stop", async () => {
+      const { enhancement, root, client, registry, closePane } =
+        await harness(true);
+      const pane = {
+        serverId: "owned-server",
+        workspaceId: "w1",
+        tabId: "t1",
+        paneId: "p1",
+      };
+      vi.spyOn(client, "createWorkerPane").mockResolvedValue(pane);
+      const report = vi.spyOn(client, "reportWorker").mockResolvedValue();
+      const worker = await enhancement.createProcess({ cwd: root });
+      const startup = worker.start().catch((error: unknown) => error);
+      try {
+        await vi.waitFor(async () =>
+          expect(await registry.list()).toHaveLength(1),
+        );
+        const idle = {
+          sessionId: "session-one",
+          runState: "idle",
+          needsInput: false,
+        } as const;
+        enhancement.updateWorkerStatus(new PiRpcProcess({ cwd: root }), idle);
+        const statuses = [
+          { ...idle, state: "idle" },
+          { ...idle, runState: "running", state: "working" },
+          { ...idle, runState: "running", needsInput: true, state: "blocked" },
+          { ...idle, runState: "compacting", state: "working" },
+          { ...idle, sessionId: "session-two", state: "idle" },
+        ] as const;
+        for (const [index, { state, ...status }] of statuses.entries()) {
+          enhancement.updateWorkerStatus(worker, status);
+          await vi.waitFor(() =>
+            expect(report).toHaveBeenCalledTimes(index + 1),
+          );
+          expect(report).toHaveBeenLastCalledWith(
+            pane,
+            expect.objectContaining({ state, sessionId: status.sessionId }),
+          );
+          if (index === 0) {
+            enhancement.updateWorkerStatus(worker, status);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            expect(report).toHaveBeenCalledOnce();
+          }
+        }
+
+        worker.emit("exit", new Error("RPC retired before confirmed Pi exit"));
+        enhancement.updateWorkerStatus(worker, idle);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(report).toHaveBeenCalledTimes(statuses.length);
+        expect(closePane).not.toHaveBeenCalled();
+        expect(await registry.list()).toHaveLength(1);
+      } finally {
+        await worker.stop();
+        await startup;
+      }
+      expect(closePane).toHaveBeenCalledExactlyOnceWith(pane);
+      expect(await registry.list()).toEqual([]);
     });
 
     it("never recovers a still-live Host's resources when a second Host starts on the same address", async () => {
@@ -272,44 +283,66 @@ describe.skipIf(process.platform !== "linux")(
       expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
     });
 
-    it("fences admission during recovery even when switching back to direct mode", async () => {
+    it("shares recovery retries and holds direct starts until stale ownership is cleared", async () => {
       const { enhancement, root, lease, registry, restore, closePane } =
         await harness();
       const owned = await lease();
-      // The recorded Host incarnation is gone; no Pi grant was ever issued.
-      // Deliberately keep its numeric PID to exercise birth-identity reuse.
+      // Same PID, different birth identity: the recorded Host is gone.
       const old = { ...owned, owner: { ...owned.owner, birth: "0" } };
       await writeFile(
         join(registry.directory, `${old.id}.json`),
         JSON.stringify(old),
       );
+      const list = vi
+        .spyOn(registry, "list")
+        .mockRejectedValueOnce(new Error("Temporary storage failure"));
+      await enhancement.initialize();
+      expect(await enhancement.status()).toMatchObject({
+        ready: false,
+        issue: expect.stringContaining("could not be verified"),
+      });
+      expect(list).toHaveBeenCalledOnce();
+
       let finishCleanup!: () => void;
-      closePane.mockImplementationOnce(
-        () =>
-          new Promise<void>((resolve) => {
-            finishCleanup = resolve;
-          }),
+      closePane.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          finishCleanup = resolve;
+        }),
       );
-      const recovering = enhancement.initialize();
-      let created = false;
-      const creating = enhancement
-        .createProcess({ cwd: root })
-        .then((worker) => {
-          created = true;
-          return worker;
+      const admitted = vi.fn();
+      const starts = [1, 2].map(() =>
+        enhancement.createProcess({ cwd: root }).then((worker) => {
+          admitted();
+          return worker.pid;
+        }),
+      );
+      try {
+        await vi.waitFor(() =>
+          expect(closePane).toHaveBeenCalledExactlyOnceWith(old.pane),
+        );
+        expect(restore).toHaveBeenCalledExactlyOnceWith({
+          ...old.pane,
+          cwd: root,
         });
-      await vi.waitFor(() => expect(closePane).toHaveBeenCalledOnce());
-      expect(created).toBe(false);
-      finishCleanup();
-      await recovering;
-      expect((await creating).pid).toBeNull();
-      expect(restore).toHaveBeenCalledWith({ ...old.pane, cwd: root });
-      expect(closePane).toHaveBeenCalledWith(old.pane);
-      expect(await registry.list()).toEqual([]);
+        expect(admitted).not.toHaveBeenCalled();
+      } finally {
+        finishCleanup();
+      }
+      expect(await Promise.all(starts)).toEqual([null, null]);
+      expect((await enhancement.status()).issue).toBeUndefined();
       await expect(
-        readFile(join(owned.launchDirectory, "launch.json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+        readFile(join(registry.directory, `${old.id}.json`)),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(stat(old.launchDirectory)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+
+      // Recovery has completed; a later lease belongs to this Host.
+      await lease();
       expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
+      expect(list).toHaveBeenCalledTimes(2);
     });
 
     it("retains legacy granted leases rather than claiming detached tools exited", async () => {
@@ -350,27 +383,6 @@ describe.skipIf(process.platform !== "linux")(
         ready: false,
         issue: expect.stringContaining("could not be verified"),
       });
-    });
-
-    it("retries failed ownership recovery on the next start and shares concurrent retries", async () => {
-      const { enhancement, root, registry, lease } = await harness();
-      const list = vi
-        .spyOn(registry, "list")
-        .mockRejectedValueOnce(new Error("Temporary storage failure"));
-      await enhancement.initialize();
-      expect((await enhancement.status()).ready).toBe(false);
-      expect(list).toHaveBeenCalledOnce();
-      const workers = await Promise.all([
-        enhancement.createProcess({ cwd: root }),
-        enhancement.createProcess({ cwd: root }),
-      ]);
-      expect(workers.every((worker) => worker.pid === null)).toBe(true);
-      expect(list).toHaveBeenCalledTimes(2);
-      expect((await enhancement.status()).issue).toBeUndefined();
-      // Once admitted, new ownership belongs to this Host, not startup recovery.
-      await lease();
-      expect((await enhancement.createProcess({ cwd: root })).pid).toBeNull();
-      expect(list).toHaveBeenCalledTimes(2);
     });
   },
 );

@@ -4,106 +4,60 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { TerminalDaemonClient } from "../../server/terminal-daemon-client.js";
-import { TerminalDaemonServer } from "../../server/terminal-daemon-server.js";
-import {
-  type TerminalAttachmentSink,
-  TerminalServiceError,
-} from "../../server/terminal-service.js";
-import {
-  type TerminalPtyFactory,
-  TerminalSessionManager,
-} from "../../server/terminal-session-manager.js";
-import {
-  decodeTerminalServerDataFrame,
-  type TerminalDescriptor,
-  type TerminalServerControlMessage,
-} from "../../shared/terminal-contracts.js";
-
-import { FakePty } from "./fixtures/terminal-pty.js";
-
-class Sink implements TerminalAttachmentSink {
-  readonly controls: TerminalServerControlMessage[] = [];
-  readonly data: Uint8Array[] = [];
-  readonly closes: Array<[number, string]> = [];
-
-  sendControl(message: TerminalServerControlMessage): void {
-    this.controls.push(message);
-  }
-
-  sendData(frame: Uint8Array): void {
-    this.data.push(Buffer.from(frame));
-  }
-
-  close(code: number, reason: string): void {
-    this.closes.push([code, reason]);
-  }
-}
-
-const directories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    directories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
-
-async function setup() {
-  const directory = await mkdtemp(join(tmpdir(), "inspire-terminal-daemon-"));
-  directories.push(directory);
-  const address =
-    process.platform === "win32"
-      ? `\\\\.\\pipe\\inspire-terminal-test-${randomUUID()}`
-      : join(directory, "terminal.sock");
-  const ptys: FakePty[] = [];
-  const ptyFactory: TerminalPtyFactory = () => {
-    const pty = new FakePty(4321);
-    ptys.push(pty);
-    return pty;
-  };
-  const manager = new TerminalSessionManager({
-    profiles: [
-      {
-        id: "bash",
-        label: "Bash",
-        shell: "/bin/bash",
-        args: ["-l"],
-        available: true,
-        isDefault: true,
-      },
-    ],
-    ptyFactory,
-  });
-  const server = new TerminalDaemonServer(address, "test-secret", manager);
-  await server.start();
-  const client = new TerminalDaemonClient(address, "test-secret");
-  return { address, client, directory, manager, ptys, server };
-}
+import { describe, expect, it, vi } from "vitest";
+import { processStartIdentity } from "../../server/instance-state.mjs";
+import type { TerminalDaemonInfo } from "../../server/terminal-daemon-configuration.js";
+import type { TerminalDescriptor } from "../../shared/terminal-contracts.js";
+import { terminalDaemonFixture } from "./fixtures/terminal-daemon.js";
 
 describe("terminal daemon", () => {
-  it("delivers attachment refusals to a connected Host and remains available", async () => {
-    const { client, manager, server } = await setup();
-    vi.spyOn(manager, "attach").mockRejectedValue(
-      new TerminalServiceError("terminal_busy", 409, "Terminal is restarting"),
-    );
+  it("keeps lifecycle controls available after a descendant blocks shutdown", async () => {
+    let info: TerminalDaemonInfo;
+    const shutdown = vi.fn();
+    const fixture = await terminalDaemonFixture({ info: () => info, shutdown });
+    const { client, directory, address, manager, spawns, server } = fixture;
+    let descendantsRetired = false;
     try {
-      await expect(
-        client.attach(
-          { terminalId: "fixture", clientId: "fixture", cols: 80, rows: 24 },
-          new Sink(),
-        ),
-      ).rejects.toMatchObject({
-        code: "terminal_busy",
-        status: 409,
-        message: "Terminal is restarting",
+      info = {
+        lifecycleVersion: 1,
+        instanceId: randomUUID(),
+        pid: process.pid,
+        processStartTime: await processStartIdentity(process.pid),
+        configuration: {
+          root: directory,
+          host: "127.0.0.1",
+          port: 4555,
+          address,
+          tokenPath: join(directory, "token"),
+          statePath: join(directory, "state"),
+        },
+        runningTerminals: 0,
+        stopping: false,
+        systemdUnit: null,
+      };
+      const terminal = await manager.create({ cwd: directory });
+      const pty = spawns[0]!.pty;
+      Object.assign(pty, {
+        killTree: async () => pty.emitExit(0),
+        waitForTreeExit: async () => descendantsRetired,
       });
-      await expect(client.probe()).resolves.toBeUndefined();
-    } finally {
-      await client.close();
+      await expect(server.stop()).rejects.toMatchObject({
+        code: "terminal_cleanup_failed",
+      });
+      expect(manager.list().terminals).toMatchObject([
+        { id: terminal.id, status: "exited" },
+      ]);
+      await expect(client.daemonInfo()).resolves.toEqual(info);
+      await expect(client.probe()).rejects.toThrow();
+
+      await client.shutdownDaemon(info.instanceId, true);
+      expect(shutdown).toHaveBeenCalledExactlyOnceWith(info.instanceId, true);
+      descendantsRetired = true;
       await server.stop();
+      expect(manager.list().terminals).toEqual([]);
+    } finally {
+      descendantsRetired = true;
+      await fixture.close();
     }
   });
 
@@ -111,7 +65,6 @@ describe("terminal daemon", () => {
     const directory = await mkdtemp(
       join(tmpdir(), "inspire-terminal-disconnect-"),
     );
-    directories.push(directory);
     const address =
       process.platform === "win32"
         ? `\\\\.\\pipe\\inspire-terminal-test-${randomUUID()}`
@@ -168,195 +121,91 @@ describe("terminal daemon", () => {
       await server.stop();
       console.log("daemon survived the disconnected attachment");
     `;
-    const { stdout, stderr } = await promisify(execFile)(
-      process.execPath,
-      ["--import", "tsx", "--input-type=module", "-e", script],
-      { timeout: 10_000, env: process.env },
-    );
-    expect(stdout).toContain("daemon survived the disconnected attachment");
-    expect(stderr).toBe("");
+    try {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "-e", script],
+        { timeout: 10_000, env: process.env },
+      );
+      expect(stdout).toContain("daemon survived the disconnected attachment");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
-  it.each(["remove", "restart"] as const)(
-    "keeps the %s RPC open through graceful stop and delayed PTY exit",
-    async (method) => {
-      const { client, directory, ptys, server } = await setup();
+  it("replays a failed restart, accepts a fresh restart and waits for delayed removal", async () => {
+    const fixture = await terminalDaemonFixture();
+    const { client, directory, manager, spawns } = fixture;
+    try {
       const epoch = await client.operationEpoch();
+      const identity = () => ({ id: randomUUID(), epoch });
       const terminal = await client.operate<TerminalDescriptor>(
         "create",
         { request: { cwd: directory } },
-        { id: randomUUID(), epoch },
+        identity(),
       );
-      const pty = ptys[0]!;
-      const exit = pty.kill.bind(pty);
+      const id = terminal.id;
+      const pty = spawns[0]!.pty;
       let markStopping!: () => void;
       const stopping = new Promise<void>((resolve) => {
         markStopping = resolve;
       });
-      vi.spyOn(pty, "kill").mockImplementation((signal) => {
-        markStopping();
-        if (signal === "SIGKILL") setTimeout(() => exit(signal), 4_000);
-      });
+      vi.spyOn(pty, "kill").mockImplementation(markStopping);
+      const restart = vi.spyOn(manager, "restart");
+      const failedOperation = identity();
+      const resend = () => client.operate("restart", { id }, failedOperation);
       vi.useFakeTimers();
-      try {
-        let settled = false;
-        const request = client.operate(
-          method,
-          method === "remove"
-            ? { id: terminal.id, force: false }
-            : { id: terminal.id },
-          { id: randomUUID(), epoch },
-        );
-        const result = request.then(
-          (receipt) => {
-            settled = true;
-            return receipt;
-          },
-          (error: unknown) => {
-            settled = true;
-            return error;
-          },
-        );
-        // The request has reached the real IPC server before time advances.
-        await stopping;
-        await vi.advanceTimersByTimeAsync(5_500);
-        expect(settled).toBe(false);
-        await vi.advanceTimersByTimeAsync(500);
-        await expect(result).resolves.toMatchObject({
-          catalogEpoch: terminal.catalogEpoch,
-        });
-        const catalog = await client.list(directory);
-        if (method === "remove") expect(catalog.terminals).toEqual([]);
-        else {
-          expect(catalog.terminals).toMatchObject([
-            { id: terminal.id, status: "running" },
-          ]);
-          expect(catalog.terminals[0]!.outputEpoch).not.toBe(
-            terminal.outputEpoch,
-          );
-        }
-      } finally {
-        exit();
-        vi.useRealTimers();
-        await client.close();
-        await server.stop();
-      }
-    },
-  );
 
-  it("replays a restart failure after the PTY exits too late", async () => {
-    const { client, directory, manager, ptys, server } = await setup();
-    const epoch = await client.operationEpoch();
-    const { id } = await client.operate<TerminalDescriptor>(
-      "create",
-      { request: { cwd: directory } },
-      { id: randomUUID(), epoch },
-    );
-    const pty = ptys[0]!;
-    let markStopping!: () => void;
-    const stopping = new Promise<void>((resolve) => {
-      markStopping = resolve;
-    });
-    vi.spyOn(pty, "kill").mockImplementation(markStopping);
-    const restart = vi.spyOn(manager, "restart");
-    const operation = { id: randomUUID(), epoch };
-    const send = () => client.operate("restart", { id }, operation);
-    vi.useFakeTimers();
-    try {
       const failure = { code: "terminal_stop_timeout", status: 503 };
-      const first = expect(send()).rejects.toMatchObject(failure);
+      const first = expect(resend()).rejects.toMatchObject(failure);
       await stopping;
       await vi.advanceTimersByTimeAsync(7_000);
       await first;
       pty.emitExit(0);
 
-      await expect(send()).rejects.toMatchObject(failure);
+      await expect(resend()).rejects.toMatchObject(failure);
       expect(restart).toHaveBeenCalledOnce();
-      expect(ptys).toHaveLength(1);
+      expect(spawns).toHaveLength(1);
       expect((await client.list(directory)).terminals).toMatchObject([
         { id, status: "exited" },
       ]);
+
+      await expect(
+        client.operate("restart", { id }, identity()),
+      ).resolves.toMatchObject({
+        id,
+        status: "running",
+      });
+      expect(spawns).toHaveLength(2);
+      const restarted = spawns[1]!.pty;
+      const exit = restarted.kill.bind(restarted);
+      let markRemoving!: () => void;
+      const removing = new Promise<void>((resolve) => {
+        markRemoving = resolve;
+      });
+      vi.spyOn(restarted, "kill").mockImplementation((signal) => {
+        markRemoving();
+        if (signal === "SIGKILL") setTimeout(() => exit(signal), 4_000);
+      });
+      let settled = false;
+      const result = client
+        .operate("remove", { id, force: false }, identity())
+        .finally(() => {
+          settled = true;
+        });
+      const receipt = expect(result).resolves.toMatchObject({
+        catalogEpoch: terminal.catalogEpoch,
+      });
+      await removing;
+      await vi.advanceTimersByTimeAsync(5_500);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(500);
+      await receipt;
+      expect((await client.list(directory)).terminals).toEqual([]);
     } finally {
-      pty.emitExit(0);
+      for (const { pty } of spawns) pty.emitExit(0);
       vi.useRealTimers();
-      await client.close();
-      await server.stop();
+      await fixture.close();
     }
-  });
-
-  it("keeps terminal RPC and byte streams behind authenticated IPC", async () => {
-    const { address, client, directory, ptys, server } = await setup();
-    await client.probe();
-    const epoch = await client.operationEpoch();
-    expect(await client.getSettings()).toEqual({
-      persistOutput: false,
-      historyRetentionDays: 30,
-    });
-    expect(
-      await client.operate(
-        "updateSettings",
-        { patch: { persistOutput: true, historyRetentionDays: 14 } },
-        { id: randomUUID(), epoch },
-      ),
-    ).toEqual({ persistOutput: true, historyRetentionDays: 14 });
-    await client.operate("clearHistory", {}, { id: randomUUID(), epoch });
-    await expect(
-      new TerminalDaemonClient(address, "wrong-secret").probe(),
-    ).rejects.toThrow();
-
-    const terminal = await client.operate<TerminalDescriptor>(
-      "create",
-      { request: { cwd: directory, cols: 90, rows: 28 } },
-      { id: randomUUID(), epoch },
-    );
-    const catalog = await client.list(directory);
-    expect(catalog.terminals).toMatchObject([
-      { id: terminal.id, status: "running" },
-    ]);
-
-    const sink = new Sink();
-    const attachment = await client.attach(
-      {
-        terminalId: terminal.id,
-        clientId: "browser-a",
-        cols: 91,
-        rows: 29,
-      },
-      sink,
-    );
-    await vi.waitFor(() =>
-      expect(
-        sink.controls.some(
-          (message) =>
-            message.type === "attached" &&
-            message.terminal.cols === 91 &&
-            message.terminal.rows === 29,
-        ),
-      ).toBe(true),
-    );
-    await vi.waitFor(() =>
-      expect(
-        sink.controls.some((message) => message.type === "replay_complete"),
-      ).toBe(true),
-    );
-
-    attachment.writeInput(1, Buffer.from("echo daemon\r"));
-    await vi.waitFor(() =>
-      expect(ptys[0]?.writes.map(String)).toEqual(["echo daemon\r"]),
-    );
-    ptys[0]?.emitData("daemon output\r\n");
-    await vi.waitFor(() =>
-      expect(
-        sink.data
-          .map((frame) => decodeTerminalServerDataFrame(frame))
-          .some((frame) =>
-            Buffer.from(frame.data).toString().includes("daemon output"),
-          ),
-      ).toBe(true),
-    );
-
-    attachment.detach();
-    await client.close();
-    await server.stop();
   });
 });

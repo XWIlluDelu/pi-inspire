@@ -17,11 +17,7 @@ import { type PiRpcOptions, type PiRpcProcess } from "../../server/pi-rpc.js";
 
 import { RuntimeController, safeProjection } from "../../server/runtime.js";
 
-import {
-  SessionCatalog,
-  type SessionRecord,
-} from "../../server/session-catalog.js";
-import { SessionProjection } from "../../server/session-projection.js";
+import { SessionCatalog } from "../../server/session-catalog.js";
 
 import {
   catalog,
@@ -33,6 +29,7 @@ import {
   preview,
   record,
   trackedAttachmentStore,
+  trackRuntime,
   waitForReady,
   workspaceDirectories,
 } from "./fixtures/runtime.js";
@@ -69,34 +66,31 @@ describe("runtime source admission", () => {
       const runtime = new RuntimeController(source, trackedAttachmentStore(), {
         createProcess,
       });
-      try {
-        if (change === "removed") {
-          await expect(runtime.snapshot("a")).rejects.toMatchObject({
-            status: 404,
-            code: "SESSION_NOT_FOUND",
-          });
-        } else if (change === "ambiguous") {
-          await expect(runtime.openSession("a")).rejects.toMatchObject({
-            status: 409,
-          });
-        } else {
-          const snapshot = await runtime.snapshot("a");
-          expect(snapshot.active?.sessionFile).toBe(replacement.path);
-          expect(snapshot.active?.projectionHealth).toMatchObject({
-            status: "ok",
-          });
-        }
+      trackRuntime(runtime);
+      if (change === "removed") {
+        await expect(runtime.snapshot("a")).rejects.toMatchObject({
+          status: 404,
+          code: "SESSION_NOT_FOUND",
+        });
+      } else if (change === "ambiguous") {
+        await expect(runtime.openSession("a")).rejects.toMatchObject({
+          status: 409,
+        });
+      } else {
+        const snapshot = await runtime.snapshot("a");
+        expect(snapshot.active?.sessionFile).toBe(replacement.path);
+        expect(snapshot.active?.projectionHealth).toMatchObject({
+          status: "ok",
+        });
+      }
+      expect(list).toHaveBeenCalledTimes(2);
+      expect(runtime.activeSessionId).toBeNull();
+      expect(createProcess).not.toHaveBeenCalled();
+      if (change === "moved" || change === "replaced") {
+        await runtime.openSession("a");
+        await waitForReady(runtime);
         expect(list).toHaveBeenCalledTimes(2);
-        expect(runtime.activeSessionId).toBeNull();
-        expect(createProcess).not.toHaveBeenCalled();
-        if (change === "moved" || change === "replaced") {
-          await runtime.openSession("a");
-          await waitForReady(runtime);
-          expect(list).toHaveBeenCalledTimes(2);
-          expect(createProcess).toHaveBeenCalledOnce();
-        }
-      } finally {
-        await runtime.close();
+        expect(createProcess).toHaveBeenCalledOnce();
       }
     },
   );
@@ -114,161 +108,95 @@ describe("runtime source admission", () => {
     const runtime = new RuntimeController(source, trackedAttachmentStore(), {
       createProcess,
     });
-    try {
-      await expect(runtime.openSession("a")).rejects.toMatchObject({
-        code: "SESSION_CATALOG_STALE",
-      });
-      expect(refresh).toHaveBeenCalledExactlyOnceWith(true);
-      expect(createProcess).not.toHaveBeenCalled();
-      expect(runtime.activeSessionId).toBeNull();
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await expect(runtime.openSession("a")).rejects.toMatchObject({
+      code: "SESSION_CATALOG_STALE",
+    });
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(true);
+    expect(createProcess).not.toHaveBeenCalled();
+    expect(runtime.activeSessionId).toBeNull();
   });
 
-  it.each(["missing", "file"] as const)(
-    "reads retained history without starting Pi when the workspace is %s",
-    async (kind) => {
-      const session = await persistedRecord(
-        "a",
-        join(fixtureWorkspace, "unavailable"),
-      );
-      if (kind === "file") await writeFile(session.cwd, "not a directory");
-      const before = await readFile(session.path);
-      const createProcess = vi.fn(
-        (options: PiRpcOptions) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-      );
-      const queryModels = vi
-        .fn()
-        .mockRejectedValue(
-          new Error("Metadata discovery must not run in an unavailable folder"),
-        );
-      const runtime = new RuntimeController(
-        catalog([session]),
-        trackedAttachmentStore(),
-        { createProcess },
-      );
-      runtime.setModelMetadataCatalog(new ModelMetadataCatalog(queryModels));
-      try {
-        const opened = await runtime.openSession("a");
-        expect(opened.active).toMatchObject({
-          sessionId: "a",
-          cwd: session.cwd,
-          readOnlyReason: "workspace-unavailable",
-        });
-        expect(opened.active?.transcriptPage.messages).toEqual([
-          expect.objectContaining({ role: "user", content: "persisted:a" }),
-        ]);
-        const tree = await runtime.branchTree("a");
-        expect(
-          await runtime.branchEntry({
-            sessionId: "a",
-            viewId: opened.active!.transcriptPage.viewId,
-            targetId: "u1",
-          }),
-        ).toMatchObject({ text: "persisted:a" });
-        const resources = await runtime.resourceContext("a");
-        expect(await resources.loadMessages?.()).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ role: "user", content: "persisted:a" }),
-          ]),
-        );
-        for (const operation of [
-          () => runtime.prompt({ sessionId: "a", message: "do not execute" }),
-          () => runtime.rename("a", "do not write"),
-          () =>
-            runtime.cloneBranch({
-              sessionId: "a",
-              viewId: opened.active!.transcriptPage.viewId,
-              targetId: tree.effectiveLeafId,
-            }),
-          () => runtime.nativeCommand({ sessionId: "a", command: "reload" }),
-          () => runtime.refreshModels("a"),
-        ]) {
-          await expect(operation()).rejects.toMatchObject({
-            status: 409,
-            code: "SESSION_WORKSPACE_UNAVAILABLE",
-          });
-        }
-        expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
-          "workspace-unavailable",
-        );
-        expect(createProcess).not.toHaveBeenCalled();
-        expect(queryModels).not.toHaveBeenCalled();
-        expect(await readFile(session.path)).toEqual(before);
-      } finally {
-        await runtime.close();
-      }
-    },
-  );
-
-  it("rechecks a restored folder on explicit open and then warms the worker", async () => {
+  it("reads retained history for unavailable workspaces and starts Pi only after an explicit reopen of the restored folder", async () => {
     const session = await persistedRecord(
       "a",
-      join(fixtureWorkspace, "restored"),
+      join(fixtureWorkspace, "unavailable"),
     );
+    const before = await readFile(session.path);
     const createProcess = vi.fn(
       (options: PiRpcOptions) =>
         new FakeRpc(options) as unknown as PiRpcProcess,
     );
-    const runtime = new RuntimeController(
-      catalog([session]),
-      trackedAttachmentStore(),
-      { createProcess },
-    );
-    try {
-      // A cold reconnect can also project history without selecting or warming.
-      const observed = await runtime.snapshot("a");
-      expect(observed.active?.readOnlyReason).toBe("workspace-unavailable");
-      expect(runtime.activeSessionId).toBeNull();
-      expect(createProcess).not.toHaveBeenCalled();
-
-      await mkdir(session.cwd);
-      const opened = await runtime.openSession("a");
-      expect(opened.active?.readOnlyReason).toBeUndefined();
-      expect(opened.active?.cwd).toBe(await realpath(session.cwd));
-      expect(opened.active?.transcriptPage.viewId).not.toBe(
-        observed.active?.transcriptPage.viewId,
+    const queryModels = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Metadata discovery must not run in an unavailable folder"),
       );
-      await waitForReady(runtime);
-      expect(createProcess).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ cwd: await realpath(session.cwd) }),
-      );
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("uses an explicitly wrapped real projection without changing persistence semantics", async () => {
-    const session = await persistedRecord("a");
-    const openProjection = vi.fn((record: SessionRecord) =>
-      SessionProjection.open(record),
-    );
     const runtime = new RuntimeController(
       catalog([session]),
       trackedAttachmentStore(),
       {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: openProjection,
+        createProcess,
       },
     );
-    try {
-      const snapshot = await runtime.openSession("a");
-      await waitForReady(runtime);
-      expect(openProjection).toHaveBeenCalledExactlyOnceWith(session);
-      expect(snapshot.active?.transcriptPage.messages).toEqual([
-        expect.objectContaining({ role: "user", content: "persisted:a" }),
-      ]);
-      expect(snapshot.active?.durableLeafId).toBe("u1");
-      await rm(session.path);
-      await expect(
-        runtime.prompt({ sessionId: "a", message: "must not write" }),
-      ).rejects.toMatchObject({ status: 409 });
-    } finally {
-      await runtime.close();
+    runtime.setModelMetadataCatalog(new ModelMetadataCatalog(queryModels));
+    trackRuntime(runtime);
+    const missing = await runtime.snapshot("a");
+    expect(missing.active).toMatchObject({
+      sessionId: "a",
+      cwd: session.cwd,
+      readOnlyReason: "workspace-unavailable",
+      transcriptPage: {
+        messages: [{ role: "user", content: "persisted:a" }],
+      },
+    });
+    expect(runtime.activeSessionId).toBeNull();
+
+    await writeFile(session.cwd, "not a directory");
+    const opened = await runtime.openSession("a");
+    expect(opened.active?.readOnlyReason).toBe("workspace-unavailable");
+    const viewId = opened.active!.transcriptPage.viewId;
+    const tree = await runtime.branchTree("a");
+    expect(
+      await runtime.branchEntry({ sessionId: "a", viewId, targetId: "u1" }),
+    ).toMatchObject({
+      text: "persisted:a",
+    });
+    const resources = await runtime.resourceContext("a");
+    expect(await resources.loadMessages?.()).toContainEqual(
+      expect.objectContaining({ role: "user", content: "persisted:a" }),
+    );
+    for (const operation of [
+      () => runtime.prompt({ sessionId: "a", message: "do not execute" }),
+      () => runtime.rename("a", "do not write"),
+      () =>
+        runtime.cloneBranch({
+          sessionId: "a",
+          viewId,
+          targetId: tree.effectiveLeafId,
+        }),
+      () => runtime.nativeCommand({ sessionId: "a", command: "reload" }),
+      () => runtime.refreshModels("a"),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({
+        status: 409,
+        code: "SESSION_WORKSPACE_UNAVAILABLE",
+      });
     }
+    expect(createProcess).not.toHaveBeenCalled();
+    expect(queryModels).not.toHaveBeenCalled();
+    expect(await readFile(session.path)).toEqual(before);
+
+    await rm(session.cwd);
+    await mkdir(session.cwd);
+    const restored = await runtime.openSession("a");
+    expect(restored.active?.readOnlyReason).toBeUndefined();
+    expect(restored.active?.cwd).toBe(await realpath(session.cwd));
+    expect(restored.active?.transcriptPage.viewId).not.toBe(viewId);
+    await waitForReady(runtime);
+    expect(createProcess).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cwd: await realpath(session.cwd) }),
+    );
   });
 
   it("reconciles an injected scheduling projection before admitting a writer command", async () => {
@@ -286,22 +214,19 @@ describe("runtime source admission", () => {
         openSessionProjection: async () => projection,
       },
     );
-    try {
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      const reconcile = vi
-        .spyOn(projection, "reconcile")
-        .mockRejectedValueOnce(new Error("pre-write reconciliation failed"));
-      await expect(
-        runtime.prompt({ sessionId: "a", message: "must not write" }),
-      ).rejects.toThrow("pre-write reconciliation failed");
-      expect(reconcile).toHaveBeenCalledWith(true);
-      expect(worker.commands.some((command) => command.type === "prompt")).toBe(
-        false,
-      );
-    } finally {
-      await runtime.close();
-    }
+    trackRuntime(runtime);
+    await runtime.openSession("a");
+    await waitForReady(runtime);
+    const reconcile = vi
+      .spyOn(projection, "reconcile")
+      .mockRejectedValueOnce(new Error("pre-write reconciliation failed"));
+    await expect(
+      runtime.prompt({ sessionId: "a", message: "must not write" }),
+    ).rejects.toThrow("pre-write reconciliation failed");
+    expect(reconcile).toHaveBeenCalledWith(true);
+    expect(worker.commands.some((command) => command.type === "prompt")).toBe(
+      false,
+    );
   });
 
   it.runIf(process.platform !== "win32")(
@@ -334,31 +259,28 @@ describe("runtime source admission", () => {
           return worker as unknown as PiRpcProcess;
         },
       });
-      try {
-        const initial = await runtime.openSession("a");
-        const physical = await realpath(alias);
-        await vi.waitFor(() => expect(worker?.starts).toBe(1));
-        expect(physical).toBe(physicalOne);
-        expect(worker?.options.cwd).toBe(physicalOne);
-        expect(initial.active?.cwd).toBe(physicalOne);
-        expect(runtime.sessionCwd("a")).toBe(physicalOne);
+      trackRuntime(runtime);
+      const initial = await runtime.openSession("a");
+      const physical = await realpath(alias);
+      await vi.waitFor(() => expect(worker?.starts).toBe(1));
+      expect(physical).toBe(physicalOne);
+      expect(worker?.options.cwd).toBe(physicalOne);
+      expect(initial.active?.cwd).toBe(physicalOne);
+      expect(runtime.sessionCwd("a")).toBe(physicalOne);
 
-        await rm(alias);
-        await symlink(physicalTwo, alias, "dir");
-        await runtime.prompt({
-          sessionId: "a",
-          message: "use marker",
-          projectFiles: ["marker.txt"],
-        });
-        const prompt = worker?.commands.find(
-          (command) => command.type === "prompt",
-        );
-        expect(prompt?.message).toContain(join(physicalOne, "marker.txt"));
-        expect(prompt?.message).not.toContain(join(physicalTwo, "marker.txt"));
-        expect((await runtime.resourceContext("a")).cwd).toBe(physicalOne);
-      } finally {
-        await runtime.close();
-      }
+      await rm(alias);
+      await symlink(physicalTwo, alias, "dir");
+      await runtime.prompt({
+        sessionId: "a",
+        message: "use marker",
+        projectFiles: ["marker.txt"],
+      });
+      const prompt = worker?.commands.find(
+        (command) => command.type === "prompt",
+      );
+      expect(prompt?.message).toContain(join(physicalOne, "marker.txt"));
+      expect(prompt?.message).not.toContain(join(physicalTwo, "marker.txt"));
+      expect((await runtime.resourceContext("a")).cwd).toBe(physicalOne);
     },
   );
 

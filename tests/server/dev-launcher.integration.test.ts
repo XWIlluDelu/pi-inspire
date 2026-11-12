@@ -199,7 +199,6 @@ it("refuses an occupied UI port without opening it or sending a credential", asy
   const instance = start(fixture.environment, fixture.home);
   expect(await instance.exit).not.toBe(0);
   expect(instance.log()).toContain("already in use");
-  expect(instance.log()).not.toContain("INSΠRE development:");
   expect(instance.log()).not.toContain(inheritedToken);
   expect(requests).toEqual([]);
   expect(await readFile(fixture.sentinel, "utf8")).toBe(

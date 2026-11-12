@@ -203,8 +203,6 @@ const MAX_DEFERRED_PROMPTS = 16;
 const MAINTENANCE_RESTART_LEASE_MS = 30_000;
 const ATTACHED_RESTART_CHECK_MS = 5_000;
 
-export { PI_STARTUP_RESPONSE_UI_ERROR } from "./runtime-events.js";
-
 function finiteMetric(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
@@ -635,10 +633,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       options.openSessionProjection ?? openProjection;
     this.openForkProjection = options.openForkProjection ?? openProjection;
     this.branchBridgeTimeoutMs = options.branchBridgeTimeoutMs ?? null;
-    this.deleteSessionRecord =
-      options.deleteSessionRecord ??
-      ((session, version) =>
-        deleteSessionFile(session, undefined, undefined, version));
+    this.deleteSessionRecord = options.deleteSessionRecord ?? deleteSessionFile;
     this.diagnostics = options.diagnostics ?? nullDiagnosticLogger();
     this.validateSessionRecord =
       options.validateSessionRecord ?? validateSessionFile;
@@ -697,10 +692,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       catalogRefresh: (force) =>
         this.catalog.refresh(force, { requireComplete: true }),
       invalidateCatalog: () => this.catalog.invalidate(),
-      validateSessionRecord: (session) =>
-        this.validateSessionRecord(session, "current"),
-      deleteSessionRecord: (session, version) =>
-        this.deleteSessionRecord(session, version),
+      validateSessionRecord: (session) => this.validateSessionRecord(session),
+      deleteSessionRecord: (session) => this.deleteSessionRecord(session),
     });
     this.extensionUi = new RuntimeExtensionUiController({
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),

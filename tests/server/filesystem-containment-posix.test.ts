@@ -21,49 +21,33 @@ beforeEach(() => {
   native.stat.mockReset();
 });
 
-describe("POSIX spelling/normalization identity contracts (not native APFS evidence)", () => {
-  it("keeps canonical prefixes on a zero-I/O path", async () => {
+describe("POSIX directory alias identity", () => {
+  it("returns a path relative to its exact base", async () => {
+    native.stat.mockResolvedValue(directory(7n));
     expect(
       await filesystemRelativePath("/Project", "/Project/deep/file.txt"),
     ).toBe("deep/file.txt");
-    expect(native.stat).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ["/Project", "/project/deep/file.txt", "/project", "deep/file.txt"],
-    ["/Caf\u00e9", "/Cafe\u0301/deep/file.txt", "/Cafe\u0301", "deep/file.txt"],
-    [
-      "/\u00e9/Project",
-      "/e\u0301/project/file.txt",
-      "/e\u0301/project",
-      "file.txt",
-    ],
-  ])(
-    "accepts %s only with a matching live directory identity",
-    async (base, path, ancestor, within) => {
-      native.stat.mockResolvedValue(directory(7n));
-      expect(await filesystemRelativePath(base, path)).toBe(within);
-      expect(native.stat).toHaveBeenCalledTimes(2);
-      expect(native.stat).toHaveBeenCalledWith(base, { bigint: true });
-      expect(native.stat).toHaveBeenCalledWith(ancestor, { bigint: true });
-    },
-  );
+  it("accepts a case and normalization alias only through its matching ancestor", async () => {
+    const root = "/\u00e9/Project";
+    const ancestor = "/e\u0301/project";
+    native.stat.mockImplementation(async (path) =>
+      directory(path === root || path === ancestor ? 7n : 8n),
+    );
+    expect(
+      await filesystemRelativePath(root, `${ancestor}/deep/file.txt`),
+    ).toBe("deep/file.txt");
+  });
 
-  it.each([
-    ["/Project", "/project/file.txt"],
-    ["/Caf\u00e9", "/Cafe\u0301/file.txt"],
-    // Unicode uppercase expands ß to SS: that is only a candidate filter,
-    // not a promise that this volume equates the two directory names.
-    ["/Stra\u00dfe", "/STRASSE/file.txt"],
-  ])(
-    "refuses Unicode/case candidates that are actually distinct: %s",
-    async (base, path) => {
-      native.stat
-        .mockResolvedValueOnce(directory(7n))
-        .mockResolvedValueOnce(directory(8n));
-      expect(await filesystemRelativePath(base, path)).toBeNull();
-    },
-  );
+  it("refuses visually related directories with different inodes", async () => {
+    native.stat
+      .mockResolvedValueOnce(directory(7n))
+      .mockResolvedValueOnce(directory(8n));
+    expect(
+      await filesystemRelativePath("/Stra\u00dfe", "/STRASSE/file.txt"),
+    ).toBeNull();
+  });
 
   it("rejects unrelated segments or ancestors without any filesystem probe", async () => {
     expect(

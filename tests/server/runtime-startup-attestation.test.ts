@@ -41,27 +41,23 @@ describe("writer startup attestation", () => {
         },
         parentId !== null,
       );
-      try {
-        await vi.waitFor(async () => {
-          expect((await runtime.snapshot()).active?.thinkingLevel).toBe("off");
-          expect(
-            workers[0]!.commands.some(
-              (command) => command.type === "get_commands",
-            ),
-          ).toBe(true);
-        });
-        expect(workers[0]!.commands).toContainEqual(
-          parentId === null
-            ? { type: "get_entries" }
-            : { type: "get_entries", since: parentId },
-        );
-        expect(workers[0]!.stops).toBe(0);
-        expect((await runtime.branchTree("session-a")).durableLeafId).toBe(
-          entry.id,
-        );
-      } finally {
-        await runtime.close();
-      }
+      await vi.waitFor(async () => {
+        expect((await runtime.snapshot()).active?.thinkingLevel).toBe("off");
+        expect(
+          workers[0]!.commands.some(
+            (command) => command.type === "get_commands",
+          ),
+        ).toBe(true);
+      });
+      expect(workers[0]!.commands).toContainEqual(
+        parentId === null
+          ? { type: "get_entries" }
+          : { type: "get_entries", since: parentId },
+      );
+      expect(workers[0]!.stops).toBe(0);
+      expect((await runtime.branchTree("session-a")).durableLeafId).toBe(
+        entry.id,
+      );
     },
   );
 
@@ -156,19 +152,15 @@ describe("writer startup attestation", () => {
         ),
       );
     });
-    try {
-      await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-      expect(sequence).not.toContain("start");
-      const changed = (await runtime.snapshot()).active!;
-      expect(changed.transcriptPage.viewId).not.toBe(
-        opened.active!.transcriptPage.viewId,
-      );
-      expect(JSON.stringify(changed.transcriptPage.messages)).toContain(
-        "replaced before startup",
-      );
-    } finally {
-      await runtime.close();
-    }
+    await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
+    expect(sequence).not.toContain("start");
+    const changed = (await runtime.snapshot()).active!;
+    expect(changed.transcriptPage.viewId).not.toBe(
+      opened.active!.transcriptPage.viewId,
+    );
+    expect(JSON.stringify(changed.transcriptPage.messages)).toContain(
+      "replaced before startup",
+    );
   });
 
   it("rejects an otherwise exact state-equivalent entry injected by the process factory before rpc.start", async () => {
@@ -178,17 +170,21 @@ describe("writer startup attestation", () => {
       worker.startupLeafId = entry.id;
       appendFileSync(worker.sessionPath, `${JSON.stringify(entry)}\n`);
     });
-    try {
-      await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-      expect(sequence).not.toContain("start");
-      expect(workers[0]!.commands).toEqual([]);
-      expect((await runtime.snapshot()).runState).toBe("failed");
-    } finally {
-      await runtime.close();
-    }
+    await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
+    expect(sequence).not.toContain("start");
+    expect(workers[0]!.commands).toEqual([]);
+    expect((await runtime.snapshot()).runState).toBe("failed");
   });
 
   it.each([
+    {
+      name: "partial append",
+      prepare: (worker: ProjectionRpc) => {
+        worker.onStart = async () => {
+          await appendFile(worker.sessionPath, '{"type":"message"');
+        };
+      },
+    },
     {
       name: "wrong level",
       prepare: (worker: ProjectionRpc) => {
@@ -266,13 +262,12 @@ describe("writer startup attestation", () => {
     "fails closed for a $name during startup attestation",
     async ({ prepare }) => {
       const { runtime, workers } = await setup([], prepare);
-      try {
-        await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
-        expect((await runtime.snapshot()).runState).toBe("failed");
-        expect(workers).toHaveLength(1);
-      } finally {
-        await runtime.close();
-      }
+      await vi.waitFor(() => expect(workers[0]!.stops).toBe(1));
+      expect((await runtime.snapshot()).runState).toBe("failed");
+      expect(workers).toHaveLength(1);
+      expect(workers[0]!.commands).not.toContainEqual({
+        type: "get_commands",
+      });
     },
   );
 });

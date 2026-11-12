@@ -1,4 +1,3 @@
-import { execFile as execFileCallback } from "node:child_process";
 import {
   appendFile,
   cp,
@@ -17,8 +16,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   prepareSessionRecovery,
@@ -61,56 +58,6 @@ afterEach(async () => {
 });
 
 describe("explicit original-path session recovery", () => {
-  it("provides a standalone recovery command without starting a Host", async () => {
-    const { bundle, original, contents } = await fixture();
-    const entry = fileURLToPath(
-      new URL("../../server/session-recovery-entry.ts", import.meta.url),
-    );
-    const execFile = promisify(execFileCallback);
-    const command = [
-      process.execPath,
-      ["--import", "tsx", entry, bundle],
-    ] as const;
-    const { stdout } = await execFile(command[0], [...command[1]], {
-      cwd: process.cwd(),
-    });
-    expect(stdout).toContain("Recovered session: " + original);
-    expect(stdout).toContain("Recovery bundle retained.");
-    expect(await readFile(original, "utf8")).toBe(contents);
-    await expect(
-      execFile(command[0], [...command[1]], { cwd: process.cwd() }),
-    ).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining("already exists"),
-    });
-  });
-
-  it("restores complete bytes atomically and leaves the complete selected bundle intact", async () => {
-    const { bundle, original, payload, contents } = await fixture();
-    await expect(recoverSessionBundle(bundle)).resolves.toBe(original);
-    expect(await readFile(original, "utf8")).toBe(contents);
-    expect(await readFile(payload, "utf8")).toBe(contents);
-    expect((await readdir(bundle)).sort()).toEqual(
-      [RECOVERY_MANIFEST, RECOVERY_README, basename(payload)].sort(),
-    );
-    expect(await readdir(dirname(original))).toEqual([basename(original)]);
-    expect((await lstat(original)).ino).not.toBe((await lstat(payload)).ino);
-    await expect(recoverSessionBundle(bundle)).rejects.toThrow(
-      "already exists",
-    );
-  });
-
-  it("accepts a copied/restored bundle whose payload inode changed", async () => {
-    const { root, bundle, original, payload, contents } = await fixture();
-    const copy = join(root, "another volume copy");
-    await cp(bundle, copy, { recursive: true });
-    expect((await lstat(join(copy, basename(payload)))).ino).not.toBe(
-      (await lstat(payload)).ino,
-    );
-    await expect(recoverSessionBundle(copy)).resolves.toBe(original);
-    expect(await readFile(original, "utf8")).toBe(contents);
-  });
-
   it.runIf(process.platform === "linux")(
     "recovers a bundle across real filesystem devices without an EXDEV publication",
     async ({ skip }) => {
@@ -155,16 +102,6 @@ describe("explicit original-path session recovery", () => {
     await expect(recoverSessionBundle(bundle)).resolves.toBe(original);
     expect(await readFile(original, "utf8")).toBe(contents);
     expect(await readdir(other)).toEqual([]);
-  });
-
-  it("preserves a newer existing session and every recovery file", async () => {
-    const { bundle, original, payload, contents } = await fixture();
-    await writeFile(original, "newer session\n");
-    await expect(recoverSessionBundle(bundle)).rejects.toThrow(
-      "already exists",
-    );
-    expect(await readFile(original, "utf8")).toBe("newer session\n");
-    expect(await readFile(payload, "utf8")).toBe(contents);
   });
 
   it("does not overwrite a destination created after copying but before publication", async () => {

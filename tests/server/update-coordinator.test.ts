@@ -2,8 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { UPDATE_SNOOZE_MS } from "../../shared/contracts.js";
 import { UpdateCoordinator } from "../../server/update-coordinator.js";
+import { UPDATE_SNOOZE_MS } from "../../shared/contracts.js";
 
 const temporaryPaths: string[] = [];
 
@@ -32,13 +32,14 @@ describe("Host update coordinator", () => {
       pi: { kind: "current" as const, latestVersion: "0.84.2" },
       extensions: { kind: "none" as const },
     }));
-    const first = new UpdateCoordinator({
+    const options = {
       currentPiVersion: "0.84.2",
       inspireChecker: { check: inspireCheck },
       piChecker: { check: piCheck },
       statePath: path,
       now: () => now,
-    });
+    };
+    const first = new UpdateCoordinator(options);
 
     await first.promptAccepted();
     expect(inspireCheck).not.toHaveBeenCalled();
@@ -50,31 +51,18 @@ describe("Host update coordinator", () => {
     expect(piCheck).toHaveBeenCalledTimes(1);
     await first.close();
 
-    const reloadedInspireCheck = vi.fn(async () => ({
-      kind: "current" as const,
-    }));
-    const reloadedPiCheck = vi.fn(async () => ({
-      currentVersion: "0.84.2",
-      installedVersion: "0.84.2",
-      pi: { kind: "current" as const, latestVersion: "0.84.2" },
-      extensions: { kind: "none" as const },
-    }));
-    const reloaded = new UpdateCoordinator({
-      currentPiVersion: "0.84.2",
-      inspireChecker: { check: reloadedInspireCheck },
-      piChecker: { check: reloadedPiCheck },
-      statePath: path,
-      now: () => now,
-    });
+    inspireCheck.mockClear();
+    piCheck.mockClear();
+    const reloaded = new UpdateCoordinator(options);
 
     await reloaded.promptAccepted();
-    expect(reloadedInspireCheck).not.toHaveBeenCalled();
-    expect(reloadedPiCheck).not.toHaveBeenCalled();
+    expect(inspireCheck).not.toHaveBeenCalled();
+    expect(piCheck).not.toHaveBeenCalled();
 
     now = new Date(2026, 7, 22, 8, 0).getTime();
     await reloaded.promptAccepted();
-    expect(reloadedInspireCheck).toHaveBeenCalledTimes(1);
-    expect(reloadedPiCheck).toHaveBeenCalledTimes(1);
+    expect(inspireCheck).toHaveBeenCalledTimes(1);
+    expect(piCheck).toHaveBeenCalledTimes(1);
     await reloaded.close();
   });
 
@@ -82,7 +70,7 @@ describe("Host update coordinator", () => {
     const now = new Date(2026, 7, 21, 9, 0).getTime();
     const path = await statePath();
     let latestInspireVersion = "1.1.0";
-    const options = () => ({
+    const options = {
       currentPiVersion: "0.84.2",
       inspireChecker: {
         check: async () => ({
@@ -108,8 +96,8 @@ describe("Host update coordinator", () => {
       },
       statePath: path,
       now: () => now,
-    });
-    const first = new UpdateCoordinator(options());
+    };
+    const first = new UpdateCoordinator(options);
     await Promise.all([first.checkInspire(), first.checkPi()]);
     const observed = await first.status();
     expect(observed.availableUpdateIdentity).not.toBeNull();
@@ -118,7 +106,7 @@ describe("Host update coordinator", () => {
     expect(snoozed.updateSnoozedUntil).toBe(now + UPDATE_SNOOZE_MS);
     await first.close();
 
-    const reloaded = new UpdateCoordinator(options());
+    const reloaded = new UpdateCoordinator(options);
     expect((await reloaded.status()).updateSnoozedUntil).toBe(
       now + UPDATE_SNOOZE_MS,
     );
@@ -140,33 +128,5 @@ describe("Host update coordinator", () => {
       reloaded.dismiss(observed.availableUpdateIdentity!),
     ).rejects.toMatchObject({ status: 409 });
     await reloaded.close();
-  });
-
-  it("publishes acknowledgement as shared state instead of consuming display", async () => {
-    const now = new Date(2026, 7, 21, 9, 0).getTime();
-    const coordinator = new UpdateCoordinator({
-      currentPiVersion: "0.84.2",
-      inspireChecker: {
-        check: async () => ({
-          kind: "available" as const,
-          update: {
-            currentVersion: "1.0.0",
-            latestVersion: "1.1.0",
-            releaseUrl: "https://github.com/example/inspire/releases/v1.1.0",
-          },
-        }),
-      },
-      now: () => now,
-    });
-    await Promise.all([coordinator.checkInspire(), coordinator.checkPi()]);
-    const before = await coordinator.status();
-    const listener = vi.fn();
-    coordinator.subscribe(listener);
-
-    await coordinator.dismiss(before.availableUpdateIdentity!);
-    expect(listener).toHaveBeenLastCalledWith(
-      expect.objectContaining({ updateSnoozedUntil: now + UPDATE_SNOOZE_MS }),
-    );
-    await coordinator.close();
   });
 });

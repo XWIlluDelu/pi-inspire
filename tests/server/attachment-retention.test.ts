@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { AttachmentStore } from "../../server/attachments.js";
@@ -45,15 +45,15 @@ async function fixture() {
   await store.ready();
   return { parent, root, store };
 }
-function upload(): Express.Multer.File {
+function upload(name = "notes.txt"): Express.Multer.File {
   return {
-    originalname: "notes.txt",
+    originalname: name,
     mimetype: "text/plain",
     buffer: Buffer.from("notes"),
     size: 5,
   } as Express.Multer.File;
 }
-async function owner(parent: string, mode: "staged" | "prepared") {
+async function owner(parent: string) {
   const root = join(parent, "2-2-child");
   const child = spawn(
     process.execPath,
@@ -64,7 +64,6 @@ async function owner(parent: string, mode: "staged" | "prepared") {
         new URL("../fixtures/attachment-lifecycle.ts", import.meta.url),
       ),
       root,
-      mode,
     ],
     { stdio: ["pipe", "pipe", "pipe"] },
   );
@@ -99,51 +98,54 @@ async function owner(parent: string, mode: "staged" | "prepared") {
 }
 
 describe("temporary uploads and durable delivered assets", () => {
-  it("reclaims abandoned staging only after its real owner exits, across shared Hosts", async () => {
+  it("reclaims only unsubmitted copies when their owner exits without cleanup", async () => {
     const { parent, store } = await fixture();
-    const f = await owner(parent, "staged");
-    expect(await store.collectStaged()).toEqual({ reclaimed: [] });
-    await stop(f.child);
-    expect((await store.collectStaged()).reclaimed.sort()).toEqual(
-      f.records.map((record) => record.path).sort(),
-    );
-    for (const record of f.records) {
-      await expect(access(record.path)).rejects.toMatchObject({
-        code: "ENOENT",
-      });
-      await expect(
-        access(join(f.root, record.id + ".json")),
-      ).rejects.toMatchObject({ code: "ENOENT" });
-    }
-  });
-
-  it("preserves a possible delivery after an owner crash, without requiring a visible session reference", async () => {
-    const { parent, store } = await fixture();
-    const f = await owner(parent, "prepared");
-    expect(f.records.map((record) => record.delivery)).toEqual([
+    const { child, records, root } = await owner(parent);
+    const staged = records.slice(0, 2);
+    const [possiblyDeliveredFile, possiblyDeliveredImage] = records.slice(2);
+    expect(records.map(({ delivery }) => delivery)).toEqual([
+      "unsubmitted",
+      "unsubmitted",
       "possible",
       "possible",
     ]);
-    await stop(f.child);
+    const unrelated = join(root, "unrelated.txt");
+    await writeFile(unrelated, "keep");
+
     expect(await store.collectStaged()).toEqual({ reclaimed: [] });
-    for (const record of f.records)
-      await expect(access(record.path)).resolves.toBeUndefined();
-    expect(store.ownsPromptFile(f.records[0].path)).toBe(true);
-    expect(store.ownsPromptFile(f.records[1].path)).toBe(false);
+    await stop(child);
+    expect((await store.collectStaged()).reclaimed.sort()).toEqual(
+      staged.map(({ path }) => path).sort(),
+    );
+    for (const { id, path } of staged) {
+      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(access(join(root, id + ".json"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(await readFile(unrelated, "utf8")).toBe("keep");
+    await expect(access(possiblyDeliveredFile.path)).resolves.toBeUndefined();
+    await expect(access(possiblyDeliveredImage.path)).resolves.toBeUndefined();
+    expect(store.ownsPromptFile(possiblyDeliveredFile.path)).toBe(true);
+    expect(store.ownsPromptFile(possiblyDeliveredImage.path)).toBe(false);
   });
 
-  it.each([undefined, 2])(
-    "keeps existing version %s assets recallable and unchanged",
-    async (version) => {
+  it.each([
+    { version: undefined, name: "legacy.txt" },
+    { version: undefined, name: "字".repeat(100) + ".txt" },
+    { version: 2, name: "legacy.txt" },
+  ])(
+    "keeps existing version $version assets recallable and unchanged ($name)",
+    async ({ version, name }) => {
       const { parent, store } = await fixture();
       const root = join(parent, "3-3-existing");
       await mkdir(root);
       const id = randomUUID(),
-        path = join(root, id + "-legacy.txt");
+        path = join(root, id + "-" + name);
       const record = {
         version,
         id,
-        fileName: "legacy.txt",
+        fileName: name,
         mimeType: "text/plain",
         kind: "file",
         size: 4,
@@ -151,19 +153,56 @@ describe("temporary uploads and durable delivered assets", () => {
         ownerPid: 0,
       };
       const metadata = JSON.stringify(record);
-      await writeFile(path, "keep");
+      // A long unversioned name fits NTFS but cannot be created on POSIX.
+      const canWrite =
+        process.platform === "win32" ||
+        Buffer.byteLength(basename(path)) <= 255;
+      if (canWrite) await writeFile(path, "keep");
       await writeFile(join(root, id + ".json"), metadata);
       expect(await store.collectStaged()).toEqual({ reclaimed: [] });
-      expect(store.promptFileName(path)).toBe("legacy.txt");
-      expect(await readFile(path, "utf8")).toBe("keep");
+      expect(store.promptFileName(path)).toBe(name);
+      if (canWrite) expect(await readFile(path, "utf8")).toBe("keep");
       expect(await readFile(join(root, id + ".json"), "utf8")).toBe(metadata);
     },
   );
 
-  it("removes withdrawn staging but preserves a file handed off before shutdown", async () => {
-    const { root, store } = await fixture();
+  it("does not grant recall or deletion authority to unknown or mismatched ownership records", async () => {
+    const { parent, store } = await fixture();
+    const root = join(parent, "3-3-existing");
+    await mkdir(root);
+    for (const version of [3, 99]) {
+      const id = randomUUID();
+      const fileName = "notes.txt";
+      const path = join(
+        root,
+        version === 3 ? "unrelated.txt" : `${id}-${fileName}`,
+      );
+      await writeFile(path, "keep");
+      await writeFile(
+        join(root, `${id}.json`),
+        JSON.stringify({
+          version,
+          id,
+          fileName,
+          path,
+          ownerPid: 0,
+          delivery: "unsubmitted",
+          kind: "file",
+          mimeType: "text/plain",
+          size: 4,
+        }),
+      );
+      expect(await store.collectStaged()).toEqual({ reclaimed: [] });
+      expect(store.ownsPromptFile(path)).toBe(false);
+      expect(await readFile(path, "utf8")).toBe("keep");
+    }
+  });
+
+  it("removes staged copies on shutdown and reloads the complete name of a delivered file", async () => {
+    const { parent, root, store } = await fixture();
     const abandoned = await store.add(upload());
-    const delivered = await store.add(upload());
+    const name = "文".repeat(100) + ".txt";
+    const delivered = await store.add(upload(name));
     const { files } = await store.resolveForPrompt([delivered.id]);
     expect(
       JSON.parse(await readFile(join(root, delivered.id + ".json"), "utf8"))
@@ -174,7 +213,14 @@ describe("temporary uploads and durable delivered assets", () => {
     await expect(
       access(join(root, abandoned.id + "-notes.txt")),
     ).rejects.toMatchObject({ code: "ENOENT" });
-    expect(await readFile(files[0]!.path, "utf8")).toBe("notes");
+    const reopened = new AttachmentStore(join(parent, "4-4-reopened"), parent, {
+      sweepIntervalMs: 0,
+    });
+    stores.push(reopened);
+    expect(await reopened.collectStaged()).toEqual({ reclaimed: [] });
+    const path = files[0]!.path;
+    expect(reopened.promptFileName(path)).toBe(name);
+    expect(await readFile(path, "utf8")).toBe("notes");
   });
 
   it("does not hand a file to Pi when its durable handoff cannot be recorded", async () => {

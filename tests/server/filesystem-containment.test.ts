@@ -27,6 +27,7 @@ describe("filesystem containment on the actual fixture volume", () => {
     await mkdir(sibling);
     await writeFile(join(base, "inside.txt"), "fixture");
     await writeFile(join(sibling, "outside.txt"), "fixture");
+    expect(await filesystemRelativePath(base, base)).toBe("");
     expect(
       await filesystemRelativePath(
         base,

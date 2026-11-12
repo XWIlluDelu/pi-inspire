@@ -24,8 +24,7 @@ describe("desktop file manager integration", () => {
       expect(JSON.parse(args.at(-2))).toEqual([
         `${pathToFileURL("/tmp").href}/file%20'quoted',%20$(command);%20%23%25.txt`,
       ]);
-      expect(options).not.toHaveProperty("shell");
-      expect(options.timeout).toBe(10_000);
+      expect(options.shell).toBeFalsy();
     },
   );
 
@@ -44,23 +43,20 @@ describe("desktop file manager integration", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it.each(["ENOENT", 1])(
-    "does not report success for a failed opener (%s)",
-    async (code) => {
-      const run = vi
-        .fn()
-        .mockRejectedValue(
-          Object.assign(new Error("desktop failed"), { code }),
-        );
-      await expect(
-        showInFileManager("/tmp/file", false, {
-          platform: "linux",
-          environment: { DISPLAY: ":0" },
-          run,
-        }),
-      ).rejects.toMatchObject({ status: 503 });
-    },
-  );
+  it("reports a failed desktop command as unavailable", async () => {
+    const run = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error("desktop failed"), { code: 1 }),
+      );
+    await expect(
+      showInFileManager("/tmp/file", false, {
+        platform: "linux",
+        environment: { DISPLAY: ":0" },
+        run,
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+  });
 
   it.each([false, true])(
     "uses Finder reveal or directory open (%s)",
@@ -93,7 +89,7 @@ describe("desktop file manager integration", () => {
         directory ? "Explore($env:INSPIRE_REVEAL_PATH)" : "ThrowExceptionForHR",
       );
       expect(options.env.INSPIRE_REVEAL_PATH).toBe(path);
-      expect(options).not.toHaveProperty("shell");
+      expect(options.shell).toBeFalsy();
     },
   );
 

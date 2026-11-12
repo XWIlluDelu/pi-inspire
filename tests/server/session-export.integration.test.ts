@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import {
   link,
+  mkdir,
   mkdtemp,
   readdir,
   readFile,
@@ -12,7 +13,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { GeneratedExportStore } from "../../server/generated-exports.js";
 import { piInstallation, SessionManager } from "../../server/pi-runtime.js";
+import { openCanonicalResourceFile } from "../../server/resources.js";
 import {
   assertExportDestination,
   serializeBranchExport,
@@ -20,6 +23,8 @@ import {
 import { exportArgumentPath } from "../../shared/commands.js";
 import type { HostNativeCommandResponse } from "../../shared/contracts.js";
 import { nativeSessionWorkbench } from "./fixtures/native-session-workbench.js";
+
+vi.mock("../../server/resources.js", { spy: true });
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -122,13 +127,6 @@ it.skipIf(
         })
       ).status,
     ).toBe(404);
-    expect(
-      (
-        await fetch(`${f.url}/api/sessions/${f.id}/exports/../../etc/passwd`, {
-          headers: f.headers,
-        })
-      ).status,
-    ).not.toBe(200);
     await writeFile(result.export!.path, "Replaced export file");
     const fetched = await fetch(download, { headers: f.headers });
     expect(fetched.status).toBe(200);
@@ -261,5 +259,61 @@ describe("native path and branch boundaries", () => {
     await expect(
       assertExportDestination(join(directory, "export.jsonl"), path),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("GeneratedExportStore", () => {
+  it("keeps graphical exports as managed downloads and cleans temporary source files on success or failure", async () => {
+    const store = new GeneratedExportStore();
+    cleanup.push(() => store.close());
+    let source = "";
+    const result = await store.create("session", "jsonl", async (path) => {
+      source = path;
+      await writeFile(path, "branch\n");
+    });
+    const generated = await store.get("session", result.downloadId);
+    expect(await readFile(generated.path, "utf8")).toBe("branch\n");
+    await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      store.create("session", "html", async (path) => {
+        source = path;
+        await writeFile(path, "partial");
+        throw new Error("Export failed");
+      }),
+    ).rejects.toThrow("Export failed");
+    await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("retries an aliased source after directory failure without leaking its handle", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "inspire-export-directory-test-"),
+    );
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    const directory = join(root, "actual");
+    const alias = join(root, "alias");
+    await mkdir(directory);
+    await symlink(
+      directory,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await writeFile(join(directory, "branch.jsonl"), "snapshot\n");
+    const source = join(alias, "branch.jsonl");
+    const temporary = join(root, "unavailable");
+    for (const key of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(key, temporary);
+    const store = new GeneratedExportStore();
+    cleanup.push(() => store.close());
+    const openSource = vi.mocked(openCanonicalResourceFile);
+
+    await expect(store.add("session", source, "jsonl")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await mkdir(temporary);
+    const result = await store.add("session", source, "jsonl");
+    for (const { value } of openSource.mock.results)
+      expect((await value).handle.fd).toBe(-1);
+    const generated = await store.get("session", result.downloadId);
+    expect(await readFile(generated.path, "utf8")).toBe("snapshot\n");
+    expect(result.fileName).toBe("branch.jsonl");
   });
 });

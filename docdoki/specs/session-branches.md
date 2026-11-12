@@ -13,8 +13,8 @@ covers:
   - shared/contracts.ts
   - src/store.ts
   - src/controllers/composer-controller.ts
-  - tests/server/{runtime-branching,session-fork,session-tree,branch-bridge-extension,session-export.integration,generated-exports}.test.ts
-  - tests/server/{runtime-branch-bridge,pi-branch-callback.integration}.test.ts
+  - tests/server/{runtime-branching,session-tree,branch-bridge-extension,session-export.integration}.test.ts
+  - tests/server/{runtime-branch-bridge,pi-branch-bridge.integration}.test.ts
   - tests/web/{branch-controller,branch-tree,branch-store}.test.ts*
   - tests/browser/history.spec.ts
   - src/styles/{history,transcript}.css

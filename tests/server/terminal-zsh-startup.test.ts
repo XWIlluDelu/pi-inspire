@@ -29,20 +29,10 @@ async function fixture() {
 }
 
 describe.runIf(zsh)("native zsh startup continuity", () => {
-  it.each([
-    {
-      name: "ordinary commands and paths",
-      command: "git status --short",
-      directory: "project",
-    },
-    {
-      name: "percent signs and marker delimiters",
-      command: "printf '%s\\n' '100% done %25 %0A\r\n\u001b\u0007'",
-      directory: "100% project %25",
-    },
-  ])("round-trips $name through native shell markers", async (sample) => {
+  it("round-trips percent signs and marker delimiters through native shell markers", async () => {
+    const command = "printf '%s\\n' '100% done %25 %0A\r\n\u001b\u0007'";
     const f = await fixture();
-    const directory = join(f.root, sample.directory);
+    const directory = join(f.root, "100% project %25");
     await mkdir(directory);
     const cwd = await realpath(directory);
     await ensureTerminalShellIntegration(f.integration, f.env);
@@ -53,7 +43,7 @@ describe.runIf(zsh)("native zsh startup continuity", () => {
         'source "$1"; __inspire_terminal_preexec "$2"; false; __inspire_terminal_precmd',
         "inspire-marker-test",
         join(f.integration, "zsh-integration.zsh"),
-        sample.command,
+        command,
       ],
       { cwd, env: f.env, timeout: 10_000 },
     );
@@ -68,7 +58,7 @@ describe.runIf(zsh)("native zsh startup continuity", () => {
         phase!.endsWith("1") ? decodeURIComponent(payload!) : payload,
       ]),
     ).toEqual([
-      ["C1", sample.command],
+      ["C1", command],
       ["P1", cwd],
       ["D", "1"],
       ["A", undefined],

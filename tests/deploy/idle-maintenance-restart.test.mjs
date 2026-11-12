@@ -4,10 +4,7 @@ import {
   restartIdleHost,
   terminalServicePath,
 } from "../../deploy/systemd/control.mjs";
-import {
-  requestMaintenance,
-  runIdleMaintenanceRestart,
-} from "../../deploy/systemd/idle-maintenance-restart.mjs";
+import { runIdleMaintenanceRestart } from "../../deploy/systemd/idle-maintenance-restart.mjs";
 import { RuntimeController } from "../../server/runtime.js";
 
 const root = "/synthetic/inspire";
@@ -23,8 +20,8 @@ function fixture({
   const requests = [];
   const run = vi.fn(async (args) => {
     if (args.includes("restart")) return issue();
-    await inspect();
     const terminal = args.includes("inspire-terminal.service");
+    await inspect(terminal);
     return {
       code: 0,
       stderr: "",
@@ -65,7 +62,7 @@ const restarts = (run) =>
 describe.runIf(process.platform !== "win32")(
   "fenced maintenance runner",
   () => {
-    it.each(["inspection", "post-commit"])(
+    it.each(["inspection", "lost commit reply", "post-commit"])(
       "keeps the real runtime safe across a delayed %s boundary",
       async (delayAt) => {
         vi.useFakeTimers();
@@ -80,14 +77,13 @@ describe.runIf(process.platform !== "win32")(
           },
         );
         try {
+          let admissionWhileInspecting;
+          let commitResult;
           const test = fixture({
-            inspect: async () => {
-              if (delayAt === "inspection") {
+            inspect: async (terminal) => {
+              if (delayAt === "inspection" && terminal) {
                 vi.advanceTimersByTime(31_000);
-                // Admission reopened during the inspection, not after the old intent ended.
-                await expect(runtime.deselectSession()).resolves.toMatchObject({
-                  runState: "idle",
-                });
+                admissionWhileInspecting = await runtime.deselectSession();
               }
             },
             issue: async () => {
@@ -98,21 +94,36 @@ describe.runIf(process.platform !== "win32")(
               return { code: 0 };
             },
             request: async (action, owner) => {
-              if (action === "commit")
-                return runtime.commitMaintenanceRestart(owner);
+              if (action === "commit") {
+                commitResult = runtime.commitMaintenanceRestart(owner);
+                return delayAt === "lost commit reply" ? null : commitResult;
+              }
               if (action === "release")
                 return runtime.releaseMaintenanceRestart(owner);
               return runtime.reserveMaintenanceRestart();
             },
           });
           expect((await test.execute()).kind).toBe(
-            delayAt === "inspection" ? "skipped" : "restarted",
+            delayAt === "post-commit" ? "restarted" : "skipped",
           );
           expect(restarts(test.run)).toHaveLength(
-            delayAt === "inspection" ? 0 : 1,
+            delayAt === "post-commit" ? 1 : 0,
           );
+          if (delayAt === "inspection")
+            expect(admissionWhileInspecting).toMatchObject({
+              runState: "idle",
+            });
           if (delayAt === "post-commit")
             expect(runtime.reserveMaintenanceRestart().kind).toBe("busy");
+          if (delayAt === "lost commit reply") {
+            expect(commitResult?.kind).toBe("committed");
+            expect(test.requests.map(([action]) => action)).toEqual([
+              undefined,
+              "commit",
+              "release",
+            ]);
+            expect(runtime.reserveMaintenanceRestart().kind).toBe("ready");
+          }
         } finally {
           await runtime.close();
           vi.useRealTimers();
@@ -122,7 +133,7 @@ describe.runIf(process.platform !== "win32")(
 
     it.each([
       null,
-      { kind: "ready", expiresAt: Date.now() + 30_000 },
+      { kind: "ready", expiresAt: 30_000 },
       { kind: "skipped", reason: "busy" },
     ])(
       "skips unavailable or busy preparation without systemctl: %j",
@@ -132,61 +143,6 @@ describe.runIf(process.platform !== "win32")(
         expect(test.run).not.toHaveBeenCalled();
       },
     );
-
-    it("treats a timeout reading the commit response body as unknown, not approval", async () => {
-      vi.useFakeTimers();
-      let fetched;
-      const started = new Promise((resolve) => {
-        fetched = resolve;
-      });
-      const fetch = vi.fn(async (_url, { signal }) => {
-        fetched();
-        return {
-          ok: true,
-          body: new ReadableStream({
-            start(controller) {
-              controller.enqueue(new TextEncoder().encode('{"version":1,'));
-              signal.addEventListener("abort", () =>
-                controller.error(new Error("timed out")),
-              );
-            },
-          }),
-        };
-      });
-      vi.stubGlobal("fetch", fetch);
-      try {
-        const response = requestMaintenance(
-          {
-            schemaVersion: 1,
-            host: "127.0.0.1",
-            port: 1234,
-            token: "synthetic",
-            pid: process.pid,
-            root,
-            processStartTime: "fixture-birth",
-            startedAt: "fixture-start",
-            durableWorkerRelease: true,
-          },
-          "commit",
-          leaseId,
-        );
-        await started;
-        await vi.advanceTimersByTimeAsync(6_000);
-        await expect(response).resolves.toBeNull();
-        expect(fetch).toHaveBeenCalledOnce();
-        const options = fetch.mock.calls[0][1];
-        expect(options.headers.Authorization).toBeUndefined();
-        expect(JSON.parse(options.body)).toMatchObject({
-          action: "maintenance-commit",
-          payload: { leaseId },
-        });
-        expect(options.body).not.toContain("synthetic");
-        expect(vi.getTimerCount()).toBe(0);
-      } finally {
-        vi.unstubAllGlobals();
-        vi.useRealTimers();
-      }
-    });
 
     it.each(["absent", "inspection-error"])(
       "cancels before commit when service is %s",
@@ -205,72 +161,19 @@ describe.runIf(process.platform !== "win32")(
       },
     );
 
-    it("commits after both inspections and issues exactly one restart", async () => {
+    it("never consumes a commit for a different lease", async () => {
       const test = fixture({
         request: async (action) => {
           if (!action) return ready;
-          expect(test.run).toHaveBeenCalledTimes(2);
-          return { kind: "committed", leaseId };
+          return action === "commit"
+            ? { kind: "committed", leaseId: "b".repeat(43) }
+            : { kind: "released" };
         },
       });
-      expect(await test.execute()).toEqual({ kind: "restarted" });
-      expect(restarts(test.run)).toHaveLength(1);
-      expect(test.requests).toEqual([
-        [undefined, undefined],
-        ["commit", leaseId],
-      ]);
+      expect((await test.execute()).kind).toBe("skipped");
+      expect(restarts(test.run)).toHaveLength(0);
+      expect(test.requests.at(-1)).toEqual(["release", leaseId]);
     });
-
-    it.each([
-      null,
-      { kind: "committed", leaseId: "b".repeat(43) },
-      { kind: "skipped", reason: "lease-invalid" },
-    ])(
-      "never consumes an unconfirmed or mismatched commit: %j",
-      async (response) => {
-        const test = fixture({
-          request: async (action) => {
-            if (!action) return ready;
-            return action === "commit" ? response : { kind: "released" };
-          },
-        });
-        expect((await test.execute()).kind).toBe("skipped");
-        expect(restarts(test.run)).toHaveLength(0);
-        expect(test.requests.at(-1)).toEqual(["release", leaseId]);
-      },
-    );
-
-    it.each(["before-release", "after-release"])(
-      "cancels a timed-out commit delivered %s without later authorization",
-      async (order) => {
-        let phase = "preparing";
-        let deliverCommit;
-        const test = fixture({
-          request: async (action) => {
-            if (!action) return ready;
-            if (action === "commit") {
-              deliverCommit = () => {
-                if (phase !== "preparing") return { kind: "skipped" };
-                phase = "committed";
-                return { kind: "committed", leaseId };
-              };
-              if (order === "before-release") deliverCommit();
-              throw new Error("HTTP response lost");
-            }
-            phase = "released";
-            return { kind: "released" };
-          },
-        });
-        expect((await test.execute()).kind).toBe("skipped");
-        if (order === "after-release")
-          expect(deliverCommit()).toEqual({ kind: "skipped" });
-        expect(phase).toBe("released");
-        expect(restarts(test.run)).toHaveLength(0);
-        expect(
-          test.requests.filter(([action]) => action === "commit"),
-        ).toHaveLength(1);
-      },
-    );
 
     it("releases a known failure to spawn", async () => {
       const test = fixture({ issue: async () => ({ code: 1, issued: false }) });

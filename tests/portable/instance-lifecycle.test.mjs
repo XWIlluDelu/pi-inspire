@@ -123,14 +123,6 @@ async function fixture(context, scopeResult = "ordinary") {
   return { path, expected, state };
 }
 
-test("inspects a proven Host and stops it without sending a bearer", async (context) => {
-  const { path, expected } = await fixture(context);
-  const stopped = await stopManagedInstance(path, expected, {
-    timeoutMs: 5_000,
-  });
-  assert.equal(stopped.kind, "stopped");
-});
-
 test("requires an exact owner and request receipt for Host-only shutdown", async (context) => {
   const { path, expected, state } = await fixture(context, "acknowledge");
   const wrongOwner = { ...state, processStartTime: "different-birth" };

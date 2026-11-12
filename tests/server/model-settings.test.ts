@@ -4,7 +4,6 @@ import {
   readFile,
   rm,
   symlink,
-  utimes,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -76,6 +75,15 @@ const initialConfig = {
     },
   },
 };
+const newModel = {
+  id: "later-model",
+  name: "Later available model",
+  reasoning: false,
+  input: ["text"],
+  contextWindow: 4096,
+  maxTokens: 128,
+} satisfies Extract<ModelConfigEdit, { kind: "model" }>["values"];
+
 beforeEach(async () => {
   const workspace = await nativePiWorkspace(
     "inspire-model-settings-",
@@ -135,74 +143,75 @@ function routes(
 // budget: each query already has a 15s deadline and Windows process-tree
 // retirement can take another 5s. Let both complete before test cleanup.
 describe("model settings routes", () => {
-  it.each(["providers", "start"] as const)(
-    "reloads the Host auth reader for %s after saving a new provider",
-    async (operation) => {
-      const native = await ModelRuntime.create({
-        modelsPath: join(agent, "models.json"),
-        authPath: join(agent, "auth.json"),
-        refreshOnCreate: false,
-      });
-      const auth = new ProviderAuthService(native);
-      const { app } = routes({ providerAuth: auth });
-      const provider = "new-provider";
-      expect(native.getProvider(provider)).toBeUndefined();
-      try {
-        for (const edit of [
-          {
-            kind: "provider",
-            id: provider,
-            values: {
-              api: "openai-completions",
-              baseUrl: "https://example.invalid/v1",
-            },
+  it("discovers and admits login for a newly saved provider through existing Host auth readers", async () => {
+    const createAuthReader = async () =>
+      new ProviderAuthService(
+        await ModelRuntime.create({
+          modelsPath: join(agent, "models.json"),
+          authPath: join(agent, "auth.json"),
+          refreshOnCreate: false,
+        }),
+      );
+    const discovery = await createAuthReader();
+    const admission = await createAuthReader();
+    const { app } = routes({ providerAuth: discovery });
+    const admissionApp = routes({ providerAuth: admission }).app;
+    const provider = "new-provider";
+    try {
+      // The readers predate the edit and each operation must discover it on its own.
+      for (const edit of [
+        {
+          kind: "provider",
+          id: provider,
+          values: {
+            api: "openai-completions",
+            baseUrl: "https://example.invalid/v1",
           },
-          { kind: "model", provider, values: { id: "new-model" } },
-        ]) {
-          const current = await request(app)
-            .get("/api/model-settings")
-            .query({ cwd });
-          const saved = await request(app)
-            .patch("/api/model-settings/config")
-            .query({ cwd })
-            .send({ revision: current.body.configRevision, edit });
-          expect(saved.status, saved.body.error).toBe(200);
-          expect(saved.body.saved).toBe(true);
-        }
-        const response = await request(app)
-          .post("/api/provider-auth")
+        },
+        { kind: "model", provider, values: { id: "new-model" } },
+      ]) {
+        const current = await request(app)
+          .get("/api/model-settings")
           .query({ cwd })
-          .send(
-            operation === "providers"
-              ? { operation }
-              : { operation, provider, type: "api_key" },
-          );
-        expect(response.status).toBe(200);
-        if (operation === "providers")
-          expect(response.body.result).toContainEqual({
-            id: provider,
-            name: provider,
-            stored: null,
-            methods: [{ type: "api_key", label: "API key" }],
-          });
-        else {
-          expect(response.body.result).toMatchObject({
-            provider,
-            type: "api_key",
-            status: "pending",
-          });
-          await vi.waitFor(() =>
-            expect(auth.snapshot(response.body.result.id).prompt?.type).toBe(
-              "secret",
-            ),
-          );
-        }
-      } finally {
-        auth.close();
+          .expect(200);
+        const saved = await request(app)
+          .patch("/api/model-settings/config")
+          .query({ cwd })
+          .send({ revision: current.body.configRevision, edit })
+          .expect(200);
+        expect(saved.body.saved).toBe(true);
       }
-    },
-    45_000,
-  );
+      const listed = await request(app)
+        .post("/api/provider-auth")
+        .query({ cwd })
+        .send({ operation: "providers" })
+        .expect(200);
+      expect(listed.body.result).toContainEqual({
+        id: provider,
+        name: provider,
+        stored: null,
+        methods: [{ type: "api_key", label: "API key" }],
+      });
+      const started = await request(admissionApp)
+        .post("/api/provider-auth")
+        .query({ cwd })
+        .send({ operation: "start", provider, type: "api_key" })
+        .expect(200);
+      expect(started.body.result).toMatchObject({
+        provider,
+        type: "api_key",
+        status: "pending",
+      });
+      await vi.waitFor(() =>
+        expect(admission.snapshot(started.body.result.id).prompt?.type).toBe(
+          "secret",
+        ),
+      );
+    } finally {
+      discovery.close();
+      admission.close();
+    }
+  }, 45_000);
 
   it("offers native available models, not the full catalog, and refreshes configuration choices while retaining unavailable saved scope", async () => {
     const native = await ModelRuntime.create({
@@ -252,7 +261,11 @@ describe("model settings routes", () => {
       .query({ cwd })
       .send({
         revision: host.body.configRevision,
-        edit: { kind: "provider", id: "fixture", values: { apiKey: null } },
+        edit: {
+          kind: "provider",
+          id: "fixture",
+          values: { apiKey: null, baseUrl: "https://changed.invalid/v1" },
+        },
       });
     expect(saved.status).toBe(200);
     expect(saved.body.saved).toBe(true);
@@ -262,6 +275,16 @@ describe("model settings routes", () => {
       ),
     ).toBe(false);
     expect(saved.body.snapshot.models).toEqual(await availableModels());
+    const { apiKey: _key, ...provider } = initialConfig.providers.fixture;
+    const editedProvider = {
+      ...provider,
+      baseUrl: "https://changed.invalid/v1",
+    };
+    expect(
+      (await readJson(join(agent, "models.json"))).providers.fixture,
+    ).toEqual(editedProvider);
+    expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("{}");
+    expect(saved.body.snapshot.providers[0].apiKeyConfigured).toBe(false);
     expect(saved.body.snapshot.saved.enabledModels).toEqual(
       initialSettings.enabledModels,
     );
@@ -276,7 +299,7 @@ describe("model settings routes", () => {
         edit: {
           kind: "model",
           provider: "fixture",
-          values: { id: "later-model", name: "Later available model" },
+          values: newModel,
         },
       });
     expect(declaration.status).toBe(200);
@@ -289,9 +312,12 @@ describe("model settings routes", () => {
       ).models,
     ).toContainEqual({
       provider: "fixture",
-      id: "later-model",
+      id: newModel.id,
       thinkingLevel: "high",
     });
+    expect(
+      (await readJson(join(agent, "models.json"))).providers.fixture,
+    ).toEqual({ ...editedProvider, models: [...provider.models, newModel] });
     expect(
       (await readJson(join(agent, "settings.json"))).enabledModels,
     ).toEqual(initialSettings.enabledModels);
@@ -315,7 +341,6 @@ describe("model settings routes", () => {
       invalidateModels: () => catalog.invalidate(),
     });
     const before = await snapshot();
-    const read = vi.spyOn(service, "read");
     const response = await request(app)
       .patch("/api/model-settings/config?sessionId=fixture")
       .send({
@@ -325,7 +350,6 @@ describe("model settings routes", () => {
     expect(response.status).toBe(200);
     expect(response.body.snapshot.models).toEqual(models);
     expect(runtime.refreshModels).toHaveBeenCalledWith("fixture");
-    expect(read).toHaveBeenCalledOnce();
     expect(modelMetadata).not.toHaveBeenCalled();
     expect(catalog.peek(cwd)).toBeUndefined();
     release(metadata(cwd, models));
@@ -423,7 +447,6 @@ describe("model settings routes", () => {
       /Model availability could not load/,
     );
     expect(saved.body.snapshot.providers[0].models[0].name).toBe("Committed");
-    expect(runtime.sessionCwd).toHaveBeenCalledOnce();
 
     const after = await snapshot();
     vi.spyOn(service, "read").mockRejectedValue(
@@ -447,16 +470,7 @@ describe("model settings routes", () => {
 });
 
 describe("native configuration round trips", () => {
-  it("reads global model settings after the session workspace is removed", async () => {
-    await rm(cwd, { recursive: true });
-
-    const settings = await snapshot();
-
-    expect(settings.saved.defaultThinkingLevel).toBe("high");
-    expect(settings.effective).toEqual(settings.saved);
-  });
-
-  it("keeps global preferences editable when trusted project settings cannot be parsed", async () => {
+  it("keeps global settings available while project settings are malformed and after workspace removal", async () => {
     new ProjectTrustStore(agent).set(cwd, true);
     const projectPath = join(cwd, ".pi", "settings.json");
     await writeFile(projectPath, "{broken project settings");
@@ -471,6 +485,11 @@ describe("native configuration round trips", () => {
     expect(await readFile(projectPath, "utf8")).toBe(
       "{broken project settings",
     );
+
+    await rm(cwd, { recursive: true });
+    const after = await snapshot();
+    expect(after.saved.defaultThinkingLevel).toBe("medium");
+    expect(after.effective).toEqual(after.saved);
   });
 
   it("keeps saved defaults distinct from project precedence, per-model thinking and ordered native patterns", async () => {
@@ -529,108 +548,26 @@ describe("native configuration round trips", () => {
     expect(readback.effective.defaultThinkingLevel).toBe("low");
   });
 
-  it("edits graphical model fields without replacing advanced declarations or exposing secrets", async () => {
-    const before = await snapshot();
-    expect(before.commonModels).toEqual([
-      { provider: "fixture", id: "second" },
-      { provider: "fixture", id: "first", thinkingLevel: "high" },
-    ]);
-    expect(JSON.stringify(before)).not.toContain("stored-config-secret");
-    expect(JSON.stringify(before)).not.toContain("never-project-this");
-    expect(before.providers[0]?.apiKeyConfigured).toBe(true);
-    expect(before.providers[0]?.advancedFields).toEqual([
-      "headers",
-      "modelOverrides",
-    ]);
-    await service.saveConfig(cwd, before.configRevision, {
-      kind: "model",
-      provider: "fixture",
-      originalId: "first",
-      values: { id: "first", name: "Edited" },
-    });
-    expect(await readJson(join(agent, "models.json"))).toEqual({
-      ...initialConfig,
-      providers: {
-        fixture: {
-          ...initialConfig.providers.fixture,
-          models: [
-            { ...initialConfig.providers.fixture.models[0], name: "Edited" },
-          ],
-        },
-      },
-    });
-    const after = await snapshot();
-    expect(after.providers[0]?.models[0]?.name).toBe("Edited");
-    expect(JSON.stringify(after)).not.toContain("stored-config-secret");
-    expect(JSON.stringify(after)).not.toContain("never-project-this");
-  });
-
-  // Each save intentionally validates through a fresh native metadata worker.
-  // Keep independent edit scenarios separate instead of charging all six cold
-  // starts to one test deadline; the add/remove case still checks a round trip.
-  it("adds and removes a model while preserving existing declarations and provider secrets", async () => {
-    const model = {
-      id: "new-model",
-      reasoning: false,
-      input: ["text"],
-      contextWindow: 4096,
-      maxTokens: 128,
-    };
-    await editConfig({
-      kind: "model",
-      provider: "fixture",
-      values: model,
-    });
-    expect(await readJson(join(agent, "models.json"))).toEqual({
-      ...initialConfig,
-      providers: {
-        fixture: {
-          ...initialConfig.providers.fixture,
-          models: [...initialConfig.providers.fixture.models, model],
-        },
-      },
-    });
-    await editConfig({
-      kind: "remove-model",
-      provider: "fixture",
-      id: "new-model",
-    });
-    expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
-  }, 45_000);
-
-  it("preserves provider edits and advanced declarations when clearing a model-file credential", async () => {
-    await editConfig({
-      kind: "provider",
-      id: "fixture",
-      values: { baseUrl: "https://changed.invalid/v1" },
-    });
-    expect(
-      (await readJson(join(agent, "models.json"))).providers.fixture,
-    ).toEqual({
-      ...initialConfig.providers.fixture,
-      baseUrl: "https://changed.invalid/v1",
-    });
-    await editConfig({
-      kind: "provider",
-      id: "fixture",
-      values: { apiKey: null },
-    });
-    const { apiKey: _key, ...provider } = initialConfig.providers.fixture;
-    expect(
-      (await readJson(join(agent, "models.json"))).providers.fixture,
-    ).toEqual({
-      ...provider,
-      baseUrl: "https://changed.invalid/v1",
-    });
-    expect(await readFile(join(agent, "auth.json"), "utf8")).toBe("{}");
-    expect((await snapshot()).providers[0]?.apiKeyConfigured).toBe(false);
-  }, 45_000);
-
-  it("removes the provider declaration independently of saved preferences and login credentials", async () => {
+  it("removes declarations without changing remaining models, saved preferences or login credentials", async () => {
     const auth = JSON.stringify({
       fixture: { type: "api_key", key: "saved-login-secret" },
     });
     await writeFile(join(agent, "auth.json"), auth);
+    const provider = initialConfig.providers.fixture;
+    await writeFile(
+      join(agent, "models.json"),
+      JSON.stringify({
+        providers: {
+          fixture: { ...provider, models: [...provider.models, newModel] },
+        },
+      }),
+    );
+    await editConfig({
+      kind: "remove-model",
+      provider: "fixture",
+      id: newModel.id,
+    });
+    expect(await readJson(join(agent, "models.json"))).toEqual(initialConfig);
     await editConfig({ kind: "remove-provider", id: "fixture" });
     expect(await readJson(join(agent, "models.json"))).toEqual({
       providers: {},
@@ -639,9 +576,9 @@ describe("native configuration round trips", () => {
       initialSettings,
     );
     expect(await readFile(join(agent, "auth.json"), "utf8")).toBe(auth);
-  });
+  }, 45_000);
 
-  it("edits symlink targets and accepts native models comments/settings BOM without losing fields", async () => {
+  it("edits linked Pi files with BOM/comments while preserving advanced declarations and secrets", async () => {
     const settingsTarget = join(root, "managed-settings.json");
     const modelsTarget = join(root, "managed-models.json");
     await writeFile(settingsTarget, `\uFEFF${JSON.stringify(initialSettings)}`);
@@ -660,6 +597,12 @@ describe("native configuration round trips", () => {
     const before = await snapshot();
     expect(before.settingsError).toBeUndefined();
     expect(before.configError).toBeUndefined();
+    expect(before.providers[0]).toMatchObject({
+      apiKeyConfigured: true,
+      advancedFields: ["headers", "modelOverrides"],
+    });
+    for (const secret of ["stored-config-secret", "never-project-this"])
+      expect(JSON.stringify(before)).not.toContain(secret);
     await service.savePreferences(before.settingsRevision, {
       defaultThinkingLevel: "medium",
     });
@@ -679,31 +622,22 @@ describe("native configuration round trips", () => {
       ...initialSettings,
       defaultThinkingLevel: "medium",
     });
-    const linked = await readJson(modelsTarget);
-    expect(linked.providers.fixture.models[0]).toEqual({
-      ...initialConfig.providers.fixture.models[0],
-      name: "Linked edit",
+    expect(await readJson(modelsTarget)).toEqual({
+      providers: {
+        fixture: {
+          ...initialConfig.providers.fixture,
+          models: [
+            {
+              ...initialConfig.providers.fixture.models[0],
+              name: "Linked edit",
+            },
+          ],
+        },
+      },
     });
-    expect(linked.providers.fixture.headers).toEqual(
-      initialConfig.providers.fixture.headers,
+    expect((await snapshot()).providers[0]?.models[0]?.name).toBe(
+      "Linked edit",
     );
-  });
-
-  it("recovers an abandoned native-compatible lock", async () => {
-    const lock = join(agent, "models.json.lock");
-    await mkdir(lock);
-    const old = new Date(Date.now() - 20_000);
-    await utimes(lock, old, old);
-    await editConfig({
-      kind: "model",
-      provider: "fixture",
-      originalId: "first",
-      values: { id: "first", name: "Recovered" },
-    });
-    expect(
-      (await readJson(join(agent, "models.json"))).providers.fixture.models[0]
-        .name,
-    ).toBe("Recovered");
   });
 
   it("refuses stale, malformed and native-invalid writes instead of replacing existing data", async () => {

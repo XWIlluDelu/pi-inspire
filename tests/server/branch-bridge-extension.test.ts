@@ -4,7 +4,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import inspireBranchBridge from "../../server/extensions/inspire-branch-bridge.js";
-import { RETRY_STATE_SUFFIX } from "../../shared/branch-bridge-protocol.js";
+import {
+  decodeBranchBridgeJson,
+  encodeBranchBridgeJson,
+  RETRY_STATE_SUFFIX,
+} from "../../shared/branch-bridge-protocol.js";
 
 const command = "inspire_branch_abcdefghijklmnopqrstuvwxyz123456";
 const statusKey = "inspire_status_abcdefghijklmnopqrstuvwxyz123456";
@@ -13,62 +17,49 @@ const sessionId = "session-a";
 
 afterEach(() => vi.unstubAllEnvs());
 
-function setup(
-  navigateTree: (
-    target: string,
-    options: unknown,
-  ) => Promise<{ cancelled: boolean }> = vi.fn(async () => ({
-    cancelled: false,
-  })),
-) {
+function setup(navigateTree = async () => ({ cancelled: false })) {
   vi.stubEnv("INSPIRE_BRANCH_COMMAND", command);
   vi.stubEnv("INSPIRE_BRANCH_STATUS_KEY", statusKey);
   vi.stubEnv("INSPIRE_BRANCH_WORKER_ID", workerId);
-  let handler!: (
+  type Handler = (
     argument: string,
     context: ExtensionCommandContext,
   ) => Promise<void>;
-  const handlers = new Map<string, typeof handler>();
-  const getSettings = vi.fn(() => ({}) as { retry?: { enabled?: boolean } });
+  const handlers = new Map<string, Handler>();
+  const getSettings = vi.fn();
   const api = {
     on: vi.fn(),
     getSettings,
-    registerCommand(name: string, value: { handler: typeof handler }) {
+    registerCommand(name: string, value: { handler: Handler }) {
       handlers.set(name, value.handler);
-      if (name === command) handler = value.handler;
     },
   } as unknown as ExtensionAPI;
   inspireBranchBridge(api);
   const statuses: Array<[string, string | undefined]> = [];
-  let leaf: string | null = "old-leaf";
   const context = {
     mode: "rpc",
     isIdle: () => true,
     hasPendingMessages: () => false,
     sessionManager: {
       getSessionId: () => sessionId,
-      getLeafId: () => leaf,
+      getLeafId: () => "old-leaf",
       getEntries: () => [],
       getEntry: (id: string) => (id === "target" ? { id } : undefined),
     },
-    navigateTree: vi.fn(async (target: string, options: unknown) => {
-      const result = await navigateTree(target, options);
-      if (!result.cancelled) leaf = target;
-      return result;
-    }),
+    navigateTree: vi.fn(navigateTree),
     ui: {
       setStatus: (key: string, text: string | undefined) =>
         statuses.push([key, text]),
     },
   } as unknown as ExtensionCommandContext;
-  return { handler, handlers, getSettings, context, statuses, navigateTree };
+  return { handlers, getSettings, context, statuses };
 }
 
-function argument(nonce = "nonce_abcdefghijklmnopqrstuvwxyz123456") {
+function argument() {
   return Buffer.from(
     JSON.stringify({
       v: 1,
-      nonce,
+      nonce: "nonce_abcdefghijklmnopqrstuvwxyz123456",
       workerId,
       sessionId,
       operation: "navigate",
@@ -78,39 +69,10 @@ function argument(nonce = "nonce_abcdefghijklmnopqrstuvwxyz123456") {
 }
 
 function decoded(statuses: Array<[string, string | undefined]>) {
-  return JSON.parse(
-    Buffer.from(statuses[0]![1]!, "base64url").toString("utf8"),
-  ) as Record<string, unknown>;
+  return decodeBranchBridgeJson(statuses[0]![1], 2_048);
 }
 
-describe("inspire retry state extension", () => {
-  it.each([undefined, false, true])(
-    "reports the effective setting %s with Pi's absent-field default",
-    async (enabled) => {
-      const fixture = setup();
-      fixture.getSettings.mockReturnValue(
-        enabled === undefined ? {} : { retry: { enabled } },
-      );
-      const request = {
-        v: 1,
-        nonce: "nonce_abcdefghijklmnopqrstuvwxyz123456",
-        workerId,
-        sessionId,
-      };
-      await fixture.handlers.get(`${command}${RETRY_STATE_SUFFIX}`)!(
-        Buffer.from(JSON.stringify(request)).toString("base64url"),
-        fixture.context,
-      );
-      expect(fixture.statuses).toHaveLength(1);
-      expect(fixture.statuses[0]![0]).toBe(`${statusKey}${RETRY_STATE_SUFFIX}`);
-      expect(decoded(fixture.statuses)).toEqual({
-        ...request,
-        autoRetryEnabled: enabled ?? true,
-      });
-      expect(fixture.context.navigateTree).not.toHaveBeenCalled();
-    },
-  );
-
+describe("inspire branch extension", () => {
   it("rejects a settings read for another session before reading settings", async () => {
     const fixture = setup();
     const request = {
@@ -128,57 +90,42 @@ describe("inspire retry state extension", () => {
     expect(fixture.getSettings).not.toHaveBeenCalled();
     expect(fixture.statuses).toHaveLength(0);
   });
-});
-
-describe("inspire branch extension", () => {
-  it("uses public unsummarized navigation and emits one bounded final nonce result", async () => {
-    const fixture = setup();
-    await fixture.handler(argument(), fixture.context);
-    expect(fixture.context.navigateTree).toHaveBeenCalledWith("target", {
-      summarize: false,
-      customInstructions: undefined,
-    });
-    expect(fixture.statuses).toHaveLength(1);
-    expect(fixture.statuses[0]![0]).toBe(statusKey);
-    expect(fixture.statuses[0]![1]!.length).toBeLessThan(2_048);
-    expect(decoded(fixture.statuses)).toMatchObject({
-      v: 1,
-      nonce: "nonce_abcdefghijklmnopqrstuvwxyz123456",
-      workerId,
-      sessionId,
-      ok: true,
-      cancelled: false,
-      beforeLeaf: "old-leaf",
-      effectiveLeaf: "target",
-    });
+  it("independently enforces decoded bytes and encoded characters", () => {
+    // Twelve decoded JSON bytes fit, but their sixteen base64url characters do not.
+    expect(() => encodeBranchBridgeJson("1234567890", 12)).toThrow(
+      /encoded character/,
+    );
+    const encoded = Buffer.from(JSON.stringify("1234567890"), "utf8").toString(
+      "base64url",
+    );
+    expect(Buffer.from(encoded, "base64url")).toHaveLength(12);
+    expect(() => decodeBranchBridgeJson(encoded, 12)).toThrow(/encoding/);
   });
 
-  it.each(["%%%", "a".repeat(4_100)])(
-    "catches malformed input and still emits exactly one small error result",
-    async (input) => {
-      const fixture = setup();
-      await expect(
-        fixture.handler(input, fixture.context),
-      ).resolves.toBeUndefined();
-      expect(fixture.statuses).toHaveLength(1);
-      expect(decoded(fixture.statuses)).toMatchObject({
-        ok: false,
-        cancelled: false,
-        error: expect.any(String),
-      });
-      expect(fixture.context.navigateTree).not.toHaveBeenCalled();
-    },
-  );
+  it("rejects non-canonical and malformed UTF-8 framing", () => {
+    expect(() => decodeBranchBridgeJson("YWJj=", 32)).toThrow(/encoding/);
+    expect(() =>
+      decodeBranchBridgeJson(Buffer.from([0xff]).toString("base64url"), 32),
+    ).toThrow();
+  });
+
+  it("returns a bounded error without navigating on oversized input", async () => {
+    const fixture = setup();
+    await fixture.handlers.get(command)!("a".repeat(4_100), fixture.context);
+    expect(fixture.statuses).toHaveLength(1);
+    expect(decoded(fixture.statuses)).toMatchObject({
+      ok: false,
+      cancelled: false,
+      error: expect.any(String),
+    });
+    expect(fixture.context.navigateTree).not.toHaveBeenCalled();
+  });
 
   it("catches navigation errors and reports them instead of relying on prompt success", async () => {
-    const fixture = setup(
-      vi.fn(async () => {
-        throw new Error("tree hook failed");
-      }),
-    );
-    await expect(
-      fixture.handler(argument(), fixture.context),
-    ).resolves.toBeUndefined();
+    const fixture = setup(async () => {
+      throw new Error("tree hook failed");
+    });
+    await fixture.handlers.get(command)!(argument(), fixture.context);
     expect(fixture.statuses).toHaveLength(1);
     expect(decoded(fixture.statuses)).toMatchObject({
       ok: false,

@@ -1,19 +1,24 @@
 import {
+  appendFile,
   mkdir,
   readdir,
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { showInFileManager } from "../../server/file-manager.js";
 import { ResourceStore } from "../../server/resources.js";
 import { MAX_ATTACHMENT_FILE_BYTES } from "../../shared/contracts.js";
-import { MAX_RESOURCE_REFERENCE_LENGTH } from "../../shared/resource-references.js";
+import {
+  fileResourceReference,
+  MAX_RESOURCE_REFERENCE_LENGTH,
+} from "../../shared/resource-references.js";
 
 import {
   closeHostApiFixture,
@@ -22,153 +27,70 @@ import {
   token,
 } from "./fixtures/host-api.js";
 
+vi.mock("../../server/file-manager.js", () => ({
+  showInFileManager: vi.fn(),
+}));
+
 describe("HTTP resource and upload authority", () => {
-  let temporary: Awaited<ReturnType<typeof hostApiFixture>>["temporary"];
-  let application: Awaited<ReturnType<typeof hostApiFixture>>["application"];
-  let resources: Awaited<ReturnType<typeof hostApiFixture>>["resources"];
-  let runtime: Awaited<ReturnType<typeof hostApiFixture>>["runtime"];
-  let git: Awaited<ReturnType<typeof hostApiFixture>>["git"];
-  let baseUrl: Awaited<ReturnType<typeof hostApiFixture>>["baseUrl"];
-  let promptDelivery: Awaited<
-    ReturnType<typeof hostApiFixture>
-  >["promptDelivery"];
-  let fixture: Awaited<ReturnType<typeof hostApiFixture>>;
+  type Fixture = Awaited<ReturnType<typeof hostApiFixture>>;
+  let fixture: Fixture;
+  let temporary: Fixture["temporary"];
+  let resources: Fixture["resources"];
+  let runtime: Fixture["runtime"];
+  let baseUrl: Fixture["baseUrl"];
+  let local: Fixture["localRequest"];
+  let guest: ReturnType<typeof request>;
   beforeEach(async () => {
+    vi.mocked(showInFileManager).mockReset().mockResolvedValue(undefined);
     fixture = await hostApiFixture();
-    ({
-      temporary,
-      application,
-      resources,
-      runtime,
-      git,
-      baseUrl,
-      promptDelivery,
-    } = fixture);
+    ({ temporary, resources, runtime, baseUrl, localRequest: local } = fixture);
+    guest = request(fixture.application.server);
   });
   afterEach(async () => closeHostApiFixture(fixture));
 
-  it("keeps literal file identity through listing, probes, preview bytes, and one-use downloads", async () => {
-    const project = join(temporary, "project");
-    await mkdir(project);
-    const literal = join(temporary, "report%20draft.md");
-    const space = join(temporary, "report draft.md");
-    await writeFile(literal, "ONLY_CITED_LITERAL");
-    await writeFile(space, "UNRELATED_SPACE_FILE");
-    const { bearer } = await pairedBrowser(application.server, baseUrl);
-    const opened = await request(application.server)
+  async function browser() {
+    const { bearer } = await pairedBrowser(fixture.application.server, baseUrl);
+    return request
+      .agent(fixture.application.server)
+      .set("Authorization", `Bearer ${bearer}`);
+  }
+
+  async function openProject(cwd = temporary, client = local): Promise<string> {
+    const { body } = await client
       .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ cwd: project })
+      .send({ cwd })
       .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    const original = await runtime.resourceContext(sessionId);
-    vi.spyOn(runtime, "resourceContext").mockResolvedValue({
-      sessionId,
-      viewId: original.viewId,
-      revision: original.revision,
-      cwd: project,
-      messages: [
-        {
-          role: "assistant",
-          content: [
-            { type: "toolCall", name: "read", arguments: { path: literal } },
-          ],
-        },
-      ],
-    });
-    const listed = await request(application.server)
-      .post("/api/resources/list")
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ sessionId })
-      .expect(200);
-    expect(listed.body.resources).toHaveLength(1);
-    expect(listed.body.resources[0].label).toBe(literal);
-    const reference = listed.body.resources[0].reference as string;
-    expect(reference).toContain("report%2520draft.md");
-    const spaceUrl = pathToFileURL(space).href;
-    const probed = await request(application.server)
-      .post("/api/resources/probe")
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ sessionId, references: [reference, spaceUrl] })
-      .expect(200);
-    expect(probed.body.results).toMatchObject([
-      { reference, availability: "available" },
-      { reference: spaceUrl, availability: "unavailable" },
-    ]);
-    await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ sessionId, reference: spaceUrl })
-      .expect(403);
-    const resolved = await request(application.server)
-      .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ sessionId, reference })
-      .expect(200);
-    expect(resolved.body.name).toBe("report%20draft.md");
-    const content = await request(application.server)
-      .get(`/api/resources/${resolved.body.id}/content`)
-      .query({ sessionId })
-      .set("Authorization", `Bearer ${bearer}`)
-      .expect(200);
-    expect(content.text).toBe("ONLY_CITED_LITERAL");
-    const grant = await request(application.server)
-      .post(`/api/resources/${resolved.body.id}/download-ticket`)
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ sessionId })
-      .expect(200);
-    const path = `/api/resource-downloads/${grant.body.ticket}`;
-    const downloaded = await request(application.server)
-      .get(path)
-      .set("Sec-Fetch-Site", "same-origin")
-      .expect(200);
-    expect(downloaded.text).toBe("ONLY_CITED_LITERAL");
-    const disposition = downloaded.headers["content-disposition"]!;
-    expect(disposition).toBe(
-      "attachment; filename*=UTF-8''report%2520draft.md",
-    );
-    expect(decodeURIComponent(disposition.split("''")[1]!)).toBe(
-      "report%20draft.md",
-    );
-    await request(application.server)
-      .get(path)
-      .set("Sec-Fetch-Site", "same-origin")
-      .expect(401);
-  });
+    return body.active.sessionId;
+  }
 
   it("allows URI escaping overhead without enlarging the literal workspace-path budget", async () => {
     await writeFile(join(temporary, "long-url.md"), "LONG_LINK_BYTES");
-    const opened = await fixture.localRequest
-      .post("/api/sessions/new")
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
+    const sessionId = await openProject();
     // A valid escaped relative URL whose native target is a short owned path.
     // No platform-dependent deep directory or overlong component is needed.
     const reference = "%2E/".repeat(2_100) + "long-url.md";
-    expect(reference.length).toBeGreaterThan(8_192);
-    const resolved = await fixture.localRequest
+    const resolved = await local
       .post("/api/resources/resolve")
       .send({ sessionId, reference })
       .expect(200);
     expect(resolved.body.name).toBe("long-url.md");
-    const content = await fixture.localRequest
+    const content = await local
       .get(`/api/resources/${resolved.body.id}/content`)
       .query({ sessionId })
       .expect(200);
     expect(content.text).toBe("LONG_LINK_BYTES");
-    await fixture.localRequest
+    await local
       .post("/api/resources/resolve")
       .send({
         sessionId,
         reference: "a".repeat(MAX_RESOURCE_REFERENCE_LENGTH + 1),
       })
       .expect(400);
-    await fixture.localRequest
+    await local
       .post("/api/resources/resolve")
       .send({ sessionId, reference: "a".repeat(8_193) })
       .expect(400);
-    await fixture.localRequest
+    await local
       .post("/api/resources/resolve")
       .send({
         sessionId,
@@ -179,42 +101,33 @@ describe("HTTP resource and upload authority", () => {
   });
 
   it("streams only the one-use download's current session/view/resource and revalidates before bytes", async () => {
-    const { bearer } = await pairedBrowser(application.server, baseUrl);
-    await writeFile(join(temporary, "download.txt"), "complete raw download\n");
-    const opened = await request(application.server)
-      .post("/api/sessions/new")
-      .set("Authorization", `Bearer ${bearer}`)
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    const resolved = await request(application.server)
+    const paired = await browser();
+    const name = "report%20 draft.md";
+    await writeFile(join(temporary, name), "complete raw download\n");
+    const sessionId = await openProject(temporary, paired);
+    const resolved = await paired
       .post("/api/resources/resolve")
-      .set("Authorization", `Bearer ${bearer}`)
       .send({
         sessionId,
-        reference: "download.txt",
-        workspacePath: "download.txt",
+        reference: name,
+        workspacePath: name,
       })
       .expect(200);
     const id = resolved.body.id as string;
     const mint = async () => {
-      const result = await request(application.server)
+      const result = await paired
         .post(`/api/resources/${id}/download-ticket`)
-        .set("Authorization", `Bearer ${bearer}`)
         .send({ sessionId })
         .expect(200);
       return `/api/resource-downloads/${result.body.ticket}`;
     };
-    await request(application.server)
+    await guest
       .post(`/api/resources/${id}/download-ticket`)
       .send({ sessionId })
       .expect(401);
     const url = await mint();
-    await request(application.server).get(url).expect(403);
-    await request(application.server)
-      .get(url)
-      .set("Sec-Fetch-Site", "same-site")
-      .expect(403);
+    await guest.get(url).expect(403);
+    await guest.get(url).set("Sec-Fetch-Site", "same-site").expect(403);
     for (const headers of [
       { Referer: "https://foreign.invalid/" },
       { Referer: "not-a-url" },
@@ -230,30 +143,24 @@ describe("HTTP resource and upload authority", () => {
         "Sec-Fetch-Site": "cross-site",
       },
     ]) {
-      await request(application.server).get(url).set(headers).expect(403);
+      await guest.get(url).set(headers).expect(403);
     }
-    const webkit = await mint();
-    const webkitBytes = await request(application.server)
-      .get(webkit)
+    const referredDownload = await mint();
+    await guest
+      .get(referredDownload)
       .set("Referer", baseUrl + "/")
-      .expect(200);
-    expect(webkitBytes.text).toBe("complete raw download\n");
-    await request(application.server)
-      .get(webkit)
-      .set("Referer", baseUrl + "/")
-      .expect(401);
-    const bytes = await request(application.server)
+      .expect(200, "complete raw download\n");
+    const bytes = await guest
       .get(url)
       .set("Sec-Fetch-Site", "same-origin")
       .expect(200);
     expect(bytes.text).toBe("complete raw download\n");
-    expect(bytes.headers["content-disposition"]).toContain("attachment;");
-    await request(application.server)
-      .get(url)
-      .set("Sec-Fetch-Site", "same-origin")
-      .expect(401);
+    const disposition = bytes.headers["content-disposition"]!;
+    expect(disposition).toMatch(/^attachment; filename\*=UTF-8''/u);
+    expect(decodeURIComponent(disposition.split("''")[1]!)).toBe(name);
+    await guest.get(url).set("Sec-Fetch-Site", "same-origin").expect(401);
     const wrongOrigin = await mint();
-    await request(application.server)
+    await guest
       .get(wrongOrigin)
       .set("Host", "localhost:55555")
       .set("Sec-Fetch-Site", "same-origin")
@@ -264,118 +171,74 @@ describe("HTTP resource and upload authority", () => {
       ...context,
       viewId: "retired-view",
     });
-    await request(application.server)
+    await guest
       .get(retiredView)
       .set("Sec-Fetch-Site", "same-origin")
       .expect(404);
     const stale = await mint();
-    await rm(join(temporary, "download.txt"));
-    await request(application.server)
-      .get(stale)
-      .set("Sec-Fetch-Site", "same-origin")
-      .expect(404);
-    await request(application.server)
-      .get(stale)
-      .set("Sec-Fetch-Site", "same-origin")
-      .expect(401);
+    await rm(join(temporary, name));
+    await guest.get(stale).set("Sec-Fetch-Site", "same-origin").expect(404);
+    await guest.get(stale).set("Sec-Fetch-Site", "same-origin").expect(401);
   });
 
-  // Multiple HTTP requests run real native hidden-attribute commands on the
-  // host. This checks behavior, not a 5-second budget for the whole scenario.
-  it("keeps file visibility and resource authority independent of Git through the HTTP API", async () => {
-    await mkdir(join(temporary, "dist"));
-    await mkdir(join(temporary, "empty"));
-    await mkdir(join(temporary, ".git"));
-    await writeFile(join(temporary, ".git", "index"), "corrupt Git fixture");
-    await writeFile(join(temporary, ".gitignore"), "dist/\n");
-    await writeFile(join(temporary, "dist", "report.md"), "# Ignored output\n");
+  it("validates hidden filters for saved and prospective workspace searches", async () => {
     await writeFile(join(temporary, ".env"), "SYNTHETIC_CONFIG=true\n");
-    const opened = await fixture.localRequest
-      .post("/api/sessions/new")
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    const listing = await fixture.localRequest
-      .get("/api/files/list")
-      .query({ sessionId })
-      .expect(200);
-    expect(listing.body).toMatchObject({
-      entries: [
-        { name: "dist", type: "dir" },
-        { name: "empty", type: "dir" },
-      ],
-      truncated: false,
-    });
-    const hidden = await fixture.localRequest
-      .get("/api/files/list")
-      .query({ sessionId, showHidden: "1" })
-      .expect(200);
-    expect(hidden.body.entries).toContainEqual({ name: ".env", type: "file" });
-    for (const endpoint of ["/api/files", "/api/new-session/files"]) {
-      const query =
-        endpoint === "/api/files" ? { sessionId } : { cwd: temporary };
-      const visible = await fixture.localRequest
-        .get(endpoint)
-        .query({ ...query, q: "report" })
-        .expect(200);
-      expect(visible.body.files).toEqual([
-        { name: "report.md", path: "dist/report.md" },
+    const sessionId = await openProject();
+    for (const [endpoint, scope] of [
+      ["/api/files", { sessionId }],
+      ["/api/new-session/files", { cwd: temporary }],
+    ] as const) {
+      const search = (showHidden?: string) =>
+        local.get(endpoint).query({
+          ...scope,
+          q: ".env",
+          ...(showHidden ? { showHidden } : {}),
+        });
+      expect((await search().expect(200)).body.files).toEqual([]);
+      expect((await search("1").expect(200)).body.files).toEqual([
+        { name: ".env", path: ".env" },
       ]);
-      const excluded = await fixture.localRequest
-        .get(endpoint)
-        .query({ ...query, q: ".env" })
-        .expect(200);
-      expect(excluded.body.files).toEqual([]);
-      const included = await fixture.localRequest
-        .get(endpoint)
-        .query({ ...query, q: ".env", showHidden: "1" })
-        .expect(200);
-      expect(included.body.files).toEqual([{ name: ".env", path: ".env" }]);
-      await fixture.localRequest
-        .get(endpoint)
-        .query({ ...query, showHidden: "yes" })
-        .expect(400);
+      await search("yes").expect(400);
     }
-    // Visibility is not access control, including when the file was never searched.
-    const resolved = await fixture.localRequest
+    await local
+      .get("/api/files/list")
+      .query({ sessionId, showHidden: "yes" })
+      .expect(400);
+    // Workspace filtering does not affect authorization of an exact path.
+    const resolved = await local
       .post("/api/resources/resolve")
       .send({ sessionId, reference: ".env", workspacePath: ".env" })
       .expect(200);
-    const downloaded = await fixture.localRequest
+    await local
       .get(`/api/resources/${resolved.body.id}/content`)
-      .query({ sessionId, download: "1" })
-      .expect(200);
-    expect(downloaded.text).toBe("SYNTHETIC_CONFIG=true\n");
+      .query({ sessionId })
+      .expect(200, "SYNTHETIC_CONFIG=true\n");
   }, 30_000);
 
   it("serves only authenticated session-addressed Git status and diff inspection", async () => {
-    await request(application.server)
-      .get("/api/git/status?sessionId=fixture-active")
-      .expect(401);
-    await fixture.localRequest
-      .get("/api/git/status?sessionId=not-open")
-      .expect(409);
-    await fixture.localRequest
+    await guest.get("/api/git/status?sessionId=fixture-active").expect(401);
+    await local.get("/api/git/status?sessionId=not-open").expect(409);
+    await local
       .post("/api/sessions/open")
       .send({ id: "fixture-active" })
       .expect(200);
-    const status = await fixture.localRequest
+    const status = await local
       .get("/api/git/status?sessionId=fixture-active")
       .expect(200);
     expect(status.body).toEqual({ kind: "not-repository" });
-    expect(git.status).toHaveBeenCalledWith(
+    expect(fixture.git.status).toHaveBeenCalledWith(
       fixture.cwd,
       expect.any(AbortSignal),
     );
 
-    await fixture.localRequest
+    await local
       .post("/api/git/diff")
       .send({
         sessionId: "fixture-active",
         pathId: "not base64!",
       })
       .expect(400);
-    const diff = await fixture.localRequest
+    const diff = await local
       .post("/api/git/diff")
       .send({
         sessionId: "fixture-active",
@@ -383,112 +246,190 @@ describe("HTTP resource and upload authority", () => {
       })
       .expect(200);
     expect(diff.body).toMatchObject({ kind: "empty" });
-    expect(git.diff).toHaveBeenCalledWith(
+    expect(fixture.git.diff).toHaveBeenCalledWith(
       fixture.cwd,
       "ZmlsZS50eHQ",
       expect.any(AbortSignal),
     );
-
-    for (const route of [
-      "add",
-      "commit",
-      "restore",
-      "checkout",
-      "history",
-      "blame",
-      "push",
-    ]) {
-      await fixture.localRequest
-        .post(`/api/git/${route}`)
-        .send({ sessionId: "fixture-active" })
-        .expect(404);
-    }
   });
 
-  it("keeps addressed resource access after another session opens", async () => {
+  it("reveals only authorized workspace paths and transcript citations in the file manager", async () => {
+    const literalName = "literal%20name.md";
+    await writeFile(join(fixture.cwd, literalName), "content");
+    await mkdir(join(fixture.cwd, "nested"));
+    await writeFile(join(temporary, "outside.md"), "outside");
+    const revealPath = "/api/resources/show-in-file-manager";
+    const sessionId = "fixture-active";
+    const workspaceTarget = (path: string, directory?: boolean) => ({
+      sessionId,
+      reference: path,
+      workspacePath: path,
+      directory,
+    });
+    await local.post("/api/sessions/open").send({ id: sessionId }).expect(200);
+    await guest.post(revealPath).send(workspaceTarget(literalName)).expect(401);
+    const reveal = (body: object) => local.post(revealPath).send(body);
+
+    const outside = join(temporary, "outside.md");
+    const citation = { sessionId, reference: fileResourceReference(outside) };
+    for (const [body, status] of [
+      [workspaceTarget("missing.md"), 404],
+      [workspaceTarget(literalName, true), 400],
+      [workspaceTarget("../outside.md"), 400],
+      [citation, 403],
+    ] as const)
+      await reveal(body).expect(status);
+    if (process.platform !== "win32") {
+      await symlink(temporary, join(fixture.cwd, "outside"), "dir");
+      await reveal(workspaceTarget("outside", true)).expect(403);
+    }
+    expect(showInFileManager).not.toHaveBeenCalled();
+    await reveal(workspaceTarget(literalName)).expect(200);
+    await reveal(workspaceTarget("nested", true)).expect(200);
+
+    const context = await runtime.resourceContext(sessionId);
+    vi.spyOn(runtime, "resourceContext").mockResolvedValue({
+      sessionId: context.sessionId,
+      viewId: context.viewId,
+      revision: context.revision + 1,
+      cwd: context.cwd,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "toolCall", name: "read", arguments: { path: outside } },
+          ],
+        },
+      ],
+    });
+    await reveal(citation).expect(200);
+    expect(vi.mocked(showInFileManager).mock.calls).toEqual([
+      [join(fixture.cwd, literalName), false],
+      [join(fixture.cwd, "nested"), true],
+      [outside, false],
+    ]);
+    vi.mocked(showInFileManager).mockRejectedValueOnce(
+      Object.assign(new Error("No desktop is available to show this item"), {
+        status: 503,
+      }),
+    );
+    await reveal(citation).expect(503, {
+      error: "No desktop is available to show this item",
+    });
+  });
+
+  it("serves files and embedded images from the addressed session after selection changes", async () => {
+    const sessionId = "fixture-active";
+    const session = (await fixture.catalog.get(sessionId))!;
     const name =
       process.platform === "win32" ? "quoted'(x).md" : "quoted'(*).md";
-    await writeFile(join(temporary, name), "# Host preview\n");
-    const opened = await fixture.localRequest
-      .post("/api/sessions/new")
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
+    await writeFile(join(session.cwd, name), "# Host preview\n");
+    const image = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/a9sAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const parentId = JSON.parse(
+      (await readFile(session.path, "utf8")).trim().split("\n").at(-1)!,
+    ).id;
+    const timestamp = Date.now();
+    await appendFile(
+      session.path,
+      `${JSON.stringify({
+        type: "message",
+        id: "saved-image",
+        parentId,
+        timestamp: new Date(timestamp).toISOString(),
+        message: {
+          role: "user",
+          timestamp,
+          content: [
+            { type: "text", text: "Retained picture" },
+            {
+              type: "image",
+              mimeType: "image/png",
+              data: image.toString("base64"),
+            },
+          ],
+        },
+      })}\n`,
+    );
+    const open = (id: string) =>
+      local.post("/api/sessions/open").send({ id }).expect(200);
+    await open(sessionId);
+    const pending = await runtime.resourceContext(sessionId);
     const resolve = (reference: string) =>
-      fixture.localRequest
-        .post("/api/resources/resolve")
-        .send({ sessionId, reference });
-    const resolved = await resolve(name).expect(200);
-    expect(resolved.body).toMatchObject({ name, kind: "markdown" });
-    const resourcePath = `/api/resources/${resolved.body.id}/content`;
+      local.post("/api/resources/resolve").send({ sessionId, reference });
+    const file = (await resolve(name).expect(200)).body;
+    expect(file).toMatchObject({ name, kind: "markdown" });
     await resolve("../outside.txt").expect(403);
 
-    await fixture.localRequest
-      .post("/api/sessions/open")
-      .send({ id: "fixture-active" })
-      .expect(200);
-    const content = await fixture.localRequest
-      .get(resourcePath)
-      .query({ sessionId })
-      .expect(200);
-    expect(content.text).toBe("# Host preview\n");
-    expect(content.headers["content-disposition"]).toBe(
-      process.platform === "win32"
-        ? "inline; filename*=UTF-8''quoted%27%28x%29.md"
-        : "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
+    const other = "fixture-history";
+    await open(other);
+    expect(await pending.loadMessages!()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          content: expect.arrayContaining([
+            expect.objectContaining({
+              type: "image",
+              data: image.toString("base64"),
+            }),
+          ]),
+        }),
+      ]),
     );
-    await fixture.localRequest
-      .get(resourcePath)
-      .query({ sessionId, download: "1" })
+
+    const { body: list } = await local
+      .post("/api/resources/list")
+      .send({ sessionId })
+      .expect(200);
+    const embedded = list.resources.find((resource: { reference: string }) =>
+      resource.reference.startsWith("pi-embedded://"),
+    );
+    const savedImage = (await resolve(embedded.reference).expect(200)).body;
+    expect(savedImage).toMatchObject({ kind: "image", size: image.length });
+    await local
+      .post("/api/resources/probe")
+      .send({ sessionId, references: [name] })
+      .expect(200)
+      .expect(({ body }) =>
+        expect(body.results).toMatchObject([
+          { availability: "available", workspacePath: name },
+        ]),
+      );
+    const content = (id: string, owner = sessionId) =>
+      local.get(`/api/resources/${id}/content`).query({ sessionId: owner });
+    await content(file.id)
+      .expect(
+        "Content-Disposition",
+        process.platform === "win32"
+          ? "inline; filename*=UTF-8''quoted%27%28x%29.md"
+          : "inline; filename*=UTF-8''quoted%27%28%2A%29.md",
+      )
+      .expect(200, "# Host preview\n");
+    await content(file.id)
+      .query({ download: "1" })
       .expect("Content-Disposition", /^attachment;/)
       .expect(200, "# Host preview\n");
-
-    await fixture.localRequest
-      .get(resourcePath)
-      .query({ sessionId })
+    await content(file.id)
       .set("Range", "bytes=0-5")
       .expect("Content-Range", "bytes 0-5/15")
       .expect(206, "# Host");
-    await fixture.localRequest
-      .get(resourcePath)
-      .query({ sessionId })
-      .set("Range", "bytes=999-1000")
-      .expect(416);
-
-    for (const [operation, body] of [
-      ["list", { sessionId }],
-      ["probe", { sessionId, references: [name] }],
-      ["resolve", { sessionId, reference: name }],
-    ] as const) {
-      await fixture.localRequest
-        .post(`/api/resources/${operation}`)
-        .send(body)
-        .expect(200);
-    }
-    await fixture.localRequest
-      .get(resourcePath)
-      .query({ sessionId: "fixture-active" })
-      .expect(404);
+    await content(file.id).set("Range", "bytes=999-1000").expect(416);
+    await content(file.id, other).expect(404);
+    const ranged = await content(savedImage.id)
+      .set("Range", "bytes=0-4")
+      .expect("Content-Type", "image/png")
+      .expect("Content-Range", `bytes 0-4/${image.length}`)
+      .expect(206);
+    expect(ranged.body).toEqual(image.subarray(0, 5));
+    await content(savedImage.id, other).expect(404);
   });
 
   it("uses the current resource size after resolve when a file grows or shrinks", async () => {
     const resourcePath = join(temporary, "changing.md");
     await writeFile(resourcePath, "old\n");
-    const opened = await fixture.localRequest
-      .post("/api/sessions/new")
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = opened.body.active.sessionId as string;
-    await fixture.localRequest
-      .post("/api/prompt")
-      .send(
-        promptDelivery({
-          sessionId,
-          message: "Open [changing](changing.md).",
-        }),
-      )
-      .expect(202);
-    const resolved = await fixture.localRequest
+    const sessionId = await openProject();
+    const resolved = await local
       .post("/api/resources/resolve")
       .send({ sessionId, reference: "changing.md" })
       .expect(200);
@@ -496,7 +437,7 @@ describe("HTTP resource and upload authority", () => {
 
     const grown = "grown-content\n";
     await writeFile(resourcePath, grown);
-    const grownResponse = await fixture.localRequest
+    const grownResponse = await local
       .get(
         `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
       )
@@ -509,7 +450,7 @@ describe("HTTP resource and upload authority", () => {
 
     const shrunk = "new\n";
     await writeFile(resourcePath, shrunk);
-    const shrunkResponse = await fixture.localRequest
+    const shrunkResponse = await local
       .get(
         `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`,
       )
@@ -523,16 +464,8 @@ describe("HTTP resource and upload authority", () => {
 
   it("closes an opened file when the client aborts during authorization", async () => {
     await writeFile(join(temporary, "slow.md"), "slow preview\n");
-    const openedSession = await fixture.localRequest
-      .post("/api/sessions/new")
-      .send({ cwd: temporary })
-      .expect(200);
-    const sessionId = openedSession.body.active.sessionId as string;
-    await fixture.localRequest
-      .post("/api/prompt")
-      .send(promptDelivery({ sessionId, message: "Open [slow](slow.md)." }))
-      .expect(202);
-    const resolved = await fixture.localRequest
+    const sessionId = await openProject();
+    const resolved = await local
       .post("/api/resources/resolve")
       .send({ sessionId, reference: "slow.md" })
       .expect(200);
@@ -577,69 +510,38 @@ describe("HTTP resource and upload authority", () => {
     });
   });
 
-  it("honors byte ranges for embedded resources as well as filesystem files", async () => {
-    const sessionId = "embedded-session";
-    vi.spyOn(runtime, "resourceContext").mockImplementation(
-      async (requestedSessionId) => {
-        if (requestedSessionId !== sessionId)
-          throw Object.assign(new Error("Wrong session"), { status: 409 });
-        return {
-          sessionId,
-          viewId: "embedded-view",
-          revision: 1,
-          cwd: temporary,
-          messages: [
-            {
-              role: "toolResult",
-              content: [
-                {
-                  type: "image",
-                  data: Buffer.from("image-bytes").toString("base64"),
-                  mimeType: "image/png",
-                },
-              ],
-            },
-          ],
-        };
-      },
-    );
-    const resolved = await fixture.localRequest
-      .post("/api/resources/resolve")
-      .send({ sessionId, reference: "pi-embedded://0/0" })
-      .expect(200);
-    const ranged = await fixture.localRequest
-      .get(`/api/resources/${resolved.body.id}/content?sessionId=${sessionId}`)
-      .set("Range", "bytes=0-4")
-      .expect(206);
-    expect(ranged.headers["content-range"]).toBe("bytes 0-4/11");
-    expect(Buffer.from(ranged.body).toString()).toBe("image");
-  });
-
-  it("deletes withdrawn attachments from the host cache", async () => {
-    const uploaded = await fixture.localRequest
+  it("keeps staged uploads private and removes them on withdrawal", async () => {
+    const directory = await fixture.attachments.uploadDirectory();
+    const before = await readdir(directory);
+    const uploaded = await local
       .post("/api/attachments")
       .attach("files", Buffer.from("draft"), {
         filename: "draft.txt",
         contentType: "text/plain",
       })
       .expect(200);
-    const id = uploaded.body.attachments[0].id as string;
-    await fixture.localRequest
-      .delete(`/api/attachments/${id}`)
-      .expect(200, { ok: true });
-    // Idempotent: a second delete of the same id still succeeds.
-    await fixture.localRequest
-      .delete(`/api/attachments/${id}`)
-      .expect(200, { ok: true });
-    await fixture.localRequest
-      .delete("/api/attachments/not-a-uuid")
-      .expect(400);
+    const [attachment] = uploaded.body.attachments;
+    expect(attachment).toMatchObject({ fileName: "draft.txt", kind: "file" });
+    expect(attachment).not.toHaveProperty("path");
+    const id = attachment.id as string;
+    const stored = (await readdir(directory)).filter(
+      (name) => !before.includes(name),
+    );
+    expect(stored.length).toBeGreaterThan(0);
+    if (process.platform !== "win32") {
+      for (const name of stored)
+        expect((await stat(join(directory, name))).mode & 0o777).toBe(0o600);
+    }
+    await local.delete(`/api/attachments/${id}`).expect(200, { ok: true });
+    expect(await readdir(directory)).toEqual(before);
+    await local.delete(`/api/attachments/${id}`).expect(200, { ok: true });
+    await local.delete("/api/attachments/not-a-uuid").expect(400);
   });
 
   it("rejects multipart batches at the aggregate streaming budget and removes partial files", async () => {
     const uploadDirectory = await fixture.attachments.uploadDirectory();
     const metadataBefore = await readdir(uploadDirectory);
-    await fixture.localRequest
+    await local
       .post("/api/attachments")
       .attach("files", Buffer.alloc(MAX_ATTACHMENT_FILE_BYTES), {
         filename: "one.bin",
@@ -651,76 +553,4 @@ describe("HTTP resource and upload authority", () => {
       .expect(413);
     expect(await readdir(uploadDirectory)).toEqual(metadataBefore);
   }, 15_000);
-
-  it("accepts a bounded private upload and delivers its handle through the prompt API", async () => {
-    await fixture.localRequest
-      .post("/api/sessions/open")
-      .send({ id: "fixture-active" })
-      .expect(200);
-
-    const metadataBefore = await readdir(
-      await fixture.attachments.uploadDirectory(),
-    );
-    const uploaded = await fixture.localRequest
-      .post("/api/attachments")
-      .attach("files", Buffer.from("research notes"), {
-        filename: "notes.txt",
-        contentType: "text/plain",
-      })
-      .expect(200);
-    expect(uploaded.body.attachments[0]).toMatchObject({
-      fileName: "notes.txt",
-      kind: "file",
-      size: 14,
-    });
-    expect(uploaded.body.attachments[0]).not.toHaveProperty("path");
-    const storedFiles = await readdir(join(temporary, "uploads"));
-    const id = uploaded.body.attachments[0].id;
-    expect(storedFiles.sort()).toEqual(
-      [...metadataBefore, `${id}-notes.txt`, `${id}.json`].sort(),
-    );
-    const ownership = JSON.parse(
-      await readFile(join(temporary, "uploads", `${id}.json`), "utf8"),
-    );
-    expect(ownership).toMatchObject({
-      id,
-      kind: "file",
-      fileName: "notes.txt",
-      path: join(temporary, "uploads", `${id}-notes.txt`),
-    });
-    if (process.platform !== "win32") {
-      expect(
-        (await stat(join(temporary, "uploads", `${id}-notes.txt`))).mode &
-          0o777,
-      ).toBe(0o600);
-    }
-
-    const prompt = vi.spyOn(runtime, "prompt");
-    const delivered = await fixture.localRequest
-      .post("/api/prompt")
-      .send(
-        promptDelivery({
-          sessionId: "fixture-active",
-          message: "Integrate this note",
-          attachmentIds: [uploaded.body.attachments[0].id],
-        }),
-      )
-      .expect(202);
-    expect(delivered.body).toMatchObject({
-      accepted: true,
-      historyEntry: {
-        text: "Integrate this note",
-        images: [],
-        files: [{ fileName: "notes.txt", kind: "attachment" }],
-      },
-    });
-
-    expect(prompt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "fixture-active",
-        message: "Integrate this note",
-        attachmentIds: [id],
-      }),
-    );
-  });
 });

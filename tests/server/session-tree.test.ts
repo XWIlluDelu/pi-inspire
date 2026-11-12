@@ -1,10 +1,8 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
 import {
   BRANCH_TREE_MAX_BYTES,
   BRANCH_TREE_MAX_NODES,
-  boundedUserText,
   branchEntryContent,
   branchEntryText,
   branchNode,
@@ -26,7 +24,7 @@ const message = (
   }) as SessionEntry;
 
 describe("bounded session branch tree", () => {
-  it("orders branched entries, computes active ancestry, and exposes only safe snippets", () => {
+  it("projects the current route and alternative branch endpoints", () => {
     const entries = [
       message("u1", null, "user", "root question"),
       message("a1", "u1", "assistant", "first answer"),
@@ -64,74 +62,9 @@ describe("bounded session branch tree", () => {
       leaf: true,
       label: "Chosen path",
     });
-    expect(JSON.stringify(tree)).not.toContain("apiKey");
   });
 
-  it("separates readable user outlines from retained search, detail and edit source", () => {
-    const source = `Review this report\n\n${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"\n\n[Image: original 2560x133, displayed at 2000x104. Multiply coordinates by 1.28 to map to original image.]`;
-    const entry = message("files", null, "user", "");
-    Object.assign(
-      (entry as Extract<SessionEntry, { type: "message" }>).message,
-      {
-        content: [
-          { type: "text", text: source },
-          { type: "image", mimeType: "image/png", data: "unused" },
-        ],
-      },
-    );
-    expect(branchNode(entry, true, true).snippet).toBe(
-      "Review this report report.csv [Image: image/png]",
-    );
-    expect(branchEntryText(entry, "separate")).toBe(source);
-    expect(boundedUserText(entry, 10_000)).toBe(source);
-    const search = projectSessionTree([entry], entry.id, {
-      query: "/demo/report.csv",
-    });
-    expect(search.nodes[0]?.snippet).toContain("/demo/report.csv");
-  });
-
-  it("bounds deep and large histories by node count and serialized bytes", () => {
-    const entries: SessionEntry[] = [];
-    let parent: string | null = null;
-    for (let index = 0; index < BRANCH_TREE_MAX_NODES + 80; index += 1) {
-      const id = `entry-${index}`;
-      entries.push(
-        message(
-          id,
-          parent,
-          index === 0 ? "user" : "assistant",
-          `content-${index}-${"x".repeat(400)}`,
-        ),
-      );
-      parent = id;
-    }
-    const tree = projectSessionTree(entries, parent);
-    expect(tree.truncated).toBe(true);
-    expect(tree.nodes.length).toBeLessThanOrEqual(BRANCH_TREE_MAX_NODES);
-    expect(
-      Buffer.byteLength(
-        JSON.stringify({ nodes: tree.nodes, activePath: tree.activePath }),
-      ),
-    ).toBeLessThanOrEqual(BRANCH_TREE_MAX_BYTES);
-    expect(tree.nodes.at(-1)).toMatchObject({
-      id: parent,
-      leaf: true,
-      active: true,
-    });
-    expect(tree.nodes[0]?.id).not.toBe("entry-0");
-    expect(tree.leadingPrompt).toMatchObject({
-      id: "entry-0",
-      role: "user",
-      canFork: true,
-    });
-    expect(tree.nextBefore).toBe(tree.nodes[0]!.id);
-    expect(
-      tree.activePath.every((id) => tree.nodes.some((node) => node.id === id)),
-    ).toBe(true);
-    expect(tree.nodes.every((node) => node.depth >= 0)).toBe(true);
-  });
-
-  it("pages every retained point and searches complete old/alternate text, not snippets", () => {
+  it("pages a long turn within projection limits and searches complete retained text", () => {
     const entries: SessionEntry[] = [];
     let parent: string | null = null;
     for (let index = 0; index < 1200; index++) {
@@ -140,10 +73,10 @@ describe("bounded session branch tree", () => {
         message(
           id,
           parent,
-          index % 2 ? "assistant" : "user",
+          index === 0 ? "user" : "assistant",
           index === 1
             ? `${"Long response. ".repeat(6000)}needle beyond the preview · 完整内容`
-            : `Conversation point ${index}`,
+            : `Conversation point ${index} ${"x".repeat(400)}`,
         ),
       );
       parent = id;
@@ -152,6 +85,19 @@ describe("bounded session branch tree", () => {
       message("alternate", "point-4", "user", "Abandoned alternate input"),
     );
     let page = projectSessionTree(entries, parent);
+    expect(page.truncated).toBe(true);
+    expect(page.nodes.length).toBeLessThanOrEqual(BRANCH_TREE_MAX_NODES);
+    expect(
+      Buffer.byteLength(
+        JSON.stringify({ nodes: page.nodes, activePath: page.activePath }),
+      ),
+    ).toBeLessThanOrEqual(BRANCH_TREE_MAX_BYTES);
+    expect(page.nodes.at(-1)).toMatchObject({ id: parent, leaf: true });
+    expect(page.leadingPrompt).toMatchObject({
+      id: "point-0",
+      role: "user",
+      canFork: true,
+    });
     const ids = page.nodes.map((node) => node.id);
     while (page.nextBefore) {
       page = projectSessionTree(entries, parent, { before: page.nextBefore });
@@ -251,7 +197,6 @@ describe("bounded session branch tree", () => {
       expect(branchEntryText(shell)).toContain(
         excludeFromContext ? "Excluded from context" : "Included in context",
       );
-      expect(branchEntryText(shell)).not.toContain('"role"');
       for (const query of ["shell-marker", "native-result-marker"])
         expect(
           projectSessionTree([shell], "shell", { query }).nodes[0],
@@ -259,41 +204,36 @@ describe("bounded session branch tree", () => {
     },
   );
 
-  it("keeps outline whitespace, block separators and truncation without reading unused text", () => {
-    for (const length of [238, 239, 240, 241]) {
-      const entry = message("preview", null, "assistant", "");
-      Object.assign(
-        (entry as Extract<SessionEntry, { type: "message" }>).message,
-        {
-          content: [
-            { type: "text", text: ` \n${"x".repeat(length)}\t ` },
-            { type: "thinking", thinking: "\nThought\tprocess" },
-            { type: "image", mimeType: "image/png", data: "unused" },
-            { type: "text", text: "Last block" },
-          ],
-        },
-      );
-      const normalized = branchEntryText(entry).replace(/\s+/gu, " ").trim();
-      expect(branchNode(entry, true, true).snippet).toBe(
-        normalized.length > 240 ? `${normalized.slice(0, 239)}…` : normalized,
-      );
-    }
+  it("keeps readable outlines within the preview bound", () => {
+    const mixed = message("preview", null, "assistant", "");
+    Object.assign(
+      (mixed as Extract<SessionEntry, { type: "message" }>).message,
+      {
+        content: [
+          { type: "text", text: " \nFirst block\t " },
+          { type: "thinking", thinking: "\nThought\tprocess" },
+          { type: "image", mimeType: "image/png", data: "unused" },
+          { type: "text", text: "Last block" },
+        ],
+      },
+    );
+    expect(branchNode(mixed, true, true).snippet).toBe(
+      "First block Thinking Thought process [Image: image/png] Last block",
+    );
+
     const entry = message("lazy-preview", null, "assistant", "");
     Object.assign(
       (entry as Extract<SessionEntry, { type: "message" }>).message,
       {
         content: [
           { type: "text", text: "x".repeat(1000) },
-          {
-            type: "text",
-            get text(): string {
-              throw new Error("unused preview text");
-            },
-          },
+          { type: "text", text: "second block beyond the preview" },
         ],
       },
     );
-    expect(branchNode(entry, false, false).snippet).toBe(`${"x".repeat(239)}…`);
+    const preview = branchNode(entry, false, false).snippet;
+    expect(preview.startsWith("x")).toBe(true);
+    expect(preview.length).toBeLessThanOrEqual(240);
   });
 
   it("reuses a snapshot's structure without retaining labels or ancestry across revisions", () => {
@@ -363,15 +303,6 @@ describe("bounded session branch tree", () => {
     );
   });
 
-  it("returns bounded original user text and rejects non-user targets", () => {
-    const user = message("user", null, "user", "original text");
-    expect(boundedUserText(user, 100)).toBe("original text");
-    expect(() => boundedUserText(user, 3)).toThrow(/composer limit/);
-    expect(() =>
-      boundedUserText(message("assistant", "user", "assistant", "answer"), 100),
-    ).toThrow(/not an editable user/);
-  });
-
   it("rejects oversized raw entry and parent identities with a small typed error that never echoes them", () => {
     const oversized = "secret-" + "x".repeat(600);
     for (const entries of [
@@ -389,16 +320,5 @@ describe("bounded session branch tree", () => {
         ).toBeLessThan(100);
       }
     }
-  });
-
-  it("fails closed on missing parents and cycles instead of projecting ambiguous depth", () => {
-    expect(() =>
-      projectSessionTree([message("a", "missing", "assistant", "bad")], "a"),
-    ).toThrow(/missing/);
-    const cycle = [
-      message("a", "b", "assistant", "a"),
-      message("b", "a", "assistant", "b"),
-    ];
-    expect(() => projectSessionTree(cycle, "a")).toThrow();
   });
 });

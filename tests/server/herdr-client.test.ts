@@ -241,7 +241,7 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
     ).toHaveLength(0);
   });
 
-  it("creates exact argv programs in no-focus project tabs without ambient Herdr identity or shell interpretation", async () => {
+  it("places exact argv in background project panes and retires the workspace before reuse", async () => {
     const { client, commands, requests } = await harness({
       running: true,
       session: "isolated",
@@ -253,14 +253,12 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
     });
     const cwd = "/repo with spaces";
     const argv = ["/path/my pi", "a'b;$(touch bad)", "line\nbreak", ""];
-    const [first, second, third] = await Promise.all([
+    const [first, second] = await Promise.all([
       client.createWorkerPane(cwd, "one", argv),
       client.createWorkerPane(cwd, "two", ["pi"]),
-      client.createWorkerPane(cwd, "three", ["pi"]),
     ]);
-    expect(new Set([first.paneId, second.paneId, third.paneId]).size).toBe(3);
+    expect(first.paneId).not.toBe(second.paneId);
     expect(first.workspaceId).toBe(second.workspaceId);
-    expect(second.workspaceId).toBe(third.workspaceId);
     expect(first.serverId).toBe(second.serverId);
     expect(
       requests.filter((item) =>
@@ -287,14 +285,6 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
           root: { type: "pane", cwd, label: "two", command: ["pi"] },
         },
       },
-      {
-        method: "layout.apply",
-        params: {
-          workspace_id: first.workspaceId,
-          focus: false,
-          root: { type: "pane", cwd, label: "three", command: ["pi"] },
-        },
-      },
     ]);
     expect(
       (await commands()).every(
@@ -307,21 +297,33 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
     await expect(
       client.createWorkerPane(cwd, "invalid", ["pi", String.fromCharCode(0)]),
     ).rejects.toThrow("NUL");
+
+    await client.closePane(first);
+    const before = requests.length;
+    const closing = client.closePane(second);
+    const reopening = client.createWorkerPane(cwd, "next", ["pi"]);
+    await closing;
+    expect((await reopening).workspaceId).not.toBe(first.workspaceId);
+    expect(requests.slice(before).map(({ method }) => method)).toEqual([
+      "pane.close",
+      "workspace.create",
+      "layout.apply",
+    ]);
   });
 
   it("does not retry ambiguous allocation; only exact private leases can restore cleanup ownership", async () => {
-    const failed = await harness({ running: true, failCreate: true });
+    const options = { running: true, failCreate: true };
+    const { client, requests, binary, environment } = await harness(options);
     const results = await Promise.allSettled([
-      failed.client.createWorkerPane("/repo", "one", ["pi"]),
-      failed.client.createWorkerPane("/repo", "two", ["pi"]),
+      client.createWorkerPane("/repo", "one", ["pi"]),
+      client.createWorkerPane("/repo", "two", ["pi"]),
     ]);
     expect(results.every((item) => item.status === "rejected")).toBe(true);
     expect(
-      failed.requests.filter((item) => item.method === "workspace.create"),
+      requests.filter((item) => item.method === "workspace.create"),
     ).toHaveLength(1);
-    const { client, requests, binary, environment } = await harness({
-      running: true,
-    });
+
+    options.failCreate = false;
     const first = await client.createWorkerPane("/repo", "one", ["pi"]);
     const second = await client.createWorkerPane("/repo", "two", ["pi"]);
     await expect(
@@ -343,52 +345,28 @@ describe.skipIf(process.platform !== "linux")("HerdrClient", () => {
     await expect(recovered.closePane(second)).rejects.toThrow("not owned");
   });
 
-  it("orders final-pane cleanup before creating the next project workspace", async () => {
-    const { client, requests } = await harness({ running: true });
-    const first = await client.createWorkerPane("/repo", "old", ["pi"]);
-    const closing = client.closePane(first);
-    const next = client.createWorkerPane("/repo", "new", ["pi"]);
-    await closing;
-    expect((await next).workspaceId).not.toBe(first.workspaceId);
+  it("recreates an externally closed workspace even when its old panes still have leases", async () => {
+    const { client, root, requests } = await harness({ running: true });
+    const first = await client.createWorkerPane("/repo", "first", ["pi"]);
+    const second = await client.createWorkerPane("/repo", "second", ["pi"]);
+    const external = await HerdrControl.open(join(root, "api.sock"), 22);
+    try {
+      await external.request("workspace.close", {
+        workspace_id: first.workspaceId,
+      });
+    } finally {
+      external.close();
+    }
+    await client.closePane(first);
+    const next = await client.createWorkerPane("/repo", "new", ["pi"]);
+    expect(next.workspaceId).not.toBe(first.workspaceId);
+    await client.closePane(second);
+    const sibling = await client.createWorkerPane("/repo", "sibling", ["pi"]);
+    expect(sibling.workspaceId).toBe(next.workspaceId);
     expect(
-      requests
-        .filter((item) => item.method !== "ping")
-        .map((item) => item.method),
-    ).toEqual([
-      "workspace.create",
-      "layout.apply",
-      "pane.close",
-      "workspace.create",
-      "layout.apply",
-    ]);
+      requests.filter(({ method }) => method === "workspace.create"),
+    ).toHaveLength(2);
   });
-
-  it.each([true, false])(
-    "recreates an externally closed workspace (all workers retired: %s)",
-    async (retireAll) => {
-      const { client, root, requests } = await harness({ running: true });
-      const first = await client.createWorkerPane("/repo", "first", ["pi"]);
-      const second = await client.createWorkerPane("/repo", "second", ["pi"]);
-      const external = await HerdrControl.open(join(root, "api.sock"), 22);
-      try {
-        await external.request("workspace.close", {
-          workspace_id: first.workspaceId,
-        });
-      } finally {
-        external.close();
-      }
-      await client.closePane(first);
-      if (retireAll) await client.closePane(second);
-      const next = await client.createWorkerPane("/repo", "new", ["pi"]);
-      expect(next.workspaceId).not.toBe(first.workspaceId);
-      if (!retireAll) await client.closePane(second);
-      const sibling = await client.createWorkerPane("/repo", "sibling", ["pi"]);
-      expect(sibling.workspaceId).toBe(next.workspaceId);
-      expect(
-        requests.filter(({ method }) => method === "workspace.create"),
-      ).toHaveLength(2);
-    },
-  );
 
   it("does not replace a cached workspace after an uncertain layout failure", async () => {
     const options = { running: true, failLayout: false };

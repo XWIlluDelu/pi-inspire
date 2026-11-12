@@ -1,11 +1,4 @@
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
@@ -15,10 +8,7 @@ import { addAttachmentContext } from "../../server/attachments.js";
 import {
   PiRpcCancelledError,
   PiRpcOutcomeUnknownError,
-  type PiRpcProcess,
 } from "../../server/pi-rpc.js";
-
-import { RuntimeController } from "../../server/runtime.js";
 import type { RuntimeSlot } from "../../server/runtime-slot.js";
 
 import {
@@ -26,85 +16,52 @@ import {
   hostApiFixture,
   token,
 } from "./fixtures/host-api.js";
-import { PreviewProjection } from "./fixtures/preview-projection.js";
 import {
-  catalog,
   deferredSignal,
   disposeRuntimeFixture,
-  FakeRpc,
+  fakeRuntime,
+  fixtureWorkspace,
   initializeRuntimeFixture,
   persistedRecord,
   preview,
-  previewSnapshot,
   record,
   schedulingRuntime,
   trackedAttachmentStore,
+  trackRuntime,
   upload,
   waitForReady,
   workspaceDirectories,
 } from "./fixtures/runtime.js";
 
+import { messageEntry } from "./fixtures/session-jsonl.js";
+
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("prompt admission and artifact ownership", () => {
-  it("returns the Pi-file preview before extensions finish and makes prompt await readiness", async () => {
-    const store = trackedAttachmentStore();
-    const { promise: gate, resolve: release } = deferredSignal();
-    const f = schedulingRuntime({
-      attachments: store,
-      configure: (worker) => {
-        worker.startGate = gate;
-      },
-    });
-    const { runtime } = f;
-
-    const opening = runtime.openSession("a");
-    await vi.waitFor(() => expect(f.worker?.starts).toBe(1));
-    const opened = await opening;
-    expect(opened.active?.transcriptPage.messages).toEqual([
-      { role: "user", content: "preview:a", timestamp: 1 },
-    ]);
-
-    const prompting = runtime.prompt({ sessionId: "a", message: "continue" });
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    expect(f.worker.commands.some((command) => command.type === "prompt")).toBe(
-      false,
-    );
-    release();
-    await prompting;
-    expect(f.worker.commands.some((command) => command.type === "prompt")).toBe(
-      true,
-    );
-    await runtime.close();
-  });
-
-  it("revalidates project-file authority after gated worker startup", async () => {
+  it("reads the saved preview during startup and revalidates project files before dispatch", async () => {
     const workspace = await mkdtemp(
       join(tmpdir(), "inspire-runtime-project-revalidate-"),
     );
     workspaceDirectories.push(workspace);
     const selected = join(workspace, "selected.txt");
     await writeFile(selected, "selected");
-    const store = trackedAttachmentStore();
     const { promise: gate, resolve: release } = deferredSignal();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([record("a", workspace)]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          worker.startGate = gate;
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: preview,
+    const f = schedulingRuntime({
+      sessions: [record("a", workspace)],
+      configure(worker) {
+        worker.startGate = gate;
       },
-    );
+    });
+    const { runtime } = f;
 
     try {
-      await runtime.openSession("a");
-      await vi.waitFor(() => expect(worker.starts).toBe(1));
+      const opened = await runtime.openSession("a");
+      expect(opened.active?.transcriptPage.messages).toMatchObject([
+        { role: "user", content: "preview:a", timestamp: 1 },
+      ]);
+      await vi.waitFor(() => expect(f.workers[0]?.starts).toBe(1));
+      const { worker } = f;
       const prompting = runtime.prompt({
         sessionId: "a",
         message: "use the selected file",
@@ -119,61 +76,36 @@ describe("prompt admission and artifact ownership", () => {
         expect(slots.get("a")?.mutationQueue.pending).toBe(2),
       );
 
+      const delivered = () =>
+        worker.commands.filter(({ type }) => type === "prompt");
+      expect(delivered()).toEqual([]);
       await rm(selected);
       release();
       await expect(prompting).rejects.toMatchObject({
         status: 409,
         message: "A selected project file changed before prompt delivery",
       });
-      expect(worker.commands.some((command) => command.type === "prompt")).toBe(
-        false,
-      );
+      expect(delivered()).toEqual([]);
+      await writeFile(selected, "reselected");
+      await runtime.prompt({
+        sessionId: "a",
+        message: "use the selected file",
+        projectFiles: ["selected.txt"],
+      });
+      expect(delivered()).toEqual([
+        expect.objectContaining({
+          message: expect.stringContaining(
+            JSON.stringify(await realpath(selected)),
+          ),
+        }),
+      ]);
     } finally {
       release();
       await runtime.close();
     }
   });
 
-  it("shields prompt attachments from a DELETE racing the gated delivery", async () => {
-    const store = trackedAttachmentStore();
-    const { promise: gate, resolve: release } = deferredSignal();
-    const f = schedulingRuntime({
-      attachments: store,
-      configure: (worker) => {
-        worker.startGate = gate;
-      },
-    });
-    const { runtime } = f;
-    await runtime.openSession("a");
-
-    const doc = await store.add(upload("notes.txt", "text/plain"));
-    const prompting = runtime.prompt({
-      sessionId: "a",
-      message: "use the note",
-      attachmentIds: [doc.id],
-    });
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    // The prompt owns the file while delivery waits on the worker; the
-    // racing withdrawal must be moot.
-    await store.remove(doc.id);
-    release();
-    await prompting;
-
-    const promptCommand = f.worker.commands.find(
-      (command) => command.type === "prompt",
-    );
-    const referenced = JSON.parse(
-      String(promptCommand?.message ?? "").split("\n- ")[1]!,
-    ) as string;
-    expect(referenced).toContain("notes.txt");
-    await expect(access(referenced)).resolves.toBeUndefined();
-    // Consumed after delivery: a late DELETE is equally moot.
-    await store.remove(doc.id);
-    await expect(access(referenced)).resolves.toBeUndefined();
-    await runtime.close();
-  });
-
-  it("rejects a prompt reusing an in-flight attachment without breaking the first lease", async () => {
+  it("keeps a file through concurrent reuse and withdrawal before and after delivery", async () => {
     const store = trackedAttachmentStore();
     const { promise: gate, resolve: release } = deferredSignal();
     const f = schedulingRuntime({
@@ -212,6 +144,8 @@ describe("prompt admission and artifact ownership", () => {
       String(promptCommand?.message ?? "").split("\n- ")[1]!,
     ) as string;
     await expect(access(referenced)).resolves.toBeUndefined();
+    await store.remove(doc.id);
+    await expect(access(referenced)).resolves.toBeUndefined();
     await runtime.close();
   });
 
@@ -226,15 +160,9 @@ describe("prompt admission and artifact ownership", () => {
       await resolveGate;
       return resolved;
     };
-    const runtime = new RuntimeController(
-      catalog([record("a", "/tmp")]),
-      store,
-      {
-        createProcess: (options) =>
-          new FakeRpc(options) as unknown as PiRpcProcess,
-        openSessionProjection: preview,
-      },
-    );
+    const { runtime } = schedulingRuntime({
+      attachments: store,
+    });
     await runtime.openSession("a");
 
     const doc = await store.add(upload("notes.txt", "text/plain"));
@@ -287,31 +215,25 @@ describe("prompt admission and artifact ownership", () => {
     "does not restage or duplicate unknown prompt delivery (exit confirmed: %s)",
     async (confirmed) => {
       const store = trackedAttachmentStore();
-      let worker!: FakeRpc;
-      const runtime = new RuntimeController(
-        catalog([await persistedRecord("a")]),
-        store,
-        {
-          createProcess: (options) => {
-            worker = new FakeRpc(options);
-            const request = worker.request.bind(worker);
-            worker.request = async <T>(command: Record<string, unknown>) => {
-              if (command.type !== "prompt") return request<T>(command);
-              worker.commands.push(command);
-              const error = new PiRpcOutcomeUnknownError("prompt");
-              error.stopped = confirmed
-                ? Promise.resolve()
-                : Promise.reject(new Error("Worker exit unconfirmed"));
-              throw error;
+      const f = fakeRuntime({
+        sessions: [await persistedRecord("a")],
+        attachments: store,
+        configure(worker) {
+          const exitFailure = new Error("Worker exit unconfirmed");
+          worker.responseOverrides.set("prompt", () => {
+            const error = new PiRpcOutcomeUnknownError("prompt");
+            error.stopped = confirmed
+              ? Promise.resolve()
+              : Promise.reject(exitFailure);
+            throw error;
+          });
+          if (!confirmed)
+            worker.stop = async () => {
+              throw exitFailure;
             };
-            if (!confirmed)
-              worker.stop = async () => {
-                throw new Error("Worker exit unconfirmed");
-              };
-            return worker as unknown as PiRpcProcess;
-          },
         },
-      );
+      });
+      const { runtime } = f;
       await runtime.openSession("a");
       const doc = await store.add(upload("notes.txt", "text/plain"));
       await expect(
@@ -325,7 +247,7 @@ describe("prompt admission and artifact ownership", () => {
         message: expect.stringMatching(/outcome is unknown/),
       });
       expect(
-        worker.commands.filter((command) => command.type === "prompt"),
+        f.worker.commands.filter((command) => command.type === "prompt"),
       ).toHaveLength(1);
       await expect(
         runtime.prompt({
@@ -335,7 +257,7 @@ describe("prompt admission and artifact ownership", () => {
         }),
       ).rejects.toThrow(/already belong/);
       expect(
-        worker.commands.filter((command) => command.type === "prompt"),
+        f.worker.commands.filter((command) => command.type === "prompt"),
       ).toHaveLength(1);
       await store.remove(doc.id);
       await expect(store.resolveForPrompt([doc.id])).rejects.toThrow(
@@ -353,18 +275,10 @@ describe("prompt admission and artifact ownership", () => {
     "retains an unknown prompt receipt when cancellation %s fails",
     async (failure) => {
       const store = trackedAttachmentStore();
-      const workers: FakeRpc[] = [];
-      const runtime = new RuntimeController(
-        catalog([await persistedRecord("a")]),
-        store,
-        {
-          createProcess: (options) => {
-            const worker = new FakeRpc(options);
-            workers.push(worker);
-            return worker as unknown as PiRpcProcess;
-          },
-        },
-      );
+      const { runtime, workers } = fakeRuntime({
+        sessions: [await persistedRecord("a")],
+        attachments: store,
+      });
       await runtime.openSession("a");
       await waitForReady(runtime);
       const internal = runtime as unknown as {
@@ -496,420 +410,218 @@ describe("prompt admission and artifact ownership", () => {
     },
   );
 
-  it("acknowledges an accepted prompt when its immediate projection refresh fails", async () => {
+  it.each([
+    "receipt projection",
+    "settlement projection",
+    "history",
+    "upload cleanup",
+  ] as const)("preserves confirmed delivery when %s fails", async (failure) => {
     const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([await persistedRecord("a")]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-      },
-    );
+    const f = fakeRuntime({
+      sessions: [await persistedRecord("a")],
+      attachments: store,
+    });
+    const { runtime } = f;
+    trackRuntime(runtime);
     await runtime.openSession("a");
     await waitForReady(runtime);
-    const slots = (
-      runtime as unknown as {
-        slots: Map<
-          string,
-          {
-            projection: {
-              reconcile: (force?: boolean) => Promise<unknown>;
-            } | null;
-          }
-        >;
-      }
-    ).slots;
-    const reconcile = vi.spyOn(slots.get("a")!.projection!, "reconcile");
+    const { worker } = f;
+    const { slots } = runtime as unknown as {
+      slots: Map<string, RuntimeSlot>;
+    };
+    const projection = slots.get("a")!.projection!;
+    let faulted = false;
+    const fail = () => {
+      faulted = true;
+      throw new Error(failure + " failed");
+    };
+    const failProjection = () =>
+      vi
+        .spyOn(projection, "reconcile")
+        .mockImplementationOnce(async () => fail());
     const request = worker.request.bind(worker);
     worker.request = async <T>(command: Record<string, unknown>) => {
       const result = await request<T>(command);
-      if (command.type === "prompt")
-        reconcile
-          .mockClear()
-          .mockRejectedValueOnce(new Error("projection read failed"));
+      if (command.type === "prompt") {
+        if (failure === "receipt projection") failProjection();
+        if (failure === "history")
+          vi.spyOn(projection, "composerHistoryPage").mockImplementationOnce(
+            fail,
+          );
+      }
       return result;
     };
-
-    await expect(
-      runtime.prompt({ sessionId: "a", message: "accepted once" }),
-    ).resolves.toBeNull();
-    expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toHaveLength(1);
-    expect(reconcile).toHaveBeenCalled();
-    expect(worker.stops).toBe(1);
-    expect((await runtime.snapshot()).active?.projectionConflict).toMatchObject(
-      {
-        kind: "projection-failure",
-      },
-    );
-    await runtime.close();
-  });
-
-  it("does not reject an accepted prompt when optional Composer-history hydration fails", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([await persistedRecord("a")]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-      },
-    );
-    await runtime.openSession("a");
-    await waitForReady(runtime);
-    const slot = (
-      runtime as unknown as {
-        slots: Map<
-          string,
-          {
-            projection: {
-              composerHistoryPage: (...args: unknown[]) => unknown;
-            } | null;
-          }
-        >;
-      }
-    ).slots.get("a")!;
-    const hydrate = vi.spyOn(slot.projection!, "composerHistoryPage");
-    const request = worker.request.bind(worker);
-    worker.request = async <T>(command: Record<string, unknown>) => {
-      const result = await request<T>(command);
-      if (command.type === "prompt")
-        hydrate.mockClear().mockImplementation(() => {
-          throw new Error("history projection failed");
-        });
-      return result;
-    };
-
-    await expect(
-      runtime.prompt({ sessionId: "a", message: "accepted once" }),
-    ).resolves.toBeNull();
-    expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toHaveLength(1);
-    expect(hydrate).toHaveBeenCalled();
-    hydrate.mockRestore();
-    expect((await runtime.composerHistory("a", 0)).entries).toContainEqual(
-      expect.objectContaining({ text: "persisted:a", images: [], files: [] }),
-    );
-    expect(worker.stops).toBe(0);
-    await runtime.close();
-  });
-
-  it("stops a worker when terminal-event projection reconciliation fails", async () => {
-    const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const runtime = new RuntimeController(
-      catalog([await persistedRecord("a")]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-      },
-    );
-    await runtime.openSession("a");
-    await runtime.prompt({ sessionId: "a", message: "accepted" });
-    const slot = (
-      runtime as unknown as {
-        slots: Map<
-          string,
-          {
-            projection: {
-              reconcile: (force?: boolean) => Promise<unknown>;
-            } | null;
-          }
-        >;
-      }
-    ).slots.get("a")!;
-    const projection = slot.projection!;
-    const reconcile = projection.reconcile.bind(projection);
-    projection.reconcile = async () => {
-      projection.reconcile = reconcile;
-      throw new Error("terminal projection read failed");
-    };
-
-    worker.emit("event", { type: "agent_settled" });
-    await vi.waitFor(() => expect(worker.stops).toBe(1));
-    expect((await runtime.snapshot()).active?.projectionConflict).toMatchObject(
-      {
-        kind: "projection-failure",
-      },
-    );
-    await runtime.close();
-  });
-
-  it("resends all recalled prompt artifacts from the current branch view", async () => {
-    const root = await realpath(
-      await mkdtemp(join(tmpdir(), "inspire-history-artifacts-")),
-    );
-    workspaceDirectories.push(root);
-    const workspace = join(root, "project");
-    const projectFile = join(workspace, "source.ts");
-    await mkdir(workspace);
-    await writeFile(projectFile, "project");
-    const store = trackedAttachmentStore();
-    const uploaded = await store.add(upload("report.pdf", "application/pdf"));
-    const leased = await store.resolveForPrompt([uploaded.id]);
-    const attachmentFile = leased.files[0]!.path;
-    await store.releaseConsumed([uploaded.id]);
-    let worker!: FakeRpc;
-    const data = Buffer.from("historical pixels").toString("base64");
-    const historicalText = addAttachmentContext(
-      "original",
-      [{ kind: "file", path: attachmentFile }],
-      [projectFile],
-    );
-    const runtime = new RuntimeController(
-      catalog([record("a", workspace)]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: async (session) => {
-          const value = await previewSnapshot(session);
-          return new PreviewProjection(session.id, {
-            ...value,
-            transcriptPage: {
-              ...value.transcriptPage,
-              messages: [
-                {
-                  role: "user",
-                  __inspireHistoryEntryId: "original",
-                  content: [
-                    { type: "text", text: historicalText },
-                    { type: "image", data, mimeType: "image/png" },
-                  ],
-                  timestamp: 1,
-                },
-              ],
-            },
-          });
-        },
-      },
-    );
-    await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
-    const history = await runtime.composerHistory("a", 0);
-    const entry = history.entries[0]!;
-    expect(entry.images[0]?.reference).toBe("pi-history-image://original/1");
-    expect(entry.files).toEqual([
-      {
-        reference: "pi-history-file://original/0",
-        fileName: "source.ts",
-        kind: "project",
-      },
-      {
-        reference: "pi-history-file://original/1",
-        fileName: "report.pdf",
-        kind: "attachment",
-      },
-    ]);
+    const attachmentIds: string[] = [];
+    if (failure === "upload cleanup") {
+      attachmentIds.push(
+        (await store.add(upload("cleanup.txt", "text/plain"))).id,
+      );
+      vi.spyOn(store, "releaseConsumed").mockImplementationOnce(async () =>
+        fail(),
+      );
+    }
 
     await expect(
       runtime.prompt({
         sessionId: "a",
-        message: "forged",
-        historyArtifacts: {
-          viewId: "another-view",
-          incarnation: history.incarnation ?? null,
-          effectiveLeafId: history.effectiveLeafId ?? null,
-          imageReferences: entry.images.map((image) => image.reference),
-          fileReferences: entry.files.map((file) => file.reference),
-        },
+        message: "accepted once",
+        attachmentIds,
       }),
-    ).rejects.toMatchObject({ status: 409 });
+    ).resolves.toBeNull();
+    if (failure === "settlement projection") {
+      failProjection();
+      worker.emit("event", { type: "agent_settled" });
+    }
     expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toEqual([]);
-
-    await runtime.prompt({
-      sessionId: "a",
-      message: "again",
-      historyArtifacts: {
-        viewId: history.viewId,
-        incarnation: history.incarnation ?? null,
-        effectiveLeafId: history.effectiveLeafId ?? null,
-        imageReferences: entry.images.map((image) => image.reference),
-        fileReferences: entry.files.map((file) => file.reference),
-      },
-    });
-    expect(
-      worker.commands.find((command) => command.type === "prompt"),
-    ).toMatchObject({
-      message: addAttachmentContext(
-        "again",
-        [{ kind: "file", path: attachmentFile }],
-        [projectFile],
-      ),
-      images: [{ type: "image", data, mimeType: "image/png" }],
-    });
-    await runtime.close();
+      worker.commands.filter(({ type }) => type === "prompt"),
+    ).toHaveLength(1);
+    if (
+      failure === "receipt projection" ||
+      failure === "settlement projection"
+    ) {
+      await vi.waitFor(() => expect(worker.stops).toBe(1));
+      expect(
+        (await runtime.snapshot()).active?.projectionConflict,
+      ).toMatchObject({
+        kind: "projection-failure",
+      });
+    } else {
+      expect(worker.stops).toBe(0);
+      expect((await runtime.composerHistory("a", 0)).entries).toContainEqual(
+        expect.objectContaining({
+          text: "persisted:a",
+          images: [],
+          files: [],
+        }),
+      );
+    }
+    expect(faulted).toBe(true);
   });
 
-  it("rejects a forged recalled attachment path outside the active workspace", async () => {
-    const root = await realpath(
-      await mkdtemp(join(tmpdir(), "inspire-forged-history-")),
-    );
-    workspaceDirectories.push(root);
-    const workspace = join(root, "project");
-    const forgedFile = join(root, "host-secret.txt");
-    await mkdir(workspace);
+  it("resends recalled files and images only from the current authorized branch view", async () => {
+    const workspace = join(fixtureWorkspace, "project");
+    const projectFile = join(workspace, "source.ts");
+    const forgedFile = join(fixtureWorkspace, "host-secret.txt");
+    await writeFile(projectFile, "project");
     await writeFile(forgedFile, "not an uploaded attachment");
     const store = trackedAttachmentStore();
-    let worker!: FakeRpc;
-    const historicalText = addAttachmentContext(
-      "open the report",
-      [{ kind: "file", path: forgedFile }],
-      [],
-    );
-    const runtime = new RuntimeController(
-      catalog([record("a", workspace)]),
-      store,
-      {
-        createProcess: (options) => {
-          worker = new FakeRpc(options);
-          return worker as unknown as PiRpcProcess;
-        },
-        openSessionProjection: async (session) => {
-          const value = await previewSnapshot(session);
-          return new PreviewProjection(session.id, {
-            ...value,
-            transcriptPage: {
-              ...value.transcriptPage,
-              messages: [
-                {
-                  role: "user",
-                  __inspireHistoryEntryId: "original",
-                  content: historicalText,
-                  timestamp: 1,
-                },
-              ],
-            },
-          });
-        },
-      },
-    );
+    const uploaded = await store.add(upload("report.pdf", "application/pdf"));
+    const { files } = await store.resolveForPrompt([uploaded.id]);
+    const file = files[0]!;
+    await store.releaseConsumed([uploaded.id]);
+    const image = {
+      type: "image",
+      data: Buffer.from("historical pixels").toString("base64"),
+      mimeType: "image/png",
+    };
+    const f = fakeRuntime({
+      sessions: [record("a", workspace)],
+      attachments: store,
+      openSessionProjection: (session) =>
+        preview(session, [
+          messageEntry("original", null, {
+            role: "user",
+            timestamp: 1,
+            content: [
+              {
+                type: "text",
+                text: addAttachmentContext("original", [file], [projectFile]),
+              },
+              image,
+            ],
+          }),
+          messageEntry("forged", "original", {
+            role: "user",
+            timestamp: 2,
+            content: addAttachmentContext(
+              "forged",
+              [{ kind: "file", path: forgedFile }],
+              [],
+            ),
+          }),
+        ]),
+    });
+    const { runtime } = f;
+    trackRuntime(runtime);
     await runtime.openSession("a");
-    await new Promise<void>((resolveTick) => setImmediate(resolveTick));
+    await waitForReady(runtime);
     const history = await runtime.composerHistory("a", 0);
-    const entry = history.entries[0]!;
-    expect(entry.files).toEqual([
-      {
-        reference: "pi-history-file://original/0",
-        fileName: "host-secret.txt",
-        kind: "attachment",
-      },
+    const original = history.entries.find(
+      (entry) => entry.text === "original",
+    )!;
+    const forged = history.entries.find((entry) => entry.text === "forged")!;
+    expect(
+      original.files.map(({ fileName, kind }) => ({ fileName, kind })),
+    ).toEqual([
+      { fileName: "source.ts", kind: "project" },
+      { fileName: "report.pdf", kind: "attachment" },
     ]);
-
-    await expect(
+    expect(forged.files).toHaveLength(1);
+    const send = (entry: typeof original, viewId = history.viewId) =>
       runtime.prompt({
         sessionId: "a",
-        message: "send it again",
+        message: "again",
         historyArtifacts: {
-          viewId: history.viewId,
+          viewId,
           incarnation: history.incarnation ?? null,
           effectiveLeafId: history.effectiveLeafId ?? null,
-          imageReferences: [],
-          fileReferences: entry.files.map((file) => file.reference),
+          imageReferences: entry.images.map(({ reference }) => reference),
+          fileReferences: entry.files.map(({ reference }) => reference),
         },
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-    expect(
-      worker.commands.filter((command) => command.type === "prompt"),
-    ).toHaveLength(0);
-    await runtime.close();
+      });
+    const delivered = () =>
+      f.worker.commands.filter(({ type }) => type === "prompt");
+    await expect(send(original, "another-view")).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(send(forged)).rejects.toMatchObject({ status: 409 });
+    expect(delivered()).toEqual([]);
+    await send(original);
+    expect(delivered()).toMatchObject([
+      {
+        message: addAttachmentContext("again", [file], [projectFile]),
+        images: [image],
+      },
+    ]);
   });
 
-  it("does not turn post-acceptance attachment cleanup failure into a rejected prompt", async () => {
+  it("delivers the full image limit, then reclaims those uploads while keeping the referenced file", async () => {
     const store = trackedAttachmentStore();
-    const attachment = await store.add(upload("cleanup.txt", "text/plain"));
-    const cleanup = vi
-      .spyOn(store, "releaseConsumed")
-      .mockRejectedValue(new Error("Synthetic cleanup failure"));
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-    try {
-      await runtime.openSession("a");
-      await expect(
-        runtime.prompt({
-          sessionId: "a",
-          message: "accepted synthetic upload",
-          attachmentIds: [attachment.id],
-        }),
-      ).resolves.toBeNull();
-      expect(cleanup).toHaveBeenCalled();
-      expect(
-        f.worker.commands.filter((command) => command.type === "prompt"),
-      ).toHaveLength(1);
-      expect(f.worker.stops).toBe(0);
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  it("accepts the full image attachment limit without counting RPC image parts twice", async () => {
-    const store = trackedAttachmentStore();
-    const uploaded = await store.addMany(
+    const images = await store.addMany(
       Array.from({ length: 8 }, (_, index) =>
         upload(`shot-${index}.png`, "image/png"),
       ),
     );
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-
+    const file = await store.add(upload("notes.txt", "text/plain"));
+    const { runtime, workers } = schedulingRuntime({ attachments: store });
+    trackRuntime(runtime);
     await runtime.openSession("a");
     await runtime.prompt({
       sessionId: "a",
       message: "use these images",
-      attachmentIds: uploaded.map((item) => item.id),
+      attachmentIds: images.map(({ id }) => id),
     });
-
-    const promptCommand = f.worker.commands.find(
-      (command) => command.type === "prompt",
+    const commands = workers[0]!.commands;
+    expect(commands.find(({ type }) => type === "prompt")?.images).toHaveLength(
+      8,
     );
-    expect(promptCommand?.images).toHaveLength(8);
-    await runtime.close();
-  });
+    for (const { id } of images)
+      await expect(store.imagePreview(id)).rejects.toMatchObject({
+        status: 404,
+      });
 
-  it("reclaims consumed image uploads after a delivered prompt but keeps file uploads readable", async () => {
-    const store = trackedAttachmentStore();
-    const image = await store.add(upload("shot.png", "image/png"));
-    const file = await store.add(upload("notes.txt", "text/plain"));
-    const f = schedulingRuntime({ attachments: store });
-    const { runtime } = f;
-
-    await runtime.openSession("a");
     await runtime.prompt({
       sessionId: "a",
-      message: "use these",
-      attachmentIds: [image.id, file.id],
+      message: "read this",
+      attachmentIds: [file.id],
     });
-    // Image bytes travelled inside the prompt request; the cache entry is gone.
-    await expect(store.resolveForPrompt([image.id])).rejects.toThrow(/expired/);
-    // The ordinary file's host path is referenced by the conversation text:
-    // it stays readable on disk, but cannot join a second message.
-    const promptCommand = f.worker.commands.find(
-      (command) => command.type === "prompt",
-    );
-    const referenced = JSON.parse(
-      String(promptCommand?.message ?? "").split("\n- ")[1]!,
-    ) as string;
-    expect(referenced).toContain("notes.txt");
-    await expect(access(referenced)).resolves.toBeUndefined();
+    const prompt = commands.filter(({ type }) => type === "prompt").at(-1)!;
+    const path: string = JSON.parse(String(prompt.message).split("\n- ")[1]!);
+    expect(store.promptFileName(path)).toBe("notes.txt");
+    await store.remove(file.id);
+    await expect(access(path)).resolves.toBeUndefined();
     await expect(store.resolveForPrompt([file.id])).rejects.toThrow(
       /already belong/,
     );
-    await runtime.close();
   });
 });

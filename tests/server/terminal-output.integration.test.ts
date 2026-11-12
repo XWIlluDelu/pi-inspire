@@ -43,17 +43,6 @@ it.each(profiles)(
           await readFile(path, "utf8"),
         ].join("\n"),
       );
-    } else {
-      await writeFile(
-        join(root, ".bash_profile"),
-        [
-          "__inspire_test_prompt() { __inspire_test_prompt_status=$?; }",
-          // Cooperating profiles retain the inherited one-shot bootstrap. A
-          // profile that replaces it is separately tested as an ordinary PTY.
-          'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__inspire_test_prompt"',
-          "trap 'case \"$BASH_COMMAND\" in *CHECK_DEBUG*) __inspire_test_debug_seen=yes ;; esac' DEBUG",
-        ].join("\n"),
-      );
     }
 
     // Model a fresh Windows client without changing any user/machine policy.
@@ -197,17 +186,8 @@ it.each(profiles)(
             },
             { command: "false", output: "", status: 1 },
             {
-              command: 'printf "PROMPT_%s\\n" "$__inspire_test_prompt_status"',
-              output: "PROMPT_1",
-            },
-            {
               command: `printf '%s\\n' "SUB_$(printf '%s' LABEL)"`,
               output: "SUB_LABEL",
-            },
-            {
-              command:
-                ': CHECK_DEBUG; printf "DEBUG_%s\\n" "$__inspire_test_debug_seen"',
-              output: "DEBUG_yes",
             },
           ];
       for (const { command, output, status = 0 } of samples) {

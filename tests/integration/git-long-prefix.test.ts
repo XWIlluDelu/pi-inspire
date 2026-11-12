@@ -4,24 +4,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { GitInspectionService } from "../../server/git-inspection";
-import type { GitDiffResponse } from "../../shared/contracts";
 import { sourceDiffRows } from "../../src/source-diff";
-import {
-  closeHostApiFixture,
-  hostApiFixture,
-  token,
-} from "../server/fixtures/host-api";
 
 const exec = promisify(execFile);
-describe("bounded Git diff through the Host and source projection", () => {
+describe("native Git diff and source projection", () => {
   it.each([0, 600])(
     "keeps a change at line 2200 reachable with %i-byte prefix rows",
     async (width) => {
       const root = await mkdtemp(join(tmpdir(), "inspire-git-prefix-"));
-      const f = await hostApiFixture();
       const git = (...args: string[]) => exec("git", ["-C", root, ...args]);
       try {
         await git("init", "-q");
@@ -44,59 +36,42 @@ describe("bounded Git diff through the Host and source projection", () => {
         );
         source[2199] = "const changed = 42;";
         await writeFile(join(root, "source.ts"), source.join("\n") + "\n");
-        const service = new GitInspectionService();
-        f.git.status = (_cwd, signal) => service.status(root, signal);
-        f.git.diff = (_cwd, id, signal) => service.diff(root, id, signal);
-        await request(f.application.server)
-          .post("/api/sessions/open")
-          .set("Authorization", `Bearer ${token}`)
-          .send({ id: "fixture-active" })
-          .expect(200);
-        const response = await request(f.application.server)
-          .post("/api/git/diff")
-          .set("Authorization", `Bearer ${token}`)
-          .send({
-            sessionId: "fixture-active",
-            pathId: Buffer.from("source.ts").toString("base64url"),
-          })
-          .expect(200);
-        const diff = response.body as Extract<
-          GitDiffResponse,
-          { kind: "text" }
-        >;
+        const diff = await new GitInspectionService().diff(
+          root,
+          Buffer.from("source.ts").toString("base64url"),
+        );
+        if (diff.kind !== "text")
+          throw new Error(`Expected text diff, got ${diff.kind}`);
         expect(diff.lines.find((line) => line.kind === "add")).toMatchObject({
           newLine: 2200,
           text: "+const changed = 42;",
         });
         expect(diff).toMatchObject({
-          kind: "text",
           additions: 1,
           deletions: 1,
           truncated: false,
           contextLimited: true,
         });
         expect(diff.lines.length).toBeLessThan(30);
-        const projection = sourceDiffRows(diff);
-        expect(projection.changes).toBe(1);
-        expect(projection.rows.filter((row) => row.startsChange)).toHaveLength(
-          1,
-        );
-        const changed = projection.rows.find((row) => row.line.kind === "add")!;
-        expect(changed.changeIndex).toBe(0);
+        const { rows, changes } = sourceDiffRows(diff);
+        expect(changes).toBe(1);
+        const changed = rows.find((row) => row.line.kind === "add")!;
+        expect(changed).toMatchObject({
+          changeIndex: 0,
+          line: { newLine: 2200 },
+        });
         const code = document.createElement("code");
         code.innerHTML = changed.html;
         expect(code.textContent).toBe("const changed = 42;");
         if (width === 0) {
-          expect(diff.source).toBeDefined();
           // The opening comment is thousands of lines outside the displayed hunk.
-          expect(code.querySelector(".hljs-comment")).not.toBeNull();
-          expect(code.querySelector(".hljs-keyword")).toBeNull();
+          expect(code.querySelector(".hljs-comment")?.textContent).toBe(
+            "const changed = 42;",
+          );
         } else {
-          expect(diff.source).toBeUndefined();
-          expect(code.querySelector("span")).toBeNull();
+          expect(changed.html).toBe("const changed = 42;");
         }
       } finally {
-        await closeHostApiFixture(f);
         await rm(root, { recursive: true, force: true });
       }
     },
