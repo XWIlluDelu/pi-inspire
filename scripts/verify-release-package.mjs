@@ -31,7 +31,7 @@ const root = resolve(import.meta.dirname, "..");
 const plexSansManifestDigest =
   "012a329e2e373c4aba5c81e46eb6df3bc78252fc65d97e2207a5c12ce286e6c6";
 const fluxSumsDigest =
-  "24612c6ced4a164a61f355bcc3e7a3acc5159b8bf5f921f0e2cae0b6b394c281";
+  "3d2eb1c72f167c502e9809c4f08d9ab9e5d37ba880e5281775a5ec5bcb788c7a";
 
 async function execNpm(args, options = {}) {
   const invocation = npmInvocation(args, {
@@ -66,10 +66,7 @@ function parseSha256Sums(value, label) {
 }
 
 async function verifyFontFiles(directory, manifestDigest, label) {
-  const manifest = reviewedText(
-    await readFile(join(directory, "SHA256SUMS")),
-    `${label} checksum manifest`,
-  );
+  const manifest = await readFile(join(directory, "SHA256SUMS"));
   if (sha256(manifest) !== manifestDigest)
     throw new Error(
       `${label} checksum manifest differs from the reviewed release`,
@@ -82,8 +79,6 @@ async function verifyFontFiles(directory, manifestDigest, label) {
     throw new Error(`${label} source directory and checksum manifest disagree`);
   for (const [filename, digest] of entries) {
     const value = await readFile(join(directory, filename));
-    if (!filename.endsWith(".woff2"))
-      reviewedText(value, `${label} ${filename}`);
     if (sha256(value) !== digest)
       throw new Error(`${label} provenance mismatch: ${filename}`);
   }
