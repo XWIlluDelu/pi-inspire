@@ -969,12 +969,9 @@ export function ComposerInput({
         isTextareaCaretOnVisualEdge(element, "first")
       ) {
         event.preventDefault();
-        const lineStart = element.value.lastIndexOf("\n", caret - 1) + 1;
-        if (
-          element.value === "" ||
-          historyIndexRef.current >= 0 ||
-          caret === lineStart
-        ) {
+        const lineStart =
+          caret === 0 ? 0 : element.value.lastIndexOf("\n", caret - 1) + 1;
+        if (historyIndexRef.current >= 0 || caret === lineStart) {
           navigateHistory(-1, element);
         } else {
           element.setSelectionRange(lineStart, lineStart);

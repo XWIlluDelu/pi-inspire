@@ -378,14 +378,15 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill("other session draft");
   await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(input).toHaveValue(draft);
-  // Merely browsing history must not overwrite the saved pre-browse draft.
+  const historyDraft = `\n${draft}`;
+  await input.fill(historyDraft);
   await input.evaluate((element: HTMLTextAreaElement) =>
     element.setSelectionRange(0, 0),
   );
   await input.press("ArrowUp");
-  await expect(input).not.toHaveValue(draft);
+  await expect(input).not.toHaveValue(historyDraft);
   await page.reload();
-  await expect(input).toHaveValue(draft);
+  await expect(input).toHaveValue(historyDraft);
   await input.fill("send and do not resurrect");
   const accepted = page.waitForResponse(
     (response) =>
