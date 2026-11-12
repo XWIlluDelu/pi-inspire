@@ -13,7 +13,6 @@ import {
   ProviderAuthService,
 } from "../../server/provider-auth.js";
 import { ResourceStore } from "../../server/resources.js";
-import type { RuntimeLike } from "../../server/runtime.js";
 import type { ProviderLoginAttempt } from "../../shared/model-settings.js";
 import type { ProviderAuthOperation } from "../../shared/provider-auth-bridge.js";
 import { hostServices } from "../fixtures/host-services.js";
@@ -126,11 +125,17 @@ async function finishApiKeyLogin(
   await completed(attempt);
 }
 
-function authRoutes(runtime: Partial<RuntimeLike> = {}) {
+function authRoutes(
+  runtime: Partial<
+    Parameters<typeof registerModelSettingsRoutes>[1]["runtime"]
+  > = {},
+) {
   const app = express();
   app.use(express.json());
   registerModelSettingsRoutes(app, {
-    runtime: runtime as RuntimeLike,
+    runtime: runtime as Parameters<
+      typeof registerModelSettingsRoutes
+    >[1]["runtime"],
     providerAuth: service,
   });
   app.use(

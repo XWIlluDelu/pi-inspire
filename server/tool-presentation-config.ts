@@ -17,12 +17,6 @@ export interface ToolPresentationConfigurationState {
   warning?: string;
 }
 
-export interface ToolPresentationConfigLike {
-  inspect(
-    enabled?: Readonly<Record<string, boolean>>,
-  ): Promise<ToolPresentationConfigurationState>;
-}
-
 /** Source checkouts use an ignored reference; installed packages use XDG config.
  * Both read the same data-only adapter format without changing the web build. */
 export function defaultToolPresentationConfigPath(root: string): string {
@@ -122,7 +116,7 @@ function compose(
   return validated;
 }
 
-export class ToolPresentationConfigStore implements ToolPresentationConfigLike {
+export class ToolPresentationConfigStore {
   constructor(readonly path: string) {}
 
   async inspect(

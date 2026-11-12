@@ -58,7 +58,7 @@ async function record(
     updatedAt: Date.now(),
     endpoint: "",
     token: "token",
-    taskRuns: { instanceId, activeRunId: null, settled: [] },
+    taskRuns: { instanceId, settled: [] },
     modelSelection: { model: null, thinkingLevel: "off" },
     ...overrides,
   };

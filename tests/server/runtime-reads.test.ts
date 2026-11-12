@@ -29,7 +29,6 @@ function fixture() {
       operation(),
     snapshotSlot: vi.fn(),
     reconcileSlot: vi.fn(async () => {}),
-    effectiveLeaf: () => null,
     promptFileName: () => null,
   };
   return {

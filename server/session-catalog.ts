@@ -62,8 +62,6 @@ export interface SessionCatalogLike {
   invalidate(): void;
   /** Retain discovery hints in memory before attempting optional persistence. */
   rememberProjectCwd?(cwd: string): Promise<void>;
-  /** Complete configured storage roots, independent of curation/pagination. */
-  sessionDirectories?(): Promise<readonly (string | undefined)[]>;
 }
 
 export class SessionCatalog implements SessionCatalogLike {

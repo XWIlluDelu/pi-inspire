@@ -13,7 +13,6 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpConfigService } from "../../server/mcp-config.js";
 import { registerMcpConfigRoutes } from "../../server/mcp-config-routes.js";
-import type { RuntimeLike } from "../../server/runtime.js";
 import type { McpConfigEdit } from "../../shared/mcp.js";
 import {
   nativePiWorkspace,
@@ -490,7 +489,7 @@ describe("MCP HTTP ownership", () => {
       mcpConfig: service,
       runtime: {
         sessionCwd: (id: string) => (id === "open" ? cwd : null),
-      } as RuntimeLike,
+      },
     });
     app.use(
       (

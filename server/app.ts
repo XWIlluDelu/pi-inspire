@@ -50,15 +50,12 @@ import {
 } from "./browser-auth.js";
 import { showInFileManager } from "./file-manager.js";
 import { GeneratedExportStore } from "./generated-exports.js";
-import type { GitInspectionLike } from "./git-inspection.js";
+import type { GitInspectionService } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
 import { HtmlPreviewStore } from "./html-preview.js";
 import { InstanceHttpControl } from "./instance-control.mjs";
 import { type InstanceState, instanceUrl } from "./instance-state.mjs";
-import type {
-  MaintenanceRestartOutcome,
-  MaintenanceRestartTransition,
-} from "./maintenance-restart.js";
+import type { MaintenanceRestartController } from "./maintenance-restart.js";
 import type { McpConfigService } from "./mcp-config.js";
 import { registerMcpConfigRoutes } from "./mcp-config-routes.js";
 import { queryModelThinkingLevel } from "./model-metadata.js";
@@ -69,7 +66,6 @@ import { resolveProjectDirectory } from "./paths.js";
 import { OperationReceipts } from "./operation-receipts.js";
 import { PendingOperationReceipts } from "./pending-operation-receipts.js";
 import { installedPiChangelog } from "./pi-changelog.js";
-import type { PiUpdateCheckerLike } from "./pi-update-checker.js";
 import type { PreferencesStore } from "./preferences.js";
 import {
   invalidateProjectFiles,
@@ -80,7 +76,7 @@ import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
 import { resourceByteRange, sendResourceFile } from "./resource-http.js";
 import type { ResourceStore } from "./resources.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { RuntimeController } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
 import type { SessionCatalogLike } from "./session-catalog.js";
 import { staticWebAssets } from "./static-web-assets.js";
@@ -92,14 +88,10 @@ import {
 import { createTerminalGateway } from "./terminal-gateway.js";
 import type { TerminalService } from "./terminal-service.js";
 import type {
-  ToolPresentationConfigLike,
+  ToolPresentationConfigStore,
   ToolPresentationConfigurationState,
 } from "./tool-presentation-config.js";
-import type { UpdateCheckerLike } from "./update-checker.js";
-import {
-  UpdateCoordinator,
-  type UpdateCoordinatorLike,
-} from "./update-coordinator.js";
+import { UpdateCoordinator } from "./update-coordinator.js";
 
 const updateSnoozeSchema = z
   .object({
@@ -418,30 +410,27 @@ const gitDiffSchema = z.object({
 const PROMPT_OBSERVATION_WINDOW_MS = 20_000;
 const WEBSOCKET_HEARTBEAT_INTERVAL_MS = 20_000;
 
-interface MaintenanceRestartLike {
-  reserve(): Promise<MaintenanceRestartOutcome>;
-  commit(leaseId: string): MaintenanceRestartTransition;
-  release(leaseId: string): MaintenanceRestartTransition;
-}
-
 interface AppDependencies {
   /** An HTTP observation window, never a Pi operation deadline. */
   promptObservationWindowMs?: number;
   token: string;
   /** Ready, currently owned publication; never a caller-supplied process identity. */
   instanceState?: () => InstanceState | null;
-  runtime: RuntimeLike;
+  runtime: RuntimeController;
   catalog: SessionCatalogLike;
   attachments: AttachmentStore;
   preferences: PreferencesStore;
-  toolPresentations?: ToolPresentationConfigLike;
+  toolPresentations?: Pick<ToolPresentationConfigStore, "inspect">;
   resources: ResourceStore;
-  git: GitInspectionLike;
+  git: Pick<GitInspectionService, "status" | "diff">;
   version: string;
   piVersion: string;
   /** Authenticated timer coordination; it detects installed updates and asks
    * the runtime for its short idle fence, never restarts systemd itself. */
-  maintenanceRestart?: MaintenanceRestartLike;
+  maintenanceRestart?: Pick<
+    MaintenanceRestartController,
+    "reserve" | "commit" | "release"
+  >;
   hostRestart?: import("./host-restart.js").HostRestartController;
   /** Effective-at-startup Herdr state; omitted when this Host has no enhancement integration. */
   getHerdrStatus?: () => Promise<HerdrEnhancementStatus>;
@@ -455,13 +444,9 @@ interface AppDependencies {
   mcpConfig?: McpConfigService;
   invalidateModels?: () => void;
   providerAuth?: ProviderAuthService;
-  /** Cached public-release observation; failures never block local work. */
-  updateChecker?: UpdateCheckerLike;
-  /** Read-only Pi and configured-package update observation. */
-  piUpdateChecker?: PiUpdateCheckerLike;
   /** Shared update-state owner. Production supplies the persistent deployment
-   * instance; internal hosts may use the in-memory checker fallback. */
-  updateCoordinator?: UpdateCoordinatorLike;
+   * instance; test hosts default to one without checkers. */
+  updateCoordinator?: UpdateCoordinator;
   distDir?: string;
   /** Complete prior asset generations retained for already-open clients. */
   staticAssetCacheDirs?: readonly string[];
@@ -616,14 +601,10 @@ export function createInspireServer(deps: AppDependencies): {
     deps.websocketHeartbeatIntervalMs ?? WEBSOCKET_HEARTBEAT_INTERVAL_MS;
   const updateCoordinator =
     deps.updateCoordinator ??
-    new UpdateCoordinator({
-      currentPiVersion: deps.piVersion,
-      inspireChecker: deps.updateChecker,
-      piChecker: deps.piUpdateChecker,
-    });
+    new UpdateCoordinator({ currentPiVersion: deps.piVersion });
   type PromptOperationResponse = {
     accepted: true;
-    historyEntry: Awaited<ReturnType<RuntimeLike["prompt"]>>;
+    historyEntry: Awaited<ReturnType<RuntimeController["prompt"]>>;
   };
   const pendingOperations = new PendingOperationReceipts();
   const promptOperations = new OperationReceipts<PromptOperationResponse>({
@@ -1492,7 +1473,7 @@ export function createInspireServer(deps: AppDependencies): {
       });
   };
   const pendingResponse = (
-    recovered: Awaited<ReturnType<RuntimeLike["recoverPending"]>>,
+    recovered: Awaited<ReturnType<RuntimeController["recoverPending"]>>,
   ) => ({
     ...recovered,
     ...(recovered.attachments?.length ? { authorityId } : {}),

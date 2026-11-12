@@ -36,7 +36,6 @@ beforeEach(() => {
       state = { ...state, ...patch };
     },
     ensureSessionVisible,
-    notify: vi.fn(),
     applySnapshot: vi.fn(),
     invalidateSelection: vi.fn(),
     recordRuntimeReady: vi.fn(),

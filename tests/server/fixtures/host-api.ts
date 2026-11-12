@@ -8,11 +8,10 @@ import { vi } from "vitest";
 import { type ClientOptions, WebSocket } from "ws";
 import { createInspireServer } from "../../../server/app.js";
 import { AttachmentStore } from "../../../server/attachments.js";
-import type { GitInspectionLike } from "../../../server/git-inspection.js";
 import { PreferencesStore } from "../../../server/preferences.js";
 import { ResourceStore } from "../../../server/resources.js";
-import type { RuntimeLike } from "../../../server/runtime.js";
 import { ToolPresentationConfigStore } from "../../../server/tool-presentation-config.js";
+import { UpdateCoordinator } from "../../../server/update-coordinator.js";
 import type {
   ActiveSnapshot,
   SessionRuntimeStatus,
@@ -106,8 +105,7 @@ export async function hostApiFixture(
       | null;
     websocketHeartbeatIntervalMs?: number;
     promptObservationWindowMs?: number;
-    runtime?: Parameters<typeof createInspireServer>[0]["runtime"] &
-      Pick<import("node:events").EventEmitter, "emit">;
+    runtime?: Parameters<typeof createInspireServer>[0]["runtime"];
     distDir?: string;
     staticAssetCacheDirs?: string[];
   } = {},
@@ -127,10 +125,8 @@ export async function hostApiFixture(
   });
   process.env.PI_CODING_AGENT_DIR = workbench.agent;
   process.env.PI_CODING_AGENT_SESSION_DIR = workbench.sessions;
-  const runtime: RuntimeLike &
-    Pick<import("node:events").EventEmitter, "emit"> =
-    options.runtime ?? workbench.runtime;
-  const git: GitInspectionLike = {
+  const runtime = options.runtime ?? workbench.runtime;
+  const git: Parameters<typeof createInspireServer>[0]["git"] = {
     status: vi.fn(async () => ({ kind: "not-repository" as const })),
     diff: vi.fn(async (_cwd, pathId) => ({
       kind: "empty" as const,
@@ -157,36 +153,35 @@ export async function hostApiFixture(
     git,
     version: "0.1.0-test",
     piVersion: "0.80.10",
-    updateChecker: {
-      check: async () => ({
-        kind: "available",
-        update: {
-          currentVersion: "0.1.0-test",
-          latestVersion: "0.2.0",
-          releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
-        },
-      }),
-    },
-    piUpdateChecker: {
-      check: async () => ({
-        currentVersion: "0.80.10",
-        installedVersion: "0.80.10",
-        pi: {
+    updateCoordinator: new UpdateCoordinator({
+      currentPiVersion: "0.80.10",
+      inspireChecker: {
+        check: async () => ({
           kind: "available",
-          latestVersion: "0.84.3",
-          releaseUrl: "https://pi.dev/changelog",
-        },
-        extensions: {
-          kind: "available",
-          updates: [
-            {
-              displayName: "pi-web-access",
-              type: "npm",
-            },
-          ],
-        },
-      }),
-    },
+          update: {
+            currentVersion: "0.1.0-test",
+            latestVersion: "0.2.0",
+            releaseUrl:
+              "https://github.com/example/inspire/releases/tag/v0.2.0",
+          },
+        }),
+      },
+      piChecker: {
+        check: async () => ({
+          currentVersion: "0.80.10",
+          installedVersion: "0.80.10",
+          pi: {
+            kind: "available",
+            latestVersion: "0.84.3",
+            releaseUrl: "https://pi.dev/changelog",
+          },
+          extensions: {
+            kind: "available",
+            updates: [{ displayName: "pi-web-access", type: "npm" }],
+          },
+        }),
+      },
+    }),
     bootstrapModels: () => [fixtureModel],
     modelMetadata: async (cwd) => ({
       models: [fixtureModel],

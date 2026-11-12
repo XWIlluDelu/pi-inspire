@@ -377,7 +377,6 @@ export class AppStore {
   private readonly runtimeEvents = new RuntimeEventController({
     state: () => this.state,
     patch: (patch) => this.set(patch),
-    notify: (kind, text) => this.notify(kind, text),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
     invalidateSelection: () => this.selection.invalidateForReplacement(),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),

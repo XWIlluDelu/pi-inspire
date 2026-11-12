@@ -10,7 +10,7 @@ import type {
 import { lastAssistantText } from "./assistant-text.js";
 import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import { effectiveRuntimeLeaf, type RuntimeSlot } from "./runtime-slot.js";
 import type { SessionProjectionView } from "./session-projection.js";
 
 interface RuntimeReadControllerHost {
@@ -22,7 +22,6 @@ interface RuntimeReadControllerHost {
   useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
   snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
-  effectiveLeaf(slot: RuntimeSlot): string | null;
   promptFileName(path: string): string | null;
 }
 
@@ -78,7 +77,7 @@ export class RuntimeReadController {
       // The projection validates source identity/version on every read; only
       // changed files need byte revalidation. Writer admission remains forced.
       await this.host.reconcileSlot(slot, false);
-      return read(requireProjection(slot), slot, this.host.effectiveLeaf(slot));
+      return read(requireProjection(slot), slot, effectiveRuntimeLeaf(slot));
     });
   }
 
@@ -185,7 +184,7 @@ export class RuntimeReadController {
       this.visibleProjection(slot, viewId, revision);
       await this.host.reconcileSlot(slot, false);
       const projection = this.visibleProjection(slot, viewId, revision);
-      const leaf = this.host.effectiveLeaf(slot);
+      const leaf = effectiveRuntimeLeaf(slot);
       // Context coordinates remain unchanged. History adds separately named,
       // entry-bound images from retained USER prompts on this same branch.
       return [

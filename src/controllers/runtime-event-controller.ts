@@ -13,7 +13,6 @@ import {
   type ChatMessage,
   type EventSlice,
   messageKey,
-  type Notice,
   reduceEvent,
   type WireEvent,
 } from "../events";
@@ -22,7 +21,6 @@ import type { ResyncOptions } from "../snapshot-transition";
 interface RuntimeEventHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
-  notify(kind: Notice["kind"], text: string): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
   invalidateSelection(): void;
   ensureSessionVisible(sessionId: string): void;

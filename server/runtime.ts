@@ -142,8 +142,6 @@ import type { SessionCatalogLike, SessionRecord } from "./session-catalog.js";
 import {
   type DeleteSessionRecord,
   deleteSessionFile,
-  type ValidateSessionRecord,
-  validateSessionFile,
 } from "./session-delete.js";
 import {
   assertExportDestination,
@@ -285,138 +283,11 @@ export type MaintenanceRestartTransition =
   | { kind: "released" }
   | { kind: "skipped"; reason: string };
 
-export interface RestartLeaseOwner {
-  /** Fence new work for a short restart handoff. Explicit page authority may
-   * interrupt existing runtime work. Scheduled callers remain idle-only. */
-  reserveMaintenanceRestart(
-    interruptWork?: boolean,
-    includeAttached?: boolean,
-    preserveWork?: boolean,
-  ): MaintenanceRestartDecision;
-  commitMaintenanceRestart(leaseId: string): MaintenanceRestartTransition;
-  releaseMaintenanceRestart(leaseId: string): MaintenanceRestartTransition;
-}
-
 /** Backend-neutral status of one admitted worker, separate from browser events. */
 export interface RuntimeWorkerStatus {
   sessionId: string;
   runState: SessionRuntimeStatus["runState"];
   needsInput: boolean;
-}
-
-export interface RuntimeLike extends RestartLeaseOwner {
-  /** Host default selection. Addressed operations and browser detail interests
-   * retain their own session/view ownership independently of this value. */
-  readonly activeSessionId: string | null;
-  on(event: "event", listener: (event: unknown) => void): this;
-  off(event: "event", listener: (event: unknown) => void): this;
-  /** Working directory of an open session, or null when it is not open.
-   * Project-file routes scope to the session the client names, never to
-   * the host's current selection. */
-  sessionCwd(sessionId: string): string | null;
-  openSession(id: string): Promise<ActiveSnapshot>;
-  /** Attach to the live external Pi continuing the viewed branch. */
-  takeOverSession(sessionId: string): Promise<ActiveSnapshot>;
-  branchLeaves(sessionId: string): Promise<BranchLeavesResponse>;
-  /** View another branch end, applying the read-only/takeover rule to it. */
-  selectBranch(sessionId: string, leafId: string): Promise<ActiveSnapshot>;
-  deselectSession(): Promise<ActiveSnapshot>;
-  newSession(
-    cwdInput: string,
-    options?: NewSessionOptions,
-  ): Promise<ActiveSnapshot>;
-  deleteSession(sessionId: string): Promise<SessionDeleteResponse>;
-  clearHiddenSessions(
-    expectedSessionIds: readonly string[],
-    hiddenSessionIds: readonly string[],
-    hiddenProjectCwds: readonly string[],
-  ): Promise<HiddenClearResponse>;
-  prompt(request: PromptRequest): Promise<ComposerHistoryEntry | null>;
-  abort(sessionId: string, expectedViewId?: string): Promise<PendingRecovery>;
-  recoverPending(
-    sessionId: string,
-    expectedViewId?: string,
-  ): Promise<PendingRecovery>;
-  pendingText(request: PendingReadRequest): Promise<PendingCopyContent>;
-  clearPending(sessionId: string): Promise<void>;
-  rename(sessionId: string, name: string): Promise<void>;
-  cycleModel(sessionId: string): Promise<unknown>;
-  setModel(
-    sessionId: string,
-    provider: string,
-    modelId: string,
-  ): Promise<unknown>;
-  refreshModels(
-    sessionId: string,
-    inherit?: boolean,
-  ): Promise<ModelCatalogResponse & { enabledModelPatterns?: string[] }>;
-  providerAuth?(
-    sessionId: string,
-    operation: ProviderAuthOperation,
-    workerId?: string,
-  ): Promise<ProviderAuthResult>;
-  providerAuthOwner?(
-    sessionId: string,
-  ): { id: string; cancelLogin(id: string): Promise<void> } | null;
-  setThinkingLevel(sessionId: string, level: string): Promise<unknown>;
-  setAutoCompaction(sessionId: string, enabled: boolean): Promise<void>;
-  setAutoRetry(sessionId: string, enabled: boolean): Promise<void>;
-  setSteeringMode(
-    sessionId: string,
-    mode: PiMessageDeliveryMode,
-  ): Promise<void>;
-  setFollowUpMode(
-    sessionId: string,
-    mode: PiMessageDeliveryMode,
-  ): Promise<void>;
-  nativeCommand(
-    request: HostNativeCommandRequest,
-  ): Promise<HostNativeCommandResponse>;
-  extensionUiResponse(response: Record<string, unknown>): Promise<void>;
-  snapshot(sessionId?: string | null): Promise<ActiveSnapshot>;
-  /** Retain a view and resume its external-session recovery without selecting it. */
-  retainSessionView?(sessionId: string): () => void;
-  lastAssistantText(
-    sessionId: string,
-    viewId: string,
-  ): Promise<{ text: string | null }>;
-  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage>;
-  transcriptActivityPage(
-    sessionId: string,
-    cursor: string,
-  ): Promise<TranscriptActivityPage>;
-  transcriptUserTurns(
-    sessionId: string,
-    start?: number,
-  ): Promise<UserTurnIndexPage>;
-  transcriptUserTurn(
-    sessionId: string,
-    targetMessageId: string,
-    cursor?: string,
-  ): Promise<UserTurnTranscriptPage>;
-  composerHistory(
-    sessionId: string,
-    start?: number,
-  ): Promise<ComposerHistoryPage>;
-  branchTree(
-    sessionId: string,
-    query?: BranchTreeQuery,
-  ): Promise<BranchTreeResponse>;
-  branchEntry(request: BranchEntryRequest): Promise<BranchEntryResponse>;
-  branchImage(
-    request: BranchEntryRequest,
-    index: number,
-  ): Promise<{ data: Buffer; mimeType: string }>;
-  cloneBranch(request: BranchCloneRequest): Promise<BranchForkResponse>;
-  navigateBranch(
-    request: BranchNavigateRequest,
-  ): Promise<BranchNavigateResponse>;
-  forkBranch(request: BranchForkRequest): Promise<BranchForkResponse>;
-  resourceContext(sessionId: string): Promise<ResourceContext>;
-  /** Abort active work in taken-over Pi after explicit confirmation. */
-  stopAttachedPiWork(): Promise<void>;
-  checkAttachedRestartWork(): Promise<RestartWorkConflict | null>;
-  close(preserveWorkers?: boolean): Promise<void>;
 }
 
 interface ForkReservation {
@@ -442,11 +313,10 @@ export interface RuntimeControllerOptions {
   branchBridgeTimeoutMs?: number | null;
   deleteSessionRecord?: DeleteSessionRecord;
   diagnostics?: DiagnosticLogger;
-  validateSessionRecord?: ValidateSessionRecord;
   stageFork?: StageSessionFork;
 }
 
-export class RuntimeController extends EventEmitter implements RuntimeLike {
+export class RuntimeController extends EventEmitter {
   private readonly slots = new Map<string, RuntimeSlot>();
   private readonly sessionViewObservers = new Map<string, number>();
   private externalRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -537,7 +407,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
         corresponds: (slot, leafId) => this.leafContinuesView(slot, leafId),
         continues: (slot, leafId) => {
-          const view = this.effectiveLeaf(slot);
+          const view = effectiveRuntimeLeaf(slot);
           const { projection } = slot;
           return (
             leafId === view ||
@@ -614,7 +484,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   private readonly branchBridgeTimeoutMs: number | null;
   private readonly deleteSessionRecord: DeleteSessionRecord;
   private readonly diagnostics: DiagnosticLogger;
-  private readonly validateSessionRecord: ValidateSessionRecord;
   private readonly stageFork: StageSessionFork;
 
   constructor(
@@ -635,8 +504,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.branchBridgeTimeoutMs = options.branchBridgeTimeoutMs ?? null;
     this.deleteSessionRecord = options.deleteSessionRecord ?? deleteSessionFile;
     this.diagnostics = options.diagnostics ?? nullDiagnosticLogger();
-    this.validateSessionRecord =
-      options.validateSessionRecord ?? validateSessionFile;
     this.stageFork = options.stageFork ?? stageSessionFork;
     this.persistenceOwnership = new RuntimePersistenceOwnershipController(
       {
@@ -692,7 +559,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       catalogRefresh: (force) =>
         this.catalog.refresh(force, { requireComplete: true }),
       invalidateCatalog: () => this.catalog.invalidate(),
-      validateSessionRecord: (session) => this.validateSessionRecord(session),
       deleteSessionRecord: (session) => this.deleteSessionRecord(session),
     });
     this.extensionUi = new RuntimeExtensionUiController({
@@ -767,7 +633,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       useSlot: (slot, operation) => this.useSlot(slot, operation),
       snapshotSlot: (slot) => this.snapshotSlot(slot),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
-      effectiveLeaf: (slot) => this.effectiveLeaf(slot),
       promptFileName: (path) => this.attachments.promptFileName(path),
     });
     this.projectionCoordinator = new RuntimeProjectionCoordinator(
@@ -849,6 +714,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
+  /** Host default selection. Addressed operations and browser detail interests
+   * retain their own session/view ownership independently of this value. */
   get activeSessionId(): string | null {
     return this.selectedSessionId;
   }
@@ -893,6 +760,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     return { kind: "ready", leaseId, expiresAt };
   }
 
+  /** Abort active work in taken-over Pi after explicit confirmation. */
   async stopAttachedPiWork(): Promise<void> {
     const failures = await Promise.all(
       [...this.slots.values()].map(async (slot) => {
@@ -1085,6 +953,9 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     }
   }
 
+  /** Working directory of an open session, or null when it is not open.
+   * Project-file routes scope to the session the client names, never to
+   * the host's current selection. */
   sessionCwd(sessionId: string): string | null {
     return this.slots.get(sessionId)?.cwd ?? null;
   }
@@ -1146,10 +1017,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     };
   }
 
-  private effectiveLeaf(slot: RuntimeSlot): string | null {
-    return effectiveRuntimeLeaf(slot);
-  }
-
   /** Keep each view on its own branch as the saved tree grows: a worker's
    * actual leaf, an attached Pi's reported leaf, or else the latest
    * continuation of the branch being viewed. */
@@ -1160,7 +1027,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<void> {
     const projection = slot.projection;
     if (!projection) return;
-    const before = this.effectiveLeaf(slot);
+    const before = effectiveRuntimeLeaf(slot);
     const rpc = slot.process;
     if (rpc && slot.ready) {
       if (!external || slot.pendingBranchBridge) return;
@@ -1195,12 +1062,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         leaf === projection.leafId
           ? null
           : {
-              workerId: slot.bridge.workerId,
-              sourceRevision: projection.revision,
-              durableLeafId: projection.leafId,
               effectiveLeafId: leaf,
-              targetId: leaf ?? "",
-              mode: "switch",
             };
     } else if (!rpc && slot.viewLeafId !== undefined) {
       const reported = this.externalSessions?.reportedLeaf(slot);
@@ -1210,14 +1072,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           ? reported
           : projection.latestContinuation(slot.viewLeafId);
     }
-    const after = this.effectiveLeaf(slot);
+    const after = effectiveRuntimeLeaf(slot);
     this.recordViewChange(slot, projection, before, after);
   }
 
   private followAttachedLeaf(slot: RuntimeSlot, leafId: string | null): void {
     const projection = slot.projection;
     if (!projection || (leafId !== null && !projection.entry(leafId))) return;
-    const before = this.effectiveLeaf(slot);
+    const before = effectiveRuntimeLeaf(slot);
     slot.viewLeafId = leafId;
     if (before === leafId) return;
     this.recordViewChange(slot, projection, before, leafId);
@@ -1268,12 +1130,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     ) {
       throw requestError("Fork destination is already being attached", 409);
     }
-    let settle!: () => void;
+    const { promise: completion, resolve: settle } =
+      Promise.withResolvers<void>();
     let released = false;
     const reservation: ForkReservation = {
-      completion: new Promise<void>((resolveCompletion) => {
-        settle = resolveCompletion;
-      }),
+      completion,
       release: () => {
         if (released) return;
         released = true;
@@ -1535,10 +1396,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
           await slot.mutationQueue.tail;
           continue;
         }
-        let dispatched!: () => void;
-        const sent = new Promise<void>((resolve) => {
-          dispatched = resolve;
-        });
+        const { promise: sent, resolve: dispatched } =
+          Promise.withResolvers<void>();
         // With a live agent, only the write boundary is serialized. A slow
         // receipt must not hold the remaining steering/follow-up inputs.
         const settled = this.promptInside(
@@ -1697,7 +1556,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     // Pi opens at the saved default; continue from the branch being viewed.
     const target = slot.viewLeafId;
     slot.viewLeafId = undefined;
-    const current = this.effectiveLeaf(slot);
+    const current = effectiveRuntimeLeaf(slot);
     if (
       target === undefined ||
       target === current ||
@@ -1728,7 +1587,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         },
         true,
       );
-      if (result.cancelled || this.effectiveLeaf(slot) !== target)
+      if (result.cancelled || effectiveRuntimeLeaf(slot) !== target)
         throw requestError("The viewed branch could not be restored", 409);
     } catch (error) {
       try {
@@ -2221,7 +2080,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): ActiveSnapshot {
     if (!slot.preview || !slot.projection)
       throw new Error("Session projection is not available");
-    const effectiveLeafId = this.effectiveLeaf(slot);
+    const effectiveLeafId = effectiveRuntimeLeaf(slot);
     const page = slot.projection.latestPage(
       slot.overlay,
       effectiveLeafId,
@@ -2553,7 +2412,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   /** A leaf on this view's root-to-leaf line: an ancestor of the displayed
    * leaf (a report may lag one append) or a continuation of it. */
   private leafContinuesView(slot: RuntimeSlot, leafId: string | null): boolean {
-    const view = this.effectiveLeaf(slot);
+    const view = effectiveRuntimeLeaf(slot);
     if (leafId === view) return true;
     if (!slot.projection) return false;
     return slot.projection.onSameLine(view, leafId);
@@ -2604,7 +2463,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
   ): Promise<void> {
     const watching = await this.externalWriterContinues(
       slot,
-      this.effectiveLeaf(slot),
+      effectiveRuntimeLeaf(slot),
       fresh,
       refreshProjection,
     );
@@ -2632,7 +2491,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     if (
       !(await this.externalWriterContinues(
         slot,
-        this.effectiveLeaf(slot),
+        effectiveRuntimeLeaf(slot),
         true,
       ))
     )
@@ -2659,7 +2518,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       await this.reconcileSlot(slot, false);
       if (!slot.projection)
         throw requestError("Session projection is not available", 503);
-      return slot.projection.branchLeaves(this.effectiveLeaf(slot), 30);
+      return slot.projection.branchLeaves(effectiveRuntimeLeaf(slot), 30);
     });
   }
 
@@ -2674,7 +2533,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         const target = projection?.entry(leafId);
         if (!projection || !target)
           throw requestError("That branch no longer exists", 404);
-        if (leafId === this.effectiveLeaf(slot)) return false;
+        if (leafId === effectiveRuntimeLeaf(slot)) return false;
         const reported = this.externalSessions?.reportedLeaf(slot);
         if (reported !== undefined && reported === leafId) return false;
         const watching = await this.externalWriterContinues(slot, leafId, true);
@@ -2731,7 +2590,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     this.emitSlotEvent(slot, {
       type: "branch_changed",
       revision: slot.branchRevision,
-      effectiveLeafId: this.effectiveLeaf(slot),
+      effectiveLeafId: effectiveRuntimeLeaf(slot),
     });
   }
 
@@ -2980,10 +2839,8 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const provisionalId = slot.id;
     let committed = false;
     let committedSnapshot: ActiveSnapshot | null = null;
-    let finishProvisional!: () => void;
-    const completion = new Promise<void>((resolveCompletion) => {
-      finishProvisional = resolveCompletion;
-    });
+    const { promise: completion, resolve: finishProvisional } =
+      Promise.withResolvers<void>();
     this.provisionalSlots.set(provisionalId, { slot, completion });
     this.workerLifecycle.bind(slot, rpc, true);
     try {
@@ -3192,7 +3049,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const slot = this.requireSlot(request.sessionId);
     const stopEpoch = slot.inputStopEpoch;
     const navigationEpoch = slot.deliveryNavigationEpoch;
-    const sourceLeaf = this.effectiveLeaf(slot);
+    const sourceLeaf = effectiveRuntimeLeaf(slot);
     const assertPromptView = (expectedViewId?: string) => {
       if (
         (expectedViewId !== undefined && expectedViewId !== slot.viewId) ||
@@ -3626,7 +3483,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
               try {
                 const newest = slot.projection?.composerHistoryPage(
                   0,
-                  this.effectiveLeaf(slot),
+                  effectiveRuntimeLeaf(slot),
                   slot.viewId,
                   slot.cwd,
                   (path) => this.attachments.promptFileName(path),
@@ -3646,7 +3503,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
                       historyArtifacts: {
                         viewId: slot.viewId,
                         incarnation: slot.projection?.incarnation ?? null,
-                        effectiveLeafId: this.effectiveLeaf(slot),
+                        effectiveLeafId: effectiveRuntimeLeaf(slot),
                         imageReferences: newest.images.map(
                           (image) => image.reference,
                         ),
@@ -3774,7 +3631,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       if (!slot.projection)
         throw requestError("Session projection is not available", 503);
       return {
-        ...slot.projection.branchTree(this.effectiveLeaf(slot), query),
+        ...slot.projection.branchTree(effectiveRuntimeLeaf(slot), query),
         revision: slot.branchRevision,
         skipSummaryPrompt:
           SettingsManager.create(
@@ -3797,7 +3654,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         ...slot.projection.branchEntry(
           request.targetId,
           request.offset ?? 0,
-          this.effectiveLeaf(slot),
+          effectiveRuntimeLeaf(slot),
           request.format,
         ),
         revision: slot.branchRevision,
@@ -3859,14 +3716,11 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     bridge: BranchBridgeIdentity,
   ): PendingBranchBridge {
     const nonce = bridgeToken("nonce");
-    let resolveResult!: (result: BranchBridgeResult) => void;
-    let rejectResult!: (error: Error) => void;
-    const result = new Promise<BranchBridgeResult>(
-      (resolvePromise, rejectPromise) => {
-        resolveResult = resolvePromise;
-        rejectResult = rejectPromise;
-      },
-    );
+    const {
+      promise: result,
+      resolve: resolveResult,
+      reject: rejectResult,
+    } = Promise.withResolvers<BranchBridgeResult>();
     const pending: PendingBranchBridge = {
       nonce,
       bridge,
@@ -3935,7 +3789,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
       !request.summarize &&
       !request.customInstructions
     ) {
-      if (request.targetId !== this.effectiveLeaf(slot))
+      if (request.targetId !== effectiveRuntimeLeaf(slot))
         await this.restoreSavedPositionInsideGate(
           slot,
           projection,
@@ -3954,7 +3808,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     const editorText = editable
       ? projection.editableText(request.targetId, MAX_PROMPT_CHARS)
       : undefined;
-    const beforeLeaf = this.effectiveLeaf(slot);
+    const beforeLeaf = effectiveRuntimeLeaf(slot);
     const navigationTarget = nativeNavigationLeaf(target, beforeLeaf);
     if (request.targetId === beforeLeaf)
       return {
@@ -3971,7 +3825,6 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
 
     const pending = this.makePendingBranch(slot, bridge);
     pending.navigationParentId = navigationTarget;
-    pending.beforeLeafId = beforeLeaf;
     pending.summarize = request.summarize ?? false;
     const bridgeRequest: BranchBridgeRequest = {
       v: BRANCH_BRIDGE_VERSION,
@@ -4127,18 +3980,10 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     slot.branchRevision += 1;
     if (!restoringView) slot.deliveryNavigationEpoch += 1;
     this.renewView(slot);
-    if (result.effectiveLeaf === projection.leafId) {
-      slot.navigationLease = null;
-    } else {
-      slot.navigationLease = {
-        workerId: bridge.workerId,
-        sourceRevision: projection.revision,
-        durableLeafId: projection.leafId,
-        effectiveLeafId: result.effectiveLeaf,
-        targetId: request.targetId,
-        mode: request.mode,
-      };
-    }
+    slot.navigationLease =
+      result.effectiveLeaf === projection.leafId
+        ? null
+        : { effectiveLeafId: result.effectiveLeaf };
     this.emitSlotEvent(slot, {
       type: "branch_changed",
       revision: slot.branchRevision,
@@ -4169,7 +4014,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         );
     };
     assertSavedTarget();
-    slot.viewLeafId = this.effectiveLeaf(slot);
+    slot.viewLeafId = effectiveRuntimeLeaf(slot);
     await this.stopWriter(slot);
     await this.reconcileSlot(slot, true);
     assertSavedTarget();
@@ -5073,7 +4918,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
             await this.reconcileSlot(slot, false);
             this.throwIfConflicted(slot);
             let entries = slot.projection!.entriesAfter(null);
-            let leafId = this.effectiveLeaf(slot);
+            let leafId = effectiveRuntimeLeaf(slot);
             // A saved branch is independently readable, even without its cwd
             // or a writable Pi. Never launch a worker merely to export it.
             if (slot.process) {
@@ -5157,19 +5002,14 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     assertView?.();
     const previousRunState = slot.runState;
     const previousTailEntryId = slot.projection?.tailEntryId ?? null;
-    const previousEffectiveLeafId = this.effectiveLeaf(slot);
+    const previousEffectiveLeafId = effectiveRuntimeLeaf(slot);
     // This is a user-started standalone compaction. Automatic compaction
     // captures and restores the surrounding agent state from its events.
     slot.compactionReturnState = "idle";
     slot.runState = "compacting";
-    let finish!: () => void;
-    const compaction = {
-      worker: ready.process,
-      finished: new Promise<void>((resolveFinished) => {
-        finish = resolveFinished;
-      }),
-      aborted: false,
-    };
+    const { promise: finished, resolve: finish } =
+      Promise.withResolvers<void>();
+    const compaction = { worker: ready.process, finished, aborted: false };
     slot.manualCompaction = compaction;
     try {
       const expectation = deferredExpectation();
@@ -5665,7 +5505,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
         slot.sessionPath = runtimeSessionPath;
       if (!slot.projection)
         throw new Error("Session projection is not available");
-      const effectiveLeafId = this.effectiveLeaf(slot);
+      const effectiveLeafId = effectiveRuntimeLeaf(slot);
       const page = slot.projection.latestPage(
         slot.overlay,
         effectiveLeafId,
@@ -5740,6 +5580,7 @@ export class RuntimeController extends EventEmitter implements RuntimeLike {
     });
   }
 
+  /** Retain a view and resume its external-session recovery without selecting it. */
   retainSessionView(sessionId: string): () => void {
     this.sessionViewObservers.set(
       sessionId,

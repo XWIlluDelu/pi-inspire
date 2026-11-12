@@ -89,10 +89,9 @@ function expectExactBudget(slot: ReturnType<typeof setup>["slot"]) {
   expect(slot.overlayItemBytes).toEqual(
     slot.overlay.map((item) => Buffer.byteLength(JSON.stringify(item))),
   );
-  expect(slot.overlayBytes).toBe(
-    Buffer.byteLength(JSON.stringify(slot.overlay)),
+  expect(Buffer.byteLength(JSON.stringify(slot.overlay))).toBeLessThanOrEqual(
+    TRANSIENT_OVERLAY_MAX_BYTES,
   );
-  expect(slot.overlayBytes).toBeLessThanOrEqual(TRANSIENT_OVERLAY_MAX_BYTES);
 }
 
 function measureWork(events: number, incremental: boolean) {

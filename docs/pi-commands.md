@@ -2,7 +2,7 @@
 
 For initial setup, follow [Your first session](../README.md#your-first-session). This guide covers
 the controls available once you are using the workbench. An **Inspire-owned session** runs in a Pi
-worker started by the Host. A **connected native Pi** keeps running in its original Herdr terminal;
+worker started by the Host. A **connected native Pi** keeps running in its original terminal;
 some actions below therefore direct you back there. Project terminal tabs are separate shells.
 
 Use the Composer's `/` completion or the command palette (header button or Ctrl/⌘+K). Both list

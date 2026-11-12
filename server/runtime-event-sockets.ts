@@ -8,13 +8,13 @@ import {
   isSessionRuntimeStatus,
   MAX_SESSION_ID_CHARS,
 } from "../shared/contracts.js";
-import type { RuntimeLike } from "./runtime.js";
+import type { RuntimeController } from "./runtime.js";
 import type {
   NotificationPrincipal,
   TaskNotifications,
 } from "./task-notifications.js";
 import { compactToolArgumentEvents } from "./tool-argument-batches.js";
-import type { UpdateCoordinatorLike } from "./update-coordinator.js";
+import type { UpdateCoordinator } from "./update-coordinator.js";
 
 export const MAX_JOINING_EVENT_BYTES = 4 * 1024 * 1024;
 export const MAX_RUNTIME_EVENT_BYTES = 2 * 1024 * 1024;
@@ -23,8 +23,11 @@ const STREAM_EVENT_BATCH_INTERVAL_MS = 16;
 const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 
 interface RuntimeEventSocketOptions {
-  runtime: Pick<RuntimeLike, "on" | "off" | "snapshot" | "retainSessionView">;
-  updateCoordinator: Pick<UpdateCoordinatorLike, "status" | "subscribe">;
+  runtime: Pick<
+    RuntimeController,
+    "on" | "off" | "snapshot" | "retainSessionView"
+  >;
+  updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
   heartbeatIntervalMs: number;
   taskNotifications?: Pick<TaskNotifications, "attach">;
@@ -73,7 +76,7 @@ export function createRuntimeEventSockets({
     // Acquire before releasing so a new subscription to the same session never
     // briefly makes its live projection eligible for reclamation.
     const release = interest.sessionId
-      ? runtime.retainSessionView?.(interest.sessionId)
+      ? runtime.retainSessionView(interest.sessionId)
       : undefined;
     const previous = retainedViews.get(socket);
     if (release) retainedViews.set(socket, release);

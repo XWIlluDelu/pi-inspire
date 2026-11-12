@@ -27,10 +27,6 @@ interface PackageUpdateCandidate {
   scope: "user" | "project";
 }
 
-export interface PiUpdateCheckerLike {
-  check(force?: boolean): Promise<PiUpdateCheckResponse>;
-}
-
 interface PiUpdateCheckerOptions {
   currentVersion: string;
   readInstalledVersion: () => Promise<string>;
@@ -41,7 +37,7 @@ interface PiUpdateCheckerOptions {
 }
 
 /** Mirrors Pi's read-only startup checks without exposing package mutation. */
-export class PiUpdateChecker implements PiUpdateCheckerLike {
+export class PiUpdateChecker {
   private readonly fetchLatest: FetchLatest;
   private readonly now: () => number;
   private readonly offline: () => boolean;

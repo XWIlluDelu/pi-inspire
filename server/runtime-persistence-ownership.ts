@@ -57,7 +57,6 @@ function overlayArrayBytes(items: readonly number[]): number {
 
 function recountOverlay(slot: RuntimeSlot): void {
   slot.overlayItemBytes = slot.overlay.map(overlayItemBytes);
-  slot.overlayBytes = overlayArrayBytes(slot.overlayItemBytes);
 }
 
 interface RuntimePersistenceOwnershipHost {
@@ -316,7 +315,6 @@ export class RuntimePersistenceOwnershipController {
     }
     slot.overlay = next;
     slot.overlayItemBytes = itemBytes;
-    slot.overlayBytes = overlayArrayBytes(itemBytes);
     return projected;
   }
 
@@ -560,7 +558,6 @@ export class RuntimePersistenceOwnershipController {
         appendedEntries,
         matchedExpectations,
       );
-      let expectationsConsumed = matchedPrefix;
       for (const entry of appendedEntries.slice(matchedPrefix)) {
         // The worker has attested the entire observed prefix. An unclaimed
         // metadata entry must not prevent later exact message claims from
@@ -571,7 +568,6 @@ export class RuntimePersistenceOwnershipController {
         if (index >= 0) {
           const [expectation] = slot.persistenceExpectations.splice(index, 1);
           this.bindPersistenceEntry(slot, expectation!, entry);
-          expectationsConsumed += 1;
           continue;
         }
         if (
@@ -590,7 +586,6 @@ export class RuntimePersistenceOwnershipController {
       return {
         owned: true,
         source: "worker-entries",
-        expectationsConsumed,
         workerWitness,
       };
     } catch {
@@ -710,7 +705,6 @@ export class RuntimePersistenceOwnershipController {
       source: initialMaterialization
         ? "initial-materialization"
         : "expectation",
-      expectationsConsumed: matchedExpectations.length,
     };
   }
 

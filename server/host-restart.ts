@@ -5,7 +5,7 @@ import type {
   HostRestartStatus,
 } from "../shared/host-restart.js";
 import { requestError } from "./request-error.js";
-import type { RestartLeaseOwner, RuntimeLike } from "./runtime.js";
+import type { RuntimeController } from "./runtime.js";
 
 export interface HostRestartBackend {
   inspect(): Promise<{ host: boolean; all: boolean }>;
@@ -32,8 +32,14 @@ export class HostRestartController {
   private availability: ReturnType<HostRestartBackend["inspect"]> | null = null;
 
   constructor(
-    private readonly runtime: RestartLeaseOwner &
-      Pick<RuntimeLike, "checkAttachedRestartWork" | "stopAttachedPiWork">,
+    private readonly runtime: Pick<
+      RuntimeController,
+      | "reserveMaintenanceRestart"
+      | "commitMaintenanceRestart"
+      | "releaseMaintenanceRestart"
+      | "checkAttachedRestartWork"
+      | "stopAttachedPiWork"
+    >,
     private readonly backend: HostRestartBackend,
     private readonly canPreserveWorkers = () => true,
   ) {}

@@ -6,10 +6,8 @@ import type { DiagnosticLogger } from "./diagnostics.js";
 import { resolvePiInstallationIdentity } from "./pi-installation.js";
 import type {
   MaintenanceRestartTransition,
-  RestartLeaseOwner,
+  RuntimeController,
 } from "./runtime.js";
-
-export type { MaintenanceRestartTransition } from "./runtime.js";
 
 const execFile = promisify(execFileCallback);
 const IDENTITY_COMMAND_TIMEOUT_MS = 5_000;
@@ -26,12 +24,17 @@ interface MaintenanceRestartReady {
   updates: Array<"inspire" | "pi">;
 }
 
-export type MaintenanceRestartOutcome =
+type MaintenanceRestartOutcome =
   | MaintenanceRestartReady
   | { kind: "skipped"; reason: string };
 
 interface MaintenanceRestartControllerOptions {
-  runtime: RestartLeaseOwner;
+  runtime: Pick<
+    RuntimeController,
+    | "reserveMaintenanceRestart"
+    | "commitMaintenanceRestart"
+    | "releaseMaintenanceRestart"
+  >;
   root: string;
   piVersion: string;
   runningSource: InspireSourceIdentity;

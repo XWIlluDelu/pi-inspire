@@ -10,27 +10,23 @@ import type {
 
 export function knownExpectation(
   matcher: PersistenceMatcher,
-  exactEntry: SessionEntry | null = null,
 ): PersistenceExpectation {
   return {
     token: Symbol("persistence-expectation"),
     matcher,
-    exactEntry,
     ready: Promise.resolve(),
     settle: () => undefined,
   };
 }
 
 export function deferredExpectation(): PersistenceExpectation {
-  let settleReady!: () => void;
+  const { promise: ready, resolve: settleReady } =
+    Promise.withResolvers<void>();
   let settled = false;
   const expectation: PersistenceExpectation = {
     token: Symbol("persistence-expectation"),
     matcher: null,
-    exactEntry: null,
-    ready: new Promise<void>((resolveReady) => {
-      settleReady = resolveReady;
-    }),
+    ready,
     settle(matcher) {
       if (settled) return;
       settled = true;
@@ -60,9 +56,8 @@ export function exactEntryExpectation(
   entry: SessionEntry,
 ): PersistenceExpectation {
   const expected = structuredClone(entry);
-  return knownExpectation(
-    (candidate) => samePersistedJson(candidate, expected),
-    expected,
+  return knownExpectation((candidate) =>
+    samePersistedJson(candidate, expected),
   );
 }
 
