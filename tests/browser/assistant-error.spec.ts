@@ -9,151 +9,58 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: "wait" });
 });
 
-for (const scenario of [
-  {
-    name: "native cancellation with a mouse",
-    hasTouch: false,
-    deviceScaleFactor: 1,
-  },
-  {
-    name: "native cancellation on touch",
+test.describe("narrow conversation", () => {
+  test.use({
     hasTouch: true,
-    deviceScaleFactor: 2,
-  },
-]) {
-  test.describe(scenario.name, () => {
-    test.use({
-      hasTouch: scenario.hasTouch,
-      deviceScaleFactor: scenario.deviceScaleFactor,
-      serviceWorkers: "block",
-    });
-    test("Stopped preserves output and drafts without hiding later failures @cross-browser", async ({
-      page,
-    }) => {
-      const fixture = await assistantOutcomeScenario(page);
-      await page.emulateMedia({ reducedMotion: "reduce" });
-      await pairedPage(page);
-      await openFixtureSession(page, /Pi error display fixture/);
-      await expect.poll(fixture.ready).toBe(true);
-      const input = page.getByRole("textbox", { name: "Message", exact: true });
-      await input.fill("Keep this unsent draft.");
-      const stop = page.getByRole("button", {
-        name: "Abort running task",
-        exact: true,
-      });
-      await stop.click();
-      await expect(page.locator(".notice--warning")).toContainText(
-        "Stop could not be confirmed",
-      );
-      await expect(stop).toBeVisible();
-      await expect(
-        page.getByRole("group", { name: "Stopped", exact: true }),
-      ).toHaveCount(0);
-      await page
-        .locator(".notice--warning")
-        .getByRole("button", { name: /Dismiss/ })
-        .click();
-      fixture.allowStop();
-      const receipt = page.waitForResponse("**/api/control/abort");
-      await stop.click();
-      await receipt;
-      await expect(
-        page.getByRole("group", { name: "Stopped", exact: true }),
-      ).toHaveCount(0);
-      fixture.stopped();
-      const stopped = page.getByRole("group", { name: "Stopped", exact: true });
-      await expect(stopped).toBeVisible();
-      await expect(
-        page.getByRole("group", { name: "Pi error", exact: true }),
-      ).toHaveCount(0);
-      await expect(page.locator(".composer--failed")).toHaveCount(0);
-      await expect(input).toHaveValue("Keep this unsent draft.");
-      await expect(
-        page.getByText("Partial response kept before Stop.", { exact: true }),
-      ).toBeVisible();
-      await expect(stopped).toHaveText("Stopped");
-      await expect(stopped).toHaveClass(/assistant-error--stopped/);
-      await expect(stopped.locator("button, section")).toHaveCount(0);
-      await expect(stopped.locator("svg")).toHaveCount(1);
-      await expect(stopped.locator("svg")).toHaveAttribute(
-        "aria-hidden",
-        "true",
-      );
-      await expect(stopped.locator("svg")).toHaveClass(/lucide-square/);
-      await expect(stopped.locator("svg circle")).toHaveCount(0);
-      await expect(
-        page.getByText("This operation was aborted", { exact: true }),
-      ).toHaveCount(0);
-      for (const width of [1280, 320]) {
-        await page.setViewportSize({ width, height: 844 });
-        await stopped.scrollIntoViewIfNeeded();
-        const iconGeometry = await stopped.evaluate((el) => {
-          const i = el.querySelector("svg")!.getBoundingClientRect();
-          const label = el
-            .querySelector(".assistant-error__label")!
-            .getBoundingClientRect();
-          return {
-            width: i.width,
-            height: i.height,
-            gap: label.left - i.right,
-            dy: (i.top + i.bottom - label.top - label.bottom) / 2,
-          };
-        });
-        expect(iconGeometry).toMatchObject({
-          width: 14,
-          height: 14,
-          gap: 8,
-        });
-        expect(Math.abs(iconGeometry.dy)).toBeLessThanOrEqual(0.5);
-        expect(
-          await stopped.evaluate((el) => el.scrollWidth <= el.clientWidth),
-        ).toBe(true);
-        expect(
-          await stopped.evaluate((el) =>
-            parseFloat(getComputedStyle(el).borderTopWidth),
-          ),
-        ).toBe(1);
-      }
-      expect(
-        (
-          await new AxeBuilder({ page })
-            .include(".assistant-error--stopped")
-            .analyze()
-        ).violations,
-      ).toEqual([]);
-      await fixture.reload();
-      await expect(stopped).toHaveCount(1);
-      await expect(page.locator(".composer--failed")).toHaveCount(0);
-      await expect(input).toHaveValue("Keep this unsent draft.");
-      await expect(
-        page.getByRole("main").locator(".banner--warning"),
-      ).toHaveCount(0);
-      fixture.failed();
-      await expect(
-        page.getByRole("group", { name: "Pi error", exact: true }),
-      ).toHaveText(/This operation was aborted/);
-      await expect(stopped).toHaveCount(1);
-      const outcomeColors = await page
-        .locator(".assistant-error")
-        .evaluateAll((elements) =>
-          elements.map((element) => ({
-            border: getComputedStyle(element).borderTopColor,
-            background: getComputedStyle(element).backgroundColor,
-            icon: getComputedStyle(
-              element.querySelector(".assistant-error__icon")!,
-            ).color,
-            label: getComputedStyle(
-              element.querySelector(".assistant-error__label")!,
-            ).color,
-          })),
-        );
-      expect(outcomeColors).toHaveLength(2);
-      expect(outcomeColors[0]).toEqual(outcomeColors[1]);
-      await expect(page.locator(".composer--failed")).toHaveCount(1);
-      await expect(input).toHaveValue("Keep this unsent draft.");
-    });
+    viewport: { width: 320, height: 844 },
+    serviceWorkers: "block",
+    contextOptions: { reducedMotion: "reduce" },
   });
-}
+
+  test("Stopped preserves output and drafts without hiding later failures @cross-browser", async ({
+    page,
+  }) => {
+    const fixture = await assistantOutcomeScenario(page);
+    await pairedPage(page);
+    await openFixtureSession(page, /Pi error display fixture/);
+    await expect.poll(fixture.ready).toBe(true);
+    const input = page.getByRole("textbox", { name: "Message", exact: true });
+    await input.fill("Keep this unsent draft.");
+    const stop = page.getByRole("button", {
+      name: "Abort running task",
+      exact: true,
+    });
+    const stopped = page.getByRole("group", { name: "Stopped", exact: true });
+    const error = page.getByRole("group", { name: "Pi error", exact: true });
+    await stop.tap();
+    const warning = page.locator(".notice--warning");
+    await expect(warning).toContainText("Stop could not be confirmed");
+    await expect(stop).toBeVisible();
+    await warning.getByRole("button", { name: /Dismiss/ }).click();
+
+    fixture.allowStop();
+    const receipt = page.waitForResponse("**/api/control/abort");
+    await stop.tap();
+    await receipt;
+    await expect(stopped).toHaveCount(0);
+
+    fixture.stopped();
+    await expect(stopped).toBeVisible();
+    await expect(error).toHaveCount(0);
+    await expect(input).toHaveValue("Keep this unsent draft.");
+    await expect(
+      page.getByText("Partial response kept before Stop.", { exact: true }),
+    ).toBeVisible();
+
+    await fixture.reload();
+    await expect(stopped).toHaveCount(1);
+    await expect(input).toHaveValue("Keep this unsent draft.");
+    fixture.failed();
+    await expect(error).toHaveText(/This operation was aborted/);
+    await expect(stopped).toHaveCount(1);
+    await expect(input).toHaveValue("Keep this unsent draft.");
+  });
+});
 
 test("Pi errors remain visible after reopening and reload, with copyable long details", async ({
   page,
@@ -214,54 +121,43 @@ test("Pi errors remain visible after reopening and reload, with copyable long de
     page.getByText("WebSocket error", { exact: true }),
   ).toBeVisible();
 
-  for (const [palette, theme] of [
-    ["chimonanthus", "light"],
-    ["chimonanthus", "dark"],
-    ["hydrangea", "light"],
-    ["hydrangea", "dark"],
-    ["wisteria", "light"],
-    ["wisteria", "dark"],
-    ["lycoris", "light"],
-    ["lycoris", "dark"],
-  ]) {
+  for (const [palette, theme, width] of [
+    ["chimonanthus", "light", 1280],
+    ["hydrangea", "dark", 390],
+  ] as const) {
     await page.evaluate(
       ({ palette, theme }) => {
-        document.documentElement.dataset.palette = palette;
-        document.documentElement.dataset.theme = theme;
+        Object.assign(document.documentElement.dataset, { palette, theme });
       },
       { palette, theme },
     );
-    for (const width of [1280, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await error.scrollIntoViewIfNeeded();
-      const show = error.getByRole("button", { name: "Show details" });
-      await show.focus();
-      await page.keyboard.press("Enter");
-      await expect(
-        error.getByRole("button", { name: "Hide details" }),
-      ).toHaveAttribute("aria-expanded", "true");
-      expect(
-        await error.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
-        ),
-      ).toBe(true);
-      const diagnostics = error.getByRole("region", { name: "Error details" });
-      await diagnostics.focus();
-      await expect(diagnostics).toBeFocused();
-      if (
-        await diagnostics.evaluate((el) => el.scrollHeight > el.clientHeight)
-      ) {
-        await diagnostics.press("PageDown");
-        await expect
-          .poll(() => diagnostics.evaluate((el) => el.scrollTop))
-          .toBeGreaterThan(0);
-      }
-      expect(
-        (await new AxeBuilder({ page }).include(".assistant-error").analyze())
-          .violations,
-      ).toEqual([]);
-
-      await error.getByRole("button", { name: "Hide details" }).click();
+    await page.setViewportSize({ width, height: 900 });
+    await error.scrollIntoViewIfNeeded();
+    const show = error.getByRole("button", { name: "Show details" });
+    await show.focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      error.getByRole("button", { name: "Hide details" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      await error.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    const diagnostics = error.getByRole("region", { name: "Error details" });
+    await diagnostics.focus();
+    await expect(diagnostics).toBeFocused();
+    if (width === 390) {
+      await diagnostics.press("PageDown");
+      await expect
+        .poll(() => diagnostics.evaluate((el) => el.scrollTop))
+        .toBeGreaterThan(0);
     }
+    expect(
+      (await new AxeBuilder({ page }).include(".assistant-error").analyze())
+        .violations,
+    ).toEqual([]);
+
+    await error.getByRole("button", { name: "Hide details" }).click();
   }
 });

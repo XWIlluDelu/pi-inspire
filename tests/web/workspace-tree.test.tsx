@@ -7,7 +7,8 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
+import type { GitFileChange } from "../../shared/contracts";
 import {
   WorkspaceFileSearch,
   WorkspaceSearchResults,
@@ -24,11 +25,9 @@ import {
   type RouteResponse,
 } from "./helpers";
 
-afterEach(() => vi.useRealTimers());
-
 async function workspaceHarness() {
   const directory = vi.fn(
-    (dir: string): RouteResponse => ({
+    (dir: string): RouteResponse | Promise<RouteResponse> => ({
       body: {
         entries: dir
           ? [{ name: "nested.ts", type: "file" }]
@@ -60,7 +59,14 @@ async function workspaceHarness() {
   await store.init();
   const socket = FakeWebSocket.instances.at(-1)!;
   socket.open();
-  return { directory, search, socket };
+  const openProject = (sessionId: string, cwd: string) =>
+    act(() =>
+      socket.emit({
+        type: "snapshot",
+        data: activeSnapshot({ sessionId, cwd }),
+      }),
+    );
+  return { directory, search, openProject };
 }
 
 it("keeps workspace search clearing available while loading and retires the pending result", async () => {
@@ -92,7 +98,7 @@ it("keeps workspace search clearing available while loading and retires the pend
   ).not.toBeInTheDocument();
 });
 
-it("keeps confirmed directory and search rows visible during and after a failed refresh", async () => {
+it("preserves displayed files through a failed refresh and clears its warnings on return", async () => {
   const harness = await workspaceHarness();
   await store.loadWorkspaceDirectory("");
   store.setWorkspaceQuery("known");
@@ -105,74 +111,79 @@ it("keeps confirmed directory and search rows visible during and after a failed 
       <WorkspaceSearchResults />
     </>,
   );
-  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
-  harness.directory.mockReturnValue({
-    status: 503,
-    body: { error: "Directory temporarily unavailable" },
-  });
-  harness.search.mockReturnValue({
-    status: 503,
-    body: { error: "Search temporarily unavailable" },
-  });
-  vi.useFakeTimers();
-  let refresh!: Promise<void>;
-  await act(async () => {
-    refresh = store.refreshWorkspaceBrowser();
-    await vi.advanceTimersByTimeAsync(0);
-  });
-  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
-  expect(screen.queryByText("Loading…")).toBeNull();
-  await act(() => vi.advanceTimersByTimeAsync(28_000));
-  await refresh;
-  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
-  expect(screen.getByText("Directory could not be refreshed")).toBeVisible();
-  expect(screen.getByText("Search temporarily unavailable")).toBeVisible();
-  expect(screen.queryByText("Directory unavailable")).toBeNull();
-});
-
-it("revalidates cached failed visible directories when returning to a workspace", async () => {
-  const harness = await workspaceHarness();
-  render(<WorkspaceTree />);
-  fireEvent.click(await screen.findByRole("button", { name: "src" }));
+  fireEvent.click(screen.getByRole("button", { name: "src" }));
   await screen.findByRole("button", { name: "nested.ts" });
-  harness.directory.mockReturnValue({
+  const pending = deferred<RouteResponse>();
+  const failure = { status: 403, body: { error: "Directory unavailable" } };
+  harness.directory
+    .mockReturnValueOnce(pending.promise)
+    .mockReturnValue(failure);
+  harness.search.mockReturnValue({
     status: 403,
-    body: { error: "Permission denied" },
+    body: { error: "Search unavailable" },
   });
-  await act(() => store.refreshWorkspaceBrowser());
-  expect(store.getState().workspaceDirectoryErrors).toEqual({
-    "": "Permission denied",
-    src: "Permission denied",
+  let refresh!: Promise<void>;
+  act(() => {
+    refresh = store.refreshWorkspaceBrowser();
   });
-  act(() =>
-    harness.socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        sessionId: "other",
-        cwd: "/other",
-      }),
-    }),
+  expect(screen.getAllByRole("button", { name: /^known\.ts/ })).toHaveLength(2);
+  await act(async () => {
+    pending.resolve(failure);
+    await refresh;
+  });
+  expect(screen.getAllByText("Directory could not be refreshed")).toHaveLength(
+    2,
   );
+  expect(screen.getByText("Search unavailable")).toBeVisible();
+  expect(screen.getByRole("button", { name: "nested.ts" })).toBeVisible();
+
+  harness.openProject("other", "/other");
   await screen.findByText("Directory unavailable");
-  harness.directory.mockReturnValue({
-    body: { entries: [{ name: "new.ts", type: "file" }] },
+  expect(screen.queryByRole("button", { name: "nested.ts" })).toBeNull();
+  harness.directory.mockImplementation((dir) => ({
+    body: {
+      entries: dir
+        ? [{ name: "new.ts", type: "file" }]
+        : [{ name: "src", type: "dir" }],
+    },
+  }));
+  harness.search.mockReturnValue({
+    body: { files: [{ name: "new.ts", path: "src/new.ts" }] },
   });
-  harness.directory.mockClear();
-  act(() =>
-    harness.socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        sessionId: "s1",
-        cwd: "/project",
-      }),
-    }),
+  harness.openProject("s1", "/project");
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: /^new\.ts/ })).toHaveLength(2),
   );
-  await screen.findByRole("button", { name: "new.ts" });
-  expect(harness.directory.mock.calls.map(([dir]) => dir)).toEqual(["", "src"]);
-  expect(store.getState().workspaceDirectoryErrors).toEqual({});
+  expect(screen.queryByRole("button", { name: "nested.ts" })).toBeNull();
+  expect(screen.queryByText("Directory could not be refreshed")).toBeNull();
+  expect(screen.queryByText("Search unavailable")).toBeNull();
 });
 
-it("decorates workspace rows by exact path without basename guessing", async () => {
+it("rolls up only authorized Git paths and decorates the exact file, not a basename match", async () => {
+  const folders = ["other", "others", "clash", "opaque", "vendor"];
+  const file = (
+    display: string,
+    change: Omit<GitFileChange, "path" | "untracked"> & { untracked?: boolean },
+    workspacePath: string | null = display,
+  ): GitFileChange => ({
+    path: { id: display, display, workspacePath: workspacePath ?? undefined },
+    untracked: false,
+    ...change,
+  });
+  const files = [
+    file("other/changed.ts", { worktree: { kind: "modified" } }),
+    file("other/untracked.ts", { untracked: true }),
+    file("clash/deep/merge.ts", { conflict: { code: "UU" } }),
+    file("clash/change.ts", { worktree: { kind: "modified" } }),
+    file("clash/new.ts", { untracked: true }),
+    file("others-shadow/twin.ts", { worktree: { kind: "modified" } }),
+    file("opaque/not-safe.ts", { untracked: true }, null),
+    file("vendor", { worktree: { kind: "modified" } }),
+    file("canceled.ts", {
+      staged: { kind: "added" },
+      unstaged: { kind: "deleted" },
+    }),
+  ];
   installFakeWebSocket();
   installFetch((url) => {
     if (url.startsWith("/api/bootstrap"))
@@ -185,70 +196,48 @@ it("decorates workspace rows by exact path without basename guessing", async () 
       return {
         body: {
           kind: "repository",
-          head: { kind: "branch", name: "main", oid: "0123456789abcdef" },
-          files: [
-            {
-              path: {
-                id: "b3RoZXIvY2hhbmdlZC50cw",
-                display: "other/changed.ts",
-                utf8Path: "other/changed.ts",
-                workspacePath: "other/changed.ts",
-              },
-              worktree: { kind: "modified" },
-              untracked: false,
-            },
-          ],
-          total: 1,
+          head: { kind: "branch", name: "main", oid: "abc" },
+          files,
+          total: files.length,
           truncated: false,
         },
       };
     if (url.startsWith("/api/files/list")) {
-      const dir = new URL(url, "http://local").searchParams.get("dir") ?? "";
+      const dir = new URL(url, "http://local").searchParams.get("dir");
       return {
         body: {
           entries:
             dir === "other"
               ? [{ name: "changed.ts", type: "file" }]
               : [
-                  { name: "other", type: "dir" },
+                  ...folders.map((name) => ({ name, type: "dir" })),
                   { name: "changed.ts", type: "file" },
+                  { name: "canceled.ts", type: "file" },
                 ],
         },
       };
     }
-
-    return undefined;
   });
   await store.init();
   await store.refreshGitStatus();
   render(<WorkspaceTree />);
-  const rootFile = await screen.findByRole("button", { name: "changed.ts" });
-  expect(within(rootFile).queryByLabelText("modified")).not.toBeInTheDocument();
-  expect(rootFile.querySelector(".workspace-tree__name")).not.toHaveClass(
-    "git-deco--modified",
-  );
-  const dirtyDirectory = screen.getByRole("button", {
-    name: /other.*contains modified files/i,
-  });
-  expect(dirtyDirectory.querySelector(".workspace-tree__name")).toHaveClass(
-    "git-deco--modified",
-  );
+  await screen.findByRole("button", { name: "changed.ts" });
+  for (const name of ["opaque", "others", "canceled.ts"]) {
+    expect(screen.getByRole("button", { name })).toBeVisible();
+  }
   expect(
-    within(dirtyDirectory).getByLabelText("Contains modified files"),
-  ).toHaveClass("git-rollup", "git-deco--modified");
-  fireEvent.click(dirtyDirectory);
-  await waitFor(() =>
-    expect(screen.getAllByRole("button", { name: /changed\.ts/ })).toHaveLength(
-      2,
-    ),
+    screen.getByRole("button", { name: /^vendor.*Contains modified files/i }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /^clash.*Contains conflicts/i }),
+  ).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: /^other.*Contains modified files/i }),
   );
-  const files = screen.getAllByRole("button", { name: /changed\.ts/ });
-  const nested = files.find((button) => button !== rootFile)!;
-  expect(within(nested).getByLabelText("modified")).toHaveTextContent("M");
-  expect(within(nested).getByLabelText("modified")).toHaveClass(
-    "git-deco--modified",
-  );
-  expect(nested.querySelector(".workspace-tree__name")).toHaveClass(
-    "git-deco--modified",
-  );
+  const changed = await screen.findByRole("button", {
+    name: /^changed\.ts.*modified/,
+  });
+  expect(
+    within(changed).getByRole("img", { name: "modified" }),
+  ).toHaveTextContent("M");
 });

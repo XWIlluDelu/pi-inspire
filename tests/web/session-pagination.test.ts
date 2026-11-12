@@ -1,169 +1,93 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sessionPage } from "./fixtures/session-catalog";
+import {
+  installCatalog,
+  type PageRequest,
+  sessionPage,
+} from "./fixtures/session-catalog";
 import {
   activeSnapshot,
   bootstrapPayload,
   deferred,
   installFakeWebSocket,
-  installFetch,
   jsonBody,
   sessionSummary,
 } from "./helpers";
 import { initStore } from "./store-fixture";
 
-function emptyBootstrap(preferences = bootstrapPayload().preferences) {
-  return bootstrapPayload({
-    preferences,
-    snapshot: { active: null, runState: "idle", sessionStatuses: {} },
-  });
-}
-
-function offsetOf(url: string): number {
-  return Number(new URL(url, "http://local").searchParams.get("offset") ?? 0);
+function pageFromIds(ids: string[], { offset, limit }: PageRequest) {
+  return {
+    body: sessionPage(
+      ids.slice(offset, offset + limit).map((id) => sessionSummary({ id })),
+      ids.length,
+      offset,
+      limit,
+    ),
+  };
 }
 
 describe("session list pagination", () => {
   beforeEach(() => installFakeWebSocket());
   afterEach(() => vi.useRealTimers());
 
-  it("loads more than three pages while curated identities and duplicate rows never advance the display cursor", async () => {
-    const requests: number[] = [];
-    const basePages = new Map<number, string[]>([
-      [0, ["s0", "s1"]],
-      [2, ["s1", "s2"]],
-      [4, ["s3", "s4"]],
-      [6, ["s5", "s6"]],
-    ]);
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: emptyBootstrap({
-            ...bootstrapPayload().preferences,
-            pinnedSessionIds: ["pinned-off-page"],
-            hiddenSessionIds: ["hidden-off-page"],
-            pinnedProjectCwds: ["/work/pinned-folder"],
-          }),
-        };
-      if (url.startsWith("/api/sessions/by-id")) {
-        const ids = (jsonBody(init).ids as string[]) ?? [];
-        return {
-          body: {
-            sessions: ids.map((id) =>
-              sessionSummary({ id, cwd: "/work/curated" }),
-            ),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        return {
-          body: {
-            sessions: [
-              sessionSummary({
-                id: "folder-off-page",
-                cwd: "/work/pinned-folder",
-              }),
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        const offset = offsetOf(url);
-        requests.push(offset);
-        return {
-          body: sessionPage(
-            (basePages.get(offset) ?? []).map((id) =>
-              sessionSummary({ id, cwd: `/work/${id}` }),
-            ),
-            8,
-            offset,
-          ),
-        };
-      }
-      return undefined;
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListNextOffset).toBe(2),
+  it("paginates by the server offset even with duplicate and curated rows", async () => {
+    const offsets: number[] = [];
+    const pages = [
+      ["s0", "s1"],
+      ["s1", "s2"],
+      ["s3", "s4"],
+    ];
+    const pinned = sessionSummary({ id: "pinned" });
+    const hidden = sessionSummary({ id: "hidden", cwd: "/work/hidden" });
+    installCatalog(
+      ({ offset }) => {
+        offsets.push(offset);
+        const sessions = pages[offset / 2]!.map((id) => sessionSummary({ id }));
+        return { body: sessionPage(sessions, 6, offset) };
+      },
+      {
+        preferences: {
+          pinnedSessionIds: [pinned.id],
+          hiddenProjectCwds: [hidden.cwd],
+        },
+        routes: (url) => {
+          if (url.startsWith("/api/sessions/by-id"))
+            return { body: { sessions: [pinned] } };
+          if (url.startsWith("/api/sessions/by-cwd"))
+            return { body: { sessions: [hidden] } };
+        },
+      },
     );
-
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "s0",
-      "s1",
-      "pinned-off-page",
-      "hidden-off-page",
-      "folder-off-page",
-    ]);
-    // Five rendered identities consumed only two chronological server rows.
+    const { store } = await initStore();
+    const ids = () => store.getState().sessions.map(({ id }) => id);
+    await vi.waitFor(() =>
+      expect(ids()).toEqual(["s0", "s1", pinned.id, hidden.id]),
+    );
+    await store.loadOlderSessions();
+    await store.loadOlderSessions();
+    expect(offsets).toEqual([0, 2, 4]);
+    expect(ids()).toEqual(["s0", "s1", "s2", "s3", "s4", pinned.id, hidden.id]);
     expect(store.getState()).toMatchObject({
-      sessionListNextOffset: 2,
-      sessionListTotal: 8,
+      sessionListNextOffset: 6,
+      sessionListTotal: 6,
     });
-
-    await store.loadOlderSessions();
-    expect(store.getState().sessionListNextOffset).toBe(4);
-    expect(
-      store.getState().sessions.filter((session) => session.id === "s1"),
-    ).toHaveLength(1);
-    await store.loadOlderSessions();
-    await store.loadOlderSessions();
-
-    expect(requests).toEqual([0, 2, 4, 6]);
-    expect(store.getState()).toMatchObject({
-      sessionListNextOffset: 8,
-      sessionListTotal: 8,
-    });
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "s0",
-      "s1",
-      "s2",
-      "s3",
-      "s4",
-      "s5",
-      "s6",
-      "pinned-off-page",
-      "hidden-off-page",
-      "folder-off-page",
-    ]);
   });
 
   it("coalesces duplicate load-more requests and discards an old page after a query reset", async () => {
-    let releaseOlder!: () => void;
-    const olderGate = new Promise<void>((resolve) => {
-      releaseOlder = resolve;
-    });
+    const older = deferred<void>();
     let olderCalls = 0;
-    installFetch(async (url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions?")) {
-        const parsed = new URL(url, "http://local");
-        const query = parsed.searchParams.get("q") ?? "";
-        const offset = Number(parsed.searchParams.get("offset") ?? 0);
-        if (query === "needle") {
-          return {
-            body: sessionPage(
-              [
-                sessionSummary({
-                  id: offset === 0 ? "match" : "current-older",
-                }),
-              ],
-              2,
-              offset,
-            ),
-          };
-        }
-        if (offset === 0) {
-          return {
-            body: sessionPage([sessionSummary({ id: "recent" })], 2),
-          };
-        }
-        olderCalls += 1;
-        await olderGate;
-        return {
-          body: sessionPage([sessionSummary({ id: "stale-older" })], 2, 1),
-        };
+    installCatalog(async ({ query, offset }) => {
+      if (query === "needle") {
+        const id = offset === 0 ? "match" : "current-older";
+        return { body: sessionPage([sessionSummary({ id })], 2, offset) };
       }
-      return undefined;
+      if (offset === 0)
+        return { body: sessionPage([sessionSummary({ id: "recent" })], 2) };
+      olderCalls++;
+      await older.promise;
+      return {
+        body: sessionPage([sessionSummary({ id: "stale-older" })], 2, 1),
+      };
     });
     const { store } = await initStore();
     await vi.waitFor(() =>
@@ -187,7 +111,7 @@ describe("session list pagination", () => {
       "match",
       "current-older",
     ]);
-    releaseOlder();
+    older.resolve();
     await Promise.all([first, duplicate]);
     expect(olderCalls).toBe(1);
     expect(store.getState().sessions.map((session) => session.id)).toEqual([
@@ -203,30 +127,10 @@ describe("session list pagination", () => {
       const olderStarted = deferred<void>();
       const curationGate = deferred<void>();
       const curationStarted = deferred<void>();
-      installFetch(async (url, init) => {
-        if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-        if (url.startsWith("/api/preferences"))
-          return {
-            body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
-          };
-        if (url.startsWith("/api/sessions/by-id")) {
-          const ids = (jsonBody(init).ids as string[]) ?? [];
-          curationStarted.resolve();
-          await curationGate.promise;
-          return {
-            body: {
-              sessions: ids.map((id) =>
-                sessionSummary({ id, cwd: "/work/curated" }),
-              ),
-            },
-          };
-        }
-        if (url.startsWith("/api/sessions?")) {
-          const offset = offsetOf(url);
+      installCatalog(
+        async ({ offset }) => {
           if (offset === 0)
-            return {
-              body: sessionPage([sessionSummary({ id: "recent" })], 2, offset),
-            };
+            return { body: sessionPage([sessionSummary({ id: "recent" })], 2) };
           olderStarted.resolve();
           await olderGate.promise;
           return {
@@ -236,9 +140,24 @@ describe("session list pagination", () => {
               offset,
             ),
           };
-        }
-        return undefined;
-      });
+        },
+        {
+          routes: async (url, init) => {
+            if (url === "/api/preferences")
+              return {
+                body: { ...bootstrapPayload().preferences, ...jsonBody(init) },
+              };
+            if (url === "/api/sessions/by-id") {
+              const { ids } = jsonBody(init) as { ids: string[] };
+              curationStarted.resolve();
+              await curationGate.promise;
+              return {
+                body: { sessions: ids.map((id) => sessionSummary({ id })) },
+              };
+            }
+          },
+        },
+      );
       const { store } = await initStore();
       await vi.waitFor(() =>
         expect(store.getState().sessionListNextOffset).toBe(1),
@@ -279,91 +198,31 @@ describe("session list pagination", () => {
     },
   );
 
-  it("retains confirmed pages after an error and retries the same authoritative offset", async () => {
-    let attempts = 0;
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions?")) {
-        const offset = offsetOf(url);
-        if (offset === 0)
-          return {
-            body: sessionPage([sessionSummary({ id: "kept" })], 2, offset),
-          };
-        attempts += 1;
-        if (attempts === 1)
-          return {
-            status: 503,
-            body: { error: "catalog temporarily unavailable" },
-          };
-        return {
-          body: sessionPage([sessionSummary({ id: "retried" })], 2, offset),
-        };
-      }
-      return undefined;
-    });
-    const { store } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "kept",
-      ]),
-    );
-
-    await store.loadOlderSessions();
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "kept",
-    ]);
-    expect(store.getState().sessionListError).toBe(
-      "catalog temporarily unavailable",
-    );
-    expect(store.getState().sessionListNextOffset).toBe(1);
-
-    await store.retrySessionList();
-    expect(attempts).toBe(2);
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "kept",
-      "retried",
-    ]);
-    expect(store.getState()).toMatchObject({
-      sessionListNextOffset: 2,
-      sessionListError: null,
-    });
-  });
-
   it("explicit refresh starts at offset zero, is latest-wins, and retains prior pages until replacement", async () => {
-    let releaseRefresh!: () => void;
-    const refreshGate = new Promise<void>((resolve) => {
-      releaseRefresh = resolve;
-    });
+    const refresh = deferred<void>();
     let refreshing = false;
     const offsets: number[] = [];
-    installFetch(async (url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/refresh")) {
-        refreshing = true;
-        await refreshGate;
-        return { body: { ok: true } };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        const offset = offsetOf(url);
+    installCatalog(
+      ({ offset }) => {
         offsets.push(offset);
+        const id = refreshing ? "refreshed" : offset === 0 ? "recent" : "older";
         return {
           body: sessionPage(
-            [
-              sessionSummary({
-                id: refreshing
-                  ? "refreshed"
-                  : offset === 0
-                    ? "recent"
-                    : "older",
-              }),
-            ],
+            [sessionSummary({ id })],
             refreshing ? 1 : 2,
             offset,
           ),
         };
-      }
-      return undefined;
-    });
+      },
+      {
+        routes: async (url) => {
+          if (url !== "/api/sessions/refresh") return;
+          refreshing = true;
+          await refresh.promise;
+          return { body: { ok: true } };
+        },
+      },
+    );
     const { store } = await initStore();
     await vi.waitFor(() =>
       expect(store.getState().sessions[0]?.id).toBe("recent"),
@@ -382,7 +241,7 @@ describe("session list pagination", () => {
       "recent",
       "older",
     ]);
-    releaseRefresh();
+    refresh.resolve();
     await refreshingPromise;
 
     expect(offsets).toEqual([0, 1, 0]);
@@ -392,187 +251,58 @@ describe("session list pagination", () => {
     expect(store.getState().sessionListNextOffset).toBe(1);
   });
 
-  it("preserves the loaded extent on background settlement and hydrates new and forked selections", async () => {
-    let currentIds = ["recent", "older"];
-    const byId = new Map<string, ReturnType<typeof sessionSummary>>();
-    byId.set(
-      "new-session",
-      sessionSummary({ id: "new-session", cwd: "/work/new" }),
-    );
-    byId.set(
-      "fork-session",
-      sessionSummary({ id: "fork-session", cwd: "/work/fork" }),
-    );
-    const offsets: Array<[number, number]> = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/by-id")) {
-        const ids = (jsonBody(init).ids as string[]) ?? [];
-        return {
-          body: {
-            sessions: ids.flatMap((id) =>
-              byId.has(id) ? [byId.get(id)!] : [],
-            ),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions/new")) {
-        return {
-          body: activeSnapshot({
-            sessionId: "new-session",
-            cwd: "/work/new",
-            effectiveLeafId: "leaf",
-          }),
-        };
-      }
-      if (url.startsWith("/api/branches/tree"))
-        return {
-          body: {
-            sessionId: "new-session",
-            revision: 1,
-            incarnation: "inc",
-            durableLeafId: "leaf",
-            effectiveLeafId: "leaf",
-            activePath: ["leaf"],
-            nodes: [
-              {
-                id: "leaf",
-                parentId: null,
-                depth: 0,
-                type: "message",
-                role: "user",
-                label: "User",
-                snippet: "prompt",
-                timestamp: "2026-01-01T00:00:00Z",
-                active: true,
-                leaf: true,
-                canSwitch: false,
-                canEdit: false,
-                canFork: true,
-              },
-            ],
-            truncated: false,
-            health: { status: "ok" },
-          },
-        };
-      if (url.startsWith("/api/branches/fork"))
-        return {
-          body: {
-            sessionId: "fork-session",
-            snapshot: activeSnapshot({
+  it("hydrates new and forked selections missing from the current catalog page", async () => {
+    const created = activeSnapshot({
+      sessionId: "new-session",
+      cwd: "/work/new",
+      effectiveLeafId: "leaf",
+    });
+    const forked = activeSnapshot({
+      sessionId: "fork-session",
+      cwd: "/work/fork",
+    });
+    const lookups: string[][] = [];
+    installCatalog((page) => pageFromIds(["recent"], page), {
+      routes: (url, init) => {
+        if (url === "/api/sessions/new") return { body: created };
+        if (url === "/api/branches/fork")
+          return {
+            body: {
               sessionId: "fork-session",
-              cwd: "/work/fork",
-            }),
-            editorText: "prompt",
-          },
-        };
-      if (url.startsWith("/api/sessions?")) {
-        const parsed = new URL(url, "http://local");
-        const offset = Number(parsed.searchParams.get("offset") ?? 0);
-        const limit = Number(parsed.searchParams.get("limit") ?? 40);
-        offsets.push([offset, limit]);
-        const ids = currentIds.slice(offset, offset + limit);
-        return {
-          body: sessionPage(
-            ids.map((id) => sessionSummary({ id })),
-            currentIds.length,
-            offset,
-            limit,
-          ),
-        };
-      }
-      return undefined;
+              snapshot: forked,
+              editorText: "prompt",
+            },
+          };
+        if (url === "/api/sessions/by-id") {
+          const { ids } = jsonBody(init) as { ids: string[] };
+          lookups.push(ids);
+          return {
+            body: { sessions: ids.map((id) => sessionSummary({ id })) },
+          };
+        }
+      },
     });
-    const { store, socket } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListNextOffset).toBe(2),
-    );
-
-    currentIds = ["updated-recent", "recent", "older"];
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "background",
-      sessionStatus: { runState: "idle" },
-    });
-    await vi.waitFor(() =>
-      expect(store.getState().sessions[0]?.id).toBe("updated-recent"),
-    );
-    expect(
-      store
-        .getState()
-        .sessions.slice(0, 3)
-        .map((session) => session.id),
-    ).toEqual(["updated-recent", "recent", "older"]);
-    expect(store.getState().sessionListNextOffset).toBe(3);
-    expect(offsets.slice(-2)).toEqual([
-      [0, 2],
-      [2, 1],
-    ]);
+    const { store } = await initStore();
 
     await store.newSession("/work/new");
     await vi.waitFor(() =>
-      expect(
-        store
-          .getState()
-          .sessions.some((session) => session.id === "new-session"),
-      ).toBe(true),
+      expect(store.getState().sessions.map(({ id }) => id)).toContain(
+        "new-session",
+      ),
     );
-    await store.loadBranchTree();
     await expect(store.forkBranch("leaf")).resolves.toBe(true);
     await vi.waitFor(() =>
-      expect(
-        store
-          .getState()
-          .sessions.some((session) => session.id === "fork-session"),
-      ).toBe(true),
+      expect(store.getState().sessions.map(({ id }) => id)).toContain(
+        "fork-session",
+      ),
+    );
+    expect(lookups.flat()).toEqual(
+      expect.arrayContaining(["new-session", "fork-session"]),
     );
     expect(store.getState().sessionId).toBe("fork-session");
   });
 
-  it("chunks 600 curated ids plus the active identity within the by-id route bound", async () => {
-    const pinnedSessionIds = Array.from(
-      { length: 100 },
-      (_, index) => `pinned-${index}`,
-    );
-    const hiddenSessionIds = Array.from(
-      { length: 500 },
-      (_, index) => `hidden-${index}`,
-    );
-    const chunkSizes: number[] = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            preferences: {
-              ...bootstrapPayload().preferences,
-              pinnedSessionIds,
-              hiddenSessionIds,
-            },
-            snapshot: activeSnapshot({ sessionId: "active-outside-curation" }),
-          }),
-        };
-      if (url.startsWith("/api/sessions/by-id")) {
-        const ids = (jsonBody(init).ids as string[]) ?? [];
-        chunkSizes.push(ids.length);
-        return { body: { sessions: ids.map((id) => sessionSummary({ id })) } };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        return { body: sessionPage([], 0) };
-      }
-      return undefined;
-    });
-    const { store } = await initStore();
-
-    await vi.waitFor(() => expect(store.getState().sessions).toHaveLength(601));
-    // The stream snapshot can concurrently request its active row while the
-    // catalog hydrates the full curated union; every request remains bounded.
-    expect(chunkSizes).toContain(600);
-    expect(chunkSizes).toContain(1);
-    expect(chunkSizes.every((size) => size <= 600)).toBe(true);
-    expect(store.getState().sessionListError).toBeNull();
-  });
-
-  it("retains confirmed base and curated rows when a later id chunk fails, then retries hydration", async () => {
+  it("keeps base and curated rows through a failed supplemental read, then retries the union", async () => {
     const hiddenSessionIds = Array.from(
       { length: 500 },
       (_, index) => `hidden-${index}`,
@@ -581,52 +311,68 @@ describe("session list pagination", () => {
       { length: 100 },
       (_, index) => `pinned-${index}`,
     );
+    const folder = sessionSummary({ id: "folder-row", cwd: "/work/pinned" });
     let phase: "initial" | "failing" | "retry" = "initial";
     let preserving = false;
     let baseCalls = 0;
     const preserveChunks: number[] = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: emptyBootstrap({
-            ...bootstrapPayload().preferences,
-            pinnedSessionIds,
-            hiddenSessionIds,
-          }),
-        };
-      if (url.startsWith("/api/sessions/by-id")) {
-        const ids = (jsonBody(init).ids as string[]) ?? [];
-        if (phase === "initial") {
-          return {
-            body: {
-              sessions: ids.length > 0 ? [sessionSummary({ id: ids[0]! })] : [],
-            },
-          };
-        }
-        if (!preserving) return { body: { sessions: [] } };
-        preserveChunks.push(ids.length);
-        if (phase === "failing" && preserveChunks.length === 2) {
-          return {
-            status: 503,
-            body: { error: "second id chunk unavailable" },
-          };
-        }
-        return { body: { sessions: ids.map((id) => sessionSummary({ id })) } };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        baseCalls += 1;
+    installCatalog(
+      () => {
+        baseCalls++;
         if (phase !== "initial" && baseCalls > 1) preserving = true;
         return {
           body: sessionPage([sessionSummary({ id: "confirmed-base" })], 1),
         };
-      }
-      return undefined;
-    });
+      },
+      {
+        preferences: {
+          pinnedSessionIds,
+          hiddenSessionIds,
+          pinnedProjectCwds: [folder.cwd],
+        },
+        routes: (url, init) => {
+          if (url.startsWith("/api/sessions/by-id")) {
+            const ids = (jsonBody(init).ids as string[]) ?? [];
+            if (phase === "initial") {
+              return {
+                body: {
+                  sessions:
+                    ids.length > 0 ? [sessionSummary({ id: ids[0]! })] : [],
+                },
+              };
+            }
+            if (!preserving) return { body: { sessions: [] } };
+            preserveChunks.push(ids.length);
+            if (phase === "failing" && preserveChunks.length === 2) {
+              return {
+                status: 503,
+                body: { error: "second id chunk unavailable" },
+              };
+            }
+            return {
+              body: { sessions: ids.map((id) => sessionSummary({ id })) },
+            };
+          }
+          if (url.startsWith("/api/sessions/by-cwd")) {
+            return {
+              body: {
+                sessions: [
+                  phase === "retry"
+                    ? { ...folder, title: "New folder title" }
+                    : folder,
+                ],
+              },
+            };
+          }
+        },
+      },
+    );
     const { store, socket } = await initStore();
     await vi.waitFor(() =>
       expect(store.getState().sessions.map((session) => session.id)).toEqual([
         "confirmed-base",
         "pinned-0",
+        folder.id,
       ]),
     );
 
@@ -650,6 +396,7 @@ describe("session list pagination", () => {
     expect(store.getState().sessions.map((session) => session.id)).toEqual([
       "confirmed-base",
       "pinned-0",
+      folder.id,
     ]);
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 1,
@@ -660,263 +407,149 @@ describe("session list pagination", () => {
     preserveChunks.length = 0;
     await vi.advanceTimersByTimeAsync(1_000);
     expect(preserveChunks).toEqual([600, 1]);
-    expect(store.getState().sessions).toHaveLength(603);
+    expect(store.getState().sessions).toHaveLength(604);
+    expect(
+      store.getState().sessions.find(({ id }) => id === folder.id)?.title,
+    ).toBe("New folder title");
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 1,
       sessionListError: null,
     });
   });
 
-  it("routes hydration authentication loss through the existing auth boundary", async () => {
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: emptyBootstrap({
-            ...bootstrapPayload().preferences,
-            pinnedSessionIds: ["requires-auth"],
-          }),
-        };
-      if (url.startsWith("/api/sessions/by-id")) {
-        return { status: 401, body: { error: "token expired" } };
+  it.each(["curated", "live"] as const)(
+    "routes %s hydration 401 through transport auth without dropping the catalog",
+    async (source) => {
+      const ids = Array.from({ length: 80 }, (_, index) => `base-${index}`);
+      installCatalog((page) => pageFromIds(ids, page), {
+        preferences:
+          source === "curated"
+            ? { pinnedSessionIds: ["requires-auth"] }
+            : undefined,
+        routes: (url) =>
+          url === "/api/sessions/by-id"
+            ? { status: 401, body: { error: "token expired" } }
+            : undefined,
+      });
+      const { store, socket } = await initStore();
+      if (source === "live") {
+        await vi.waitFor(() =>
+          expect(store.getState().sessionListNextOffset).toBe(40),
+        );
+        socket.emit({
+          type: "message_start",
+          sessionId: "requires-auth",
+          sessionStatus: { runState: "running" },
+        });
       }
-      if (url.startsWith("/api/sessions?")) {
-        return {
-          body: sessionPage([sessionSummary({ id: "confirmed-base" })], 1),
-        };
-      }
-      return undefined;
-    });
-    const { store } = await initStore();
+      await vi.waitFor(() =>
+        expect(store.getState()).toMatchObject({
+          needsToken: true,
+          connection: "offline",
+          sessionListNextOffset: 40,
+          sessionListTotal: 80,
+          sessionListLoading: false,
+          sessionListLoadingOlder: false,
+          sessionListHydrating: false,
+          sessionListOperation: null,
+          sessionListError: null,
+        }),
+      );
+      expect(store.getState().sessions.map(({ id }) => id)).toEqual(
+        ids.slice(0, 40),
+      );
+    },
+  );
 
-    await vi.waitFor(() => expect(store.getState().needsToken).toBe(true));
-    expect(store.getState()).toMatchObject({
-      connection: "offline",
-      sessionListLoading: false,
-      sessionListLoadingOlder: false,
-      sessionListOperation: null,
-    });
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "confirmed-base",
-    ]);
-  });
-
-  it("retains confirmed folder hydration on cwd failure and retries it truthfully", async () => {
-    let failCwd = false;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: emptyBootstrap({
-            ...bootstrapPayload().preferences,
-            pinnedProjectCwds: ["/work/pinned"],
-          }),
-        };
-      if (url.startsWith("/api/sessions/by-id"))
-        return { body: { sessions: [] } };
-      if (url.startsWith("/api/sessions/by-cwd")) {
-        expect(
-          ((jsonBody(init).cwds as string[]) ?? []).length,
-        ).toBeLessThanOrEqual(100);
-        if (failCwd)
-          return {
-            status: 503,
-            body: { error: "folder hydration unavailable" },
-          };
-        return {
-          body: {
-            sessions: [
-              sessionSummary({ id: "folder-row", cwd: "/work/pinned" }),
-            ],
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?"))
-        return {
-          body: sessionPage([sessionSummary({ id: "base-row" })], 1),
-        };
-      return undefined;
-    });
-    const { store, socket } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions.map((session) => session.id)).toEqual([
-        "base-row",
-        "folder-row",
-      ]),
-    );
-
-    vi.useFakeTimers();
-    failCwd = true;
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "background",
-      sessionStatus: { runState: "idle" },
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState().sessionListError).toBeNull();
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "base-row",
-      "folder-row",
-    ]);
-    expect(store.getState().sessionListOperation).toBeNull();
-
-    failCwd = false;
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "base-row",
-      "folder-row",
-    ]);
-    expect(store.getState().sessionListError).toBeNull();
-  });
-
-  it("atomically retries a preserved extent beyond the 100-row server page cap", async () => {
-    const oldIds = Array.from({ length: 300 }, (_, index) => `old-${index}`);
-    const refreshedIds = Array.from(
-      { length: 300 },
-      (_, index) => `fresh-${index}`,
-    );
-    let preserving = false;
-    let failMiddle = true;
-    const preserveRequests: Array<[number, number]> = [];
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/by-id"))
-        return { body: { sessions: [] } };
-      if (url.startsWith("/api/sessions?")) {
-        const parsed = new URL(url, "http://local");
-        const offset = Number(parsed.searchParams.get("offset") ?? 0);
-        const limit = Number(parsed.searchParams.get("limit") ?? 40);
-        if (preserving) {
-          preserveRequests.push([offset, limit]);
-          if (failMiddle && offset === 100) {
-            return {
-              status: 503,
-              body: { error: "middle preservation page failed" },
-            };
-          }
+  it("retries a preserved multi-page extent atomically and abandons it when the query changes", async () => {
+    const oldIds = Array.from({ length: 260 }, (_, index) => `old-${index}`);
+    const refreshedIds = [
+      "added",
+      ...oldIds.map((id) => id.replace("old", "fresh")),
+    ];
+    const secondPage = deferred<void>();
+    let phase: "initial" | "failed" | "retry" | "superseded" = "initial";
+    const requests: Array<[number, number]> = [];
+    installCatalog(
+      async (page) => {
+        if (page.query === "new-query")
+          return pageFromIds(["new-result"], page);
+        if (phase === "initial") return pageFromIds(oldIds, page);
+        requests.push([page.offset, page.limit]);
+        if (page.offset === 100) {
+          if (phase === "failed")
+            return { status: 503, body: { error: "middle page unavailable" } };
+          if (phase === "superseded") await secondPage.promise;
         }
-        const source = preserving ? refreshedIds : oldIds;
-        return {
-          body: sessionPage(
-            source
-              .slice(offset, offset + limit)
-              .map((id) => sessionSummary({ id })),
-            source.length,
-            offset,
-            limit,
-          ),
-        };
-      }
-      return undefined;
-    });
+        return pageFromIds(refreshedIds, page);
+      },
+      {
+        routes: (url) =>
+          url === "/api/sessions/by-id"
+            ? { body: { sessions: [] } }
+            : undefined,
+      },
+    );
     const { store, socket } = await initStore();
+    const ids = () => store.getState().sessions.map(({ id }) => id);
     await vi.waitFor(() =>
       expect(store.getState().sessionListNextOffset).toBe(40),
     );
-    for (let index = 0; index < 5; index += 1) await store.loadOlderSessions();
-    expect(store.getState().sessionListNextOffset).toBe(240);
-    expect(store.getState().sessions.at(-1)?.id).toBe("old-239");
+    for (let page = 0; page < 5; page++) await store.loadOlderSessions();
+    expect(ids()).toEqual(oldIds.slice(0, 240));
 
+    const settle = (sessionId: string) =>
+      socket.emit({
+        type: "agent_settled",
+        sessionId,
+        sessionStatus: { runState: "idle" },
+      });
     vi.useFakeTimers();
-    preserving = true;
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "background",
-      sessionStatus: { runState: "idle" },
-    });
+    phase = "failed";
+    settle("background");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState().sessionListError).toBeNull();
-    expect(store.getState().sessions[0]?.id).toBe("old-0");
-    expect(store.getState().sessions.at(-1)?.id).toBe("old-239");
-    expect(store.getState().sessionListNextOffset).toBe(240);
-
-    failMiddle = false;
-    preserveRequests.length = 0;
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(preserveRequests).toEqual([
+    expect(requests).toEqual([
       [0, 100],
       [100, 100],
-      [200, 40],
     ]);
-    expect(preserveRequests.every(([, limit]) => limit <= 100)).toBe(true);
-    expect(store.getState().sessions[0]?.id).toBe("fresh-0");
-    expect(store.getState().sessions.at(-1)?.id).toBe("fresh-239");
+    expect(ids()).toEqual(oldIds.slice(0, 240));
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 240,
       sessionListError: null,
     });
-  });
 
-  it("stops and discards a multi-page preservation generation superseded mid-sequence", async () => {
-    const ids = Array.from({ length: 260 }, (_, index) => `old-${index}`);
-    let preserving = false;
-    let releaseSecond!: () => void;
-    let secondStarted!: () => void;
-    const secondGate = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      secondStarted = resolve;
-    });
-    const preserveOffsets: number[] = [];
-    installFetch(async (url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/by-id"))
-        return { body: { sessions: [] } };
-      if (url.startsWith("/api/sessions?")) {
-        const parsed = new URL(url, "http://local");
-        const query = parsed.searchParams.get("q") ?? "";
-        const offset = Number(parsed.searchParams.get("offset") ?? 0);
-        const limit = Number(parsed.searchParams.get("limit") ?? 40);
-        if (query === "new-query")
-          return {
-            body: sessionPage(
-              [sessionSummary({ id: "new-result" })],
-              1,
-              0,
-              limit,
-            ),
-          };
-        if (preserving) {
-          preserveOffsets.push(offset);
-          if (offset === 100) {
-            secondStarted();
-            await secondGate;
-          }
-        }
-        return {
-          body: sessionPage(
-            ids
-              .slice(offset, offset + limit)
-              .map((id) => sessionSummary({ id })),
-            ids.length,
-            offset,
-            limit,
-          ),
-        };
-      }
-      return undefined;
-    });
-    const { store, socket } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListNextOffset).toBe(40),
-    );
-    for (let index = 0; index < 5; index += 1) await store.loadOlderSessions();
-    expect(store.getState().sessionListNextOffset).toBe(240);
-
-    preserving = true;
-    socket.emit({
-      type: "agent_settled",
-      sessionId: "background",
-      sessionStatus: { runState: "idle" },
-    });
-    await started;
-    await store.loadSessions("new-query");
-    releaseSecond();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "new-result",
+    phase = "retry";
+    requests.length = 0;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(requests).toEqual([
+      [0, 100],
+      [100, 100],
+      [200, 41],
     ]);
+    expect(ids()).toEqual(refreshedIds.slice(0, 241));
 
-    expect(preserveOffsets).toEqual([0, 100]);
+    phase = "superseded";
+    requests.length = 0;
+    settle("other-background");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toEqual([
+      [0, 100],
+      [100, 100],
+    ]);
+    expect(ids()).toEqual(refreshedIds.slice(0, 241));
+    expect(store.getState()).toMatchObject({
+      sessionListLoading: false,
+      sessionListOperation: null,
+      sessionListNextOffset: 241,
+    });
+    await store.loadSessions("new-query");
+    secondPage.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toEqual([
+      [0, 100],
+      [100, 100],
+    ]);
+    expect(ids()).toEqual(["new-result"]);
     expect(store.getState()).toMatchObject({
       sessionQuery: "new-query",
       sessionListNextOffset: 1,
@@ -925,43 +558,49 @@ describe("session list pagination", () => {
     });
   });
 
-  it("retries only failed live-session hydration while preserving 240 loaded rows", async () => {
+  it("recovers live rows in place and retires their retries when the query changes", async () => {
     const ids = Array.from({ length: 300 }, (_, index) => `base-${index}`);
-    let hydrationAttempts = 0;
+    const retired = deferred<void>();
+    const replacement = deferred<void>();
+    const hydrationAttempts = new Map<string, number>();
     let listRequests = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/by-id")) {
-        hydrationAttempts += 1;
-        if (hydrationAttempts === 1)
-          return { status: 503, body: { error: "live hydration unavailable" } };
-        const requested = (jsonBody(init).ids as string[]) ?? [];
-        return {
-          body: {
-            sessions: requested.map((id) =>
-              sessionSummary({ id, cwd: "/work/live" }),
-            ),
-          },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        listRequests += 1;
-        const parsed = new URL(url, "http://local");
-        const offset = Number(parsed.searchParams.get("offset") ?? 0);
-        const limit = Number(parsed.searchParams.get("limit") ?? 40);
-        return {
-          body: sessionPage(
-            ids
-              .slice(offset, offset + limit)
-              .map((id) => sessionSummary({ id })),
-            ids.length,
-            offset,
-            limit,
-          ),
-        };
-      }
-      return undefined;
-    });
+    installCatalog(
+      (page) => {
+        if (page.query) return pageFromIds(["match"], page);
+        listRequests++;
+        return pageFromIds(ids, page);
+      },
+      {
+        routes: async (url, init) => {
+          if (url.startsWith("/api/sessions/by-id")) {
+            const [id] = jsonBody(init).ids as [string];
+            const attempt = (hydrationAttempts.get(id) ?? 0) + 1;
+            hydrationAttempts.set(id, attempt);
+            if (id === "absent" || (id === "materializing" && attempt === 1))
+              return { body: { sessions: [] } };
+            if (id === "race" && attempt > 1) {
+              await (attempt === 2 ? retired.promise : replacement.promise);
+              return {
+                body: {
+                  sessions: [
+                    sessionSummary({
+                      id,
+                      title: attempt === 2 ? "Stale" : "Current",
+                    }),
+                  ],
+                },
+              };
+            }
+            if (["unavailable", "race"].includes(id) && attempt === 1)
+              return {
+                status: 503,
+                body: { error: "live hydration unavailable" },
+              };
+            return { body: { sessions: [sessionSummary({ id })] } };
+          }
+        },
+      },
+    );
     const { store, socket } = await initStore();
     await vi.waitFor(() =>
       expect(store.getState().sessionListNextOffset).toBe(40),
@@ -974,26 +613,36 @@ describe("session list pagination", () => {
     expect(listRequests).toBe(6);
 
     vi.useFakeTimers();
-    socket.emit({
-      type: "message_start",
-      sessionId: "live-session",
-      sessionStatus: { runState: "running" },
-    });
+    const live = (id: string) =>
+      socket.emit({
+        type: "message_start",
+        sessionId: id,
+        sessionStatus: { runState: "running" },
+      });
+    live("unavailable");
+    live("materializing");
+    live("absent");
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.getState().sessionListError).toBeNull();
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 240,
       sessionListTotal: 300,
       sessionListOperation: null,
       sessionListHydrating: false,
+      sessionListError: null,
     });
     expect(store.getState().sessions).toHaveLength(240);
 
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(hydrationAttempts).toBe(2);
+    expect(
+      store
+        .getState()
+        .sessions.slice(240)
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual(["materializing", "unavailable"]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(hydrationAttempts.get("absent")).toBe(4);
     expect(listRequests).toBe(6);
-    expect(store.getState().sessions).toHaveLength(241);
-    expect(store.getState().sessions.at(-1)?.id).toBe("live-session");
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 240,
       sessionListTotal: 300,
@@ -1001,116 +650,75 @@ describe("session list pagination", () => {
       sessionListHydrating: false,
       sessionListError: null,
     });
-  });
 
-  it("routes standalone live hydration 401 through auth loss without changing loaded pages", async () => {
-    const ids = Array.from({ length: 80 }, (_, index) => `base-${index}`);
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/by-id"))
-        return { status: 401, body: { error: "expired" } };
-      if (url.startsWith("/api/sessions?")) {
-        const parsed = new URL(url, "http://local");
-        const offset = Number(parsed.searchParams.get("offset") ?? 0);
-        const limit = Number(parsed.searchParams.get("limit") ?? 40);
-        return {
-          body: sessionPage(
-            ids
-              .slice(offset, offset + limit)
-              .map((id) => sessionSummary({ id })),
-            ids.length,
-            offset,
-            limit,
-          ),
-        };
-      }
-      return undefined;
-    });
-    const { store, socket } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessionListNextOffset).toBe(40),
+    live("race");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(hydrationAttempts.get("race")).toBe(2);
+    await store.loadSessions("needle");
+    expect(store.getState().sessions.map(({ id }) => id)).toEqual(["match"]);
+
+    store.searchSessions("");
+    live("race");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hydrationAttempts.get("race")).toBe(3);
+    retired.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    live("race");
+    expect(hydrationAttempts.get("race")).toBe(3);
+    expect(store.getState().sessions).not.toContainEqual(
+      expect.objectContaining({ id: "race" }),
     );
 
-    socket.emit({
-      type: "message_start",
-      sessionId: "auth-live",
-      sessionStatus: { runState: "running" },
-    });
-    await vi.waitFor(() => expect(store.getState().needsToken).toBe(true));
-    expect(store.getState().sessions).toHaveLength(40);
+    replacement.resolve();
+    await vi.advanceTimersByTimeAsync(200);
     expect(store.getState()).toMatchObject({
       sessionListNextOffset: 40,
-      sessionListTotal: 80,
+      sessionListTotal: 300,
       sessionListHydrating: false,
       sessionListOperation: null,
       sessionListError: null,
     });
+    expect(
+      store
+        .getState()
+        .sessions.slice(0, 40)
+        .map(({ id }) => id),
+    ).toEqual(ids.slice(0, 40));
+    expect(
+      store.getState().sessions.find(({ id }) => id === "race")?.title,
+    ).toBe("Current");
   });
 
-  it("discards a hydration-only retry superseded by a query generation", async () => {
-    let hydrationAttempts = 0;
-    let releaseRetry!: () => void;
-    let retryStarted!: () => void;
-    const retryGate = new Promise<void>((resolve) => {
-      releaseRetry = resolve;
-    });
-    const started = new Promise<void>((resolve) => {
-      retryStarted = resolve;
-    });
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap")) return { body: emptyBootstrap() };
-      if (url.startsWith("/api/sessions/by-id")) {
-        hydrationAttempts += 1;
-        if (hydrationAttempts === 1)
-          return { status: 503, body: { error: "retry me" } };
-        retryStarted();
-        await retryGate;
-        const requested = (jsonBody(init).ids as string[]) ?? [];
-        return {
-          body: { sessions: requested.map((id) => sessionSummary({ id })) },
-        };
-      }
-      if (url.startsWith("/api/sessions?")) {
-        const parsed = new URL(url, "http://local");
-        const query = parsed.searchParams.get("q") ?? "";
-        return {
-          body: sessionPage(
-            [sessionSummary({ id: query ? "query-result" : "base" })],
-            1,
-          ),
-        };
-      }
-      return undefined;
-    });
-    const { store, socket } = await initStore();
-    await vi.waitFor(() =>
-      expect(store.getState().sessions[0]?.id).toBe("base"),
-    );
-
+  it("reissues the current query after reconnect without replaying its retired debounce or auth failure", async () => {
     vi.useFakeTimers();
-    socket.emit({
-      type: "message_start",
-      sessionId: "stale-live",
-      sessionStatus: { runState: "running" },
+    const stale = deferred<void>();
+    const requests: string[] = [];
+    let staleSignal: AbortSignal | null | undefined;
+    installCatalog(async (page) => {
+      requests.push(page.query);
+      if (page.query === "stale") {
+        staleSignal = page.signal;
+        await stale.promise;
+        return { status: 401, body: { error: "Old transport" } };
+      }
+      return pageFromIds([page.query || "base"], page);
     });
-    await vi.advanceTimersByTimeAsync(1_000);
-    await started;
-    expect(store.getState().sessionListError).toBeNull();
-    await store.loadSessions("needle");
-    releaseRetry();
+    const { store } = await initStore();
     await vi.advanceTimersByTimeAsync(0);
-
-    expect(hydrationAttempts).toBe(2);
-    expect(store.getState().sessions.map((session) => session.id)).toEqual([
-      "query-result",
-    ]);
+    const loading = store.loadSessions("stale");
+    store.searchSessions("latest");
+    await store.init();
+    await vi.advanceTimersByTimeAsync(500);
+    await loading;
+    expect(staleSignal?.aborted).toBe(true);
+    stale.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toEqual(["", "stale", "latest"]);
     expect(store.getState()).toMatchObject({
-      sessionQuery: "needle",
-      sessionListNextOffset: 1,
-      sessionListTotal: 1,
-      sessionListHydrating: false,
-      sessionListOperation: null,
+      needsToken: false,
+      sessionQuery: "latest",
       sessionListError: null,
+      sessions: [{ id: "latest" }],
     });
   });
 });

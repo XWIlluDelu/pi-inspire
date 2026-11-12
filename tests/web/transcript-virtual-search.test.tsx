@@ -127,6 +127,9 @@ describe("virtualized transcript search navigation", () => {
       <Transcript sessionId="virtual-follow" messages={messages} {...props} />,
     );
     expect(log.scrollTop).toBe(5_700);
+    expect(
+      screen.getByText("Working…").closest(".assistant-activity"),
+    ).toHaveAttribute("role", "status");
 
     Object.defineProperty(log, "scrollHeight", {
       configurable: true,
@@ -155,39 +158,7 @@ describe("virtualized transcript search navigation", () => {
       />,
     );
     expect(log.scrollTop).toBe(5_900);
-  });
-
-  it("navigates by transcript row index and disables pinned latest-follow", () => {
-    const messages = Array.from({ length: 60 }, (_, index) => ({
-      role: index % 2 === 0 ? "user" : "assistant",
-      content: index === 45 ? "unique target phrase" : `settled row ${index}`,
-      timestamp: index,
-    }));
-    render(
-      <Transcript
-        sessionId="large"
-        messages={messages}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-
-    fireEvent.change(openTranscriptSearch(), { target: { value: "TARGET" } });
-    expect(
-      screen.getByLabelText("Transcript search matches"),
-    ).toHaveTextContent("1 match");
-    fireEvent.click(
-      screen.getByRole("button", { name: "Next transcript match" }),
-    );
-
-    expect(virtual.scrollToIndex).toHaveBeenLastCalledWith(45, {
-      align: "center",
-    });
-    // A virtual-row navigation is not evidence that the scrollport moved.
-    expect(
-      screen.queryByRole("button", { name: "Jump to latest" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
   });
 
   it("keeps a prepended search match anchored when a near-bottom scroll precedes a live append", async () => {

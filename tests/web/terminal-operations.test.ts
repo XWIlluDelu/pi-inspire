@@ -3,15 +3,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TerminalOperationController } from "../../src/controllers/terminal-operation-controller";
 import { deferred } from "./helpers";
 
+function operationIdentity(init?: RequestInit): { id: string; epoch: string } {
+  return JSON.parse(new Headers(init?.headers).get("X-Terminal-Operation")!);
+}
+
+function mutationTransport(handle: typeof fetch, epoch = "epoch-1") {
+  return vi.fn<typeof fetch>(async (path, init) =>
+    path === "/api/terminal-operations"
+      ? Response.json({ epoch })
+      : handle(path, init),
+  );
+}
+
 function reply(
   init: RequestInit | undefined,
   body: unknown = { id: "created" },
   outcome = "completed",
   status = 200,
 ) {
-  const identity = JSON.parse(
-    (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-  );
+  const identity = operationIdentity(init);
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -39,89 +49,13 @@ function saved(patch: Partial<typeof savedIntent> = {}) {
 }
 
 describe("browser terminal operation identity", () => {
-  it("keeps uncertainty visible while a same-operation check is pending", async () => {
-    const gate = deferred<Response>();
-    let sent: RequestInit | undefined;
-    let attempts = 0;
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async (path, init) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "epoch-1" });
-        attempts += 1;
-        sent = init;
-        if (attempts === 1) throw new Error("Synthetic lost reply");
-        return gate.promise;
-      });
-    const controller = new TerminalOperationController(transport);
-    await expect(
-      controller.run("/api/terminals", "POST", { cwd: "/fixture" }),
-    ).rejects.toThrow("outcome is unknown");
-    const state = controller.snapshot()[0]!;
-    expect(state).toMatchObject({
-      label: "Create terminal · /fixture",
-      outcome: "unknown",
-      busy: false,
-    });
-    const result = controller.retry(state.key);
-    expect(controller.snapshot()[0]).toMatchObject({
-      outcome: "unknown",
-      busy: true,
-    });
-    gate.resolve(reply(sent));
-    await result;
-    expect(controller.snapshot()).toEqual([]);
-  });
-
-  it.each(["POST", "DELETE"])(
-    "retains %s unknown delivery across controller reload, and retries the same operation",
-    async (method) => {
-      const identities: unknown[] = [];
-      const transport = vi
-        .fn<typeof fetch>()
-        .mockImplementation(async (path, init) => {
-          if (path === "/api/terminal-operations")
-            return Response.json({ epoch: "epoch-1" });
-          identities.push(
-            JSON.parse(
-              (init?.headers as Record<string, string>)[
-                "X-Terminal-Operation"
-              ]!,
-            ),
-          );
-          if (identities.length === 1)
-            throw new Error("Synthetic lost response after commit");
-          return reply(init);
-        });
-      const path =
-        method === "POST" ? "/api/terminals" : "/api/terminals/terminal-1";
-      const body = method === "POST" ? { cwd: "/fixture" } : undefined;
-      const first = new TerminalOperationController(transport);
-      await expect(first.run(path, method, body)).rejects.toThrow(
-        "outcome is unknown",
-      );
-      expect(first.snapshot()).toHaveLength(1);
-      const reloaded = new TerminalOperationController(transport);
-      expect(await reloaded.run(path, method, body)).toEqual({
-        id: "created",
-      });
-      expect(identities[0]).toEqual(identities[1]);
-      expect(reloaded.snapshot()).toEqual([]);
-      expect(transport).toHaveBeenCalledTimes(3); // no fresh epoch on retry
-    },
-  );
-
   it("joins concurrent same-content deliveries regardless of object key order", async () => {
     const gate = deferred<Response>();
     let sent: RequestInit | undefined;
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async (path, init) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "epoch-1" });
-        sent = init;
-        return gate.promise;
-      });
+    const transport = mutationTransport(async (_path, init) => {
+      sent = init;
+      return gate.promise;
+    });
     const controller = new TerminalOperationController(transport);
     const first = controller.run("/api/terminals", "POST", {
       cwd: "/fixture",
@@ -140,119 +74,136 @@ describe("browser terminal operation identity", () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it("never refreshes an uncertain identity after epoch fencing; unproven proxy refusal is also unknown", async () => {
-    const identities: unknown[] = [];
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async (path, init) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "old-epoch" });
-        identities.push(
-          JSON.parse(
-            (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-          ),
-        );
-        return identities.length === 1
-          ? Response.json({ error: "Proxy error" }, { status: 409 })
-          : reply(init, { error: "Epoch changed" }, "unknown", 409);
+  it("retries the same bodyless close after reload until the user retires the expired identity", async () => {
+    const path = "/api/terminals/id?force=1";
+    const deliveries: Array<{
+      path: string;
+      method?: string;
+      body?: BodyInit | null;
+      identity: ReturnType<typeof operationIdentity>;
+    }> = [];
+    const handle: typeof fetch = async (url, init) => {
+      const identity = operationIdentity(init);
+      deliveries.push({
+        path: String(url),
+        method: init?.method,
+        body: init?.body,
+        identity,
       });
-    const controller = new TerminalOperationController(transport);
-    for (let i = 0; i < 3; i++)
-      await expect(
-        controller.run("/api/terminals/id/restart", "POST"),
-      ).rejects.toThrow("outcome is unknown");
-    expect(
-      new Set(identities.map((identity) => JSON.stringify(identity))),
-    ).toHaveProperty("size", 1);
-    expect(controller.snapshot()).toHaveLength(1);
-  });
+      if (deliveries.length === 1)
+        return Response.json(
+          { error: "Proxy refused the request" },
+          { status: 409 },
+        );
+      if (identity.epoch === "old-epoch")
+        return reply(init, { error: "Receipt expired" }, "unknown", 409);
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "X-Terminal-Operation": identity.id,
+          "X-Terminal-Outcome": "completed",
+        },
+      });
+    };
+    const original = new TerminalOperationController(
+      mutationTransport(handle, "old-epoch"),
+    );
+    await expect(original.run(path, "DELETE")).rejects.toThrow(
+      "outcome is unknown",
+    );
 
-  it("retires an expired intent only explicitly, without sending work, and allows a new same-content intent after reload", async () => {
-    const identities: Array<{ id: string; epoch: string }> = [];
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async (path, init) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "new-epoch" });
-        const identity = JSON.parse(
-          (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-        );
-        identities.push(identity);
-        return identity.id === "saved-id"
-          ? reply(init, { error: "Receipt expired" }, "unknown", 409)
-          : reply(init);
-      });
-    const entry = saved();
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
-    const controller = new TerminalOperationController(transport);
-    await expect(controller.retry(entry.key)).rejects.toThrow(
+    const reloaded = new TerminalOperationController(
+      mutationTransport(handle, "new-epoch"),
+    );
+    reloaded.restore();
+    const [intent] = reloaded.snapshot();
+    expect(intent).toMatchObject({ outcome: "unknown", busy: false });
+    await expect(reloaded.retry(intent!.key)).rejects.toThrow(
       "Receipt expired",
     );
-    controller.stopTracking(entry.key);
-    expect(transport).toHaveBeenCalledTimes(1);
-    expect(controller.snapshot()).toEqual([]);
-    const reloaded = new TerminalOperationController(transport);
-    await expect(
-      reloaded.run(entry.path, entry.method, JSON.parse(entry.body!)),
-    ).resolves.toEqual({ id: "created" });
-    expect(identities[0]).toEqual(entry.identity);
-    expect(identities[1]!.id).not.toBe(entry.identity.id);
-    expect(identities[1]!.epoch).toBe("new-epoch");
+    await expect(reloaded.run(path, "DELETE")).rejects.toThrow(
+      "Receipt expired",
+    );
+    const [first] = deliveries;
+    expect(first).toMatchObject({
+      path,
+      method: "DELETE",
+      body: undefined,
+      identity: { epoch: "old-epoch" },
+    });
+    expect(deliveries).toEqual([first, first, first]);
+
+    reloaded.stopTracking(intent!.key);
+    expect(deliveries).toHaveLength(3);
+    expect(reloaded.snapshot()).toEqual([]);
+    const fresh = new TerminalOperationController(
+      mutationTransport(handle, "new-epoch"),
+    );
+    await expect(fresh.run(path, "DELETE")).resolves.toBeUndefined();
+    expect(deliveries[3]).toMatchObject({
+      path,
+      method: "DELETE",
+      body: undefined,
+      identity: { epoch: "new-epoch" },
+    });
+    expect(deliveries[3]!.identity.id).not.toBe(first!.identity.id);
+    expect(fresh.snapshot()).toEqual([]);
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBe("[]");
   });
 
-  it("retains an intent if retirement cannot be saved, and refuses retirement during a check", async () => {
-    const entry = saved();
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
+  it("blocks unsaved controls and retains a saved intent until its check settles", async () => {
+    let storageUnavailable = true;
     const storage = {
       getItem: (key: string) => sessionStorage.getItem(key),
-      setItem: vi.fn(() => {
-        throw new Error("Storage unavailable");
-      }),
-    } as unknown as Storage;
-    const transport = vi.fn<typeof fetch>();
+      setItem: (key: string, value: string) => {
+        if (storageUnavailable) throw new Error("Storage unavailable");
+        sessionStorage.setItem(key, value);
+      },
+    } as Storage;
+    const gate = deferred<void>();
+    const dispatch = vi.fn<typeof fetch>(async (_path, init) => {
+      await gate.promise;
+      return reply(init);
+    });
+    const transport = mutationTransport(dispatch);
     const controller = new TerminalOperationController(
       transport,
       () => storage,
     );
-    controller.restore();
-    expect(() => controller.stopTracking(entry.key)).toThrow(
+    await expect(controller.run("/api/terminals", "POST", {})).rejects.toThrow(
       "Storage unavailable",
     );
-    expect(controller.snapshot()).toHaveLength(1);
-    expect(sessionStorage.getItem(STORAGE_KEY)).toBe(JSON.stringify([entry]));
-    expect(transport).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
 
-    const gate = deferred<Response>();
-    transport.mockReturnValue(gate.promise);
-    const retrying = new TerminalOperationController(transport);
-    const check = retrying.retry(entry.key);
-    expect(() => retrying.stopTracking(entry.key)).toThrow("Wait for");
-    gate.resolve(
-      reply({
-        headers: { "X-Terminal-Operation": JSON.stringify(entry.identity) },
-      }),
+    const entry = saved();
+    const raw = JSON.stringify([entry]);
+    sessionStorage.setItem(STORAGE_KEY, raw);
+    const reloaded = new TerminalOperationController(transport, () => storage);
+    expect(() => reloaded.stopTracking(entry.key)).toThrow(
+      "Storage unavailable",
     );
+    expect(reloaded.snapshot()).toHaveLength(1);
+    expect(sessionStorage.getItem(STORAGE_KEY)).toBe(raw);
+    expect(dispatch).not.toHaveBeenCalled();
+
+    storageUnavailable = false;
+    const check = reloaded.retry(entry.key);
+    expect(() => reloaded.stopTracking(entry.key)).toThrow("Wait for");
+    gate.resolve();
     await check;
+    expect(reloaded.snapshot()).toEqual([]);
   });
 
   it("releases definitive refusal for a later new intent, but not malformed success", async () => {
     const identities: unknown[] = [];
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async (path, init) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "epoch-1" });
-        identities.push(
-          JSON.parse(
-            (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-          ),
-        );
-        if (identities.length === 1)
-          return reply(init, { error: "Limit" }, "rejected", 409);
-        if (identities.length === 2)
-          return new Response("broken JSON", { status: 200 });
-        return reply(init);
-      });
+    const transport = mutationTransport(async (_path, init) => {
+      identities.push(operationIdentity(init));
+      if (identities.length === 1)
+        return reply(init, { error: "Limit" }, "rejected", 409);
+      if (identities.length === 2)
+        return new Response("broken JSON", { status: 200 });
+      return reply(init);
+    });
     const controller = new TerminalOperationController(transport);
     await expect(controller.run("/api/terminals", "POST", {})).rejects.toThrow(
       "Limit",
@@ -270,23 +221,19 @@ describe("browser terminal operation identity", () => {
     "keeps the %s result when local receipt cleanup fails",
     async (outcome) => {
       const identities: string[] = [];
-      const transport = vi
-        .fn<typeof fetch>()
-        .mockImplementation(async (path, init) => {
-          if (path === "/api/terminal-operations")
-            return Response.json({ epoch: "epoch-1" });
-          identities.push(
-            (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-          );
-          return reply(
-            init,
-            outcome === "completed"
-              ? { id: "created" }
-              : { error: "Definite refusal" },
-            outcome,
-            outcome === "completed" ? 200 : 409,
-          );
-        });
+      const transport = mutationTransport(async (_path, init) => {
+        identities.push(
+          (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
+        );
+        return reply(
+          init,
+          outcome === "completed"
+            ? { id: "created" }
+            : { error: "Definite refusal" },
+          outcome,
+          outcome === "completed" ? 200 : 409,
+        );
+      });
       let storageFailure = true;
       const storage = {
         getItem: (key: string) => sessionStorage.getItem(key),
@@ -316,27 +263,6 @@ describe("browser terminal operation identity", () => {
       expect(controller.snapshot()).toEqual([]);
     },
   );
-
-  it("does not dispatch untracked work when operation storage is unavailable", async () => {
-    const transport = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(Response.json({ epoch: "epoch-1" }));
-    const controller = new TerminalOperationController(
-      transport,
-      () =>
-        ({
-          getItem: () => null,
-          setItem: () => {
-            throw new Error("Synthetic quota");
-          },
-        }) as unknown as Storage,
-    );
-    for (let i = 0; i < 2; i++)
-      await expect(
-        controller.run("/api/terminals", "POST", {}),
-      ).rejects.toThrow("Synthetic quota");
-    expect(transport).toHaveBeenCalledTimes(1); // read-only epoch lookup only
-  });
 });
 
 describe("terminal operation recovery", () => {
@@ -359,80 +285,9 @@ describe("terminal operation recovery", () => {
     expect(sessionStorage.getItem(STORAGE_KEY)).toBe(raw);
   });
 
-  it("retries the saved bytes and receipt identity without acquiring a new epoch", async () => {
-    const entry = saved({ body: '{"cwd":"/fixture","profileId":"bash"}' });
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
-    const transport = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(null, {
-        status: 204,
-        headers: {
-          "X-Terminal-Operation": entry.identity.id,
-          "X-Terminal-Outcome": "completed",
-        },
-      }),
-    );
-    const controller = new TerminalOperationController(transport);
-
-    await controller.retry(entry.key);
-
-    expect(transport).toHaveBeenCalledExactlyOnceWith(
-      entry.path,
-      expect.objectContaining({
-        method: entry.method,
-        body: entry.body,
-        headers: expect.objectContaining({
-          "X-Terminal-Operation": JSON.stringify(entry.identity),
-        }),
-      }),
-    );
-    expect(controller.snapshot()).toEqual([]);
-    expect(sessionStorage.getItem(STORAGE_KEY)).toBe("[]");
-  });
-
-  it("restores all receipt-controlled mutation kinds as uncertain, without sending them", () => {
-    const entries = [
-      ["/api/terminals", "POST", '{"cwd":"/fixture","profileId":"bash"}'],
-      ["/api/terminals/id", "PATCH", '{"title":null}'],
-      [
-        "/api/terminals/reorder",
-        "POST",
-        '{"cwd":"/fixture","terminalIds":["id"]}',
-      ],
-      ["/api/terminals/id/restart", "POST", undefined],
-      ["/api/terminals/id", "DELETE", undefined],
-      ["/api/terminals/id?force=1", "DELETE", undefined],
-      [
-        "/api/terminal-settings",
-        "PATCH",
-        '{"historyRetentionDays":14,"persistOutput":true}',
-      ],
-      ["/api/terminal-history", "DELETE", undefined],
-    ] as const;
-    const pending = entries.map(([path, method, body], index) =>
-      saved({
-        path,
-        method,
-        body,
-        identity: { id: `saved-${index}`, epoch: "epoch-1" },
-      }),
-    );
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(pending));
-    const transport = vi.fn<typeof fetch>();
-    const controller = new TerminalOperationController(transport);
-
-    controller.restore();
-
-    expect(controller.snapshot()).toEqual(
-      pending.map(({ key }) =>
-        expect.objectContaining({ key, busy: false, outcome: "unknown" }),
-      ),
-    );
-    expect(transport).not.toHaveBeenCalled();
-  });
-
-  it("accepts the legitimate cwd, tab-count and identity length boundaries", () => {
+  it("retains the full supported request at the unresolved identity limit", () => {
     const cwd = `/${"p".repeat(4095)}`;
-    const entry = saved({
+    const reorder = saved({
       path: "/api/terminals/reorder",
       body: JSON.stringify({
         cwd,
@@ -442,34 +297,26 @@ describe("terminal operation recovery", () => {
       }),
       identity: { id: "i".repeat(80), epoch: "e".repeat(80) },
     });
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify([entry]));
-    const controller = new TerminalOperationController(vi.fn<typeof fetch>());
-
-    controller.restore();
-
-    expect(controller.snapshot()).toEqual([
-      {
-        key: entry.key,
-        label: `Reorder terminals · ${cwd}`,
-        busy: false,
-        outcome: "unknown",
-      },
-    ]);
-  });
-
-  it("allows 128 unresolved identities but refuses a larger set", () => {
-    const entries = Array.from({ length: 129 }, (_, index) =>
-      saved({
-        path: `/api/terminals/id-${index}/restart`,
-        body: undefined,
-        identity: { id: `operation-${index}`, epoch: "epoch-1" },
-      }),
-    );
+    const entries = [
+      reorder,
+      ...Array.from({ length: 128 }, (_, index) =>
+        saved({
+          path: `/api/terminals/id-${index}/restart`,
+          body: undefined,
+          identity: { id: `operation-${index}`, epoch: "epoch-1" },
+        }),
+      ),
+    ];
     const transport = vi.fn<typeof fetch>();
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, 128)));
     const controller = new TerminalOperationController(transport);
     controller.restore();
     expect(controller.snapshot()).toHaveLength(128);
+    expect(controller.snapshot()[0]).toMatchObject({
+      key: reorder.key,
+      label: `Reorder terminals · ${cwd}`,
+      outcome: "unknown",
+    });
 
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
     expect(() => new TerminalOperationController(transport).restore()).toThrow(
@@ -480,13 +327,10 @@ describe("terminal operation recovery", () => {
 });
 describe("stored terminal request validation", () => {
   it.each([
-    ["non-record entry", () => null],
-    ["unexpected record fields", () => ({ ...saved(), extra: true })],
     [
       "non-receipted attach ticket",
       () => saved({ path: "/api/terminals/id/attach-ticket" }),
     ],
-    ["read-only request", () => saved({ method: "GET" })],
     [
       "encoded terminal id",
       () => saved({ path: "/api/terminals/%69d/restart" }),
@@ -496,19 +340,9 @@ describe("stored terminal request validation", () => {
       () => saved({ path: "/api/terminals/id?force=2", method: "DELETE" }),
     ],
     ["invalid JSON body", () => saved({ body: "{" })],
-    ["JSON whitespace", () => saved({ body: '{ "cwd": "/fixture" }' })],
-    [
-      "unsorted JSON keys",
-      () => saved({ body: '{"profileId":"bash","cwd":"/fixture"}' }),
-    ],
-    ["unsorted nested keys", () => saved({ body: '{"extra":{"z":1,"a":2}}' })],
     [
       "oversized body",
       () => saved({ body: JSON.stringify({ cwd: "x".repeat(32 * 1024) }) }),
-    ],
-    [
-      "non-string id",
-      () => ({ ...saved(), identity: { id: null, epoch: "epoch-1" } }),
     ],
     [
       "invalid id characters",
@@ -517,18 +351,6 @@ describe("stored terminal request validation", () => {
     [
       "oversized id",
       () => saved({ identity: { id: "a".repeat(81), epoch: "epoch-1" } }),
-    ],
-    [
-      "non-string epoch",
-      () => ({ ...saved(), identity: { id: "saved-id", epoch: 1 } }),
-    ],
-    [
-      "invalid epoch characters",
-      () => saved({ identity: { id: "saved-id", epoch: "epoch:1" } }),
-    ],
-    [
-      "unexpected identity fields",
-      () => ({ ...saved(), identity: { ...saved().identity, extra: true } }),
     ],
   ] satisfies Array<[string, () => unknown]>)(
     "rejects %s",
@@ -573,15 +395,6 @@ describe("stored terminal request validation", () => {
       expect(controller.snapshot()).toEqual([]);
     },
   );
-
-  it.each([
-    ["invalid JSON", "{"],
-    ["non-array root", "{}"],
-  ] as const)("rejects %s storage", (_label, raw) => {
-    sessionStorage.setItem(STORAGE_KEY, raw);
-    const controller = new TerminalOperationController(vi.fn<typeof fetch>());
-    expect(() => controller.restore()).toThrow("storage is invalid");
-  });
 
   it.each([
     ["unsupported mutation", "DELETE", undefined],

@@ -2,13 +2,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activeSnapshot,
-  bootstrapPayload,
   deferred,
   installFakeWebSocket,
-  installFetch,
   type RouteResponse,
 } from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
+import {
+  initStore,
+  installStoreRoutes,
+  installStoreSnapshot,
+} from "./store-fixture";
 
 function userMessage(index: number) {
   return {
@@ -20,6 +22,35 @@ function userMessage(index: number) {
   };
 }
 
+const scope = {
+  sessionId: "s1",
+  revision: 4,
+  viewId: "view-s1",
+  incarnation: "projection-1",
+};
+const turns = ["old", "middle", "latest"].map((snippet, ordinal) => ({
+  id: `u${ordinal}`,
+  ordinal,
+  snippet,
+  attachmentCount: 0,
+}));
+const firstWindow = activeSnapshot({
+  transcriptPage: {
+    ...scope,
+    messages: [
+      {
+        ...userMessage(10),
+        content: "latest",
+        __inspireMessageId: "u2",
+        __inspireUserTurnId: "u2",
+        __inspireUserTurnIndex: 2,
+      },
+    ],
+    hasOlder: true,
+    olderCursor: "older-latest",
+  },
+});
+
 beforeEach(() => installFakeWebSocket());
 
 describe("Prompt Map navigation ownership", () => {
@@ -27,7 +58,7 @@ describe("Prompt Map navigation ownership", () => {
     const resyncStarted = deferred<void>();
     const resync = deferred<RouteResponse>();
     const turnReads: string[] = [];
-    installFetch((url, init) => {
+    installStoreRoutes((url) => {
       if (url.startsWith("/api/transcript/user-turns"))
         return { status: 409, body: { error: "view changed" } };
       if (url.startsWith("/api/snapshot")) {
@@ -49,7 +80,6 @@ describe("Prompt Map navigation ownership", () => {
             },
           }),
         };
-      return baseRoutes(url, init);
     });
     const { store } = await initStore();
     const navigation = store.navigatePromptMapTurn(0);
@@ -64,421 +94,207 @@ describe("Prompt Map navigation ownership", () => {
     });
   });
 
-  describe("older paging during Prompt Map navigation", () => {
-    it.each(["late page", "late failure", "page first"] as const)(
-      "preserves the navigation boundary when the older request is %s",
-      async (order) => {
-        const olderResponse = deferred<RouteResponse>();
-        const olderStarted = deferred<void>();
-        const pageScope = {
-          sessionId: "s1",
-          revision: 4,
-          viewId: "view-s1",
-          incarnation: "projection-1",
-        };
-        const olderPage: RouteResponse = {
-          body: {
-            ...pageScope,
-            messages: [userMessage(8), userMessage(9)],
+  it.each(["late page", "late failure", "page first"] as const)(
+    "seeks a complete older turn when its competing page is a %s",
+    async (order) => {
+      const olderResponse = deferred<RouteResponse>();
+      const olderStarted = deferred<void>();
+      const olderPage = {
+        body: {
+          ...scope,
+          messages: [userMessage(8), userMessage(9)],
+          hasOlder: true,
+          olderCursor: "before-8",
+        },
+      };
+      const mapTurns = [
+        { id: "u2", ordinal: 0, snippet: "old", attachmentCount: 0 },
+        { id: "u10", ordinal: 1, snippet: "new", attachmentCount: 0 },
+      ];
+      const cursors: Array<string | null> = [];
+      installStoreSnapshot(
+        activeSnapshot({
+          transcriptPage: {
+            ...scope,
+            messages: [
+              {
+                ...userMessage(10),
+                __inspireUserTurnId: "u10",
+                __inspireUserTurnIndex: 1,
+              },
+            ],
             hasOlder: true,
-            olderCursor: "before-8",
+            olderCursor: "before-10",
           },
-        };
-        installFetch((url, init) => {
-          if (url.startsWith("/api/bootstrap")) {
-            return {
-              body: bootstrapPayload({
-                snapshot: activeSnapshot({
-                  transcriptPage: {
-                    ...pageScope,
-                    messages: [userMessage(10)],
-                    hasOlder: true,
-                    olderCursor: "before-10",
-                  },
-                }),
-              }),
-            };
-          }
+        }),
+        (url) => {
           if (url.startsWith("/api/transcript/older")) {
             olderStarted.resolve();
             return olderResponse.promise;
           }
-          if (url.startsWith("/api/transcript/user-turns")) {
-            return {
-              body: {
-                ...pageScope,
-                total: 2,
-                start: 0,
-                turns: [
-                  { id: "u2", ordinal: 0, snippet: "old", attachmentCount: 0 },
-                  { id: "u10", ordinal: 1, snippet: "new", attachmentCount: 0 },
-                ],
-              },
-            };
-          }
-          if (url.startsWith("/api/transcript/user-turn?")) {
-            return {
-              body: {
-                ...pageScope,
-                messages: [userMessage(2)],
-                hasOlder: true,
-                olderCursor: "before-2",
-                targetMessageId: "u2",
-                rangeStart: 2,
-                rangeEnd: 3,
-                hasMoreInTurn: false,
-                continuationCursor: null,
-              },
-            };
-          }
-          return baseRoutes(url, init);
-        });
-        const { store } = await initStore();
-        await store.loadPromptMapTurns();
-        const older = store.loadOlderMessages();
-        await olderStarted.promise;
+          if (url.startsWith("/api/transcript/user-turns"))
+            return { body: { ...scope, total: 2, start: 0, turns: mapTurns } };
+          if (!url.startsWith("/api/transcript/user-turn?")) return;
+          const query = new URL(url, "http://localhost").searchParams;
+          expect(query.get("id")).toBe("u2");
+          const cursor = query.get("cursor");
+          cursors.push(cursor);
+          const continued = cursor === "continue-turn";
+          return {
+            body: {
+              ...scope,
+              messages: [
+                continued
+                  ? {
+                      ...userMessage(3),
+                      role: "assistant",
+                      content: "continued response",
+                    }
+                  : userMessage(2),
+              ],
+              hasOlder: true,
+              olderCursor: "before-2",
+              targetMessageId: "u2",
+              rangeStart: continued ? 3 : 2,
+              rangeEnd: continued ? 4 : 3,
+              hasMoreInTurn: !continued,
+              continuationCursor: continued ? null : "continue-turn",
+            },
+          };
+        },
+      );
+      const { store } = await initStore();
+      await store.loadPromptMapTurns();
+      expect(store.getState().promptMapTotal).toBe(mapTurns.length);
+      expect(await store.navigatePromptMapTurn(1)).toBe(true);
+      expect(cursors).toEqual([]);
 
-        if (order === "page first") {
-          olderResponse.resolve(olderPage);
-          expect(await older).toBe(true);
-        }
-        expect(await store.navigatePromptMapTurn(0)).toBe(true);
-        if (order !== "page first") {
-          olderResponse.resolve(
-            order === "late failure"
-              ? { status: 500, body: { error: "obsolete page failed" } }
-              : olderPage,
-          );
-          expect(await older).toBe(false);
-        }
-
-        expect(
-          store
-            .getState()
-            .messages.map((message) => message.__inspireMessageIndex),
-        ).toEqual(order === "page first" ? [2, 8, 9, 10] : [2, 10]);
-        expect(store.getState()).toMatchObject({
-          hasOlderMessages: true,
-          olderMessagesCursor: "before-2",
-          olderMessagesError: null,
-          loadingOlderMessages: false,
-          promptMapNavigatingOrdinal: null,
-        });
-      },
-    );
-  });
-
-  it("loads the bounded user-turn outline and directly merges a selected turn with continuation", async () => {
-    const requestedTurnCursors: Array<string | null> = [];
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [
-                  {
-                    role: "user",
-                    content: "latest",
-                    timestamp: 10,
-                    __inspireMessageId: "u2",
-                    __inspireMessageIndex: 10,
-                    __inspireUserTurnId: "u2",
-                    __inspireUserTurnIndex: 2,
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "older-latest",
-              },
-            }),
-          }),
-        };
+      const older = store.loadOlderMessages();
+      await olderStarted.promise;
+      if (order === "page first") {
+        olderResponse.resolve(olderPage);
+        expect(await older).toBe(true);
       }
+      expect(await store.navigatePromptMapTurn(0)).toBe(true);
+      if (order !== "page first") {
+        olderResponse.resolve(
+          order === "late failure"
+            ? { status: 500, body: { error: "obsolete page failed" } }
+            : olderPage,
+        );
+        expect(await older).toBe(false);
+      }
+
+      expect(cursors).toEqual([null, "continue-turn"]);
+      expect(store.getState().messages.map(({ content }) => content)).toEqual([
+        "message 2",
+        "continued response",
+        ...(order === "page first" ? ["message 8", "message 9"] : []),
+        "message 10",
+      ]);
+      expect(store.getState()).toMatchObject({
+        hasOlderMessages: true,
+        olderMessagesCursor: "before-2",
+        olderMessagesError: null,
+        loadingOlderMessages: false,
+        promptMapNavigatingOrdinal: null,
+      });
+    },
+  );
+
+  it("retires the old outline and seek together when the branch view changes", async () => {
+    const staleOutline = deferred<RouteResponse>();
+    const staleSeek = deferred<RouteResponse>();
+    const currentOutline = deferred<RouteResponse>();
+    const seekStarted = deferred<void>();
+    let outlineReads = 0;
+    installStoreSnapshot(firstWindow, (url) => {
       if (url.startsWith("/api/transcript/user-turns")) {
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            total: 3,
-            start: 0,
-            turns: [
-              { id: "u0", ordinal: 0, snippet: "old", attachmentCount: 0 },
-              { id: "u1", ordinal: 1, snippet: "middle", attachmentCount: 0 },
-              { id: "u2", ordinal: 2, snippet: "latest", attachmentCount: 0 },
-            ],
-          },
-        };
+        switch (++outlineReads) {
+          case 1:
+            return { body: { ...scope, total: turns.length, start: 0, turns } };
+          case 2:
+            return staleOutline.promise;
+          case 3:
+            return currentOutline.promise;
+          default:
+            return {
+              status: 500,
+              body: { error: "duplicate prompt-map load" },
+            };
+        }
       }
       if (url.startsWith("/api/transcript/user-turn?")) {
-        const cursor = new URL(url, "http://localhost").searchParams.get(
-          "cursor",
-        );
-        requestedTurnCursors.push(cursor);
-        const continuation = cursor === "continue-turn";
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            messages: continuation
-              ? [
-                  {
-                    role: "assistant",
-                    content: "continued response",
-                    timestamp: 3,
-                    __inspireMessageId: "a0-continued",
-                    __inspireMessageIndex: 2,
-                    __inspireUserTurnId: "u0",
-                    __inspireUserTurnIndex: 0,
-                  },
-                ]
-              : [
-                  {
-                    role: "user",
-                    content: "old",
-                    timestamp: 1,
-                    __inspireMessageId: "u0",
-                    __inspireMessageIndex: 0,
-                    __inspireUserTurnId: "u0",
-                    __inspireUserTurnIndex: 0,
-                  },
-                  {
-                    role: "assistant",
-                    content: "response",
-                    timestamp: 2,
-                    __inspireMessageId: "a0",
-                    __inspireMessageIndex: 1,
-                    __inspireUserTurnId: "u0",
-                    __inspireUserTurnIndex: 0,
-                  },
-                ],
-            hasOlder: false,
-            olderCursor: null,
-            targetMessageId: "u0",
-            rangeStart: 0,
-            rangeEnd: continuation ? 3 : 2,
-            hasMoreInTurn: !continuation,
-            continuationCursor: continuation ? null : "continue-turn",
-          },
-        };
+        seekStarted.resolve();
+        return staleSeek.promise;
       }
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.loadPromptMapTurns();
-    expect(store.getState()).toMatchObject({
-      promptMapTotal: 3,
-      promptMapLoadedStarts: [0],
-      promptMapError: null,
-    });
-    expect(await store.navigatePromptMapTurn(2)).toBe(true);
-    expect(store.getState().promptMapNavigatingOrdinal).toBeNull();
-    expect(await store.navigatePromptMapTurn(0)).toBe(true);
-    expect(requestedTurnCursors).toEqual([null, "continue-turn"]);
-    expect(
-      store.getState().messages.map((message) => message.__inspireMessageIndex),
-    ).toEqual([0, 1, 2, 10]);
-    expect(store.getState().promptMapNavigatingOrdinal).toBeNull();
-  });
-
-  it("keeps a newer prompt-map load coalesced when an obsolete load settles", async () => {
-    const staleResponse = deferred<RouteResponse>();
-    const currentResponse = deferred<RouteResponse>();
-    let requests = 0;
-    installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                viewId: "view-old",
-                incarnation: "projection-old",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/user-turns")) {
-        requests += 1;
-        if (requests === 1) return staleResponse.promise;
-        if (requests === 2) return currentResponse.promise;
-        return { status: 500, body: { error: "duplicate prompt-map load" } };
-      }
-      return baseRoutes(url, init);
     });
     const { store, socket } = await initStore();
-    const stale = store.loadPromptMapTurns();
-    await vi.waitFor(() => expect(requests).toBe(1));
+    await store.loadPromptMapTurns();
+    const oldOutline = store.loadPromptMapTurns();
+    const oldSeek = store.navigatePromptMapTurn(0);
+    await seekStarted.promise;
+    expect(outlineReads).toBe(2);
 
+    const replacement = {
+      ...scope,
+      revision: 5,
+      viewId: "view-rewrite",
+      incarnation: "projection-2",
+    };
+    const rewritten = {
+      ...userMessage(0),
+      content: "rewritten",
+      __inspireMessageId: "rewritten",
+      __inspireUserTurnId: "rewritten",
+      __inspireUserTurnIndex: 0,
+    };
     socket.emit({
       type: "snapshot",
       data: activeSnapshot({
-        transcriptPage: {
-          revision: 5,
-          viewId: "view-current",
-          incarnation: "projection-current",
-        },
+        transcriptPage: { ...replacement, messages: [rewritten] },
       }),
     });
     const current = store.loadPromptMapTurns();
-    await vi.waitFor(() => expect(requests).toBe(2));
-
-    staleResponse.resolve({
+    await vi.waitFor(() => expect(outlineReads).toBe(3));
+    staleOutline.resolve({
+      body: { ...scope, total: turns.length, start: 0, turns },
+    });
+    staleSeek.resolve({
       body: {
-        sessionId: "s1",
-        revision: 4,
-        viewId: "view-old",
-        incarnation: "projection-old",
-        total: 1,
-        start: 0,
-        turns: [{ id: "old", ordinal: 0, snippet: "old", attachmentCount: 0 }],
-      },
-    });
-    await stale;
-    const coalesced = store.loadPromptMapTurns();
-    expect(requests).toBe(2);
-
-    currentResponse.resolve({
-      body: {
-        sessionId: "s1",
-        revision: 5,
-        viewId: "view-current",
-        incarnation: "projection-current",
-        total: 1,
-        start: 0,
-        turns: [
-          {
-            id: "current",
-            ordinal: 0,
-            snippet: "current",
-            attachmentCount: 0,
-          },
-        ],
-      },
-    });
-    await expect(Promise.all([current, coalesced])).resolves.toEqual([
-      [
-        {
-          id: "current",
-          ordinal: 0,
-          snippet: "current",
-          attachmentCount: 0,
-        },
-      ],
-      [
-        {
-          id: "current",
-          ordinal: 0,
-          snippet: "current",
-          attachmentCount: 0,
-        },
-      ],
-    ]);
-    expect(requests).toBe(2);
-  });
-
-  it("cancels an in-flight prompt-map seek when the branch view changes", async () => {
-    const first = deferred<RouteResponse>();
-    const { promise: firstStarted, resolve: firstRequested } = deferred<void>();
-    installFetch(async (url, init) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            snapshot: activeSnapshot({
-              transcriptPage: {
-                revision: 4,
-                messages: [
-                  {
-                    role: "user",
-                    content: "latest",
-                    timestamp: 10,
-                    __inspireMessageId: "u2",
-                    __inspireMessageIndex: 10,
-                    __inspireUserTurnId: "u2",
-                    __inspireUserTurnIndex: 2,
-                  },
-                ],
-                hasOlder: true,
-                olderCursor: "older-latest",
-              },
-            }),
-          }),
-        };
-      }
-      if (url.startsWith("/api/transcript/user-turns")) {
-        return {
-          body: {
-            sessionId: "s1",
-            revision: 4,
-            viewId: "view-s1",
-            incarnation: "projection-1",
-            total: 3,
-            start: 0,
-            turns: [
-              { id: "u0", ordinal: 0, snippet: "first", attachmentCount: 0 },
-              { id: "u1", ordinal: 1, snippet: "second", attachmentCount: 0 },
-              { id: "u2", ordinal: 2, snippet: "latest", attachmentCount: 0 },
-            ],
-          },
-        };
-      }
-      if (url.includes("/api/transcript/user-turn?") && url.includes("id=u0")) {
-        firstRequested();
-        return first.promise;
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    await store.loadPromptMapTurns();
-    const obsolete = store.navigatePromptMapTurn(0);
-    await firstStarted;
-    socket.emit({
-      type: "snapshot",
-      data: activeSnapshot({
-        transcriptPage: {
-          revision: 5,
-          viewId: "view-rewrite",
-          incarnation: "projection-2",
-          messages: [
-            {
-              role: "user",
-              content: "rewritten",
-              timestamp: 11,
-              __inspireMessageId: "u-rewrite",
-              __inspireMessageIndex: 0,
-              __inspireUserTurnId: "u-rewrite",
-              __inspireUserTurnIndex: 0,
-            },
-          ],
-        },
-      }),
-    });
-    first.resolve({
-      body: {
-        sessionId: "s1",
-        revision: 4,
-        viewId: "view-s1",
-        incarnation: "projection-1",
-        messages: [],
+        ...scope,
+        messages: [userMessage(0)],
         hasOlder: false,
         olderCursor: null,
         targetMessageId: "u0",
         rangeStart: 0,
-        rangeEnd: 0,
+        rangeEnd: 1,
         hasMoreInTurn: false,
         continuationCursor: null,
       },
     });
-    expect(await obsolete).toBe(false);
+    await expect(oldOutline).resolves.toEqual([]);
+    await expect(oldSeek).resolves.toBe(false);
+    const coalesced = store.loadPromptMapTurns();
+    const currentTurn = {
+      ...turns[0],
+      id: "rewritten",
+      snippet: rewritten.content,
+    };
+    currentOutline.resolve({
+      body: { ...replacement, total: 1, start: 0, turns: [currentTurn] },
+    });
+    await expect(Promise.all([current, coalesced])).resolves.toEqual([
+      [currentTurn],
+      [currentTurn],
+    ]);
+    expect(outlineReads).toBe(3);
     expect(store.getState()).toMatchObject({
-      transcriptViewId: "view-rewrite",
+      transcriptViewId: replacement.viewId,
+      promptMapTurns: [currentTurn],
       promptMapNavigatingOrdinal: null,
       promptMapError: null,
+      messages: [{ content: rewritten.content }],
     });
   });
 });

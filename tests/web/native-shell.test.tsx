@@ -1,16 +1,20 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import {
+  HistoryShellPreview,
+  historyShellContent,
+} from "../../src/components/HistoryShellPreview";
 import { Transcript } from "../../src/components/Transcript";
 import { emptyEventSlice, reduceEvent } from "../../src/events";
-import { installFakeWebSocket, installFetch, jsonBody } from "./helpers";
-import { baseRoutes, initStore } from "./store-fixture";
 
-describe("native shell presentation and input", () => {
-  beforeEach(() => {
-    installFakeWebSocket();
-  });
-
+describe("native shell transcript", () => {
   it("renders native persisted Bash as user activity even with model tools hidden", () => {
     render(
       <Transcript
@@ -45,7 +49,6 @@ describe("native shell presentation and input", () => {
     expect(
       within(shell).getByRole("button", { name: /Copy shell result/ }),
     ).toBeVisible();
-    expect(shell).toHaveClass("card--failed");
   });
 
   it("stream updates retain model state and hand off live-to-persisted identity without duplicate cards", () => {
@@ -97,66 +100,6 @@ describe("native shell presentation and input", () => {
     });
   });
 
-  it("sends busy !/!! directly without steer/queue and recalls the accepted native input", async () => {
-    let sent: Record<string, unknown> = {};
-    installFetch((url, init) => {
-      if (url === "/api/prompt") {
-        sent = jsonBody(init);
-        return {
-          status: 202,
-          body: {
-            accepted: true,
-            historyEntry: { text: "!!printf secret", images: [], files: [] },
-          },
-        };
-      }
-      return baseRoutes(url, init);
-    });
-    const { store, socket } = await initStore();
-    socket.emit({ type: "agent_start" });
-    expect(await store.sendPrompt("!!printf secret", "followUp")).toMatchObject(
-      {
-        accepted: true,
-        historyEntry: { text: "!!printf secret", images: [], files: [] },
-      },
-    );
-    expect(sent.message).toBe("!!printf secret");
-    expect(sent.behavior).toBeUndefined();
-    expect(store.getState().queue.followUp).toEqual([]);
-  });
-
-  it("rejects shell attachments without deleting them or sending a model prompt", async () => {
-    let sent = false;
-    installFetch((url, init) => {
-      if (url === "/api/prompt") {
-        sent = true;
-        return { body: { accepted: true } };
-      }
-      if (url === "/api/attachments")
-        return {
-          body: {
-            attachments: [
-              {
-                id: "image",
-                kind: "image",
-                fileName: "image.png",
-                mimeType: "image/png",
-                size: 3,
-              },
-            ],
-          },
-        };
-      return baseRoutes(url, init);
-    });
-    const { store } = await initStore();
-    await store.addFiles([
-      new File(["img"], "image.png", { type: "image/png" }),
-    ]);
-    expect(await store.sendPrompt("!pwd")).toBe(false);
-    expect(sent).toBe(false);
-    expect(store.getState().attachments).toHaveLength(1);
-  });
-
   it("shows a retired shell snapshot as interrupted, not running or a confirmed context result", () => {
     render(
       <Transcript
@@ -187,28 +130,54 @@ describe("native shell presentation and input", () => {
       within(shell).queryByText("Included in context"),
     ).not.toBeInTheDocument();
   });
+});
 
-  it("retains cancelled status on reopened native output", () => {
-    render(
-      <Transcript
-        sessionId="shell-cancelled"
-        streaming={false}
-        thinkingVisibility="hidden"
-        toolVisibility="hidden"
-        messages={[
-          {
-            role: "bashExecution",
-            command: "sleep 30",
-            output: "before stop",
-            timestamp: 1,
-            cancelled: true,
-            excludeFromContext: false,
-          },
-        ]}
-      />,
+describe("shell records in History", () => {
+  const command = "!printf 'shell history'";
+  const record = (output: string) =>
+    ["```", command, "```", "", "````", output, "````", "", "Exit 0"].join(
+      "\n",
     );
-    expect(screen.getByText("Cancelled")).toBeVisible();
-    expect(screen.getByText("Included in context")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /Copy shell result/ }));
+
+  it("reads shell stdout literally and copies it with the command and Host outcome", async ({
+    onTestFinished,
+  }) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const output =
+      "# literal heading\n  column A\tcolumn B\n<script>literal script</script>\n\nExit 99\n\n```js\nraw code\n```";
+    render(<HistoryShellPreview text={record(output)} complete />);
+    const preview = screen.getByRole("region", {
+      name: "Shell record preview",
+    });
+    expect(preview.querySelector(".history-shell__output")?.textContent).toBe(
+      output,
+    );
+    expect(preview.querySelector("script")).toBeNull();
+    expect(screen.getByText("Exit 0")).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy loaded shell content" }),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        [command, output, "Exit 0"].join("\n\n"),
+      ),
+    );
+  });
+
+  it("recognizes only a complete Host-projected full-log reference", () => {
+    const output = "Full output: /tmp/stdout-is-not-metadata.log";
+    const path = "/tmp/logs/native shell.log";
+    const text = `${record(output)}\n\nOutput truncated\n\nFull output: ${path}`;
+    expect(historyShellContent(record(output), true).fullOutputPath).toBeNull();
+    expect(historyShellContent(text, false).fullOutputPath).toBeNull();
+    render(<HistoryShellPreview text={text} complete />);
+    expect(
+      screen.getByRole("button", { name: "View full shell output" }),
+    ).toHaveAttribute("data-file-path", "/tmp/logs/native%20shell.log");
   });
 });

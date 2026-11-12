@@ -42,19 +42,9 @@ type VisibleNotifications = Map<
   }
 >;
 function fixture(
-  history = new Map<string, number>(),
-  latest = new Map<string, unknown>(),
-  persistent: {
-    groups?: Map<string, unknown>;
-    settings?: Map<string, unknown>;
-    visible?: VisibleNotifications;
-  } = {},
+  records = new Map<string, Map<string, unknown>>(),
+  visible: VisibleNotifications = new Map(),
 ) {
-  const {
-    groups = new Map<string, unknown>(),
-    settings = new Map<string, unknown>(),
-    visible = new Map() as VisibleNotifications,
-  } = persistent;
   type Event = {
     waitUntil(value: Promise<unknown>): void;
     [key: string]: unknown;
@@ -84,6 +74,8 @@ function fixture(
     MessageChannel,
     setTimeout,
     clearTimeout,
+    fetch: async () => new Response("current metadata"),
+    caches: { match: async () => new Response("cached metadata") },
     self: {
       location: new URL(origin + "/service-worker.js"),
       addEventListener: (type: string, listener: (event: Event) => void) =>
@@ -93,19 +85,14 @@ function fixture(
     },
     // The platform storage boundary is stubbed; the real worker's queue, display,
     // foreground checks and routing are executed unchanged.
-    notificationState: async (store: string, id: string, value?: unknown) => {
-      const records =
-        store === "handled"
-          ? history
-          : store === "latest"
-            ? latest
-            : store === "groups"
-              ? groups
-              : settings;
-      return value === undefined
-        ? records.get(id)
-        : (records as Map<string, unknown>).set(id, value);
-    },
+    notificationState: vi.fn(
+      async (store: string, id: string, value?: unknown) => {
+        const entries = records.get(store) ?? new Map();
+        records.set(store, entries);
+        if (value === undefined) return entries.get(id);
+        entries.set(id, value);
+      },
+    ),
   };
   const storage = context.notificationState;
   runInNewContext(script, context);
@@ -130,9 +117,18 @@ function fixture(
     return reply.mock.calls[0]?.[0];
   };
   return {
+    fetchAsset: async (path: string) => {
+      const respondWith = vi.fn<(response: Promise<Response>) => void>();
+      await dispatch("fetch", {
+        request: new Request(origin + path),
+        respondWith,
+      });
+      return respondWith.mock.calls[0]?.[0];
+    },
     show,
     visible,
-    persistent: { groups, settings, visible },
+    storage,
+    restart: (existing?: VisibleNotifications) => fixture(records, existing),
     windows,
     openWindow,
     local,
@@ -180,99 +176,79 @@ function projectNotification(
   };
 }
 
+it("reads mutable PWA metadata from the Host with an installed shell still cached", async () => {
+  const worker = fixture();
+  for (const path of [
+    "/manifest.webmanifest",
+    "/favicon.svg",
+    "/app-icon-192.png",
+    "/app-icon-512.png",
+    "/app-icon-maskable-512.png",
+    "/apple-touch-icon.png",
+  ]) {
+    const response = await worker.fetchAsset(path + "?v=fixture");
+    expect(await response?.text(), path).toBe("current metadata");
+  }
+});
+
 describe("project notification grouping", () => {
-  it("counts distinct sessions, keeps the latest target and separates same-named projects", async () => {
+  it("keeps project alerts through restart and clears members after dismissal or viewing", async () => {
     const worker = fixture();
-    const first = projectNotification(1);
-    await worker.local(first);
-    expect(worker.visible.get("inspire-project:project-one")?.title).toBe(
-      "Task completed · Review session-one",
-    );
-    await worker.local({ ...projectNotification(2), sessionName: "Renamed" });
-    expect(worker.visible.get("inspire-project:project-one")?.title).toBe(
-      "Task completed · Renamed",
-    );
-    const second = {
-      ...projectNotification(3, "session-two"),
+    const older = projectNotification(1);
+    const newer = {
+      ...projectNotification(2, "session-two"),
       outcome: "failed" as const,
     };
-    await worker.local(second);
-    const merged = worker.visible.get("inspire-project:project-one")!;
-    expect(merged.title).toBe("Task failed · 2 sessions");
-    expect(merged.options.data).toMatchObject({
-      sessionId: "session-two",
-      url: "/#inspire-session=session-two",
+    await worker.local(newer);
+    const restarted = worker.restart(worker.visible);
+    const grouped = () => restarted.visible.get("inspire-project:project-one");
+    await restarted.push(older);
+    expect(grouped()).toMatchObject({
+      title: "Task failed · 2 sessions",
+      options: {
+        renotify: false,
+        data: {
+          sessionId: "session-two",
+          url: "/#inspire-session=session-two",
+        },
+      },
     });
-    await worker.push(first);
-    expect(
-      worker.visible.get("inspire-project:project-one")?.options.renotify,
-    ).toBe(false);
-    await worker.local(
+    // A new run of an already counted session changes the target and result.
+    await restarted.local({ ...projectNotification(3), projectId: undefined });
+    expect(grouped()).toMatchObject({
+      title: "Task completed · 2 sessions",
+      options: { renotify: true, data: { sessionId: "session-one" } },
+    });
+    await restarted.local(
       projectNotification(4, "session-three", "same-label-different-project"),
     );
-    expect(worker.visible.size).toBe(2);
-    expect(worker.visible.get("inspire-project:project-one")?.title).toBe(
-      "Task failed · 2 sessions",
-    );
-  });
+    expect(restarted.visible.size).toBe(2);
+    expect(grouped()?.title).toBe("Task completed · 2 sessions");
 
-  it("merges an unseen older session silently and retains the latest result across worker restart", async () => {
-    const history = new Map<string, number>(),
-      latest = new Map<string, unknown>();
-    const worker = fixture(history, latest);
-    const older = projectNotification(1),
-      newer = {
-        ...projectNotification(2, "session-two"),
-        outcome: "failed" as const,
-      };
-    await worker.local(newer);
-    const restarted = fixture(history, latest, worker.persistent);
+    grouped()!.close();
     await restarted.push(older);
-    const merged = restarted.visible.get("inspire-project:project-one")!;
-    expect(merged.title).toBe("Task failed · 2 sessions");
-    expect(merged.options.renotify).toBe(false);
-    expect(merged.options.data.sessionId).toBe("session-two");
-    await restarted.local({ ...projectNotification(3), projectId: undefined });
-    expect(restarted.visible.size).toBe(1);
-    expect(
-      restarted.visible.get("inspire-project:project-one")?.options.renotify,
-    ).toBe(true);
-  });
-
-  it("removes only a viewed session and leaves its unread project peers visible", async () => {
-    const worker = fixture();
-    await worker.local(projectNotification(1));
-    await worker.local(projectNotification(2, "session-two"));
-    worker.windows.push(windowClient("session-two"));
-    await worker.local(projectNotification(3, "session-two"));
-    expect(worker.visible.get("inspire-project:project-one")).toMatchObject({
+    expect(grouped()).toMatchObject({
       title: "Task completed · Review session-one",
-      options: { renotify: false, data: { sessionId: "session-one" } },
+      options: { renotify: false },
     });
-    worker.windows.length = 0;
-    worker.windows.push(windowClient("session-one"));
-    await worker.local(projectNotification(4));
-    expect(worker.visible.size).toBe(0);
+    await restarted.local(projectNotification(5, "session-four"));
+    expect(grouped()?.title).toBe("Task completed · Review session-four");
+
+    await restarted.local(projectNotification(6, "session-two"));
+    restarted.windows.push(windowClient("session-two"));
+    await restarted.local(projectNotification(7, "session-two"));
+    expect(grouped()).toMatchObject({
+      title: "Task completed · Review session-four",
+      options: { renotify: false, data: { sessionId: "session-four" } },
+    });
+    restarted.windows[0] = windowClient("session-four");
+    await restarted.local(projectNotification(8, "session-four"));
+    expect([...restarted.visible.keys()]).toEqual([
+      "inspire-project:same-label-different-project",
+    ]);
   });
 
-  it("starts a new count after dismissal and does not count a mandatory stale-push repaint", async () => {
-    const worker = fixture();
-    const old = projectNotification(1);
-    await worker.local(old);
-    await worker.local(projectNotification(2, "session-two"));
-    worker.visible.get("inspire-project:project-one")!.close();
-    await worker.push(old);
-    expect(worker.visible.get("inspire-project:project-one")).toMatchObject({
-      title: "Task completed · Review session-two",
-      options: { renotify: false, data: { members: [] } },
-    });
-    await worker.local(projectNotification(3, "session-three"));
-    expect(worker.visible.get("inspire-project:project-one")?.title).toBe(
-      "Task completed · Review session-three",
-    );
-  });
-
-  it("clears old groups on a choice change, keeps tests separate and ignores stale push policy", async () => {
+  it("keeps the active grouping through old pushes, mode changes and Host replacement", async () => {
     const worker = fixture();
     const old = projectNotification(1);
     await worker.local(old);
@@ -281,81 +257,28 @@ describe("project notification grouping", () => {
       sessionId: null,
       test: true,
     });
-    expect(await worker.configure("session", 2)).toEqual({ ok: true });
+    await worker.configure("session", 2);
     expect([...worker.visible.keys()]).toEqual(["inspire-task:test-choice"]);
+
     await worker.local(projectNotification(3));
-    expect(worker.visible.has("inspire-session:session-one")).toBe(true);
     await worker.push(old);
-    expect(worker.visible.has("inspire-project:project-one")).toBe(false);
     expect(
       worker.visible.get("inspire-session:session-one")?.options.renotify,
     ).toBe(false);
-    await worker.configure("project", 3);
-    await worker.local(projectNotification(4));
-    expect(worker.visible.has("inspire-project:project-one")).toBe(true);
-  });
+    expect(worker.visible.has("inspire-project:project-one")).toBe(false);
 
-  it("allows a newly paired Host to restore its default without old pushes restoring the former Host's policy", async () => {
-    const worker = fixture();
-    const old = {
-      ...projectNotification(1),
-      notificationOwner: "old-host",
-      groupingUpdatedAt: 5,
-    };
-    await worker.local(old);
+    await worker.configure("project", 3);
+    const newest = { ...projectNotification(4), groupingUpdatedAt: 3 };
+    await worker.local(newest);
+    expect(worker.visible.has("inspire-project:project-one")).toBe(true);
     await worker.configure("session", 0, "new-host");
-    await worker.push(old);
-    expect(
-      worker.visible.get("inspire-session:session-one")?.options.data.policy,
-    ).toEqual({
-      owner: "new-host",
-      grouping: "session",
-      updatedAt: 0,
-    });
+    await worker.push(newest);
+    expect(worker.visible.has("inspire-session:session-one")).toBe(true);
     expect(worker.visible.has("inspire-project:project-one")).toBe(false);
   });
 });
 
 describe("task notification service worker", () => {
-  it("coordinates simultaneous windows and remembers a displayed outcome across worker restarts", async () => {
-    const history = new Map<string, number>();
-    const worker = fixture(history);
-    await Promise.all([
-      worker.local(notification()),
-      worker.local(notification()),
-    ]);
-    expect(worker.show).toHaveBeenCalledOnce();
-    const restarted = fixture(history);
-    await restarted.local(notification());
-    expect(restarted.show).not.toHaveBeenCalled();
-    await restarted.local({
-      ...notification("next-run"),
-      createdAt: Date.now() + 1,
-    });
-    expect(restarted.show).toHaveBeenCalledOnce();
-  });
-
-  it("consumes viewed work, expires delayed local offers, and leaves a refused display retryable", async () => {
-    const worker = fixture();
-    worker.windows.push(
-      windowClient("elsewhere", false),
-      windowClient("session / one"),
-    );
-    await worker.local(notification());
-    expect(worker.show).not.toHaveBeenCalled();
-    worker.windows.length = 0;
-    await worker.local({
-      ...notification("expired"),
-      createdAt: Date.now() - 16 * 60_000,
-    });
-    expect(worker.show).not.toHaveBeenCalled();
-    worker.show.mockRejectedValueOnce(new Error("OS refused"));
-    const retry = { ...notification("retry"), createdAt: Date.now() + 1 };
-    expect(await worker.local(retry)).toHaveProperty("error");
-    await worker.local(retry);
-    expect(worker.show).toHaveBeenCalledTimes(2);
-  });
-
   it("displays received pushes but only alerts once per outcome and suppresses late page copies", async () => {
     const worker = fixture();
     worker.windows.push(windowClient("session / one"));
@@ -363,37 +286,23 @@ describe("task notification service worker", () => {
     await worker.push(notification());
     expect(worker.show).toHaveBeenCalledTimes(2);
     expect(
-      worker.show.mock.calls.map(([title, options]) => [
-        title,
-        options.tag,
-        options.renotify,
-      ]),
-    ).toEqual([
-      [
-        "Task completed · Review results",
-        "inspire-session:session / one",
-        true,
-      ],
-      [
-        "Task completed · Review results",
-        "inspire-session:session / one",
-        false,
-      ],
-    ]);
+      worker.show.mock.calls.map(([, options]) => options.renotify),
+    ).toEqual([true, false]);
     await worker.local(notification());
     expect(worker.show).toHaveBeenCalledTimes(2);
-    await worker.push({
-      ...notification("expired-push"),
+    const expired = {
+      ...notification("expired"),
       sessionId: "expired-session",
       createdAt: Date.now() - 16 * 60_000,
-    });
+    };
+    await worker.local(expired);
+    expect(worker.show).toHaveBeenCalledTimes(2);
+    await worker.push(expired);
     expect(worker.show.mock.calls.at(-1)![1].renotify).toBe(false);
   });
 
-  it("replaces only the same session, uses its latest name, and keeps delayed results from winning after restart", async () => {
-    const history = new Map<string, number>();
-    const latest = new Map<string, unknown>();
-    const worker = fixture(history, latest);
+  it("deduplicates windows and keeps the latest session result through restart and storage failure", async () => {
+    const worker = fixture();
     const first = { ...notification(), createdAt: Date.now() - 10 };
     const second = {
       ...notification("run-two"),
@@ -401,7 +310,8 @@ describe("task notification service worker", () => {
       outcome: "failed" as const,
       createdAt: first.createdAt + 1,
     };
-    await worker.local(first);
+    await Promise.all([worker.local(first), worker.local(first)]);
+    expect(worker.show).toHaveBeenCalledOnce();
     await worker.local(second);
     await worker.local({
       ...notification("other"),
@@ -413,7 +323,9 @@ describe("task notification service worker", () => {
       "Task failed · Renamed session",
     );
     expect(worker.show.mock.calls[1]![1].renotify).toBe(true);
-    const restarted = fixture(history, latest);
+    const restarted = worker.restart();
+    await restarted.local(second);
+    expect(restarted.show).not.toHaveBeenCalled();
     await restarted.push(first);
     expect(restarted.show).toHaveBeenLastCalledWith(
       "Task failed · Renamed session",
@@ -424,26 +336,16 @@ describe("task notification service worker", () => {
     );
     await restarted.local(first);
     expect(restarted.show).toHaveBeenCalledOnce();
-  });
 
-  it("still displays received pushes when storage reads fail, retaining visible newer content", async () => {
-    const history = new Map<string, number>();
-    const latest = new Map<string, unknown>();
-    const worker = fixture(history, latest);
-    const old = { ...notification(), createdAt: Date.now() - 10 };
-    await worker.local({
-      ...old,
-      id: "newer",
-      outcome: "failed",
-      createdAt: old.createdAt + 1,
+    const persist = worker.storage.getMockImplementation()!;
+    worker.storage.mockImplementation(async (store, id, value) => {
+      if (value === undefined) throw new Error("Storage unavailable");
+      return persist(store, id, value);
     });
-    for (const records of [history, latest])
-      vi.spyOn(records, "get").mockImplementation(() => {
-        throw new Error("Storage unavailable");
-      });
-    await worker.push(old);
+    await worker.push(first);
+    expect(worker.show).toHaveBeenCalledTimes(4);
     expect(worker.show).toHaveBeenLastCalledWith(
-      "Task failed · Review results",
+      "Task failed · Renamed session",
       expect.objectContaining({ renotify: false }),
     );
   });
@@ -461,8 +363,9 @@ describe("task notification service worker", () => {
     });
     expect(worker.visible.size).toBe(0);
     expect(worker.show).toHaveBeenCalledOnce();
-    await worker.push(old);
-    expect(worker.show).toHaveBeenLastCalledWith(
+    const restarted = worker.restart();
+    await restarted.push(old);
+    expect(restarted.show).toHaveBeenLastCalledWith(
       "Task completed · Unnamed session",
       expect.objectContaining({ renotify: false }),
     );

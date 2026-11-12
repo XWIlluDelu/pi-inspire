@@ -1,17 +1,17 @@
 ---
 purpose: Device-local task notifications that report normal completion and error-induced interruption while the user is away, including supported mobile background delivery.
 covers:
-  - server/{runtime,runtime-events,runtime-external-sessions,herdr-native-session,runtime-event-sockets,session-catalog,session-metadata,browser-auth,preferences,task-notifications}.ts
+  - server/{runtime,runtime-events,runtime-external-sessions,runtime-event-sockets,session-catalog,session-metadata,browser-auth,preferences,task-notifications}.ts
   - shared/{contracts,assistant-outcome,notifications}.ts
   - extensions/attach-control.ts
   - src/{main,browser-auth,browser-notifications,notifications}.ts*
   - src/controllers/{runtime-event,preference,connection,session-selection}-controller.ts
   - src/components/Settings.tsx
   - public/{service-worker.js,manifest.webmanifest}
-  - server/{app,external-session,pi-native-actions}.ts
+  - server/{app,external-session}.ts
   - src/{api,app-state,store}.ts
-  - tests/server/{task-notifications,session-catalog,session-metadata,app-auth,runtime-external-sessions,pi-session-activity,herdr-native-actions.integration}.test.ts
-  - tests/web/{attention,preferences,task-notification-worker}.test.ts
+  - tests/server/{task-notifications,session-catalog,session-metadata,app-auth,runtime-external-sessions,attach-control}.test.ts
+  - tests/web/{attention,preferences,service-worker}.test.ts
 after: [session-transport,conversation]
 progress: in-progress
 ---

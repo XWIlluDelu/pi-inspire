@@ -663,6 +663,57 @@ function listOutput(
     });
 }
 
+function pathListBlocks(
+  input: ToolPresentationInput,
+  root: string,
+  tool: "find" | "ls",
+): ToolPresentationBlock[] {
+  if (!input.result) return [];
+  if (input.result.isError) {
+    const error = resultTextBlock(input, "Error");
+    return error ? [error] : [];
+  }
+
+  const raw = toolResultText(input.result);
+  const listing = tool === "ls";
+  const label = listing ? "Contents" : "Results";
+  if (
+    raw === (listing ? "(empty directory)" : "No files found matching pattern")
+  )
+    return [
+      {
+        type: "list",
+        label,
+        path: root,
+        items: [],
+        emptyText: listing ? "Empty directory" : "No files found",
+      },
+    ];
+
+  const details = detailsOf(input);
+  const limit = details?.[listing ? "entryLimitReached" : "resultLimitReached"];
+  const hasNotice = Boolean(
+    limit || jsonRecord(details?.truncation)?.truncated,
+  );
+  const output = stripStructuredTrailingNotice(raw, hasNotice);
+  const blocks: ToolPresentationBlock[] = [
+    {
+      type: "list",
+      label,
+      path: root,
+      items: listOutput(output.text, root, listing),
+    },
+  ];
+  const notices: string[] = [];
+  if (typeof limit === "number")
+    notices.push(`${limit} ${listing ? "entry" : "result"} limit reached`);
+  const truncated = truncationNotice(details, label);
+  if (truncated) notices.push(truncated);
+  if (notices.length > 0)
+    blocks.push({ type: "notice", text: notices.join(" · "), tone: "warning" });
+  return blocks;
+}
+
 function findRule(): ToolPresentationRule {
   return {
     id: `${PI_RULE_PREFIX}.find`,
@@ -678,50 +729,7 @@ function findRule(): ToolPresentationRule {
           { kind: "text", text: "in", separator: "space", subdued: true },
           { kind: "resource", text: root, reference: root, separator: "space" },
         ]),
-        () => {
-          if (!input.result) return [];
-          const raw = toolResultText(input.result);
-          if (input.result.isError)
-            return raw
-              ? [{ type: "text", label: "Error", text: raw, error: true }]
-              : [];
-          if (raw === "No files found matching pattern")
-            return [
-              {
-                type: "list",
-                label: "Results",
-                path: root,
-                items: [],
-                emptyText: "No files found",
-              },
-            ];
-          const details = detailsOf(input);
-          const hasNotice = Boolean(
-            details?.resultLimitReached ||
-              jsonRecord(details?.truncation)?.truncated,
-          );
-          const output = stripStructuredTrailingNotice(raw, hasNotice);
-          const blocks: ToolPresentationBlock[] = [
-            {
-              type: "list",
-              label: "Results",
-              path: root,
-              items: listOutput(output.text, root, false),
-            },
-          ];
-          const notices: string[] = [];
-          if (typeof details?.resultLimitReached === "number")
-            notices.push(`${details.resultLimitReached} result limit reached`);
-          const truncated = truncationNotice(details, "Results");
-          if (truncated) notices.push(truncated);
-          if (notices.length > 0)
-            blocks.push({
-              type: "notice",
-              text: notices.join(" · "),
-              tone: "warning",
-            });
-          return blocks;
-        },
+        () => pathListBlocks(input, root, "find"),
       );
     },
   };
@@ -738,50 +746,7 @@ function lsRule(): ToolPresentationRule {
       const root = typeof pathValue === "string" && pathValue ? pathValue : ".";
       return presentation(
         summary([{ kind: "resource", text: root, reference: root }]),
-        () => {
-          if (!input.result) return [];
-          const raw = toolResultText(input.result);
-          if (input.result.isError)
-            return raw
-              ? [{ type: "text", label: "Error", text: raw, error: true }]
-              : [];
-          if (raw === "(empty directory)")
-            return [
-              {
-                type: "list",
-                label: "Contents",
-                path: root,
-                items: [],
-                emptyText: "Empty directory",
-              },
-            ];
-          const details = detailsOf(input);
-          const hasNotice = Boolean(
-            details?.entryLimitReached ||
-              jsonRecord(details?.truncation)?.truncated,
-          );
-          const output = stripStructuredTrailingNotice(raw, hasNotice);
-          const blocks: ToolPresentationBlock[] = [
-            {
-              type: "list",
-              label: "Contents",
-              path: root,
-              items: listOutput(output.text, root, true),
-            },
-          ];
-          const notices: string[] = [];
-          if (typeof details?.entryLimitReached === "number")
-            notices.push(`${details.entryLimitReached} entry limit reached`);
-          const truncated = truncationNotice(details, "Contents");
-          if (truncated) notices.push(truncated);
-          if (notices.length > 0)
-            blocks.push({
-              type: "notice",
-              text: notices.join(" · "),
-              tone: "warning",
-            });
-          return blocks;
-        },
+        () => pathListBlocks(input, root, "ls"),
       );
     },
   };

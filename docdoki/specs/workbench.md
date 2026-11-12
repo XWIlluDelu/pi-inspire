@@ -81,32 +81,27 @@ covers:
   - tests/server/preferences.test.ts
   - tests/portable/file-lock.test.mjs
   - tests/server/host-dirs.test.ts
-  - tests/server/host-hidden-dirs.test.ts
   - tests/web/directory-picker.test.tsx
   - tests/web/api.test.ts
   - tests/server/static-asset-cache.test.ts
   - tests/server/update-checker.test.ts
   - tests/launcher.test.ts
   - tests/portable/web-build-output.test.mjs
-  - tests/server/pi-update-checker.test.ts
   - tests/browser/{composer,extension-ui,modal-ownership,shell-layout}.spec.ts
   - tests/web/composer-*.test.tsx
   - tests/web/notices.test.tsx
   - tests/web/store-feedback.test.ts
   - tests/browser/feedback.spec.ts
   - tests/web/settings-navigation.test.tsx
-  - tests/web/settings-loading.test.tsx
   - tests/browser/loading-states.spec.ts
-  - tests/browser/needs-you.spec.ts
+  - tests/browser/{session-navigation,navigation-feedback}.spec.ts
   - tests/web/update-controller.test.ts
   - tests/web/modal-focus.test.tsx
   - tests/web/extension-ui-ownership.test.tsx
   - tests/web/command-ux.test.tsx
   - tests/browser/command-ux.spec.ts
   - tests/web/theme-init.test.ts
-  - tests/web/nav.test.ts
   - tests/web/nav-render.test.tsx
-  - tests/web/needs-you.test.ts
   - tests/web/workspace-controller.test.ts
   - tests/web/pane-resize.test.tsx
   - tests/web/branch-tree.test.tsx
@@ -284,9 +279,9 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   the initial catalog is loading. Bootstrap or socket loss keeps the last confirmed surface where
   one exists and retries automatically instead of showing the interruption as a red operation
   error. Authentication failure means the host answered and opens the one-time browser-pairing
-  surface. A network failure to the exact loopback origin means only that the host is not reachable
-  (the browser cannot prove why): it names the address, `./inspire` recovery command, automatic
-  retry, and manual retry without claiming that the service is certainly stopped.
+  surface. A network failure to the exact loopback origin shows the unreachable address, automatic
+  retry, a manual retry action, and recovery commands `inspire restart` and
+  `npm run inspire -- restart`.
 
   A later live-stream interruption preserves the last settled state and starts with the narrower
   reconnect explanation, then adopts the more specific bootstrap result. Settings and contextual

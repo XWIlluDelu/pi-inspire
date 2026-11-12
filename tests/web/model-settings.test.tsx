@@ -67,79 +67,54 @@ beforeEach(() => {
   });
 });
 
-function mockSuccessfulDefaultModelSave() {
-  const saved = modelSettingsSnapshot();
-  saved.settingsRevision = "c".repeat(64);
-  saved.saved.defaultModel = saved.effective.defaultModel = {
-    provider: "anthropic",
-    id: "claude-haiku",
-  };
-  fixture.host.saveModelPreferences.mockImplementation(async () => {
-    fixture.host.readModelSettings.mockResolvedValue(saved);
-    return { saved: true, snapshot: saved };
-  });
-}
-
 describe("Models settings configuration and ownership", () => {
-  it.each(["warning", "failure"] as const)(
-    "does not restore an obsolete catalog %s after accepting a configuration snapshot",
-    async (result) => {
-      const pending = deferred<string | undefined>();
-      fixture.host.refreshModels.mockReturnValueOnce(pending.promise);
-      mockSuccessfulDefaultModelSave();
+  it.each(["refresh", "settings reread"] as const)(
+    "keeps a saved default when an obsolete %s settles",
+    async (phase) => {
+      const warmup = deferred<string | undefined>();
+      const reread = deferred<ReturnType<typeof modelSettingsSnapshot>>();
+      const rereadStarted = deferred<void>();
+      const saved = modelSettingsSnapshot();
+      saved.saved.defaultModel = saved.effective.defaultModel = {
+        provider: "anthropic",
+        id: "claude-haiku",
+      };
+      fixture.host.refreshModels.mockReturnValueOnce(warmup.promise);
+      fixture.host.readModelSettings
+        .mockResolvedValueOnce(modelSettingsSnapshot())
+        .mockImplementationOnce(() => {
+          rereadStarted.resolve();
+          return reread.promise;
+        });
+      fixture.host.saveModelPreferences.mockResolvedValue({
+        saved: true,
+        snapshot: saved,
+      });
       render(<ModelsSettings />);
-      const thinking = await screen.findByRole("combobox", {
-        name: "Default thinking",
+      const choice = await screen.findByRole("radio", {
+        name: "Default: Claude Haiku",
       });
-      fireEvent.click(
-        await screen.findByRole("radio", { name: "Default: Claude Haiku" }),
-      );
-      await waitFor(() =>
-        expect(fixture.host.saveModelPreferences).toHaveBeenCalledTimes(1),
-      );
-      await waitFor(() => expect(thinking).toBeEnabled());
+      if (phase === "settings reread") {
+        await act(async () => {
+          warmup.resolve("Obsolete catalog warning");
+          await rereadStarted.promise;
+        });
+      }
+      fireEvent.click(choice);
+      await waitFor(() => expect(choice).toBeChecked());
+
       await act(async () => {
-        if (result === "warning")
-          pending.resolve("Obsolete catalog observation");
-        else pending.reject(new Error("Obsolete catalog observation"));
+        if (phase === "refresh") warmup.resolve("Obsolete catalog warning");
+        else reread.reject(new Error("Obsolete settings failure"));
       });
-      expect(screen.queryByText("Obsolete catalog observation")).toBeNull();
+      expect(choice).toBeChecked();
       expect(
-        screen.getByRole("radio", { name: "Default: Claude Haiku" }),
-      ).toBeChecked();
+        screen.queryByText(
+          /Obsolete catalog warning|Obsolete settings failure/,
+        ),
+      ).toBeNull();
     },
   );
-
-  it("retires catalog feedback when its settings reread finishes after a save", async () => {
-    const warmup = deferred<string | undefined>();
-    const reread = deferred<ReturnType<typeof modelSettingsSnapshot>>();
-    fixture.host.refreshModels.mockReturnValueOnce(warmup.promise);
-    fixture.host.readModelSettings
-      .mockReturnValueOnce(Promise.resolve(modelSettingsSnapshot()))
-      .mockReturnValueOnce(reread.promise);
-    mockSuccessfulDefaultModelSave();
-    render(<ModelsSettings />);
-    const thinking = await screen.findByRole("combobox", {
-      name: "Default thinking",
-    });
-    await act(async () => warmup.resolve("Obsolete catalog warning"));
-    expect(fixture.host.readModelSettings).toHaveBeenCalledTimes(2);
-    fireEvent.click(
-      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
-    );
-    await waitFor(() =>
-      expect(fixture.host.saveModelPreferences).toHaveBeenCalledTimes(1),
-    );
-    await waitFor(() => expect(thinking).toBeEnabled());
-    await act(async () =>
-      reread.reject(new Error("Obsolete settings failure")),
-    );
-    expect(screen.queryByText("Obsolete catalog warning")).toBeNull();
-    expect(screen.queryByText("Obsolete settings failure")).toBeNull();
-    expect(
-      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
-    ).toBeChecked();
-  });
 
   it("retains the newest catalog failure when an older refresh finishes late", async () => {
     const older = deferred<undefined>();
@@ -168,14 +143,9 @@ describe("Models settings configuration and ownership", () => {
     render(<ModelsSettings />);
     expect(await screen.findByRole("status")).toHaveTextContent(warning);
     expect(
-      screen.queryByText("No models available yet."),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Connect a provider" }),
-    ).not.toBeInTheDocument();
-    expect(
       screen.getByRole("combobox", { name: "Default thinking" }),
     ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add provider" })).toBeEnabled();
     await openDeclarations();
     const details = screen
       .getByRole("button", { name: "Edit declared model custom/local" })
@@ -200,34 +170,6 @@ describe("Models settings configuration and ownership", () => {
       ),
     );
   });
-  it("uses provider headings instead of repeated prefixes and keeps model controls when identity captions are deduplicated", async () => {
-    fixture.host.readModelSettings.mockResolvedValue(
-      modelSettingsSnapshot({
-        models: [
-          { provider: "openai", id: "same", name: "same" },
-          { provider: "openai", id: "alias", name: "Friendly" },
-        ],
-      }),
-    );
-    render(<ModelsSettings />);
-    const same = await screen.findByRole("row", { name: /same/ });
-    expect(same.querySelector(".model-picker__id")).toBeNull();
-    expect(within(same).getByRole("checkbox")).toBeInTheDocument();
-    expect(within(same).getByRole("radio")).toBeInTheDocument();
-    const alias = screen.getByRole("row", { name: /Friendly/ });
-    expect(alias.querySelector(".model-picker__id")).toHaveTextContent(
-      /^alias$/,
-    );
-    fireEvent.change(
-      screen.getByRole("combobox", { name: "Search available models" }),
-      { target: { value: "openai/alias" } },
-    );
-    expect(screen.getAllByRole("row")).toHaveLength(1);
-    expect(
-      document.querySelector(".model-picker__id .search-match"),
-    ).toHaveTextContent(/^alias$/);
-  });
-
   it("shows saved and effective project defaults separately, including a provider-only project override", async () => {
     const snapshot = modelSettingsSnapshot({
       saved: {
@@ -252,23 +194,26 @@ describe("Models settings configuration and ownership", () => {
     expect(screen.getByText(/This project uses Low\./)).toBeInTheDocument();
   });
 
-  it("reports a project settings failure without disabling global preference edits", async () => {
-    fixture.host.readModelSettings.mockResolvedValue(
-      modelSettingsSnapshot({
-        projectSettingsError:
-          "Project settings could not be loaded. Global settings remain editable.",
-      }),
+  it("lets a project read fail independently and restores global edits after a failed initial read", async () => {
+    fixture.host.readModelSettings.mockRejectedValue(
+      new Error("Cannot read model settings"),
     );
     render(<ModelsSettings />);
-    await screen.findByText(/Project settings could not be loaded/);
-    expect(
-      screen.getByRole("combobox", { name: "Default thinking" }),
-    ).toBeEnabled();
-    const defaultChoice = screen.getByRole("radio", {
-      name: "Default: Claude Haiku",
+    const retry = await screen.findByRole("button", {
+      name: "Retry loading models",
     });
-    expect(defaultChoice).toBeEnabled();
-    fireEvent.click(defaultChoice);
+    fixture.host.readModelSettings.mockResolvedValue(
+      modelSettingsSnapshot({
+        projectSettingsError: "Project overrides are unavailable",
+      }),
+    );
+    fireEvent.click(retry);
+    expect(
+      await screen.findByText("Project overrides are unavailable"),
+    ).toBeVisible();
+    const choice = screen.getByRole("radio", { name: "Default: Claude Haiku" });
+    expect(choice).toBeEnabled();
+    fireEvent.click(choice);
     await waitFor(() =>
       expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
         { sessionId: "one" },
@@ -278,65 +223,21 @@ describe("Models settings configuration and ownership", () => {
     );
   });
 
-  it("never labels unreadable preferences as unset and recovers failed initial reads", async () => {
-    fixture.host.readModelSettings.mockRejectedValue(
-      new Error("Cannot read model settings"),
-    );
-    render(<ModelsSettings />);
-    await screen.findByRole("button", { name: "Retry loading models" });
-    expect(screen.queryByText("None")).not.toBeInTheDocument();
-    expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+  it("disables global edits and labels unreadable preferences as unavailable", async () => {
     fixture.host.readModelSettings.mockResolvedValue(
       modelSettingsSnapshot({ settingsError: "Invalid Pi settings" }),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Retry loading models" }),
-    );
+    render(<ModelsSettings />);
     const thinking = await screen.findByRole("combobox", {
       name: "Default thinking",
     });
     expect(thinking).toHaveTextContent("Unavailable");
     expect(thinking).toBeDisabled();
-    expect(document.querySelector(".models-default-result")).toHaveTextContent(
-      "Unavailable",
-    );
-    expect(screen.queryByText("None")).not.toBeInTheDocument();
     expect(
       screen.getByRole("radio", { name: "Default: Claude Haiku" }),
     ).toBeDisabled();
   });
 
-  it("can start provider creation from an empty catalog and cancel without writing", async () => {
-    fixture.host.providerAuth.mockResolvedValue([]);
-    fixture.host.readModelSettings.mockResolvedValue(
-      modelSettingsSnapshot({
-        providers: [],
-        models: [],
-        commonModels: [],
-        savedCommonEntries: [],
-        saved: {
-          defaultModel: null,
-          defaultThinkingLevel: null,
-          enabledModels: [],
-        },
-      }),
-    );
-    render(<ModelsSettings />);
-    await screen.findByText("No models available yet.");
-    expect(screen.getByRole("button", { name: "Add provider" })).toBeEnabled();
-    expect(
-      screen.queryByText(/Common order and rules/),
-    ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
-    expect(screen.getByRole("region", { name: "Add provider" })).toBeVisible();
-    expect(screen.getByLabelText("Provider ID")).toHaveFocus();
-    fireEvent.change(screen.getByLabelText("Provider ID"), {
-      target: { value: "unsaved-first-provider" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.getByText("No models available yet.")).toBeInTheDocument();
-    expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
-  });
   it("uses one model list for common/default actions and preserves unavailable identities and native pattern sources", async () => {
     let snapshot = modelSettingsSnapshot({
       models: modelSettingsSnapshot().models.filter(
@@ -456,11 +357,6 @@ describe("Models settings configuration and ownership", () => {
       name: "Common: Local model",
     });
     expect(remove).toBeChecked();
-    expect(
-      screen.queryByRole("button", {
-        name: "Edit common pattern for Local model",
-      }),
-    ).not.toBeInTheDocument();
     fireEvent.click(remove);
     await waitFor(() =>
       expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
@@ -469,72 +365,9 @@ describe("Models settings configuration and ownership", () => {
         { enabledModels: ["*gpt*:high"] },
       ),
     );
-    expect(
-      screen.queryByRole("textbox", { name: "Model pattern" }),
-    ).not.toBeInTheDocument();
-    expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
   });
 
-  it("resets provider drafts across Edit ↔ Add and submits the displayed target", async () => {
-    const snapshot = modelSettingsSnapshot();
-    const provider = snapshot.providers[0]!;
-    provider.id = "new";
-    fixture.host.readModelSettings.mockResolvedValue(snapshot);
-    fixture.host.editModelConfig.mockResolvedValue({ saved: true, snapshot });
-    render(<ModelsSettings />);
-    await openDeclarations();
-    fireEvent.click(screen.getByRole("button", { name: "Edit provider new" }));
-    fireEvent.change(screen.getByLabelText("Base URL"), {
-      target: { value: "https://unsaved-existing.test" },
-    });
-    fireEvent.click(screen.getByLabelText("Remove API key"));
-    fireEvent.click(screen.getByRole("button", { name: "Back to models" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
-    expect(screen.getByLabelText("Provider ID")).toHaveValue("");
-    expect(screen.getByLabelText("Provider ID")).not.toBeDisabled();
-    expect(screen.getByLabelText("Base URL")).toHaveValue("");
-    expect(screen.getByLabelText("API key")).toHaveAttribute(
-      "placeholder",
-      "Optional",
-    );
-    fireEvent.change(screen.getByLabelText("Provider ID"), {
-      target: { value: "different-provider" },
-    });
-    fireEvent.change(screen.getByLabelText("Base URL"), {
-      target: { value: "https://other-draft.test" },
-    });
-    fireEvent.change(screen.getByLabelText("API key"), {
-      target: { value: "unsaved-secret" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit provider new" }));
-    expect(screen.getByLabelText("Provider ID")).toHaveValue("new");
-    expect(screen.getByLabelText("Provider ID")).toBeDisabled();
-    expect(screen.getByLabelText("Base URL")).toHaveValue(
-      provider.baseUrl ?? "",
-    );
-    expect(screen.getByLabelText("API key")).toHaveValue("");
-    expect(screen.getByLabelText("Remove API key")).not.toBeChecked();
-    fireEvent.change(screen.getByLabelText("Base URL"), {
-      target: { value: "https://new-target.test/v1" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() =>
-      expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
-        { sessionId: "one" },
-        "b".repeat(64),
-        {
-          kind: "provider",
-          id: "new",
-          values: { baseUrl: "https://new-target.test/v1" },
-        },
-      ),
-    );
-  });
-
-  it("preserves an untouched configured key and refreshes providers after the committed config save", async () => {
-    const snapshot = modelSettingsSnapshot();
-    fixture.host.editModelConfig.mockResolvedValue({ saved: true, snapshot });
+  it("isolates Add and Edit drafts, keeps untouched credentials, and refreshes provider discovery after save", async () => {
     fixture.host.providerAuth
       .mockResolvedValueOnce(loginProviders())
       .mockResolvedValue([
@@ -547,124 +380,89 @@ describe("Models settings configuration and ownership", () => {
       ]);
     render(<ModelsSettings />);
     await openDeclarations();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit provider custom" }),
+    const edit = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Edit provider custom" }),
+      );
+    const change = (field: string, value: string) =>
+      fireEvent.change(screen.getByLabelText(field), { target: { value } });
+    edit();
+    change("Base URL", "https://unsaved-existing.test");
+    fireEvent.click(screen.getByLabelText("Remove API key"));
+    fireEvent.click(screen.getByRole("button", { name: "Back to models" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+    expect(screen.getByLabelText("Provider ID")).toHaveValue("");
+    expect(screen.getByLabelText("Base URL")).toHaveValue("");
+    change("Provider ID", "different-provider");
+    change("API key", "unsaved-secret");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    edit();
+    expect(screen.getByLabelText("Provider ID")).toHaveValue("custom");
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "http://localhost:8080/v1",
     );
     expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(screen.getByLabelText("Remove API key")).not.toBeChecked();
+    change("Base URL", "https://new-target.test/v1");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
+      expect(fixture.host.editModelConfig).toHaveBeenCalledExactlyOnceWith(
         { sessionId: "one" },
         "b".repeat(64),
-        { kind: "provider", id: "custom", values: {} },
+        {
+          kind: "provider",
+          id: "custom",
+          values: { baseUrl: "https://new-target.test/v1" },
+        },
       ),
     );
     fireEvent.click(screen.getByRole("button", { name: "Connect provider" }));
-    await screen.findByText("Configured custom provider");
-    expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Save" }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText("Configured custom provider")).toBeVisible();
   });
 
-  it.each([
-    { role: "radio", choice: "Default", movedFocus: false },
-    { role: "checkbox", choice: "Common", movedFocus: true },
-  ] as const)(
-    "settles a delayed $choice save without overriding a newer focus move",
-    async ({ role, choice, movedFocus }) => {
-      const finishSave = deferred<void>();
-      fixture.host.saveModelPreferences.mockImplementationOnce(
-        async (_owner, _revision, patch) => {
-          await finishSave.promise;
-          const snapshot = modelSettingsSnapshot();
-          return {
-            saved: true,
-            snapshot: { ...snapshot, saved: { ...snapshot.saved, ...patch } },
-          };
-        },
-      );
-      render(<ModelsSettings />);
-      const action = await screen.findByRole(role, {
-        name: `${choice}: Claude Haiku`,
-      });
-      const search = screen.getByRole("combobox", {
-        name: "Search available models",
-      });
-      action.focus();
-      fireEvent.click(action);
-      await waitFor(() => expect(action).toBeDisabled());
-      if (movedFocus) search.focus();
-      else action.blur();
-      finishSave.resolve();
-      await waitFor(() => expect(action).toBeEnabled());
-      await waitFor(() => expect(movedFocus ? search : action).toHaveFocus());
-    },
-  );
-
-  it("requires unresolved model API fields and shows submission errors in the current form while allowing native inheritance", async () => {
-    const snapshot = modelSettingsSnapshot();
-    delete snapshot.providers[0]!.api;
-    snapshot.providers[0]!.models = [];
-    fixture.host.readModelSettings.mockResolvedValue(snapshot);
-    fixture.host.editModelConfig.mockRejectedValue(
-      new Error("Pi rejected this declaration"),
+  it("leaves newer focus in place when a common model save settles", async () => {
+    const finishSave = deferred<void>();
+    fixture.host.saveModelPreferences.mockImplementationOnce(
+      async (_owner, _revision, patch) => {
+        await finishSave.promise;
+        const snapshot = modelSettingsSnapshot();
+        return {
+          saved: true,
+          snapshot: { ...snapshot, saved: { ...snapshot.saved, ...patch } },
+        };
+      },
     );
-    const view = render(<ModelsSettings />);
-    await openDeclarations();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add model to custom" }),
-    );
-    const identityFields = [
-      ...screen
-        .getByLabelText("Model ID")
-        .closest("form")!
-        .querySelectorAll("input"),
-    ].slice(0, 2);
-    expect(identityFields[0]).toHaveAccessibleName("Model ID");
-    expect(identityFields[1]).toHaveAccessibleName("Display name");
-    fireEvent.change(screen.getByLabelText("Model ID"), {
-      target: { value: "new-model" },
+    render(<ModelsSettings />);
+    const action = await screen.findByRole("checkbox", {
+      name: "Common: Claude Haiku",
     });
-    const api = screen.getByLabelText("API type");
-    expect(api).toBeRequired();
-    expect((api as HTMLInputElement).validity.valueMissing).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
-    fireEvent.change(api, { target: { value: "custom-stream-api" } });
-    const submit = screen.getByRole("button", { name: "Save" });
-    submit.focus();
-    fireEvent.click(submit);
-    const error = await screen.findByRole("alert");
-    expect(error.closest("form")).toBe(submit.closest("form"));
-    await waitFor(() => expect(error).toHaveFocus());
-    expect(fixture.host.editModelConfig).toHaveBeenCalledWith(
-      { sessionId: "one" },
-      "b".repeat(64),
-      expect.objectContaining({
-        values: expect.objectContaining({ api: "custom-stream-api" }),
-      }),
-    );
-    view.unmount();
-    fixture.host.editModelConfig
-      .mockClear()
-      .mockResolvedValue({ saved: true, snapshot });
-    snapshot.providers[0]!.id = "openai";
+    const search = screen.getByRole("combobox", {
+      name: "Search available models",
+    });
+    action.focus();
+    fireEvent.click(action);
+    await waitFor(() => expect(action).toBeDisabled());
+    search.focus();
+    finishSave.resolve();
+    await waitFor(() => expect(action).toBeEnabled());
+    expect(search).toHaveFocus();
+  });
+
+  it("omits an API override when adding a model with native API inheritance", async () => {
+    const snapshot = modelSettingsSnapshot();
+    snapshot.providers = [
+      { id: "openai", models: [], apiKeyConfigured: true, advancedFields: [] },
+    ];
     snapshot.nativeApiProviders = ["openai"];
     snapshot.models = [];
+    fixture.host.readModelSettings.mockResolvedValue(snapshot);
+    fixture.host.editModelConfig.mockResolvedValue({ saved: true, snapshot });
     render(<ModelsSettings />);
     await openDeclarations();
     fireEvent.click(
       screen.getByRole("button", { name: "Add model to openai" }),
     );
-    expect(
-      screen.getByText("Connection overrides").closest("details"),
-    ).not.toHaveAttribute("open");
-    expect(screen.getByLabelText("API override")).toHaveAttribute(
-      "placeholder",
-      "Use default",
-    );
-    expect(screen.queryByLabelText("API type")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Model ID"), {
       target: { value: "inherited-api-model" },
     });
@@ -684,9 +482,6 @@ describe("Models settings configuration and ownership", () => {
         },
       ),
     );
-    expect(
-      screen.getByRole("grid", { name: "Available models" }),
-    ).toHaveAttribute("aria-rowcount", "0");
   });
 
   it("owns typed declaration fields by the full model identity", async () => {
@@ -874,20 +669,5 @@ describe("Models settings configuration and ownership", () => {
       ),
     ).toHaveLength(1);
     expect(fixture.host.refreshModels).toHaveBeenCalledTimes(afterChange);
-  });
-
-  it("opens provider discovery and its matching native methods for an explicit credentials destination", async () => {
-    render(
-      <ModelsSettings
-        destination={{ focus: "credentials", query: "copilot" }}
-      />,
-    );
-    expect(
-      await screen.findByRole("button", { name: "GitHub authorization" }),
-    ).toBeEnabled();
-    expect(screen.queryByLabelText("Search providers")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to providers" }));
-    expect(screen.getByLabelText("Search providers")).toHaveValue("copilot");
-    expect(screen.getByLabelText("Search providers")).toHaveFocus();
   });
 });

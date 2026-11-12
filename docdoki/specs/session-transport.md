@@ -6,14 +6,13 @@ covers:
   - server/runtime.ts
   - server/{operation-receipts,pending-operation-receipts}.ts
   - src/controllers/pending-recovery-controller.ts
-  - tests/server/app-pending-recovery.test.ts
   - tests/integration/pending-{recovery-lifecycle,stop-native.integration}.test.ts
   - server/runtime-worker-pool.ts
   - shared/{contracts,assistant-stream,tool-argument-updates}.ts
   - server/{tool-argument-stream,tool-argument-batches,runtime-stream-budget}.ts
   - src/{api,events,store,snapshot-transition,transport-performance,recovery-backoff}.ts
   - src/controllers/{connection,session-selection,runtime-event,transcript-data}-controller.ts
-  - tests/server/{app-events,app-prompt-delivery,runtime-worker-pool}.test.ts
+  - tests/server/{app-events,app-input-operations,runtime-worker-pool}.test.ts
   - tests/integration/session-detail-confirmation.test.ts
   - tests/web/{events,store,store-transcript,store-navigation,store-async-ownership}.test.ts
 ---
@@ -272,7 +271,7 @@ identity/name publish only the completed call.
 
 ## Checks
 
-- `session-detail-confirmation.test.ts` combines HTTP/WebSocket synchronization and browser routing,
-  including invalid acknowledgements. `app-events.test.ts` checks unchanged, changed and foreign
-  authorities; its stable window over 500,000 characters uses under 2,000 bytes of synchronization
-  and queued lifecycle frames.
+- `session-detail-confirmation.test.ts` checks HTTP/WebSocket synchronization through browser
+  routing. `store.test.ts` checks invalid acknowledgements. `app-events.test.ts` checks unchanged,
+  changed and foreign authorities. Its stable window over 500,000 characters uses under 2,000
+  bytes of synchronization and queued lifecycle frames.

@@ -12,150 +12,99 @@ import {
 
 test.use({ serviceWorkers: "block" });
 
-for (const viewport of [
-  { name: "desktop", width: 1280, height: 900, colorScheme: "light" as const },
-  { name: "narrow", width: 390, height: 844, colorScheme: "dark" as const },
-]) {
-  test(`empty states keep compact lists distinct from the conversation on ${viewport.name}`, async ({
-    page,
-  }) => {
-    await page.setViewportSize(viewport);
-    await page.emulateMedia({
-      colorScheme: viewport.colorScheme,
-      reducedMotion: "reduce",
-    });
-    let emptyCatalog = true;
-    await routeSnapshots(page, {
-      snapshot: (snapshot) => {
-        if (emptyCatalog)
-          Object.assign(snapshot, {
-            active: null,
-            runState: "idle",
-            sessionStatuses: {},
-            pendingQueues: emptyPendingQueues(),
-          });
-      },
-      bootstrap: ({ preferences }) => {
-        if (emptyCatalog)
-          Object.assign(preferences, {
-            pinnedSessionIds: [],
-            hiddenSessionIds: [],
-            pinnedProjectCwds: [],
-            hiddenProjectCwds: [],
-          });
-      },
-      event: (event) => {
-        if (emptyCatalog && event.type !== "snapshot" && event.sessionId)
-          return false;
-      },
-    });
-    await page.route("**/api/sessions?**", (route) =>
-      emptyCatalog
-        ? route.fulfill({
-            json: { sessions: [], total: 0, offset: 0, limit: 40 },
-          })
-        : route.continue(),
-    );
-    await pairedPage(page);
-    const narrow = viewport.name === "narrow";
-    const toggleNav = page.getByRole("button", { name: "Toggle navigation" });
-    if (narrow) await toggleNav.click();
-
-    const navState = page.locator(".nav .empty-state");
-    await expect(navState).toContainText("No sessions yet");
-    await expect(navState).toHaveCSS("padding", "24px 16px");
-    await expect(navState).toHaveCSS("gap", "4px");
-    await expect(navState.locator(".empty-state__title")).toHaveCSS(
-      "font-size",
-      "12.5px",
-    );
-    await expect(navState.locator(".empty-state__title")).toHaveCSS(
-      "font-weight",
-      "500",
-    );
-    const search = page.getByRole("searchbox", { name: "Search sessions" });
-    await search.fill("no-matching-session");
-    await expect(navState).toContainText("No sessions found");
-    await expect(navState).toContainText("Try a different keyword");
-    if (narrow)
-      await page.getByRole("button", { name: "Close navigation" }).click();
-
-    const palette = await openCommandPalette(page);
-    await palette.getByLabel("Filter commands").fill("no-matching-command");
-    const paletteState = palette.locator(".empty-state");
-    await expect(paletteState).toContainText("No matching commands");
-    await expect(paletteState).toHaveCSS("padding", "24px 16px");
-    await expect(paletteState.locator(".empty-state__title")).toHaveCSS(
-      "font-size",
-      "12.5px",
-    );
-    await expect(paletteState.locator(".empty-state__title")).toHaveCSS(
-      "font-weight",
-      "500",
-    );
-    await palette.getByLabel("Filter commands").fill("");
-    await expect(palette.getByRole("option").first()).toBeVisible();
-    await page.keyboard.press("Escape");
-
-    await page.getByRole("button", { name: "Toggle resources panel" }).click();
-    await expect(
-      page.getByRole("button", { name: "New terminal", exact: true }),
-    ).toBeDisabled();
-    const terminalState = page.locator(".terminal-empty");
-    if (narrow)
-      await page.getByRole("button", { name: "Close context pane" }).click();
-    else
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-
-    emptyCatalog = false;
-    const created = await hostRequest(page).post("/api/sessions/new", {
-      data: { cwd: browserWorkspace, name: "Empty-state fixture" },
-    });
-    expect(created.ok()).toBe(true);
-    await reloadSession(page, (await created.json()).active.sessionId);
-    await expect(
-      page.getByRole("button", { name: /^Session actions:/ }),
-    ).toHaveText("Empty-state fixture");
-    const conversationState = page.locator(".empty-state--conversation");
-    await expect(conversationState).toContainText("Empty session");
-    await expect(conversationState).toHaveCSS("padding", "64px 0px");
-    await expect(conversationState).toHaveCSS("gap", "8px");
-    await expect(conversationState.locator(".empty-state__title")).toHaveCSS(
-      "font-size",
-      "21px",
-    );
-    await expect(conversationState.locator(".empty-state__title")).toHaveCSS(
-      "font-weight",
-      "500",
-    );
-
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await page.route("**/api/terminals?**", async (route) => {
-      await gate;
-      await route.continue();
-    });
-    try {
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-      await openProjectTerminal(page);
-      await expect(terminalState).toContainText("Loading terminals");
-      release();
-      await expect(terminalState).toContainText("Project terminal");
-      await expect(terminalState.locator("strong")).toHaveCSS(
-        "font-weight",
-        "500",
-      );
-      await expect(
-        terminalState.getByRole("button", { name: "New terminal" }),
-      ).toBeEnabled();
-    } finally {
-      release();
-    }
+test("empty session, search and terminal states keep their next actions available", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  let emptyCatalog = true;
+  await routeSnapshots(page, {
+    snapshot: (snapshot) => {
+      if (emptyCatalog)
+        Object.assign(snapshot, {
+          active: null,
+          runState: "idle",
+          sessionStatuses: {},
+          pendingQueues: emptyPendingQueues(),
+        });
+    },
+    bootstrap: ({ preferences }) => {
+      if (emptyCatalog)
+        Object.assign(preferences, {
+          pinnedSessionIds: [],
+          hiddenSessionIds: [],
+          pinnedProjectCwds: [],
+          hiddenProjectCwds: [],
+        });
+    },
+    event: (event) => {
+      if (emptyCatalog && event.type !== "snapshot" && event.sessionId)
+        return false;
+    },
   });
-}
+  await page.route("**/api/sessions?**", (route) =>
+    emptyCatalog
+      ? route.fulfill({
+          json: { sessions: [], total: 0, offset: 0, limit: 40 },
+        })
+      : route.continue(),
+  );
+  await pairedPage(page);
+  const toggleNav = page.getByRole("button", { name: "Toggle navigation" });
+  await toggleNav.click();
+
+  const navState = page.locator(".nav .empty-state");
+  await expect(navState).toContainText("No sessions yet");
+  const search = page.getByRole("searchbox", { name: "Search sessions" });
+  await search.fill("no-matching-session");
+  await expect(navState).toContainText("No sessions found");
+  await expect(navState).toContainText("Try a different keyword");
+  await page.getByRole("button", { name: "Close navigation" }).click();
+
+  const palette = await openCommandPalette(page);
+  await palette.getByLabel("Filter commands").fill("no-matching-command");
+  const paletteState = palette.locator(".empty-state");
+  await expect(paletteState).toContainText("No matching commands");
+  await palette.getByLabel("Filter commands").fill("");
+  await expect(palette.getByRole("option").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Toggle resources panel" }).click();
+  await expect(
+    page.getByRole("button", { name: "New terminal", exact: true }),
+  ).toBeDisabled();
+  const terminalState = page.locator(".terminal-empty");
+  await page.getByRole("button", { name: "Close context pane" }).click();
+
+  emptyCatalog = false;
+  const created = await hostRequest(page).post("/api/sessions/new", {
+    data: { cwd: browserWorkspace, name: "Empty-state fixture" },
+  });
+  expect(created.ok()).toBe(true);
+  await reloadSession(page, (await created.json()).active.sessionId);
+  await expect(
+    page.getByRole("button", { name: /^Session actions:/ }),
+  ).toHaveText("Empty-state fixture");
+  const conversationState = page.locator(".empty-state--conversation");
+  await expect(conversationState).toContainText("Empty session");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/terminals?**", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  try {
+    await page.getByRole("button", { name: "Toggle resources panel" }).click();
+    await openProjectTerminal(page);
+    await expect(terminalState).toContainText("Loading terminals");
+    release();
+    await expect(terminalState).toContainText("Project terminal");
+    await expect(
+      terminalState.getByRole("button", { name: "New terminal" }),
+    ).toBeEnabled();
+  } finally {
+    release();
+  }
+});

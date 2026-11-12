@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { independentProcessEnvironment } from "../server/user-environment.mjs";
-import { browserWorkspace } from "../tests/browser/fixtures/workspace.mjs";
+import {
+  browserWorkspace,
+  browserFixtureHome as home,
+} from "../tests/browser/fixtures/workspace.mjs";
 import { testPiCommand } from "./test-pi-command.mjs";
 
 const [portText] = process.argv.slice(2);
@@ -19,7 +22,6 @@ const preferencesPath = resolve(output, "preferences.json");
 const instanceStatePath = resolve(output, "instance.json");
 const stopRequestPath = resolve(output, "stop-request.json");
 const diagnosticsPath = resolve(output, "diagnostics.jsonl");
-const home = resolve(output, "fixture-home");
 await rm(home, { recursive: true, force: true });
 await mkdir(home, { recursive: true, mode: 0o700 });
 await writeFile(

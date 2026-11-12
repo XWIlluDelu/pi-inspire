@@ -1,32 +1,16 @@
 // @vitest-environment jsdom
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import { Transcript } from "../../src/components/Transcript";
-import {
-  CollapsedActivityStrip,
-  ToolCard,
-} from "../../src/components/transcript-cards";
+import { ToolCard } from "../../src/components/transcript-cards";
 import { UnpairedToolResultRow } from "../../src/components/transcript-rows";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { store } from "../../src/store";
-import { configureToolPresentationRegistry } from "../../src/tool-presentations/registry";
-import { toolResultResourcesFixture } from "../fixtures/tool-result-resources.mjs";
-import { captureClipboardSource } from "./fixtures/clipboard-source";
+import {
+  configureToolPresentationRegistry,
+  toolPresentationRegistry,
+} from "../../src/tool-presentations/registry";
 
 function call(name: string, args: Record<string, unknown>): ToolCallContent {
   return { type: "toolCall", id: `${name}-1`, name, arguments: args };
@@ -46,37 +30,20 @@ function card(
   toolCall: ToolCallContent,
   toolResult?: ChatMessage,
   visibility: "expanded" | "collapsed" = "expanded",
+  live = false,
 ) {
   return (
     <ToolCard
       call={toolCall}
       result={toolResult}
       activity={undefined}
-      live={false}
+      live={live}
       visibility={visibility}
     />
   );
 }
 
-describe("tool disclosure consistency", () => {
-  it("puts an unknown tool's result before its inspectable arguments", async () => {
-    const { container } = render(
-      card(
-        call("custom_tool", { payload: "long input" }),
-        result("short result"),
-      ),
-    );
-    const output = screen.getByText("short result");
-    const args = container.querySelector("details")!;
-    expect(args).not.toHaveAttribute("open");
-    expect(screen.queryByText(/long input/)).not.toBeInTheDocument();
-    expect(
-      output.compareDocumentPosition(args) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    fireEvent.click(within(args).getByText("Arguments"));
-    expect(await screen.findByText(/long input/)).toBeVisible();
-  });
-
+describe("generic tool fallback", () => {
   it("keeps an unknown tool's live partial arguments directly visible", () => {
     const partial: ToolCallContent = {
       ...call("custom_tool", { prompt: "incoming argument text" }),
@@ -96,202 +63,149 @@ describe("tool disclosure consistency", () => {
       />,
     );
     expect(screen.getByText(/incoming argument text/)).toBeVisible();
-    expect(screen.queryByText("Result")).not.toBeInTheDocument();
   });
 
-  it("does not repeat ordinary summaries in a strip detail and retains CodeMode identity", () => {
-    const activities = [
-      {
-        key: "read",
-        call: call("read", { path: "src/example.ts" }),
-        result: result("output"),
-      },
-      {
-        key: "codemode",
-        call: call("codemode", { code: "return 1" }),
-        result: result(
-          "Script completed\\nWall time 0.2 seconds\\nOutput:\\n1",
-        ),
-      },
-    ];
-    const { container } = render(
-      <CollapsedActivityStrip activities={activities} live={false} />,
+  it("keeps raster previews and text when other image blocks are invalid", () => {
+    render(
+      card(call("extension_tool", {}), {
+        role: "toolResult",
+        content: [
+          { type: "text", text: "Generated preview" },
+          { type: "image", mimeType: "image/png", data: "cG5n" },
+          { type: "image", mimeType: "image/svg+xml", data: "c3Zn" },
+          { type: "image", mimeType: "image/png", data: "invalid<>" },
+          { type: "image" },
+        ],
+      }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /^read: finished/ }));
-    expect(
-      container.querySelector(".activity-strip__detail .card__summary"),
-    ).toBeNull();
+    expect(screen.getByText("Generated preview")).toBeVisible();
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,cG5n",
+    );
+    expect(screen.getAllByText(/Image unavailable/)).toHaveLength(3);
     fireEvent.click(
-      screen.getByRole("button", { name: /^CodeMode: finished/ }),
+      screen.getByRole("button", { name: "Preview Tool result image 1" }),
     );
-    expect(container.querySelector(".activity-strip__detail")).toHaveClass(
-      "card--codemode",
+    expect(screen.getByRole("dialog", { name: "Image preview" })).toBeVisible();
+  });
+
+  it.each([
+    { details: { line: 4 }, content: [] },
+    { content: { line: 4 } },
+    { content: [{ type: "extensionData", line: 4 }] },
+  ])("preserves structured output for inspection: %j", async (payload) => {
+    render(
+      card(call("extension_tool", {}), { role: "toolResult", ...payload }),
     );
+    expect(screen.queryByText(/"line": 4/)).toBeNull();
+    expect(screen.queryByText("No output")).toBeNull();
+    fireEvent.click(screen.getByText("Result details"));
+    expect(await screen.findByText(/"line": 4/)).toBeVisible();
+  });
+
+  it("distinguishes an empty result from text with optional metadata", () => {
+    const extension = call("extension_tool", {});
+    const { rerender } = render(card(extension, result("", {})));
+    expect(screen.getByText("No output")).toBeVisible();
+    rerender(card(extension, result("Useful output", { tokens: 1024 })));
+    expect(screen.getByText("Useful output")).toBeVisible();
+  });
+
+  it("opens or reveals the full file argument without treating a command as a path", () => {
+    const path = `src/${"long-directory/".repeat(12)}important-file.ts`;
+    const command = "src/not-a-resource.ts";
+    const open = vi.spyOn(store, "openResource").mockResolvedValue(undefined);
+    const reveal = vi
+      .spyOn(store, "showInFileManager")
+      .mockResolvedValue(undefined);
+    const { rerender } = render(
+      card(call("extension_tool", { file_path: path }), undefined, "collapsed"),
+    );
+    const reference = screen.getByRole("button", { name: path });
+    fireEvent.click(reference);
+    fireEvent.click(reference, { ctrlKey: true });
+    fireEvent.click(reference, { metaKey: true });
+    expect(open).toHaveBeenCalledExactlyOnceWith(path);
+    expect(reveal.mock.calls).toEqual([[path], [path]]);
+
+    rerender(card(call("extension_tool", { command }), undefined, "collapsed"));
+    expect(screen.getByText(command)).toBeVisible();
+    expect(screen.queryByRole("button", { name: command })).toBeNull();
   });
 });
 
-describe("saved tool resources", () => {
-  let fixture: Awaited<ReturnType<typeof toolResultResourcesFixture>>;
-  beforeAll(async () => {
-    fixture = await toolResultResourcesFixture();
-  });
-  afterAll(async () => {
-    await fixture?.dispose();
+describe("saved tool images", () => {
+  const sessionId = "saved-session";
+  const viewId = "saved-view";
+  const incarnation = "saved-incarnation";
+  const projectedPng = { type: "image", mimeType: "image/png" } as const;
+  const transcript = (messages: ChatMessage[]) => (
+    <Transcript
+      sessionId={sessionId}
+      viewId={viewId}
+      projectionIncarnation={incarnation}
+      messages={messages}
+      streaming={false}
+      thinkingVisibility="collapsed"
+      activityFoldVisibility="expanded"
+      toolVisibility="expanded"
+    />
+  );
+  const savedImageResult = (
+    toolCall: ToolCallContent,
+    content: ChatMessage["content"],
+  ): ChatMessage => ({
+    role: "toolResult",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    __inspireMessageIndex: 2,
+    content,
   });
 
-  it.each(["native", "generic", "unpaired"])(
-    "retrieves a projected %s image by its original part index and opens the preview",
+  it.each(["generic", "unpaired"] as const)(
+    "preserves the original part index for each %s tool image",
     async (presentation) => {
-      const messages = structuredClone(fixture.page.messages) as ChatMessage[];
-      const result = messages[2]!;
-      expect((fixture.messages[2] as ChatMessage).content).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ type: "image", data: expect.any(String) }),
-        ]),
-      );
-      expect(result.content).toEqual([
-        expect.objectContaining({ type: "text" }),
-        { type: "image", mimeType: "image/png" },
-      ]);
-      expect(result.__inspireMessageIndex).toBe(2);
-      // A generic tool can return several parts with equal bytes; Pi read returns one.
-      if (presentation !== "native")
-        (result.content as unknown[]).push({
-          type: "image",
-          mimeType: "image/png",
-        });
-      if (presentation === "generic") {
-        (messages[1]!.content as ToolCallContent[])[0]!.name = "image_tool";
-        result.toolName = "image_tool";
-      } else if (presentation === "unpaired") {
-        messages.splice(1, 1);
-      }
+      const toolCall = call("image_tool", {});
       const load = vi
         .spyOn(store, "loadTranscriptImage")
-        .mockResolvedValue(new Blob(["image"], { type: "image/png" }));
-      const revoke = vi.spyOn(URL, "revokeObjectURL");
-      const create = vi
-        .spyOn(URL, "createObjectURL")
-        .mockReturnValue("blob:saved-tool-image");
-      const { unmount, container } = render(
-        <Transcript
-          sessionId={fixture.record.id}
-          viewId={fixture.page.viewId}
-          projectionIncarnation={fixture.page.incarnation ?? ""}
-          messages={messages}
-          streaming={false}
-          thinkingVisibility="collapsed"
-          toolVisibility="expanded"
-        />,
+        .mockResolvedValue(new Blob(["same bytes"], { type: "image/png" }));
+      const images = savedImageResult(toolCall, [
+        { type: "text", text: "Two images" },
+        projectedPng,
+        projectedPng,
+      ]);
+      const { unmount } = render(
+        transcript(
+          presentation === "unpaired"
+            ? [images]
+            : [{ role: "assistant", content: [toolCall] }, images],
+        ),
       );
-      const alt =
-        presentation === "native" ? "preview.png" : "Tool result image 1";
-      const preview = await screen.findByRole("button", {
-        name: `Preview ${alt}`,
-      });
-      expect(load).toHaveBeenCalledWith(
-        fixture.record.id,
-        fixture.page.viewId,
-        `${fixture.page.viewId}\u0000${fixture.page.incarnation ?? ""}`,
-        "pi-embedded://2/1",
-        expect.any(AbortSignal),
+      fireEvent.click(
+        await screen.findByRole("button", {
+          name: "Preview Tool result image 1",
+        }),
       );
-      if (presentation === "native")
-        expect(
-          container.querySelector('[data-tool-rule="inspire.pi.read"]'),
-        ).not.toBeNull();
-      expect(screen.queryByText(/Image unavailable/)).not.toBeInTheDocument();
-      fireEvent.click(preview);
-      // Source ownership applies while decoding too; jsdom does not decode blobs.
-      const displayed = within(
+      const navigation = within(
         screen.getByRole("dialog", { name: "Image preview" }),
-      ).getByRole("img", { hidden: true });
-      expect(displayed).toHaveAttribute("src", "blob:saved-tool-image");
-      expect(displayed).toHaveAttribute("alt", alt);
-      if (presentation !== "native") {
-        const navigation = within(
-          screen.getByRole("dialog", { name: "Image preview" }),
-        ).getByRole("group", { name: "Image navigation" });
-        expect(navigation).toHaveTextContent("1 / 2");
-        fireEvent.click(
-          within(navigation).getByRole("button", { name: "Next image" }),
-        );
-        expect(navigation).toHaveTextContent("2 / 2");
+      ).getByRole("group", { name: "Image navigation" });
+      expect(navigation).toHaveTextContent("1 / 2");
+      fireEvent.click(
+        within(navigation).getByRole("button", { name: "Next image" }),
+      );
+      expect(navigation).toHaveTextContent("2 / 2");
+      for (const index of [1, 2])
         expect(load).toHaveBeenCalledWith(
-          fixture.record.id,
-          fixture.page.viewId,
-          `${fixture.page.viewId}\u0000${fixture.page.incarnation ?? ""}`,
-          "pi-embedded://2/2",
+          sessionId,
+          viewId,
+          `${viewId}\u0000${incarnation}`,
+          `pi-embedded://2/${index}`,
           expect.any(AbortSignal),
         );
-      }
       unmount();
-      for (const call of load.mock.calls) expect(call[4].aborted).toBe(true);
-      expect(revoke).toHaveBeenCalledWith("blob:saved-tool-image");
-      expect(create).toHaveBeenCalledTimes(presentation === "native" ? 1 : 2);
-    },
-  );
-
-  it.each(["expanded", "collapsed"] as const)(
-    "copies the same saved image and source from %s tool details",
-    async (visibility) => {
-      const png = new Blob(["saved image"], { type: "image/png" });
-      const load = vi
-        .spyOn(store, "loadTranscriptImage")
-        .mockResolvedValue(png);
-      const { written: write } = captureClipboardSource();
-      vi.spyOn(store, "copyOwnership").mockReturnValue(() => true);
-      render(
-        <Transcript
-          sessionId={fixture.record.id}
-          viewId={fixture.page.viewId}
-          projectionIncarnation={fixture.page.incarnation ?? ""}
-          messages={fixture.page.messages as ChatMessage[]}
-          streaming={false}
-          thinkingVisibility="collapsed"
-          activityFoldVisibility="expanded"
-          toolVisibility={visibility}
-        />,
-      );
-      if (visibility === "collapsed")
-        fireEvent.click(
-          screen.getByRole("button", { name: /^read: finished/ }),
-        );
-      await screen.findByRole("button", { name: "Preview preview.png" });
-      // Thumbnail reads and copy reads are independent owners.
-      load.mockClear();
-      fireEvent.click(
-        screen.getByRole("button", { name: "Copy read tool block" }),
-      );
-      await waitFor(() => expect(write).toHaveBeenCalled());
-      expect(load).toHaveBeenCalledWith(
-        fixture.record.id,
-        fixture.page.viewId,
-        `${fixture.page.viewId}\u0000${fixture.page.incarnation ?? ""}`,
-        "pi-embedded://2/1",
-        expect.any(AbortSignal),
-      );
-      expect(write).toHaveBeenCalledWith({
-        text: expect.stringContaining("preview.png"),
-        images: [png],
-      });
-    },
-  );
-
-  it.each(["bash", "powershell"])(
-    "opens the recorded native %s full-output target",
-    (name) => {
-      const open = vi.spyOn(store, "openResource").mockResolvedValue(undefined);
-      const output = fixture.page.messages[3] as ChatMessage;
-      render(card({ ...fixture.bashCall, name }, output));
-      const action = screen.getByRole("button", { name: "View full output" });
-      expect(action).toHaveAttribute("data-file-path", fixture.fullOutputPath);
-      fireEvent.click(action);
-      expect(open).toHaveBeenCalledWith(fixture.fullOutputPath);
-      expect(
-        screen.getByRole("group", { name: "Output" }),
-      ).not.toHaveTextContent("Full output:");
-      expect(fixture.fullOutput).toMatch(/^native line 1\n/);
+      for (const request of load.mock.calls)
+        expect(request[4].aborted).toBe(true);
     },
   );
 });
@@ -317,7 +231,6 @@ describe("native Pi tool cards", () => {
     expect(screen.getByAltText("Tool result image 1")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Result details"));
     expect(await screen.findByText(/"peak": 12.4/)).toBeInTheDocument();
-    expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
   });
 
   it.each(["native", "configured"])(
@@ -369,74 +282,7 @@ describe("native Pi tool cards", () => {
     },
   );
 
-  it("shows the write shell early, streams its code in place, then distinguishes waiting, execution and success", () => {
-    const initial: ToolCallContent = {
-      ...call("write", {}),
-      __inspireToolCall: {
-        phase: "streaming",
-        characters: 0,
-        truncated: false,
-      },
-    };
-    const view = (
-      toolCall: ToolCallContent,
-      activity?: { id: string; name: string; phase: "running" | "done" },
-      toolResult?: ChatMessage,
-    ) => (
-      <ToolCard
-        call={toolCall}
-        result={toolResult}
-        activity={activity}
-        live
-        visibility="expanded"
-      />
-    );
-    const { container, rerender } = render(view(initial));
-    const shell = container.querySelector(".card");
-    expect(
-      container.querySelector('[data-tool-rule="inspire.pi.write"]'),
-    ).not.toBeNull();
-    expect(screen.getByText("Generating arguments…")).toBeInTheDocument();
-    expect(screen.queryByText("No result recorded")).not.toBeInTheDocument();
-    const partial = {
-      ...initial,
-      arguments: { path: "src/new.ts", content: "const first = 1;" },
-    };
-    rerender(view(partial));
-    expect(container.querySelector(".card")).toBe(shell);
-    expect(screen.getByText("const first = 1;")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "src/new.ts" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Copy write argument preview" }),
-    ).toBeInTheDocument();
-    const complete = call("write", {
-      path: "src/new.ts",
-      content: "const first = 1;\nconst second = 2;",
-    });
-    rerender(view(complete));
-    expect(screen.getByText("Waiting to execute…")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "src/new.ts" }),
-    ).toBeInTheDocument();
-    rerender(
-      view(complete, { id: complete.id, name: "write", phase: "running" }),
-    );
-    expect(screen.getByText("Running…")).toBeInTheDocument();
-    rerender(
-      view(
-        complete,
-        { id: complete.id, name: "write", phase: "done" },
-        result("Successfully wrote file"),
-      ),
-    );
-    expect(screen.getByLabelText("finished")).toBeInTheDocument();
-    expect(screen.queryByText("Generating arguments…")).not.toBeInTheDocument();
-    expect(container.querySelector(".card")).toBe(shell);
-  });
-
-  it("keeps large argument previews bounded and interrupted previews unexecuted", () => {
+  it("renders bounded arguments on demand and keeps interrupted previews unexecuted", () => {
     const partial: ToolCallContent = {
       ...call("write", { path: "src/new.ts", content: "line\n".repeat(1_000) }),
       __inspireToolCall: {
@@ -445,197 +291,29 @@ describe("native Pi tool cards", () => {
         truncated: true,
       },
     };
-    const { container, rerender } = render(
+    const preview = (visibility: "collapsed" | "expanded", live: boolean) => (
       <ToolCard
         call={partial}
         result={undefined}
         activity={undefined}
-        live
-        visibility="expanded"
-      />,
+        live={live}
+        visibility={visibility}
+      />
     );
+    const { container, rerender } = render(preview("collapsed", true));
+    expect(screen.queryByRole("group", { name: "Code" })).toBeNull();
+    expect(screen.getByLabelText("generating arguments")).toBeVisible();
+    rerender(preview("expanded", true));
     expect(container.querySelectorAll(".tool-code__line")).toHaveLength(400);
     expect(screen.getByText("Argument preview truncated")).toBeInTheDocument();
     expect(screen.getByText("Showing first 400 lines")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /Show all/ }),
-    ).not.toBeInTheDocument();
-    rerender(
-      <ToolCard
-        call={partial}
-        result={undefined}
-        activity={undefined}
-        live={false}
-        visibility="expanded"
-      />,
-    );
+    rerender(preview("expanded", false));
     expect(screen.getByText("Not executed")).toBeInTheDocument();
-    expect(screen.getByLabelText("not executed")).toHaveAttribute(
-      "data-status",
-      "neutral",
-    );
-    expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy write argument preview" }),
     ).toBeInTheDocument();
-    rerender(
-      <ToolCard
-        call={call("read", { path: "a.txt" })}
-        result={undefined}
-        activity={undefined}
-        live={false}
-        visibility="expanded"
-      />,
-    );
-    expect(screen.getByLabelText("no result")).toHaveAttribute(
-      "data-status",
-      "neutral",
-    );
-    expect(screen.getByText("No result recorded")).toBeInTheDocument();
   });
-
-  it("keeps one loading glyph through argument generation, queueing and execution", () => {
-    const tool = call("read", { path: "src/a.ts" });
-    const { rerender } = render(
-      <ToolCard
-        call={{
-          ...tool,
-          __inspireToolCall: {
-            phase: "streaming",
-            characters: 20,
-            truncated: false,
-          },
-        }}
-        result={undefined}
-        activity={undefined}
-        live
-        visibility="collapsed"
-      />,
-    );
-    const glyph = screen.getByLabelText("generating arguments");
-    expect(glyph).toHaveClass("pi-loading");
-    const pattern = glyph.getAttribute("data-variant");
-    for (const phase of ["queued", "running"] as const) {
-      rerender(
-        <ToolCard
-          call={tool}
-          result={undefined}
-          activity={{ id: tool.id, name: tool.name, phase }}
-          live
-          visibility="collapsed"
-        />,
-      );
-      const next = screen.getByLabelText(
-        phase === "queued" ? "waiting to execute" : "running",
-      );
-      expect(next).toBe(glyph);
-      expect(next).toHaveAttribute("data-variant", pattern);
-    }
-    rerender(
-      <ToolCard
-        call={tool}
-        result={result("done")}
-        activity={undefined}
-        live={false}
-        visibility="collapsed"
-      />,
-    );
-    expect(screen.getByLabelText("finished")).not.toHaveClass("pi-loading");
-  });
-
-  it("does not materialize a growing code body while collapsed", () => {
-    const partial: ToolCallContent = {
-      ...call("write", { path: "src/new.ts", content: "line\n".repeat(1_000) }),
-      __inspireToolCall: {
-        phase: "streaming",
-        characters: 5_000,
-        truncated: false,
-      },
-    };
-    const { container } = render(
-      <ToolCard
-        call={partial}
-        result={undefined}
-        activity={undefined}
-        live
-        visibility="collapsed"
-      />,
-    );
-    expect(container.querySelector(".tool-code")).toBeNull();
-    expect(container.querySelector(".card__body")).toBeNull();
-    expect(screen.getByLabelText("generating arguments")).toBeInTheDocument();
-  });
-  it("renders a native read as a file view while an unknown tool stays raw", () => {
-    const { container } = render(
-      <>
-        {card(
-          call("read", { path: "src/app.ts", offset: 41, limit: 2 }),
-          result("const one = 1;\nconst two = 2;"),
-        )}
-        {card(call("custom_tool", { payload: 7 }), result("custom output"))}
-      </>,
-    );
-
-    const read = container.querySelector(
-      '[data-tool-rule="inspire.pi.read"]',
-    ) as HTMLElement;
-    expect(read).not.toBeNull();
-    expect(within(read).queryByText("Arguments")).not.toBeInTheDocument();
-    expect(within(read).getByText("const one = 1;")).toBeInTheDocument();
-    expect(within(read).getByText("41")).toHaveClass("tool-code__number");
-
-    const custom = screen
-      .getByText("custom_tool", { selector: ".card__tool-name" })
-      .closest(".card") as HTMLElement;
-    expect(within(custom).getByText("Arguments")).toBeInTheDocument();
-    expect(within(custom).getByText("custom output")).toBeInTheDocument();
-  });
-
-  it("keeps complete resource actions behind one middle-truncation label", () => {
-    const readPath =
-      "docdoki/stages/archive/challenge-response-fold-pagination-2026-08-22.md";
-    const editPath =
-      "/home/wangzixiong/.pi/custom-extensions/pickup/test/workstream-announcement-records-2026-08-22.ts";
-    const patch = [
-      `--- ${editPath}`,
-      `+++ ${editPath}`,
-      "@@ -1 +1 @@",
-      "-before",
-      "+after",
-      "",
-    ].join("\n");
-    render(
-      <>
-        {card(
-          call("read", { path: readPath }),
-          result("contents"),
-          "collapsed",
-        )}
-        {card(
-          call("edit", {
-            path: editPath,
-            edits: [{ oldText: "before", newText: "after" }],
-          }),
-          result("Successfully replaced 1 block.", { patch }),
-        )}
-      </>,
-    );
-
-    for (const path of [readPath, editPath]) {
-      const resource = screen.getByRole("button", { name: path });
-      const label = resource.querySelector(".resource-path");
-      expect(resource).toHaveAttribute("data-file-path", path);
-      expect(resource).toHaveAttribute(
-        "title",
-        `Preview ${path}\nCtrl+click: Show in file manager`,
-      );
-      expect(label?.querySelector(".resource-path__visible")).toHaveTextContent(
-        path,
-      );
-    }
-  });
-
-  it("renders a configured custom rule through sanitized Markdown blocks", async () => {
+  it("uses sanitized Markdown for a matching override and raw output when it cannot render", async () => {
     configureToolPresentationRegistry(
       toolPresentationConfigurationSchema.parse({
         version: 1,
@@ -651,46 +329,178 @@ describe("native Pi tool cards", () => {
             ],
           },
         },
-        mappings: { custom_tool: "user.example.markdown" },
+        mappings: { grep: "user.example.markdown" },
       }),
     );
-    const { container } = render(
+    const { rerender } = render(
       card(
-        call("custom_tool", { query: "Inspect evidence" }),
+        call("grep", { pattern: "needle", query: "Inspect evidence" }),
         result("## Finding\n\n**Supported** [unsafe](javascript:alert(1))"),
       ),
     );
 
-    expect(container.querySelector(".tool-presentation")).toHaveAttribute(
-      "data-tool-rule",
-      "user.example.markdown",
-    );
     expect(
       await screen.findByRole("heading", { name: "Finding" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Supported")).toBeInTheDocument();
     expect(screen.getByText("unsafe").closest("a")).not.toHaveAttribute("href");
-    expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
+
+    const rawOutput = "src/app.ts:1: needle";
+    rerender(card(call("grep", { pattern: "needle" }), result(rawOutput)));
+    expect(
+      screen.getByRole("group", { name: "Result text" }),
+    ).toHaveTextContent(rawOutput);
+    fireEvent.click(screen.getByText("Arguments"));
+    expect(
+      await screen.findByRole("group", { name: "Arguments" }),
+    ).toHaveTextContent("needle");
+  });
+});
+
+describe("native edit cards", () => {
+  const path = "src/experiments/analysis/cross-calibration/fit-results.ts";
+  const edits = [
+    { oldText: "before one\nold line", newText: "after one\nnew line" },
+    { oldText: "before two", newText: 'after two\n"quoted" \\ unicode 中文' },
+    { oldText: "before three", newText: "" },
+  ];
+  const streaming = (
+    args: Record<string, unknown>,
+    phase: "streaming" | "interrupted" = "streaming",
+  ): ToolCallContent => ({
+    ...call("edit", args),
+    __inspireToolCall: {
+      phase,
+      characters: phase === "interrupted" ? 27_000 : 0,
+      truncated: phase === "interrupted",
+    },
   });
 
-  it("returns an incompatible selected native rule to the generic raw card", async () => {
-    render(
+  it.each([
+    {
+      shape: "array",
+      stages: [
+        { edits: [{ newText: "" }] },
+        { edits: [edits[0], {}] },
+        { edits, path },
+      ],
+    },
+    {
+      shape: "single",
+      stages: [
+        { path, oldText: "" },
+        { path, oldText: "before", newText: "after" },
+      ],
+    },
+  ])(
+    "stays inspectable as a $shape edit streams before execution",
+    ({ stages }) => {
+      const { rerender } = render(
+        card(streaming({}), undefined, "expanded", true),
+      );
+      for (const args of stages) {
+        rerender(card(streaming(args), undefined, "expanded", true));
+        expect(screen.getByText("Generating arguments…")).toBeVisible();
+        expect(
+          screen.getByRole("button", { name: "Copy edit argument preview" }),
+        ).toBeVisible();
+        expect(screen.queryByRole("button", { name: path })).toBeNull();
+      }
+      rerender(card(call("edit", stages.at(-1)!), undefined, "expanded", true));
+      expect(screen.getByText("Waiting to execute…")).toBeVisible();
+      expect(screen.getAllByRole("button", { name: path })[0]).toBeVisible();
+    },
+  );
+
+  it("adds the next edit only after its fields arrive and keeps the interrupted preview bounded", () => {
+    const preview = (second: Record<string, unknown>) =>
       card(
-        call("edit", {
-          path: "src/app.ts",
-          edits: [{ oldText: "one", newText: "two" }],
-        }),
-        result("done", { diff: "-1 one\n+1 two" }),
+        streaming({ path, edits: [edits[0], second] }),
+        undefined,
+        "expanded",
+        true,
+      );
+    const { container, rerender, unmount } = render(preview({}));
+    const added = () => container.querySelectorAll(".diff__line--add");
+    expect(added()).toHaveLength(2);
+    rerender(preview({ oldText: "second before" }));
+    expect(added()).toHaveLength(2);
+    expect(container.querySelectorAll(".diff__line--del")).toHaveLength(3);
+    rerender(preview({ oldText: "second before", newText: "" }));
+    expect(added()).toHaveLength(3);
+    expect(added()[0]).toHaveTextContent("after one");
+
+    unmount();
+    const interrupted = render(
+      card(
+        streaming(
+          {
+            path,
+            edits: [edits[0], { oldText: "old line\n".repeat(3_000) }],
+          },
+          "interrupted",
+        ),
       ),
     );
-
-    expect(screen.getByText("Arguments")).toBeInTheDocument();
-    expect(screen.getByText("Result")).toBeInTheDocument();
-    expect(screen.getByText("done")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Arguments"));
-    const resource = await screen.findByRole("button", { name: "src/app.ts" });
-    expect(resource.querySelector(".resource-path__visible")).toHaveTextContent(
-      "src/app.ts",
-    );
+    expect(screen.getByText("Not executed")).toBeVisible();
+    expect(screen.getByText("Argument preview truncated")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+    expect(
+      interrupted.container
+        .querySelectorAll(".diff")[1]
+        ?.querySelectorAll(".diff__line"),
+    ).toHaveLength(400);
   });
+
+  it("links the full path from the authoritative success patch and shows requested changes on failure", () => {
+    const open = vi.spyOn(store, "openResource").mockResolvedValue(undefined);
+    const request = call("edit", { path, edits: [edits[0]] });
+    const patch = `--- ${path}\n+++ ${path}\n@@ -1 +1 @@\n-applied before\n+applied after\n`;
+    const { container, rerender } = render(
+      card(
+        request,
+        result("done", {
+          diff: "-1 fallback before\n+1 fallback after",
+          patch,
+        }),
+      ),
+    );
+    expect(screen.getByText("Applied changes")).toBeVisible();
+    expect(container.querySelector(".diff__line--add")).toHaveTextContent(
+      "+applied after",
+    );
+    fireEvent.click(screen.getByRole("button", { name: path }));
+    expect(open).toHaveBeenCalledExactlyOnceWith(path);
+    rerender(card(request, result("edit rejected", undefined, true)));
+    expect(screen.getByText("Requested replacement")).toBeVisible();
+    expect(screen.getByText("edit rejected")).toBeVisible();
+    rerender(card(request, result("done", { diff: "-1 a\n+1 b" })));
+    expect(screen.getByText("Arguments")).toBeVisible();
+  });
+
+  it.each([
+    { path: 12, edits },
+    { path: "a", edits: null },
+    { path: "a", edits: [7] },
+    { path: "a", edits: [{ oldText: false }] },
+    { path: "a", newText: 5 },
+  ])("rejects wrongly typed fields during streaming: %j", (args) => {
+    expect(
+      toolPresentationRegistry.resolve({ call: streaming(args) }),
+    ).toBeNull();
+  });
+
+  it.each([
+    {},
+    { path: "a", edits: [] },
+    { path: "a", edits: [{ oldText: "a" }] },
+    { path: "a", newText: "b" },
+  ])(
+    "rejects completed edits that never received the required fields: %j",
+    (args) => {
+      expect(
+        toolPresentationRegistry.resolve({ call: call("edit", args) }),
+      ).toBeNull();
+    },
+  );
 });

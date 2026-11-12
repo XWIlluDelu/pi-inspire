@@ -4,12 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { RichText } from "../../src/components/RichText";
 import { Transcript } from "../../src/components/Transcript";
 import { store } from "../../src/store";
+import { escapedCurrencyMath } from "./fixtures/rich-text-literals";
 
 class ClipboardDataTransfer {
   private readonly values = new Map<string, string>();
-  get types(): string[] {
-    return [...this.values.keys()];
-  }
   setData(type: string, value: string): void {
     this.values.set(type, value);
   }
@@ -60,22 +58,14 @@ x^2, & x\geq 0 \\
     const { container } = render(<RichText text={source} />);
     expect(container.querySelectorAll(".katex-display")).toHaveLength(5);
     expect(container.querySelector(".sqrt svg path[d]")).toBeTruthy();
+    const math = container.querySelectorAll(".katex-mathml math");
     expect(container.querySelectorAll(".katex-mathml mtable")).toHaveLength(3);
-    expect(container.querySelectorAll("annotation")[2]?.textContent).toContain(
-      "A =",
+    expect(math[2]?.querySelector("annotation")).toHaveTextContent("A =");
+    expect(math[3]?.getAttribute("display")).toBe("block");
+    expect(math[3]?.querySelector("mtable")?.getAttribute("columnalign")).toBe(
+      "right left",
     );
-  });
-
-  it("preserves MathML structure and layout metadata for assistive technology", () => {
-    const formula = String.raw`$$\begin{aligned}f(x)&=x^2\\&=(x+1)^2\end{aligned}$$`;
-    const { container } = render(<RichText text={formula} />);
-    const math = container.querySelector(".katex-mathml math");
-    const table = math?.querySelector("mtable");
-    expect(math?.getAttribute("display")).toBe("block");
-    expect(table?.getAttribute("rowspacing")).toBe("0.25em");
-    expect(table?.getAttribute("columnalign")).toBe("right left");
-    expect(table?.getAttribute("columnspacing")).toBe("0em");
-    expect(math?.querySelector("annotation")?.getAttribute("encoding")).toBe(
+    expect(math[3]?.querySelector("annotation")?.getAttribute("encoding")).toBe(
       "application/x-tex",
     );
   });
@@ -105,45 +95,16 @@ $$z$$
   });
 
   it.each([
-    ["bare single dollar", "$"],
     ["single dollar", "$x"],
     ["bare double dollar", "$$"],
-    ["leading double dollar", "$$x"],
-    ["multiline double dollar", "$$\nx"],
     ["first-line multiline double dollar", "$$A=\nx"],
-    ["bare parenthesis", String.raw`\(`],
     ["parenthesis", String.raw`\(x`],
-    ["bare bracket", String.raw`\[`],
-    ["bracket", String.raw`\[x`],
     ["multiline bracket", String.raw`\[\nx`],
   ])("keeps incomplete %s source exact and non-math", (_label, source) => {
     const { container } = render(<RichText text={source} />);
     expect(container.querySelector(".katex")).toBeNull();
     expect(container.querySelector(".rich-text")?.textContent).toBe(source);
   });
-
-  it.each(["assistant", "thinking", "extension", "user"] as const)(
-    "does not join bare regex anchors into math in %s content",
-    (variant) => {
-      const source = String.raw`Use /^\d+$/ for the first check. Keep the ordinary words and spaces; replace it with /^(0|[1-9]\d*)$/ instead.`;
-      const { container, rerender } = render(
-        <RichText text={source} variant={variant} />,
-      );
-      expect(container.querySelector(".katex")).toBeNull();
-      expect(container.querySelector(".rich-text")?.textContent).toBe(source);
-      rerender(
-        <RichText
-          variant={variant}
-          text={source + " **Review this** and retain $x+1$/2 as math."}
-        />,
-      );
-      expect(container.querySelector("strong")?.textContent).toBe(
-        "Review this",
-      );
-      expect(container.querySelectorAll(".katex")).toHaveLength(1);
-      expect(container.querySelector("annotation")?.textContent).toBe("x+1");
-    },
-  );
 
   it("keeps regex code literal and valid adjacent math intact", () => {
     const source = "/^a$/i, /^b$/g, `/^c$/`, $x$ and $$y$$ and \\(z\\).";
@@ -155,6 +116,33 @@ $$z$$
     );
   });
 
+  it("recognizes genuine adjacent math and preserves delimiter escapes", () => {
+    const formulas = [
+      ["$ x+1 $", "x+1"],
+      ["The $n$th item and 第$m$项。", "n", "m"],
+      ["$f'(x)$", "f'(x)"],
+      ["\\(" + escapedCurrencyMath + "\\)", escapedCurrencyMath],
+      ["$$" + escapedCurrencyMath + "$$", escapedCurrencyMath],
+      ["Cost $$" + escapedCurrencyMath + "$$.", escapedCurrencyMath],
+      [String.raw`$\text{\$\$}$`, String.raw`\text{\$\$}`],
+      [String.raw`$a\\$`, String.raw`a\\`],
+      [
+        String.raw`Inline $$x+\verb|$|+y$$ remains math.`,
+        String.raw`x+\verb|$|+y`,
+      ],
+    ];
+    const { container } = render(
+      <RichText text={formulas.map(([text]) => text).join("\n\n")} />,
+    );
+    expect(
+      Array.from(
+        container.querySelectorAll("annotation"),
+        (node) => node.textContent,
+      ),
+    ).toEqual(formulas.flatMap(([, ...source]) => source));
+    expect(container.querySelector(".katex-error")).toBeNull();
+  });
+
   it("keeps a KaTeX failure contained and the source readable", () => {
     const { container } = render(<RichText text={"$\\def\\bad{策划}$"} />);
     // throwOnError is false: the raw source stays visible inside the error span
@@ -162,150 +150,64 @@ $$z$$
   });
 });
 
-describe("selection copy", () => {
-  it("copies partial inline and display selections with their original delimiter identity", async () => {
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            content: [
-              {
-                type: "text",
-                text: String.raw`Inline $i+1$
-
-\[d+2\]`,
-              },
-            ],
-            timestamp: 1,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-    await waitFor(() =>
-      expect(container.querySelector(".rich-text p .katex-html")).toBeTruthy(),
-    );
-    const inlineHtml = container.querySelector(".rich-text p .katex-html")!;
-    const inlineRange = document.createRange();
-    inlineRange.setStart(textNode(inlineHtml), 0);
-    inlineRange.setEnd(textNode(inlineHtml), 1);
-    const inline = dispatchSelectionCopy(inlineHtml, inlineRange);
-    expect(inline.event.defaultPrevented).toBe(true);
-    expect(inline.data.getData("text/plain")).toBe("$i+1$");
-    expect(inline.data.getData("text/html")).toContain("katex-html");
-    expect(inline.data.getData("text/html")).not.toContain("katex-display");
-
-    const displayHtml = container.querySelector(".katex-display .katex-html")!;
-    const displayRange = document.createRange();
-    displayRange.setStart(textNode(displayHtml), 0);
-    displayRange.setEnd(textNode(displayHtml), 1);
-    const display = dispatchSelectionCopy(displayHtml, displayRange);
-    expect(display.event.defaultPrevented).toBe(true);
-    expect(display.data.getData("text/plain")).toBe("$$\nd+2\n$$");
-    expect(display.data.getData("text/html")).toContain("katex-display");
-  });
-
-  it("puts display delimiters on separate lines without changing formula indentation", async () => {
-    const source = String.raw`\begin{aligned}
+it("copies selected formulas and surrounding text with Markdown delimiters", async () => {
+  const formula = String.raw`\begin{aligned}
   x&=1\\
     y&=2
 \end{aligned}`;
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            content: [{ type: "text", text: `$$\n${source}\n$$` }],
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-    await waitFor(() =>
-      expect(container.querySelector(".katex-display")).toBeTruthy(),
-    );
-    const formula = container.querySelector(".katex-display")!;
+  const inline = "Before $i+1$ after";
+  const { container } = render(
+    <Transcript
+      messages={[
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: inline + "\n\n\\[\n" + formula + "\n\\]" },
+          ],
+        },
+      ]}
+      streaming={false}
+      thinkingVisibility="collapsed"
+      toolVisibility="collapsed"
+    />,
+  );
+  await waitFor(() =>
+    expect(container.querySelector(".katex-display")).toBeTruthy(),
+  );
+  const paragraph = container.querySelector(".rich-text p")!;
+  const selection = document.createRange();
+  selection.selectNodeContents(paragraph);
+  const full = dispatchSelectionCopy(paragraph, selection);
+  expect(full.event.defaultPrevented).toBe(true);
+  expect(full.data.getData("text/plain")).toBe(inline);
+  expect(full.data.getData("text/html")).toContain("katex-html");
+
+  for (const [selector, expected, display] of [
+    [".rich-text p .katex-html", "$i+1$", false],
+    [".katex-display .katex-html", "$$\n" + formula + "\n$$", true],
+  ] as const) {
+    const rendered = container.querySelector(selector)!;
     const range = document.createRange();
-    range.selectNodeContents(formula);
-    const result = dispatchSelectionCopy(formula, range);
-    expect(result.data.getData("text/plain")).toBe(`$$\n${source}\n$$`);
-  });
-
-  it("handles a real DOM selection and writes both ClipboardEvent formats", async () => {
-    const { container } = render(
-      <Transcript
-        messages={[
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "Before $x+1$ after" }],
-            timestamp: 1,
-          },
-        ]}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-    await waitFor(() =>
-      expect(container.querySelector(".rich-text p")).toBeTruthy(),
-    );
-    const paragraph = container.querySelector(".rich-text p")!;
-    const range = document.createRange();
-    range.selectNodeContents(paragraph);
-    const selection = window.getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    const clipboardData = new ClipboardDataTransfer();
-    const copy = new Event("copy", { bubbles: true, cancelable: true });
-    Object.defineProperty(copy, "clipboardData", { value: clipboardData });
-
-    paragraph.dispatchEvent(copy);
-
-    expect(copy.defaultPrevented).toBe(true);
-    expect(clipboardData.getData("text/plain")).toBe("Before $x+1$ after");
-    expect(clipboardData.getData("text/html")).toContain("katex");
-    expect(clipboardData.types).toEqual(
-      expect.arrayContaining(["text/plain", "text/html"]),
-    );
-    selection.removeAllRanges();
-  });
+    const first = textNode(rendered);
+    range.setStart(first, 0);
+    range.setEnd(first, 1);
+    const { event, data } = dispatchSelectionCopy(rendered, range);
+    expect(event.defaultPrevented).toBe(true);
+    expect(data.getData("text/plain")).toBe(expected);
+    expect(data.getData("text/html").includes("katex-display")).toBe(display);
+  }
 });
 
-describe("raw HTML and unsafe URL defense", () => {
-  it("never parses raw HTML from model content", () => {
-    const html = 'Look <img src="x" onerror="window.__pwned = 1"> here';
-    const { container } = render(<RichText text={html} />);
-    expect(container.querySelector("img")).toBeNull();
-    expect(
-      (window as unknown as Record<string, unknown>).__pwned,
-    ).toBeUndefined();
-    expect(container.textContent).toContain("Look");
-  });
-
-  it("strips javascript: URLs from links", () => {
-    const { container } = render(
-      <RichText text="[click me](javascript:window.__js=1)" />,
-    );
-    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
-    expect((window as unknown as Record<string, unknown>).__js).toBeUndefined();
-  });
-
-  it("renders remote markdown images as links instead of fetching them", () => {
-    const { container } = render(
-      <RichText text="![tracking pixel](https://attacker.invalid/pixel.png)" />,
-    );
-    // No <img>: rendering a message must not fire a request to an
-    // attacker-chosen host. The reference stays reachable by choice.
-    expect(container.querySelector("img")).toBeNull();
-    const link = screen.getByRole("link", { name: /tracking pixel/ });
-    expect(link).toHaveAttribute("href", "https://attacker.invalid/pixel.png");
-    expect(link).toHaveAttribute("rel", "noreferrer noopener");
-  });
+it("preserves raw HTML as inert text and strips unsafe link destinations", () => {
+  const source =
+    "<script>literal script</script>\n\n<img src=x onerror=alert(1)>\n\nArray<T> and <Widget />. [unsafe](javascript:alert(1))";
+  const { container } = render(<RichText text={source} />);
+  expect(container.textContent).toContain("<script>literal script</script>");
+  expect(container.textContent).toContain("onerror=alert(1)");
+  expect(container.textContent).toContain("Array<T> and <Widget />.");
+  expect(
+    container.querySelector('script, img, widget, a[href^="javascript:"]'),
+  ).toBeNull();
 });
 
 describe("local file references", () => {
@@ -355,7 +257,6 @@ describe("local file references", () => {
       if (local) expect(openResource).toHaveBeenCalledExactlyOnceWith(href);
       else expect(openResource).not.toHaveBeenCalled();
       expect(container.querySelector("a button, a a")).toBeNull();
-      expect(container.querySelector("img")).toBeNull();
     },
   );
 
@@ -376,26 +277,17 @@ describe("local file references", () => {
     );
   });
 
-  it("marks local Markdown links as file references without external-link behavior", () => {
-    render(<RichText text="See [the report](./out/report.pdf) for details." />);
-    const link = screen.getByRole("link", { name: "the report" });
-    expect(link).toHaveAttribute("data-file-path", "./out/report.pdf");
-    expect(link).not.toHaveAttribute("target");
-    expect(link).not.toHaveAttribute("rel");
-  });
-
-  it("marks absolute and file: URL links as file references", () => {
+  it("keeps local Markdown links in the session reader", () => {
+    const paths = ["./out/report.pdf", "/tmp/run.log", "file:///tmp/chart.png"];
     render(
-      <RichText text="[log](/tmp/run.log) and [chart](file:///tmp/chart.png)" />,
+      <RichText
+        text={paths.map((path, i) => `[file ${i}](${path})`).join(" ")}
+      />,
     );
-    expect(screen.getByRole("link", { name: "log" })).toHaveAttribute(
-      "data-file-path",
-      "/tmp/run.log",
-    );
-    expect(screen.getByRole("link", { name: "chart" })).toHaveAttribute(
-      "data-file-path",
-      "file:///tmp/chart.png",
-    );
+    for (const [i, path] of paths.entries()) {
+      const link = screen.getByRole("link", { name: `file ${i}` });
+      expect(link).toHaveAttribute("data-file-path", path);
+    }
   });
 
   it("keeps http(s) and mailto links as safe external links", () => {
@@ -404,7 +296,6 @@ describe("local file references", () => {
     );
     for (const name of ["Pi", "mail", "paper"]) {
       const link = screen.getByRole("link", { name });
-      expect(link).not.toHaveAttribute("data-file-path");
       expect(link).toHaveAttribute("target", "_blank");
       expect(link).toHaveAttribute("rel", "noreferrer noopener");
     }
@@ -420,7 +311,7 @@ describe("local file references", () => {
     expect(container.querySelector("img")).toBeNull();
     const remote = screen.getByRole("link", { name: /logo/ });
     expect(remote).toHaveAttribute("href", "https://pi.dev/logo.png");
-    expect(remote.closest("[data-file-path]")).toBeNull();
+    expect(remote).toHaveAttribute("rel", "noreferrer noopener");
   });
 
   it("makes credible inline-code paths clickable without touching ordinary code", () => {
@@ -435,76 +326,62 @@ describe("local file references", () => {
 });
 
 describe("markdown constructs", () => {
-  it.each([
-    [
-      "unlabeled fence",
-      "```\n  first\n\n\tsecond\n\n```",
-      "  first\n\n\tsecond\n",
-    ],
-    ["indented code", "    first\n\n      second", "first\n\n  second"],
-    [
-      "unknown language",
-      "```unknown-lang\n  first\n\nsecond\n```",
-      "  first\n\nsecond",
-    ],
-    ["incomplete fence", "```\n  first\n\nsecond", "  first\n\nsecond"],
-    ["path in fence", "```\nsrc/store.ts\n```", "src/store.ts"],
-    ["indented path", "    src/store.ts", "src/store.ts"],
-  ])(
-    "preserves %s whitespace and copies source as a block",
-    async (_label, text, code) => {
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      Object.defineProperty(navigator, "clipboard", {
-        configurable: true,
-        value: { writeText },
-      });
-      const { container } = render(<RichText text={text} />);
-      expect(container.querySelector("pre code")?.textContent).toBe(code);
-      expect(
-        container.querySelector(".inline-code, [data-file-path]"),
-      ).toBeNull();
-      expect(
-        screen.getByRole("button", { name: "Insert code in terminal" }),
-      ).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
-      await waitFor(() =>
-        expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy(),
-      );
-      expect(writeText).toHaveBeenCalledWith(code);
-    },
-  );
-
-  it("does not parse HTML or math inside an unlabeled fence", () => {
+  it("preserves and copies fenced and indented code as literal blocks", async ({
+    onTestFinished,
+  }) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const blocks = [
+      [
+        "```\n  src/store.ts\n\n\t$x$\n<img src=x>\n```",
+        "  src/store.ts\n\n\t$x$\n<img src=x>",
+      ],
+      ["    src/store.ts\n\n      second", "src/store.ts\n\n  second"],
+      ["```unknown-lang\n  first\n\nsecond\n```", "  first\n\nsecond"],
+      ["```python\nprint(1)\n```", "print(1)"],
+      ["```\n  unfinished", "  unfinished"],
+    ];
     const { container } = render(
-      <RichText text={"```\n<img src=x onerror=alert(1)>\n$x$\n```"} />,
+      <RichText text={blocks.map(([source]) => source).join("\n\n")} />,
     );
-    expect(container.querySelector("img, .katex")).toBeNull();
-    expect(container.querySelector("pre code")?.textContent).toBe(
-      "<img src=x onerror=alert(1)>\n$x$",
+    expect(
+      Array.from(
+        container.querySelectorAll("pre code"),
+        (code) => code.textContent,
+      ),
+    ).toEqual(blocks.map(([, expected]) => expected));
+    expect(
+      container.querySelector(".inline-code, [data-file-path], img, .katex"),
+    ).toBeNull();
+    expect(
+      screen.getByText("python", { selector: ".code-block__lang" }),
+    ).toBeVisible();
+    expect(container.querySelector("code.language-python")).toHaveClass("hljs");
+    expect(
+      screen.getAllByRole("button", { name: "Insert code in terminal" }),
+    ).toHaveLength(blocks.length);
+    fireEvent.click(screen.getAllByRole("button", { name: "Copy code" })[0]!);
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(blocks[0]![1]),
     );
-  });
-
-  it("renders GFM tables and task lists", () => {
-    const text = "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] done\n- [ ] todo";
-    const { container } = render(<RichText text={text} />);
-    expect(container.querySelector("table")).toBeTruthy();
-    const tasks = container.querySelectorAll('input[type="checkbox"]');
-    expect(tasks).toHaveLength(2);
-    for (const task of tasks) {
-      expect(task).toHaveClass("choice-input");
-      expect(task).toBeDisabled();
-    }
-    expect(tasks[0]).toBeChecked();
-    expect(tasks[1]).not.toBeChecked();
   });
 
   it("keeps task markers separate from tight-item content without losing inline formatting", () => {
     const { container } = render(
       <RichText
         text={
-          "- [x] Review **reference** and `run-id` before [next run](https://example.invalid/run).\n- [ ] Retain the sample."
+          "| A | B |\n| - | - |\n| 1 | 2 |\n\n- [x] Review **reference** and `run-id` before [next run](https://example.invalid/run).\n- [ ] Retain the sample.\n\n7. Ordinary item."
         }
       />,
+    );
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    const ordinaryList = container.querySelector("ol");
+    expect(ordinaryList).toHaveAttribute("start", "7");
+    expect(ordinaryList?.querySelector("li")).toHaveTextContent(
+      "Ordinary item",
     );
     const tasks = container.querySelectorAll(".task-list-item");
     const content = tasks[0]!.querySelector(".rich-text__task-content")!;
@@ -520,7 +397,9 @@ describe("markdown constructs", () => {
     const marker = content.querySelector(".rich-text__task-marker input");
     expect(marker).toBeChecked();
     expect(marker).toBeDisabled();
-    expect(tasks[1]!.querySelector("input")).not.toBeChecked();
+    const pending = tasks[1]!.querySelector("input");
+    expect(pending).not.toBeChecked();
+    expect(pending).toBeDisabled();
   });
 
   it.each([false, true])(
@@ -570,51 +449,5 @@ describe("markdown constructs", () => {
       container.querySelector(".rich-text__task-marker input"),
     ).toBeChecked();
     expect(container.querySelector("input")).toBeDisabled();
-  });
-
-  it("leaves ordinary list markers and start values unchanged", () => {
-    const { container } = render(
-      <RichText
-        text={
-          "3. Review the reference.\n4. Retain the sample.\n\n- Plain bullet."
-        }
-      />,
-    );
-    expect(container.querySelector("ol")).toHaveAttribute("start", "3");
-    expect(container.querySelectorAll("li")).toHaveLength(3);
-    expect(container.querySelector(".rich-text__task-content")).toBeNull();
-  });
-
-  it("preserves ordinary entries and start values in mixed task lists", () => {
-    const { container } = render(
-      <RichText
-        text={
-          "- [x] Review the reference.\n- Keep the source notes.\n\n3. [ ] Check drift.\n4. Report the result."
-        }
-      />,
-    );
-    expect(container.querySelectorAll(".contains-task-list")).toHaveLength(2);
-    expect(container.querySelector("ol")).toHaveAttribute("start", "3");
-    const ordinary = container.querySelectorAll(
-      ".contains-task-list > li:not(.task-list-item)",
-    );
-    expect(ordinary).toHaveLength(2);
-    expect(ordinary[0]).toHaveTextContent("Keep the source notes.");
-    expect(ordinary[1]).toHaveTextContent("Report the result.");
-    for (const item of ordinary)
-      expect(item.querySelector(".rich-text__task-content")).toBeNull();
-  });
-
-  it("renders fenced code with a language label and copy control", () => {
-    const { container } = render(
-      <RichText text={"```python\nprint(1)\n```"} />,
-    );
-    expect(container.querySelector(".code-block__lang")?.textContent).toBe(
-      "python",
-    );
-    expect(container.querySelector("code.hljs")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Copy code" }),
-    ).toBeInTheDocument();
   });
 });

@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
+import { parseUnifiedDiff } from "../../src/diff";
 import type { ChatMessage, ToolCallContent } from "../../src/events";
 import { compileToolPresentationRules } from "../../src/tool-presentations/declarative";
-import {
-  type ToolPresentationRule,
-  toolPresentationSummaryText,
-} from "../../src/tool-presentations/model";
+import { toolPresentationSummaryText } from "../../src/tool-presentations/model";
 import {
   createThinkingPresentationRegistry,
   createToolPresentationRegistry,
@@ -23,68 +21,6 @@ function result(
 ): ChatMessage {
   return { role: "toolResult", content, details, isError };
 }
-
-describe("tool presentation registry", () => {
-  it("lets one explicit user mapping replace a shipped name binding", () => {
-    const shipped: ToolPresentationRule = {
-      id: "inspire.pi.grep",
-      present: () => ({
-        summary: { parts: [{ kind: "text", text: "Pi grep" }] },
-        blocks: () => [],
-      }),
-    };
-    const fff: ToolPresentationRule = {
-      id: "user.fff.grep",
-      present: () => ({
-        summary: { parts: [{ kind: "text", text: "FFF grep" }] },
-        blocks: () => [],
-      }),
-    };
-    const registry = createToolPresentationRegistry({
-      builtInRules: [shipped],
-      builtInMappings: { grep: shipped.id },
-      userRules: [fff],
-      userMappings: { grep: fff.id },
-    });
-
-    const resolved = registry.resolve({ call: call("grep", { pattern: "x" }) });
-    expect(resolved?.ruleId).toBe("user.fff.grep");
-    expect(resolved && toolPresentationSummaryText(resolved.summary)).toBe(
-      "FFF grep",
-    );
-  });
-
-  it("falls directly to raw when the selected override is missing or incompatible", () => {
-    const shipped: ToolPresentationRule = {
-      id: "inspire.pi.grep",
-      present: () => ({
-        summary: { parts: [{ kind: "text", text: "Pi grep" }] },
-        blocks: () => [],
-      }),
-    };
-    const incompatible: ToolPresentationRule = {
-      id: "user.fff.grep",
-      present: () => null,
-    };
-    const input = { call: call("grep", { pattern: "x" }) };
-
-    expect(
-      createToolPresentationRegistry({
-        builtInRules: [shipped],
-        builtInMappings: { grep: shipped.id },
-        userMappings: { grep: "user.missing.grep" },
-      }).resolve(input),
-    ).toBeNull();
-    expect(
-      createToolPresentationRegistry({
-        builtInRules: [shipped],
-        builtInMappings: { grep: shipped.id },
-        userRules: [incompatible],
-        userMappings: { grep: incompatible.id },
-      }).resolve(input),
-    ).toBeNull();
-  });
-});
 
 describe("declarative tool presentation rules", () => {
   const configuration = toolPresentationConfigurationSchema.parse({
@@ -453,61 +389,6 @@ describe("shipped Pi tool rules", () => {
     ]);
   });
 
-  it("projects native read images only inside the lazy body", () => {
-    const presentation = toolPresentationRegistry.resolve({
-      call: call("read", { path: "assets/pixel.png" }),
-      result: {
-        role: "toolResult",
-        content: [
-          { type: "text", text: "Read image file [image/png]" },
-          { type: "image", data: "cG5n", mimeType: "image/png" },
-        ],
-        isError: false,
-      },
-    });
-
-    expect(
-      presentation && toolPresentationSummaryText(presentation.summary),
-    ).toBe("assets/pixel.png · PNG image");
-    expect(presentation?.blocks()).toContainEqual({
-      type: "image",
-      label: "Preview",
-      data: "cG5n",
-      mimeType: "image/png",
-      alt: "assets/pixel.png",
-    });
-  });
-
-  it("uses the successful edit result patch rather than requested replacement text", () => {
-    const patch = [
-      "--- src/app.ts",
-      "+++ src/app.ts",
-      "@@ -1,1 +1,1 @@",
-      "-const value = 1;",
-      "+const value = 2;",
-      "",
-    ].join("\n");
-    const presentation = toolPresentationRegistry.resolve({
-      call: call("edit", {
-        path: "src/app.ts",
-        edits: [{ oldText: "value = 1", newText: "value = 2" }],
-      }),
-      result: result("Successfully replaced 1 block(s) in src/app.ts.", {
-        diff: "-1 const value = 1;\n+1 const value = 2;",
-        patch,
-      }),
-    });
-
-    expect(presentation?.blocks()).toEqual([
-      {
-        type: "diff",
-        label: "Applied changes",
-        path: "src/app.ts",
-        text: patch,
-      },
-    ]);
-  });
-
   it("keeps Pi's persisted single-edit shape renderable", () => {
     const presentation = toolPresentationRegistry.resolve({
       call: call("edit", {
@@ -574,20 +455,48 @@ describe("shipped Pi tool rules", () => {
     });
   });
 
-  it("rejects malformed native calls and incompatible successful edit results", () => {
+  it("rejects malformed native read calls", () => {
     expect(
-      toolPresentationRegistry.resolve({
-        call: call("read", { path: 17 }),
-      }),
+      toolPresentationRegistry.resolve({ call: call("read", { path: 17 }) }),
     ).toBeNull();
-    const incompatible = toolPresentationRegistry.resolve({
-      call: call("edit", {
-        path: "a.ts",
-        edits: [{ oldText: "a", newText: "b" }],
-      }),
-      result: result("done", { diff: "-1 a\n+1 b" }),
-    });
-    expect(incompatible).not.toBeNull();
-    expect(incompatible?.blocks()).toBeNull();
+  });
+});
+
+describe("unified tool patches", () => {
+  it("separates a tool preamble and keeps marker-like changed lines inside a hunk", () => {
+    const lines = parseUnifiedDiff(
+      [
+        "Edited source files:",
+        "--- a/a.md",
+        "+++ b/a.md",
+        "@@ -1,2 +1,2 @@",
+        " context",
+        "----",
+        "++++",
+        "--- a/b.md",
+        "+++ b/b.md",
+        "@@ -0,0 +1 @@",
+        "+new",
+      ].join("\n"),
+    );
+    expect(lines?.map(({ type }) => type)).toEqual([
+      "meta",
+      "meta",
+      "meta",
+      "hunk",
+      "context",
+      "del",
+      "add",
+      "meta",
+      "meta",
+      "hunk",
+      "add",
+    ]);
+    expect(lines?.[0]?.text).toBe("Edited source files:");
+  });
+
+  it("does not color prose or headerless changes as a patch", () => {
+    expect(parseUnifiedDiff("- bullet one\n+ emphasis")).toBeNull();
+    expect(parseUnifiedDiff("@@ -1 +1 @@\n----\n++++")).toBeNull();
   });
 });

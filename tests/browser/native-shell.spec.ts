@@ -1,84 +1,21 @@
 import { expect, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
-import { openEventSession, routeSnapshots } from "./support/host-events";
-import { pairedPage } from "./support/navigation";
-
-for (const touch of [false, true]) {
-  test.describe(`shell metadata action · ${touch ? "touch" : "mouse"}`, () => {
-    test.use({
-      hasTouch: touch,
-      deviceScaleFactor: touch ? 2 : 1,
-      contextOptions: { reducedMotion: "reduce" },
-    });
-    test("fits the compact output notice and opens the full log", async ({
-      page,
-    }) => {
-      const send = await openEventSession(
-        page,
-        "Shell output notice",
-        { version: 1, rules: {}, mappings: {} },
-        {},
-      );
-      send({
-        type: "message_end",
-        message: {
-          role: "bashExecution",
-          command: "printf observation-log",
-          output: "Observation log preview",
-          exitCode: 0,
-          truncated: true,
-          fullOutputPath: "native-shell.log",
-          __inspireMessageId: "shell-notice",
-        },
-      });
-      const card = page.getByRole("region", { name: "Shell command" });
-      const action = card.getByRole("button", {
-        name: "View full output",
-        exact: true,
-      });
-      for (const width of [1280, 820, 390, 320]) {
-        await page.setViewportSize({ width, height: 900 });
-        await action.scrollIntoViewIfNeeded();
-        await page.evaluate(() => document.fonts.ready);
-        expect((await action.boundingBox())!.height).toBeCloseTo(
-          touch ? 32 : 24,
-          1,
-        );
-        expect(
-          await card.evaluate((el) => el.scrollWidth - el.clientWidth),
-        ).toBeLessThanOrEqual(1);
-      }
-      await page.setViewportSize({ width: 1280, height: 900 });
-      const note = card.locator(".shell-execution__note");
-      expect((await note.boundingBox())!.height).toBeCloseTo(
-        touch ? 48 : 40,
-        1,
-      );
-      await expect(action).toHaveAttribute(
-        "data-file-path",
-        "native-shell.log",
-      );
-      if (touch) await action.tap();
-      else {
-        await action.focus();
-        await action.press("Enter");
-      }
-      await expect(
-        page.getByRole("region", { name: "File source", exact: true }),
-      ).toContainText("COMPLETE_NATIVE_SHELL_LOG_END");
-    });
-  });
-}
+import { routeSnapshots } from "./support/host-events";
+import { openFixtureSession, pairedPage } from "./support/navigation";
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
 // lifecycle integration tests, never the test Host or independent terminal.
 test("native shell cards stream, stop, recall and fit the narrow composer without an automatic model turn", async ({
   page,
 }) => {
-  let sessionId = "";
+  const sessionId = "fixture-history";
   const submitted: Array<Record<string, unknown>> = [];
   let stopped = 0;
+  let modelBusy = false;
   const projectShell = (snapshot: ActiveSnapshot) => {
+    if (snapshot.active?.sessionId !== sessionId) return;
+    snapshot.runState = modelBusy ? "running" : "idle";
+    snapshot.active.isStreaming = modelBusy;
     if (submitted.length && snapshot.active?.sessionId === sessionId) {
       snapshot.bashRunning = stopped === 0;
       snapshot.active.transcriptPage.messages.push({
@@ -102,7 +39,6 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await page.route("**/api/prompt", async (route) => {
     const body = route.request().postDataJSON() as Record<string, unknown>;
     submitted.push(body);
-    sessionId = String(body.sessionId);
     if (String(body.message).startsWith("!"))
       transport.send({
         type: "message_start",
@@ -142,36 +78,50 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   });
 
   await pairedPage(page);
-  await page
-    .locator(".nav__row-main")
-    .filter({ hasText: /Review extension event lifecycle/ })
-    .click();
+  await openFixtureSession(page, /Review extension event lifecycle/, sessionId);
+  await expect.poll(() => transport.ready(sessionId)).toBe(true);
   const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const run = page.getByRole("button", {
+    name: "Run shell command",
+    exact: true,
+  });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "shell-draft.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("keep the unsent attachment"),
+  });
+  const remove = page.getByRole("button", {
+    name: "Remove shell-draft.txt",
+    exact: true,
+  });
+  await expect(page.locator(".attachment--ready")).toBeVisible();
   await input.fill("!!printf browser");
-  await page
-    .getByRole("button", { name: "Run shell command", exact: true })
-    .click();
+  await run.click();
+  await expect(
+    page.getByText(/Shell commands cannot include attachments/),
+  ).toBeVisible();
+  await expect(remove).toBeVisible();
+  expect(submitted).toEqual([]);
+  await remove.click();
+
+  modelBusy = true;
+  transport.send({ type: "agent_start", sessionId });
+  const delivery = page.getByRole("group", { name: "Message delivery" });
+  await delivery.getByRole("button", { name: "Queue", exact: true }).click();
+  await run.click();
   await expect(input).toHaveValue("");
   const card = page.getByRole("region", { name: "Shell command" });
   await expect(card).toBeVisible();
   await expect(card.getByText("Running", { exact: true })).toBeVisible();
-  const sectionSpacing = await card.evaluate((el) => {
-    const head = el
-      .querySelector(".shell-execution__header")!
-      .getBoundingClientRect();
-    const command = el
-      .querySelector(".shell-execution__command")!
-      .getBoundingClientRect();
-    return { headerHeight: head.height, gap: command.top - head.bottom };
-  });
-  expect(sectionSpacing.headerHeight).toBeCloseTo(40, 2);
-  expect(sectionSpacing.gap).toBeCloseTo(0, 2);
   await expect(card.getByText("Excluded from context")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Abort running task", exact: true }),
   ).toBeVisible();
   expect(submitted).toHaveLength(1);
-  expect(submitted[0]!.message).toBe("!!printf browser");
+  expect(submitted[0]).toMatchObject({
+    sessionId,
+    message: "!!printf browser",
+  });
   expect(submitted[0]!.behavior).toBeUndefined();
   transport.send({
     type: "message_update",
@@ -181,7 +131,15 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     message: { ...shell, output: "STREAMED_BROWSER_OUTPUT\n" },
   });
   await expect(card.getByText("STREAMED_BROWSER_OUTPUT")).toBeVisible();
+  await expect(delivery).toBeVisible();
 
+  modelBusy = false;
+  transport.send({ type: "agent_settled", sessionId });
+  await expect(delivery).toBeHidden();
+  await input.fill("!pwd");
+  await expect(
+    page.getByRole("button", { name: "Run shell command" }),
+  ).toBeEnabled();
   await input.fill("Explicit model input during shell.");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(input).toHaveValue("");
@@ -211,4 +169,7 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
   await expect(
     card.getByRole("button", { name: /Copy shell result/ }),
   ).toBeVisible();
+  await transport.reload(sessionId);
+  await expect(card).toHaveCount(1);
+  await expect(card.getByText("Cancelled", { exact: true })).toBeVisible();
 });

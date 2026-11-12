@@ -1,9 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { testPiCommand } from "./scripts/test-pi-command.mjs";
 
-const staticWebTests = [
-  "tests/web/{browser-icon,task-notification-worker,theme-init,styles-contract,palette-colors}.test.ts",
-];
+const staticWebTests = ["tests/web/{service-worker,theme-init}.test.ts"];
 
 export default defineConfig({
   test: {

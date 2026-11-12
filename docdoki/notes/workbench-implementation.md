@@ -6,17 +6,10 @@ purpose: Implementation reasons behind document readers, streamed tool content a
 
 ## References and filesystem discovery
 
-Document links, inline paths and images resolve from the directory of the opened file, including a
-file found through basename recovery. Conversation references instead resolve from the session cwd.
-Keeping the base explicit prevents navigation from silently changing meaning between readers.
-
-Filesystem membership and Git observations are independent. Git output cannot establish whether an
-unlisted file is clean, ignored, absent or merely outside a bounded scan. Directory reads report their
-own completeness; Git contributes decoration and comparisons. See [[resource-preview]].
-
-Hidden visibility combines dot names with platform metadata. Windows `Hidden` and macOS
-`UF_HIDDEN` queries use bounded argument arrays and literal paths, separate from Git. If metadata is
-unavailable, discovery reports incomplete visibility. Authorization still depends on the session and realpath boundary, not visibility.
+Document references resolve from the opened file's directory, including after basename recovery.
+Conversation references resolve from the session cwd. Git output cannot establish why a file is
+unlisted, so directory reads report their own completeness. Native hidden-attribute queries pass
+literal paths as arguments. [[resource-preview]] defines discovery and authorization.
 
 ## Rendering without changing execution
 
@@ -24,17 +17,12 @@ Display labels and rendering strategy are separate: a card may say MCP while its
 `codemode` call keeps the Codemode tree renderer. Presentation projections retain the recorded tool
 name, arguments and result for raw inspection and resource extraction.
 
-A structured custom-message reading projection selects structured body text instead of parsing a generated
-Markdown wrapper. Its absent-provenance guard preserves the original cross-machine origin warning.
-Unrecognized custom-message shapes retain generic inspection. See [[tool-presentations]] and
-[[conversation]].
+A configured custom message reads the structured body directly. The provenance check preserves the
+cross-machine origin warning. See [[tool-presentations]] and [[conversation]].
 
-Pi supplies a call's identity and name before its arguments finish. The Host parses the incremental
-arguments once into a worker/message-owned preview, redacts sensitive keyed values before transport
-and retains no cumulative raw argument JSON. Immutable path updates preserve call identity across
-Host and browser projections. If a budget removes other paths, send a complete checkpoint rather
-than only the newest patch. Partial paths cannot authorize resource actions; final data replaces
-the preview in the same call. See [[activity-presentation]] and [[session-transport]].
+When a tool preview budget removes paths, send a complete checkpoint so the browser also removes
+them. Partial paths carry no resource authority. [[session-transport]] defines parser ownership,
+redaction and limits, and [[activity-presentation]] defines the card lifecycle.
 
 ## Reader and image geometry
 
@@ -50,10 +38,8 @@ retains its own colors; application chrome follows the active theme.
 
 ## Browser-owned chrome
 
-The PWA icon is neutral because installed icons have no portable CSS-theme binding. Ordinary tabs
-and standalone fallback use neutral light/dark `theme-color` hints. Only an active Window Controls
-Overlay follows the palette's outer frame color. The overlay uses browser-reported titlebar geometry;
-CSS emulation cannot establish activation. See `src/visual-preferences.ts` and [[design-system]].
+The PWA icon is neutral because installed icons have no portable CSS-theme binding.
+[[design-system]] defines the `theme-color` and Window Controls Overlay behavior.
 
 `useModalFocus` publishes visible backdrop depth separately from keyboard ownership: a suspended
 Settings shell keeps its focus-restoration owner without adding a second scrim. The titlebar layers

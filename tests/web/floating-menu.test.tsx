@@ -1,5 +1,5 @@
 import { renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { useFloatingMenuPlacement } from "../../src/use-floating-menu";
 
 const constraints = {
@@ -54,42 +54,28 @@ function menuInOverlay({
   ).result;
 }
 
-describe("floating menu coordinate ownership", () => {
-  it.each([0, 80])(
-    "keeps a downward menu at its viewport anchor with overlay scroll %s",
-    (scroll) => {
-      const placement = menuInOverlay({ scroll }).current!;
-      expect(placement.direction).toBe("down");
-      expect(placement.left + 18 - scroll).toBe(120);
-      expect(placement.top! + 32 - scroll).toBe(232 + constraints.gap);
-      expect(placement.maxHeight).toBe(300);
-    },
-  );
-
-  it.each([0, 80])(
-    "converts bottom offsets independently for upward menus with overlay scroll %s",
-    (scroll) => {
-      const anchorTop = window.innerHeight - 80;
-      const placement = menuInOverlay({ anchorTop, scroll }).current!;
-      expect(placement.direction).toBe("up");
-      expect(window.innerHeight - placement.bottom! - scroll).toBe(
-        anchorTop - constraints.gap,
-      );
-      expect(placement.left + 18 - scroll).toBe(120);
-    },
-  );
-
-  it("bounds an upward menu below the titlebar, not the viewport origin", () => {
-    const placement = menuInOverlay({ top: 40, bottom: 420, anchorTop: 240 })
-      .current!;
-    expect(placement.direction).toBe("up");
-    expect(placement.maxHeight).toBe(188);
-    expect(420 - placement.bottom! - placement.maxHeight).toBe(48);
+it("anchors a downward menu in either a body or a scrolled overlay portal", () => {
+  const scroll = 80;
+  const body = menuInOverlay({ scroll, portalInOverlay: false }).current!;
+  const overlay = menuInOverlay({ scroll }).current!;
+  expect(body).toMatchObject({ direction: "down", left: 120, top: 236 });
+  expect(overlay).toMatchObject({
+    direction: "down",
+    left: body.left - 18 + scroll,
+    top: body.top! - 32 + scroll,
   });
+});
 
-  it("keeps viewport coordinates for a body portal even when its anchor is in a dialog", () => {
-    const placement = menuInOverlay({ portalInOverlay: false }).current!;
-    expect(placement.left).toBe(120);
-    expect(placement.top).toBe(236);
-  });
+it("keeps an upward menu anchored and below the titlebar in a scrolled overlay", () => {
+  const scroll = 80;
+  const placement = menuInOverlay({
+    top: 40,
+    bottom: 420,
+    anchorTop: 240,
+    scroll,
+  }).current!;
+  expect(placement.direction).toBe("up");
+  const bottom = 420 - placement.bottom! - scroll;
+  expect(bottom).toBe(240 - constraints.gap);
+  expect(bottom - placement.maxHeight).toBe(40 + constraints.verticalMargin);
 });

@@ -17,7 +17,7 @@ const RANK: Record<NeedsYouReason, number> = {
  * needs nothing until it stops. Viewing a session clears its unseen outcome,
  * the same rule the row's status mark follows.
  */
-export function needsYouReason(
+function needsYouReason(
   status: SessionRuntimeStatus | undefined,
   external: ExternalSessionActivity | undefined,
   selected: boolean,

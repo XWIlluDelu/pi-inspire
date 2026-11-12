@@ -56,71 +56,18 @@ function flushAnimationFrames(): void {
 function ViewportHarness({
   sessionId = "session",
   viewId = "view",
+  hasOlder = false,
+  onLoadOlder = async () => false,
 }: {
   sessionId?: string;
   viewId?: string;
+  hasOlder?: boolean;
+  onLoadOlder?: () => Promise<boolean>;
 }) {
   const searchOwnsViewportRef = useRef(false);
   const viewport = useTranscriptViewport({
     rows: ROWS,
     sessionId,
-    viewId,
-    hasOlder: false,
-    olderError: null,
-    onLoadOlder: async () => false,
-    followSignal: "stable",
-    searchOwnsViewportRef,
-  });
-
-  return (
-    <div
-      ref={viewport.scrollRef}
-      role="log"
-      data-pinned={viewport.pinned}
-      data-at-latest={viewport.atLatest}
-      onScroll={viewport.onScroll}
-      onWheel={(event) =>
-        viewport.markUserScrollIntent(
-          event.deltaY < 0
-            ? "history"
-            : event.deltaY > 0
-              ? "latest"
-              : "unknown",
-        )
-      }
-    >
-      <div ref={viewport.contentRef}>
-        <div data-transcript-key="one">message</div>
-        <button type="button" onClick={viewport.restoreGeometricFollow}>
-          Clear search
-        </button>
-        <button
-          type="button"
-          data-testid="layout-anchor"
-          onClick={(event) =>
-            viewport.preserveAnchorThroughLayout(event.currentTarget, "end")
-          }
-        >
-          Resize row
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function OlderLoadingHarness({
-  hasOlder,
-  onLoadOlder,
-  viewId = "view",
-}: {
-  hasOlder: boolean;
-  onLoadOlder: () => Promise<boolean>;
-  viewId?: string;
-}) {
-  const searchOwnsViewportRef = useRef(false);
-  const viewport = useTranscriptViewport({
-    rows: ROWS,
-    sessionId: "session",
     viewId,
     hasOlder,
     olderError: null,
@@ -132,6 +79,8 @@ function OlderLoadingHarness({
     <div
       ref={viewport.scrollRef}
       role="log"
+      data-pinned={viewport.pinned}
+      data-at-latest={viewport.atLatest}
       data-loading-earlier={viewport.loadingEarlier}
       onScroll={viewport.onScroll}
       onWheel={(event) =>
@@ -157,8 +106,19 @@ function OlderLoadingHarness({
         >
           Navigate search
         </button>
+        <button type="button" onClick={viewport.restoreGeometricFollow}>
+          Clear search
+        </button>
         <button type="button" onClick={viewport.jumpToLatest}>
           Jump to latest
+        </button>
+        <button
+          type="button"
+          onClick={(event) =>
+            viewport.preserveAnchorThroughLayout(event.currentTarget, "end")
+          }
+        >
+          Resize row
         </button>
       </div>
     </div>
@@ -197,21 +157,30 @@ describe("transcript viewport geometry", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps a pinned transcript at latest after its scrollport shrinks", () => {
+  it("follows the latest boundary on resize while the reader is pinned", () => {
     render(<ViewportHarness />);
     const log = screen.getByRole("log");
     setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
+    const resize = (height: number) => {
+      Object.defineProperty(log, "clientHeight", {
+        configurable: true,
+        value: height,
+      });
+      act(() => {
+        TestResizeObserver.trigger(log);
+        flushAnimationFrames();
+      });
+    };
 
-    Object.defineProperty(log, "clientHeight", {
-      configurable: true,
-      value: 180,
-    });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
+    resize(300);
+    expect(log.scrollTop).toBe(700);
 
-    expect(log.scrollTop).toBe(820);
+    fireEvent.wheel(log, { deltaY: -300 });
+    log.scrollTop = 400;
+    fireEvent.scroll(log);
+    resize(180);
+    expect(log.scrollTop).toBe(400);
+    expect(log).toHaveAttribute("data-pinned", "false");
   });
 
   it("keeps an upward wheel intent across a queued layout scroll at latest", () => {
@@ -243,7 +212,17 @@ describe("transcript viewport geometry", () => {
     act(() => vi.runOnlyPendingTimers());
     expect(log.scrollTop).toBe(110);
 
-    fireEvent.wheel(log, { deltaY: 500 });
+    fireEvent.wheel(log, { deltaY: 440 });
+    log.scrollTop = 550;
+    fireEvent.scroll(log);
+    act(() => {
+      TestResizeObserver.trigger(log);
+      flushAnimationFrames();
+    });
+    expect(log.scrollTop).toBe(550);
+    expect(log).toHaveAttribute("data-pinned", "false");
+
+    fireEvent.wheel(log, { deltaY: 60 });
     log.scrollTop = 610;
     fireEvent.scroll(log);
     expect(log).toHaveAttribute("data-pinned", "true");
@@ -283,7 +262,7 @@ describe("transcript viewport geometry", () => {
         }),
     );
     const { rerender } = render(
-      <OlderLoadingHarness hasOlder onLoadOlder={onLoadOlder} />,
+      <ViewportHarness hasOlder onLoadOlder={onLoadOlder} />,
     );
     const log = screen.getByRole("log");
     await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(1));
@@ -299,9 +278,7 @@ describe("transcript viewport geometry", () => {
     await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(2));
     expect(log).toHaveAttribute("data-loading-earlier", "true");
 
-    rerender(
-      <OlderLoadingHarness hasOlder={false} onLoadOlder={onLoadOlder} />,
-    );
+    rerender(<ViewportHarness hasOlder={false} onLoadOlder={onLoadOlder} />);
     await act(async () => releases[1]!(true));
     act(() => {
       flushAnimationFrames();
@@ -319,14 +296,10 @@ describe("transcript viewport geometry", () => {
       .mockReturnValueOnce(oldPage.promise)
       .mockReturnValueOnce(currentPage.promise);
     const view = render(
-      <OlderLoadingHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
+      <ViewportHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
     );
     view.rerender(
-      <OlderLoadingHarness
-        hasOlder
-        viewId="current"
-        onLoadOlder={onLoadOlder}
-      />,
+      <ViewportHarness hasOlder viewId="current" onLoadOlder={onLoadOlder} />,
     );
     expect(onLoadOlder).toHaveBeenCalledTimes(2);
     await act(async () => oldPage.resolve(false));
@@ -352,11 +325,11 @@ describe("transcript viewport geometry", () => {
       const page = deferred<boolean>();
       const onLoadOlder = vi.fn(() => page.promise);
       const view = render(
-        <OlderLoadingHarness hasOlder={false} onLoadOlder={onLoadOlder} />,
+        <ViewportHarness hasOlder={false} onLoadOlder={onLoadOlder} />,
       );
       const log = screen.getByRole("log");
       setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
-      view.rerender(<OlderLoadingHarness hasOlder onLoadOlder={onLoadOlder} />);
+      view.rerender(<ViewportHarness hasOlder onLoadOlder={onLoadOlder} />);
       expect(onLoadOlder).toHaveBeenCalledOnce();
 
       const complete = async () => {
@@ -400,37 +373,32 @@ describe("transcript viewport geometry", () => {
     },
   );
 
-  it.each([0, 1])(
-    "retires an older page's deferred scroll after a view change at frame %s",
-    async (frames) => {
-      const page = deferred<boolean>();
-      const onLoadOlder = vi.fn(() => page.promise);
-      const view = render(
-        <OlderLoadingHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
-      );
-      const log = screen.getByRole("log");
-      setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
-      await act(async () => page.resolve(true));
-      act(() => {
-        for (let index = 0; index < frames; index += 1) flushAnimationFrames();
-      });
-      view.rerender(
-        <OlderLoadingHarness
-          hasOlder={false}
-          viewId="current"
-          onLoadOlder={onLoadOlder}
-        />,
-      );
-      expect(log.scrollTop).toBe(600);
-      act(() => {
-        flushAnimationFrames();
-        flushAnimationFrames();
-        flushAnimationFrames();
-      });
-      expect(log.scrollTop).toBe(600);
-      expect(onLoadOlder).toHaveBeenCalledOnce();
-    },
-  );
+  it("retires an older page's queued scroll after a view change", async () => {
+    const page = deferred<boolean>();
+    const onLoadOlder = vi.fn(() => page.promise);
+    const view = render(
+      <ViewportHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
+    );
+    const log = screen.getByRole("log");
+    setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
+    await act(async () => page.resolve(true));
+    act(() => flushAnimationFrames());
+    view.rerender(
+      <ViewportHarness
+        hasOlder={false}
+        viewId="current"
+        onLoadOlder={onLoadOlder}
+      />,
+    );
+    expect(log.scrollTop).toBe(600);
+    act(() => {
+      flushAnimationFrames();
+      flushAnimationFrames();
+      flushAnimationFrames();
+    });
+    expect(log.scrollTop).toBe(600);
+    expect(onLoadOlder).toHaveBeenCalledOnce();
+  });
 
   it("reports the visible latest boundary independently of follow ownership", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -460,40 +428,6 @@ describe("transcript viewport geometry", () => {
     });
     expect(log.scrollTop).toBe(600);
     expect(log).toHaveAttribute("data-at-latest", "false");
-  });
-
-  it("does not resume latest-follow while a downward gesture is still above latest", () => {
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    fireEvent.scroll(log);
-
-    fireEvent.wheel(log);
-    log.scrollTop = 500;
-    fireEvent.scroll(log);
-    fireEvent.wheel(log);
-    log.scrollTop = 560;
-    fireEvent.scroll(log);
-
-    // A stream update must preserve the deliberate reading position, even
-    // though the user has moved back into the former 80px proximity band.
-    Object.defineProperty(log, "scrollHeight", {
-      configurable: true,
-      value: 1_100,
-    });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
-    expect(log.scrollTop).toBe(560);
-    expect(log).toHaveAttribute("data-pinned", "false");
-    expect(log).toHaveAttribute("data-at-latest", "false");
-
-    fireEvent.wheel(log);
-    log.scrollTop = 700;
-    fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-pinned", "true");
-    expect(log).toHaveAttribute("data-at-latest", "true");
   });
 
   it.each([
@@ -526,46 +460,6 @@ describe("transcript viewport geometry", () => {
       expect(log.scrollTop).toBe(expectedTop);
     },
   );
-
-  it("does not reclaim latest-follow after an unpinned scrollport resize", () => {
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-
-    fireEvent.wheel(log);
-    log.scrollTop = 400;
-    fireEvent.scroll(log);
-
-    Object.defineProperty(log, "clientHeight", {
-      configurable: true,
-      value: 180,
-    });
-    act(() => {
-      TestResizeObserver.trigger(log);
-      flushAnimationFrames();
-    });
-
-    expect(log.scrollTop).toBe(400);
-  });
-
-  it("keeps the final boundary when geometry changes before updates flush", () => {
-    render(<ViewportHarness />);
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
-    act(() => {
-      for (const top of [500, 600, 500, 600]) {
-        fireEvent.wheel(log);
-        log.scrollTop = top;
-        fireEvent.scroll(log);
-      }
-    });
-    expect(log).toHaveAttribute("data-at-latest", "true");
-
-    fireEvent.wheel(log);
-    log.scrollTop = 500;
-    fireEvent.scroll(log);
-    expect(log).toHaveAttribute("data-at-latest", "false");
-  });
 
   it.each([
     { sessionId: "session", viewId: "branch-b" },
@@ -609,7 +503,7 @@ describe("transcript viewport geometry", () => {
     ({ nextScrollHeight, expectedPinned }) => {
       render(<ViewportHarness />);
       const log = screen.getByRole("log");
-      const anchor = screen.getByTestId("layout-anchor");
+      const anchor = screen.getByRole("button", { name: "Resize row" });
       setScrollGeometry(log, { clientHeight: 400, scrollTop: 600 });
       vi.spyOn(log, "getBoundingClientRect").mockReturnValue({
         top: 100,

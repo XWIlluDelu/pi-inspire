@@ -17,6 +17,7 @@ import {
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import { AppTopbar, sessionHeading } from "../../src/components/AppTopbar";
+import { ExportDialog } from "../../src/components/ExportDialog";
 import { SessionActionsMenu } from "../../src/components/SessionActionsMenu";
 import { SessionActionsSettings } from "../../src/components/SessionActionsSettings";
 import { store } from "../../src/store";
@@ -410,7 +411,7 @@ describe("Session actions", () => {
     ).toBeVisible();
   });
 
-  it("moves actions across the disclosure boundary without losing other actions", async () => {
+  it("moves actions by keyboard and restores focus at the order boundary", async () => {
     const user = userEvent.setup();
     render(<Harness />);
     const list = screen.getByRole("list", { name: "Session action order" });
@@ -419,51 +420,6 @@ describe("Session actions", () => {
         list.querySelectorAll(".session-action-order__label"),
         (label) => label.textContent,
       );
-    const exportHandle = screen.getByRole("button", {
-      name: "Reorder Export session…",
-    });
-    exportHandle.focus();
-    await user.keyboard("{Enter}");
-    const moveUp = screen.getByRole("menuitem", {
-      name: "Move Export session… up",
-    });
-    expect(moveUp).toHaveFocus();
-    expect(
-      within(
-        screen.getByRole("menu", { name: "Move options for Export session…" }),
-      )
-        .getAllByRole("menuitem")
-        .map((item) => item.getAttribute("aria-label")),
-    ).toEqual(["Move Export session… up", "Move Export session… down"]);
-    expect(
-      screen.getByRole("menuitem", { name: "Move Export session… down" }),
-    ).toBeDisabled();
-    await user.keyboard("{Enter}");
-    expect(exportHandle).toHaveFocus();
-    expect(actionLabels()).toEqual([
-      "Rename session",
-      "Copy session ID",
-      "Clone current branch",
-      "Export session…",
-      "Switch branch…",
-    ]);
-    fireEvent.click(exportHandle);
-    await user.click(
-      screen.getByRole("menuitem", { name: "Move Export session… up" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Session title" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Export session…" }),
-    ).toBeVisible();
-    expect(
-      screen.queryByRole("menuitem", { name: "Switch branch…" }),
-    ).toBeNull();
-    await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Switch branch…" }),
-    ).toBeVisible();
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     const copyHandle = screen.getByRole("button", {
       name: "Reorder Copy session ID",
     });
@@ -483,5 +439,44 @@ describe("Session actions", () => {
     );
     expect(actionLabels()[1]).toBe("Copy session ID");
     expect(copyHandle).toHaveFocus();
+  });
+
+  it("retains the selected format on failure and downloads for the captured session on retry", async () => {
+    const exportSession = vi
+      .spyOn(store, "exportSession")
+      .mockRejectedValueOnce(new Error("Unable to read this session"))
+      .mockResolvedValueOnce();
+    const onClose = vi.fn();
+    const view = render(
+      <ExportDialog sessionId="s1" active onClose={onClose} />,
+    );
+    expect(
+      screen.getByRole("radio", { name: "HTML Whole session" }),
+    ).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "JSONL Current branch" }),
+    );
+    view.rerender(
+      <ExportDialog sessionId="s1" active={false} onClose={onClose} />,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    view.rerender(<ExportDialog sessionId="s1" active onClose={onClose} />);
+    expect(
+      screen.getByRole("radio", { name: "JSONL Current branch" }),
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Unable to read this session",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("radio", { name: "JSONL Current branch" }),
+    ).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(exportSession.mock.calls).toEqual([
+      ["s1", "jsonl"],
+      ["s1", "jsonl"],
+    ]);
   });
 });

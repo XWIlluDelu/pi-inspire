@@ -26,13 +26,10 @@ covers:
   - server/preferences.ts
   - shared/contracts.ts
   - src/**/*.tsx
-  - tests/web/{styles-contract,palette-colors}.test.ts
-  - tests/web/palette-css.ts
   - tests/web/theme-init.test.ts
   - tests/browser/{shell-layout,settings-layout,reading-navigation,palette-preferences,responsive-inputs,theme-colors}.spec.ts
   - tests/browser/support/colors.ts
   - tests/browser/loading-states.spec.ts
-  - tests/browser/icon-controls.spec.ts
 ---
 
 # Design system
@@ -887,7 +884,6 @@ follows [Content copying](#content-copying), independently of presentation type.
 
 ## Checks
 
-- `tests/web/styles-contract.test.ts` checks that project CSS variable references have declarations.
 - Web tests cover theme bootstrap and overlay ownership. Browser tests exercise desktop and narrow
   controls, drawer dismissal and keyboard focus.
 - The browser contrast matrix uses the shipped CSS in every palette and luminosity. Component

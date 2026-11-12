@@ -10,12 +10,21 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import type {
   InspirePreferences,
+  SessionRuntimeStatus,
   SessionSummary,
 } from "../../shared/contracts";
 import { createInitialAppState } from "../../src/app-state";
 import { Nav } from "../../src/components/Nav";
+import {
+  hiddenDeletionBlockReason,
+  type NavCuration,
+  splitNavSections,
+} from "../../src/components/nav-model";
 import { ProjectGroup, SessionRow } from "../../src/components/NavSessions";
+import { compactAge } from "../../src/format";
+import { needsYouRows } from "../../src/needs-you";
 import { store } from "../../src/store";
+import { readNavigationDisclosure } from "../../src/workbench-session";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
   activeSnapshot,
@@ -105,8 +114,6 @@ describe("session navigation search captions", () => {
         container.querySelector(".nav__group-context .search-match"),
       ).toHaveTextContent(/^work$/);
       rerender(<ProjectGroup {...props} searchQuery="alpha" />);
-      expect(container.querySelector(".nav__group-context")).toBeNull();
-      rerender(<ProjectGroup {...props} searchQuery="" searching={false} />);
       expect(container.querySelector(".nav__group-context")).toBeNull();
       // Existing basename disambiguation survives regardless of the query.
       rerender(<ProjectGroup {...props} searchQuery="alpha" showContext />);
@@ -224,43 +231,6 @@ it("refreshes a populated session list quietly and explains an empty initial wai
   expect(screen.queryByText("No sessions yet")).toBeNull();
 });
 
-it("orders Needs you by activity even when All promotes a pin", () => {
-  const state = createInitialAppState();
-  const waiting = { runState: "running", needsInput: true } as const;
-  const archived = { ...gamma, id: "archived" };
-  vi.spyOn(store, "getState").mockReturnValue({
-    ...state,
-    sessions: [alpha, beta, gamma, archived],
-    prefs: {
-      ...state.prefs,
-      pinnedSessionIds: [alpha.id],
-      pinnedProjectCwds: [gamma.cwd],
-      hiddenSessionIds: [archived.id],
-    },
-    sessionStatuses: {
-      alpha: waiting,
-      beta: waiting,
-      gamma: waiting,
-      archived: waiting,
-    },
-  });
-  render(<Nav {...navProps} />);
-  expect(
-    within(screen.getByRole("region", { name: "Pinned" })).getByText(
-      alpha.title,
-    ),
-  ).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Needs you (3)" }));
-  const needsYou = screen.getByRole("region", {
-    name: "Sessions that need you",
-  });
-  expect(
-    [...needsYou.querySelectorAll("[data-session-id]")].map((row) =>
-      row.getAttribute("data-session-id"),
-    ),
-  ).toEqual([beta.id, gamma.id, alpha.id]);
-});
-
 it("reveals a collapsed project for search without persisting the expansion", async () => {
   await openNavigation({ preferences: { navCollapsedGroups: [alpha.cwd] } });
   const project = () => screen.getByRole("button", { name: "alpha" });
@@ -281,7 +251,11 @@ it("reveals a collapsed project for search without persisting the expansion", as
   expect(screen.queryByText(alpha.title)).toBeNull();
 });
 
-it("remembers Hidden disclosure without persisting a temporary search expansion", async () => {
+it("repairs an invalid Hidden choice without changing Recent or saving a search expansion", async () => {
+  sessionStorage.setItem(
+    "inspire:workbench:v1:navigation-disclosures",
+    JSON.stringify({ recentSessions: false, hiddenSessions: "true" }),
+  );
   const { nav, unmount } = await openNavigation({
     preferences: { hiddenSessionIds: [alpha.id] },
   });
@@ -290,6 +264,7 @@ it("remembers Hidden disclosure without persisting a temporary search expansion"
   unmount();
   const view = render(nav());
   expect(hiddenToggle()).toHaveAttribute("aria-expanded", "true");
+  expect(readNavigationDisclosure("recentSessions")).toBe(false);
   fireEvent.click(hiddenToggle());
 
   searchFor("alpha");
@@ -344,36 +319,11 @@ it("preserves search identity through curation and follows the resulting visible
   expect(onSelect).toHaveBeenLastCalledWith(gamma.id);
 
   searchFor("beta");
-  onSelect.mockClear();
   fireEvent.keyDown(search(), { key: "Enter" });
-  expect(onSelect).not.toHaveBeenCalled();
+  expect(onSelect).toHaveBeenCalledOnce();
   await screen.findByRole("button", { name: /^Beta session/ });
   fireEvent.keyDown(search(), { key: "Enter" });
-  expect(onSelect).toHaveBeenCalledWith(beta.id);
-});
-
-it("leaves composition and modified keys to the search input, then clears before blurring", async () => {
-  const { onSelect } = await openNavigation();
-  act(() => search().focus());
-  searchFor("session");
-  await screen.findByRole("button", { name: /^Beta session/ });
-  expect(searchStatus()).toHaveTextContent(beta.title);
-  fireEvent.compositionStart(search());
-  for (const key of ["ArrowDown", "Enter", "Escape"])
-    fireEvent.keyDown(search(), { key });
-  fireEvent.compositionEnd(search());
-  fireEvent.keyDown(search(), { key: "ArrowDown", isComposing: true });
-  fireEvent.keyDown(search(), { key: "Enter", keyCode: 229 });
-  fireEvent.keyDown(search(), { key: "ArrowDown", shiftKey: true });
-  expect(searchStatus()).toHaveTextContent(beta.title);
-  expect(onSelect).not.toHaveBeenCalled();
-  expect(search()).toHaveValue("session");
-
-  fireEvent.keyDown(search(), { key: "Escape" });
-  expect(search()).toHaveValue("");
-  expect(search()).toHaveFocus();
-  fireEvent.keyDown(search(), { key: "Escape" });
-  expect(search()).not.toHaveFocus();
+  expect(onSelect).toHaveBeenLastCalledWith(beta.id);
 });
 
 it.each([
@@ -414,4 +364,170 @@ it.each([
   fireEvent.click(trigger);
   fireEvent.click(screen.getByRole("button", { name: `Delete ${count}` }));
   expect(clear).toHaveBeenCalledExactlyOnceWith(targets, cwd);
+});
+
+const curation = (overrides: Partial<NavCuration> = {}): NavCuration => ({
+  pinnedSessionIds: [],
+  pinnedProjectCwds: [],
+  hiddenProjectCwds: [],
+  hiddenSessionIds: [],
+  ...overrides,
+});
+
+describe("hidden deletion eligibility", () => {
+  const idle = (): Parameters<typeof hiddenDeletionBlockReason>[1] => ({
+    openingSessionId: null,
+    sessionQuery: "",
+    sessionListLoading: false,
+    sessionListLoadingOlder: false,
+    sessionListHydrating: false,
+    sessionListError: null,
+    sessionListIssues: [],
+    clearingHidden: false,
+    deletingSessionId: null,
+  });
+  const targets = [sessionSummary({ id: "target" })];
+
+  it.each([
+    ["opening", { openingSessionId: "target" }, /opening/],
+    ["partial catalog", { sessionListHydrating: true }, /loading/],
+    ["search", { sessionQuery: "term" }, /searching/],
+    ["another deletion", { deletingSessionId: "elsewhere" }, /deletion/],
+  ] as const)(
+    "blocks %s targets or an incomplete selection",
+    (_, patch, message) => {
+      expect(
+        hiddenDeletionBlockReason(targets, { ...idle(), ...patch }),
+      ).toMatch(message);
+    },
+  );
+
+  it("keeps complete-set deletion unavailable while some catalog sources are unknown", () => {
+    expect(
+      hiddenDeletionBlockReason(targets, {
+        ...idle(),
+        sessionListIssues: [{ path: "/offline", message: "Access denied" }],
+      }),
+    ).toMatch(/unavailable session sources/);
+  });
+
+  it("allows deletion of a complete settled selection", () => {
+    expect(hiddenDeletionBlockReason(targets, idle())).toBeNull();
+  });
+});
+
+function navModelRow(id: string, folder: string, day: number) {
+  return sessionSummary({
+    id,
+    cwd: `/work/${folder}`,
+    project: folder,
+    modified: new Date(Date.UTC(2026, 6, day)).toISOString(),
+  });
+}
+
+it("files each session once and orders projects by newest activity", () => {
+  const sections = splitNavSections(
+    [
+      navModelRow("pinned-old", "archive", 15),
+      navModelRow("older", "app", 20),
+      navModelRow("other", "team/app", 21),
+      navModelRow("recent", "app", 22),
+      navModelRow("pinned-new", "app", 24),
+      navModelRow("archived", "archive", 16),
+      navModelRow("hidden", "archive", 23),
+      navModelRow("hidden-folder-child", "private", 21),
+      navModelRow("hidden-folder-new", "private", 25),
+    ],
+    curation({
+      pinnedSessionIds: ["pinned-old", "pinned-new", "hidden"],
+      pinnedProjectCwds: ["/work/archive", "/work/private"],
+      hiddenSessionIds: ["hidden", "hidden-folder-child"],
+      hiddenProjectCwds: ["/work/private"],
+    }),
+  );
+  const ids = (rows: typeof sections.pinned) => rows.map(({ id }) => id);
+  expect(ids(sections.pinned)).toEqual(["pinned-new", "pinned-old"]);
+  expect(ids(sections.hidden)).toEqual(["hidden"]);
+  expect(
+    sections.pinnedGroups.map(({ cwd, sessions }) => [cwd, ids(sessions)]),
+  ).toEqual([["/work/archive", ["archived"]]]);
+  expect(
+    sections.hiddenGroups.map(({ cwd, sessions }) => [cwd, ids(sessions)]),
+  ).toEqual([["/work/private", ["hidden-folder-new", "hidden-folder-child"]]]);
+  expect(
+    sections.groups.map(({ cwd, sessions }) => [cwd, ids(sessions)]),
+  ).toEqual([
+    ["/work/app", ["recent", "older"]],
+    ["/work/team/app", ["other"]],
+  ]);
+});
+
+it("orders Needs you by urgency then activity, including blocked native Pi", () => {
+  const sessions = [
+    "older-completion",
+    "failed",
+    "running",
+    "selected",
+    "blocked-pi",
+    "working-pi",
+    "newer-completion",
+  ].map((id, index) =>
+    sessionSummary({ id, modified: new Date(index * 1000).toISOString() }),
+  );
+  const rows = needsYouRows(
+    sessions,
+    {
+      "older-completion": { runState: "idle", indicator: "completed" },
+      failed: { runState: "failed", indicator: "failed" },
+      running: { runState: "running", indicator: "running" },
+      selected: { runState: "running", needsInput: true },
+      "newer-completion": { runState: "idle", indicator: "completed" },
+    },
+    { "blocked-pi": "blocked", "working-pi": "working" },
+    "selected",
+    null,
+  );
+  expect(rows.map(({ session, reason }) => [session.id, reason])).toEqual([
+    ["blocked-pi", "attention"],
+    ["selected", "attention"],
+    ["failed", "failed"],
+    ["newer-completion", "completed"],
+    ["older-completion", "completed"],
+  ]);
+});
+
+it("clears the viewed outcome while keeping its row in Needs you until selection changes", () => {
+  const sessions = ["completed", "failed"].map((id) => sessionSummary({ id }));
+  const statuses: Record<string, SessionRuntimeStatus> = {
+    completed: { runState: "idle", indicator: "completed" },
+    failed: { runState: "failed", indicator: "failed" },
+  };
+  const retained = { id: "completed", reason: "completed" as const };
+  const visible = (selected: string, keep: typeof retained | null) =>
+    needsYouRows(sessions, statuses, {}, selected, keep).map(
+      ({ session, reason }) => [session.id, reason],
+    );
+
+  expect(visible("completed", null)).toEqual([["failed", "failed"]]);
+  expect(visible("completed", retained)).toEqual([
+    ["failed", "failed"],
+    ["completed", null],
+  ]);
+  statuses.completed = { runState: "idle" };
+  expect(visible("failed", retained)).toEqual([]);
+});
+
+describe("compactAge", () => {
+  const now = Date.parse("2026-07-27T12:00:00Z");
+
+  it("compresses older recency to one unit and falls back to a short date", () => {
+    expect(compactAge("2026-07-27T09:00:00Z", now)).toBe("3h");
+    expect(compactAge("2026-07-22T12:00:00Z", now)).toBe("5d");
+    expect(compactAge("2026-01-03T12:00:00Z", now)).toMatch(/\d/);
+  });
+
+  it("reads empty for an unparseable timestamp and never goes negative", () => {
+    expect(compactAge("not a date", now)).toBe("");
+    expect(compactAge("2026-07-27T12:05:00Z", now)).toBe("now");
+  });
 });

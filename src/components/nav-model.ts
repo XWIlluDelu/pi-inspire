@@ -58,7 +58,7 @@ function byRecency(left: SessionSummary, right: SessionSummary): number {
 
 /** Group sessions by exact cwd identity. Groups sort by their newest session
  * descending; sessions within a group sort by modified descending. */
-export function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
+function groupSessionsByCwd(sessions: SessionSummary[]): SessionGroup[] {
   const byCwd = new Map<string, SessionSummary[]>();
   for (const session of sessions) {
     const list = byCwd.get(session.cwd);

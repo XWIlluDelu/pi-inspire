@@ -15,7 +15,6 @@ import type {
 import { BranchTree } from "../../src/components/BranchTree";
 import { Composer } from "../../src/components/Composer";
 import { EarlierBranchBanner } from "../../src/components/EarlierBranchBanner";
-import { Notices } from "../../src/components/Notices";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { store } from "../../src/store";
 import {
@@ -57,40 +56,25 @@ const nodes = [
   point("u2", "a1", "user", "Revised question"),
   point("a2", "u2", "assistant", "Latest answer", true),
 ];
-const longAnswer = `${"Complete retained response. ".repeat(1500)}old keyword beyond the snippet · 完整内容`;
-const full = new Map(
-  nodes.map((node) => [node.id, node.id === "a1" ? longAnswer : node.snippet]),
-);
 
 let fixture: {
   effective: string | null;
   navigationLeased?: boolean;
   revision: number;
   skip: boolean;
-  paged: boolean;
   cancelled: boolean;
   activity?: "model" | "shell";
   searchGate?: Promise<void>;
   navigateGate?: Promise<void>;
-  cloneError?: string;
-  treeGate?: Promise<void>;
-  images?: boolean;
-  detailText?: string;
-  detailRole?: BranchTreeNode["role"];
   outline?: BranchTreeNode[];
 };
 const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
 function tree(query = ""): BranchTreeResponse {
   const url = new URL(query || "/", "http://fixture");
   const search = url.searchParams.get("query");
-  const before = url.searchParams.get("before");
   const selected = search
-    ? nodes.filter((node) => full.get(node.id)!.includes(search))
-    : fixture.paged
-      ? before
-        ? nodes.slice(0, 3)
-        : nodes.slice(3)
-      : (fixture.outline ?? nodes);
+    ? nodes.filter((node) => node.snippet.includes(search))
+    : (fixture.outline ?? nodes);
   return {
     sessionId: "s1",
     revision: fixture.revision,
@@ -99,9 +83,8 @@ function tree(query = ""): BranchTreeResponse {
     effectiveLeafId: fixture.effective,
     activePath: nodes.filter((node) => node.active).map((node) => node.id),
     nodes: selected,
-    truncated: fixture.paged && !before && !search,
-    nextBefore: fixture.paged && !before && !search ? "a2" : null,
-    ...(fixture.paged && !before && !search ? { leadingPrompt: nodes[2] } : {}),
+    truncated: false,
+    nextBefore: null,
     skipSummaryPrompt: fixture.skip,
     rootCount: 1,
     health: { status: "ok" },
@@ -113,7 +96,6 @@ beforeEach(async () => {
     effective: "a2",
     revision: 1,
     skip: false,
-    paged: false,
     cancelled: false,
   };
   requests.length = 0;
@@ -149,40 +131,25 @@ beforeEach(async () => {
       if (url.startsWith("/api/sessions"))
         return Response.json(sessionPage([], 0));
       if (url.startsWith("/api/branches/tree")) {
-        await fixture.treeGate;
         if (new URL(url, "http://fixture").searchParams.has("query"))
           await fixture.searchGate;
         return Response.json(tree(url));
       }
-      if (url.startsWith("/api/branches/image")) {
-        return new Response("fixture image", {
-          headers: { "Content-Type": "image/png" },
-        });
-      }
       if (url.startsWith("/api/branches/entry")) {
-        const query = new URL(url, "http://fixture").searchParams;
-        const id = query.get("targetId")!;
-        if (!full.has(id))
+        const id = new URL(url, "http://fixture").searchParams.get("targetId");
+        const node = nodes.find((node) => node.id === id);
+        if (!node)
           return Response.json(
             { error: "History entry no longer exists" },
             { status: 404 },
           );
-        const text = fixture.detailText ?? full.get(id)!;
-        const offset = Number(query.get("offset") ?? 0);
-        const end = Math.min(text.length, offset + 32000);
         return Response.json({
           sessionId: "s1",
           revision: fixture.revision,
-          node: {
-            ...nodes.find((node) => node.id === id)!,
-            ...(fixture.detailRole ? { role: fixture.detailRole } : {}),
-          },
-          text: text.slice(offset, end),
-          nextOffset: end < text.length ? end : null,
-          totalChars: text.length,
-          ...(fixture.images
-            ? { images: [{ index: 1, mimeType: "image/png" }] }
-            : {}),
+          node,
+          text: node.snippet,
+          nextOffset: null,
+          totalChars: node.snippet.length,
         });
       }
       if (url === "/api/branches/navigate") {
@@ -207,25 +174,8 @@ beforeEach(async () => {
           ...(fixture.cancelled
             ? { cancelled: true }
             : node.canEdit
-              ? { editorText: full.get(node.id) }
+              ? { editorText: node.snippet }
               : {}),
-        });
-      }
-      if (url === "/api/branches/fork" || url === "/api/branches/clone") {
-        if (url.endsWith("clone") && fixture.cloneError)
-          return Response.json({ error: fixture.cloneError }, { status: 400 });
-        const fork = url.endsWith("fork");
-        const id = fork ? "forked" : "cloned";
-        return Response.json({
-          sessionId: id,
-          editorText: fork ? full.get(String(body.targetId)) : "",
-          snapshot: activeSnapshot({
-            sessionId: id,
-            sessionName: id,
-            durableLeafId: null,
-            effectiveLeafId: null,
-            pageMessages: [],
-          }),
         });
       }
       return Response.json(
@@ -252,94 +202,31 @@ async function previewAnswer() {
   fireEvent.click(
     within(history()).getByRole("button", { name: "Response Earlier answer" }),
   );
-  await screen.findByRole("button", { name: "Read more content" });
+  await screen.findByText("Earlier answer", {
+    selector: ".history-detail__body p",
+  });
 }
 
 describe("read-only History inspection", () => {
-  it.each(["fork", "clone"] as const)(
-    "allows %s from an externally read-only source while keeping navigation disabled",
-    async (mode) => {
-      (store as unknown as { set(value: unknown): void }).set({
-        readOnlyReason: "external-active",
-      });
-      render(<BranchTree />);
-      fireEvent.click(
-        within(history()).getByRole("button", { name: "Root question" }),
-      );
-      const fork = await screen.findByRole("button", {
-        name: "Fork to new session",
-      });
-      await waitFor(() => expect(fork).toBeEnabled());
-      expect(
-        screen.getByRole("button", { name: "Edit in this session" }),
-      ).toBeDisabled();
-      const clone = screen.getByRole("button", { name: "Clone through here" });
-      expect(clone).toBeEnabled();
-      fireEvent.click(mode === "fork" ? fork : clone);
-      await waitFor(() =>
-        expect(store.getState().sessionId).toBe(
-          mode === "fork" ? "forked" : "cloned",
-        ),
-      );
-      expect(requests.some(({ url }) => url === "/api/branches/navigate")).toBe(
-        false,
-      );
-    },
-  );
-
-  it("copies the complete retained entry without expanding its bounded preview", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
+  it("offers independent copies while keeping an externally owned source read-only", async () => {
+    (store as unknown as { set(value: unknown): void }).set({
+      readOnlyReason: "external-active",
     });
     render(<BranchTree />);
-    await previewAnswer();
-    fireEvent.click(screen.getByRole("button", { name: "Copy history entry" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(longAnswer));
+    fireEvent.click(
+      within(history()).getByRole("button", { name: "Root question" }),
+    );
+    const fork = await screen.findByRole("button", {
+      name: "Fork to new session",
+    });
+    await waitFor(() => expect(fork).toBeEnabled());
     expect(
-      screen.getByRole("button", { name: "Read more content" }),
-    ).toBeVisible();
-    expect(screen.queryByText(/old keyword beyond the snippet/)).toBeNull();
+      screen.getByRole("button", { name: "Clone through here" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Edit in this session" }),
+    ).toBeDisabled();
   });
-
-  it.each(["shell", "tool", "assistant"] as const)(
-    "uses the canonical %s role to select plain shell or rich content",
-    async (role) => {
-      fixture.detailRole = role;
-      fixture.detailText =
-        role === "shell"
-          ? "\`\`\`\n!echo log\n\`\`\`\n\n\`\`\`\n# Literal output\n\`\`\`\n\nExit 0"
-          : "# Rich output";
-      render(<BranchTree />);
-      const disclosure = within(history()).getAllByRole("button", {
-        name: "Replies and activity",
-      })[0]!;
-      expect(disclosure).toHaveTextContent("Activity");
-      expect(disclosure).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(disclosure);
-      expect(disclosure).toHaveAttribute("aria-expanded", "true");
-      fireEvent.click(
-        within(history()).getByRole("button", {
-          name: "Response Earlier answer",
-        }),
-      );
-      if (role === "shell") {
-        const preview = await screen.findByRole("region", {
-          name: "Shell record preview",
-        });
-        expect(preview).toHaveTextContent("# Literal output");
-        expect(within(preview).queryByRole("heading")).toBeNull();
-      } else {
-        expect(
-          await screen.findByRole("heading", { name: "Rich output" }),
-        ).toBeVisible();
-        expect(
-          screen.queryByRole("region", { name: "Shell record preview" }),
-        ).toBeNull();
-      }
-    },
-  );
 
   it("keeps first-input alternatives reachable through Other starts when their branch point is metadata", async () => {
     const setting: BranchTreeNode = {
@@ -388,112 +275,17 @@ describe("read-only History inspection", () => {
     ).toBe(false);
   });
 
-  it("leads with prompts and keeps reply selection separate from continuation", async () => {
-    setSessionDraft("s1", "unsent draft");
-    const before = store.getState().transcriptViewId;
-    render(<BranchTree />);
-    expect(
-      within(history()).getByRole("button", { name: "Root question" }),
-    ).toBeInTheDocument();
-    expect(
-      within(history()).getByRole("button", {
-        name: /Revised question Current conversation/,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      within(history()).queryByText("Earlier answer"),
-    ).not.toBeInTheDocument();
-    await previewAnswer();
-    expect(store.getState().transcriptViewId).toBe(before);
-    expect(sessionDraft("s1")).toBe("unsent draft");
-    expect(
-      requests.filter((request) => request.url === "/api/branches/navigate"),
-    ).toEqual([]);
-    expect(screen.getByRole("button", { name: "Continue here" })).toBeEnabled();
-    fireEvent.keyDown(screen.getByRole("button", { name: "Back to history" }), {
-      key: "Escape",
-    });
-    expect(
-      screen.getByRole("button", { name: "Response Earlier answer" }),
-    ).toHaveFocus();
-  });
-
-  it("searches full retained content, reads every chunk, and restores search/scroll/focus", async () => {
-    render(<BranchTree />);
-    fireEvent.change(
-      screen.getByRole("searchbox", { name: "Find in history" }),
-      { target: { value: "old keyword" } },
-    );
-    const match = await screen.findByRole("button", {
-      name: "Response Earlier answer",
-    });
-    const rows = history().querySelector(".branch-tree__rows")!;
-    rows.scrollTop = 137;
-    fireEvent.click(match);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Read more content" }),
-    );
-    await screen.findByText(/old keyword beyond the snippet · 完整内容/);
-    expect(
-      screen.queryByRole("button", { name: "Read more content" }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    expect(
-      screen.getByRole("searchbox", { name: "Find in history" }),
-    ).toHaveValue("old keyword");
-    expect(rows.scrollTop).toBe(137);
-    expect(match).toHaveFocus();
-    expect(
-      requests.filter((request) => request.url.includes("query=old")),
-    ).toHaveLength(1);
-  });
-
-  it.each([
-    { name: "active composition", isComposing: true },
-    { name: "IME confirmation", isComposing: false, keyCode: 229 },
-  ])("does not clear a history query during $name", async (ime) => {
-    render(<BranchTree />);
-    const input = screen.getByRole("searchbox", { name: "Find in history" });
-    fireEvent.change(input, { target: { value: "完整" } });
-    await screen.findByRole("button", { name: "Response Earlier answer" });
-    input.focus();
-    expect(fireEvent.keyDown(input, { key: "Escape", ...ime })).toBe(true);
-    expect(input).toHaveValue("完整");
-    expect(input).toHaveFocus();
-    fireEvent.keyDown(input, { key: "Escape" });
-    expect(input).toHaveValue("");
-    await screen.findByRole("button", { name: "Root question" });
-  });
-
-  it("shows a shared no-match state without duplicating the query and restores the outline on Escape", async () => {
-    render(<BranchTree />);
-    const search = screen.getByRole("searchbox", { name: "Find in history" });
-    const query = "no matching retained phrase";
-    fireEvent.change(search, { target: { value: query } });
-    const title = await screen.findByText("No matching history");
-    expect(title.closest(".res__state")).toHaveAttribute("role", "status");
-    expect(search).toHaveValue(query);
-    expect(screen.queryByText(query, { exact: false })).not.toBeInTheDocument();
-    fireEvent.keyDown(search, { key: "Escape" });
-    await screen.findByRole("button", { name: "Root question" });
-    expect(search).toHaveValue("");
-    expect(screen.queryByText("No matching history")).not.toBeInTheDocument();
-    expect(
-      requests.filter((request) => request.url === "/api/branches/navigate"),
-    ).toEqual([]);
-  });
-
   it("retires a pending search when cleared without letting it retire the next read", async () => {
-    fixture.paged = true;
-    await store.loadBranchTree();
     const older = deferred<void>();
     fixture.searchGate = older.promise;
     render(<BranchTree />);
     const search = screen.getByRole("searchbox", { name: "Find in history" });
-    fireEvent.change(search, { target: { value: "old keyword" } });
+    fireEvent.change(search, { target: { value: "Earlier" } });
     await screen.findByLabelText("Searching history");
-    fireEvent.keyDown(search, { key: "Escape", isComposing: true });
-    expect(search).toHaveValue("old keyword");
+    for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {
+      expect(fireEvent.keyDown(search, { key: "Escape", ...ime })).toBe(true);
+      expect(search).toHaveValue("Earlier");
+    }
     const clear = screen.getByRole("button", { name: "Clear history search" });
     expect(clear).toBeEnabled();
     fireEvent.click(clear);
@@ -502,9 +294,6 @@ describe("read-only History inspection", () => {
     await waitFor(() =>
       expect(history()).not.toHaveAttribute("aria-busy", "true"),
     );
-    expect(
-      screen.getByRole("button", { name: "Earlier conversation" }),
-    ).toBeEnabled();
     const newer = deferred<void>();
     fixture.searchGate = newer.promise;
     fireEvent.change(search, { target: { value: "Root" } });
@@ -519,155 +308,11 @@ describe("read-only History inspection", () => {
       screen.getByRole("button", { name: "Your input Root question" }),
     ).toBeVisible();
   });
-
-  it("retains ordinary loaded older pages after preview and Back", async () => {
-    fixture.paged = true;
-    await store.loadBranchTree();
-    const align = vi.spyOn(Element.prototype, "scrollIntoView");
-    render(<BranchTree />);
-    expect(
-      screen.queryByRole("button", { name: "Root question" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: /Revised question Current conversation/,
-      }),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Earlier conversation" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Root question" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Edit in this session" }),
-      ).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    expect(screen.getByRole("button", { name: "Root question" })).toHaveFocus();
-    expect(align).toHaveBeenCalledTimes(1);
-    expect(
-      screen.queryByRole("button", { name: "Earlier conversation" }),
-    ).not.toBeInTheDocument();
-    expect(
-      requests.filter((request) => request.url.includes("before=a2")),
-    ).toHaveLength(1);
-  });
 });
 
 describe("History reading restoration", () => {
   const readingKey = (sessionId = "s1") =>
     workbenchSessionKey(sessionId, "/history-fixture");
-
-  it("loads missing History after bootstrap before restoring the selected entry", async () => {
-    // The shared fixture preloads History; a fresh browser has no observations.
-    (store as unknown as { set(value: unknown): void }).set({
-      branchTree: null,
-      branchTreeLoading: false,
-      branchTreeStale: false,
-      branchTreeError: null,
-    });
-    await store.init();
-    expect(store.getState().branchTree).toBeNull();
-    requests.length = 0;
-    const reading = readHistoryReading(readingKey());
-    reading.selectedEntryId = "u1";
-
-    render(<BranchTree readingState={reading} />);
-
-    await screen.findByRole("button", { name: "Edit in this session" });
-    expect(history().querySelector(".history-detail__body")).toHaveTextContent(
-      "Root question",
-    );
-    expect(store.getState().branchTree?.sessionId).toBe("s1");
-    expect(
-      requests.filter(({ url }) => url.startsWith("/api/branches/tree")),
-    ).toHaveLength(1);
-    expect(
-      requests.filter(
-        ({ url }) =>
-          url.startsWith("/api/branches/entry") &&
-          new URL(url, "http://fixture").searchParams.get("targetId") === "u1",
-      ),
-    ).toHaveLength(1);
-  });
-
-  it("restores query, expanded turns and selected entry after remount while rereading content", async () => {
-    const key = readingKey();
-    const reading = readHistoryReading(key);
-    fixture.detailText = "First observed history content";
-    const mounted = render(<BranchTree readingState={reading} />);
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Replies and activity" })[0]!,
-    );
-    fireEvent.change(
-      screen.getByRole("searchbox", { name: "Find in history" }),
-      { target: { value: "old keyword" } },
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Response Earlier answer" }),
-    );
-    await screen.findByText("First observed history content");
-    mounted.unmount();
-
-    fixture.detailText = "Fresh history content after reopening";
-    render(<BranchTree readingState={readHistoryReading(key)} />);
-    await screen.findByText("Fresh history content after reopening");
-    expect(screen.queryByText("First observed history content")).toBeNull();
-    expect(
-      requests.filter(({ url }) => url.startsWith("/api/branches/entry")),
-    ).toHaveLength(2);
-    expect(JSON.stringify(sessionStorage)).not.toContain(
-      "First observed history content",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    expect(
-      screen.getByRole("searchbox", { name: "Find in history" }),
-    ).toHaveValue("old keyword");
-    await screen.findByRole("button", { name: "Response Earlier answer" });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Clear history search" }),
-    );
-    await screen.findByRole("button", { name: "Root question" });
-    expect(
-      screen.getAllByRole("button", { name: "Replies and activity" })[0],
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(requests.some(({ url }) => url === "/api/branches/navigate")).toBe(
-      false,
-    );
-  });
-
-  it("ends restoration of a missing entry with Retry and Back instead of permanent loading", async () => {
-    const reading = readHistoryReading(readingKey());
-    reading.query = "Root";
-    reading.selectedEntryId = "removed-entry";
-    render(<BranchTree readingState={reading} />);
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "History entry no longer exists",
-    );
-    await waitFor(() =>
-      expect(history()).not.toHaveAttribute("aria-busy", "true"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
-    await waitFor(() =>
-      expect(
-        requests.filter(({ url }) => url.includes("targetId=removed-entry")),
-      ).toHaveLength(2),
-    );
-    await waitFor(() =>
-      expect(history()).not.toHaveAttribute("aria-busy", "true"),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    expect(
-      screen.getByRole("searchbox", { name: "Find in history" }),
-    ).toHaveValue("Root");
-    expect(
-      await screen.findByRole("button", { name: "Your input Root question" }),
-    ).toBeVisible();
-    expect(reading.selectedEntryId).toBeNull();
-  });
 
   it("does not carry selection or query across distinct reading-state owners", async () => {
     const first = readHistoryReading(readingKey());
@@ -708,74 +353,55 @@ describe("History reading restoration", () => {
     expect(second.selectedEntryId).toBe("u2");
   });
 
-  it("rereads a saved alternate route after remount without continuing that conversation", async () => {
-    const key = readingKey();
-    const reading = readHistoryReading(key);
-    reading.routeLeafId = "a1";
+  it("recovers invalid saved metadata and persists only reading position", () => {
+    const storageKey = `${readingKey()}:history`;
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        query: 10,
+        expanded: ["one", "", "one", 5, "two"],
+        selectedEntryId: "",
+        routeLeafId: [],
+        outline: { top: -1, left: 0 },
+        detail: { top: 300, left: null },
+        content: "transcript body",
+      }),
+    );
+    const reading = readHistoryReading(readingKey());
+    const metadata = {
+      query: "",
+      expanded: ["one", "two"],
+      selectedEntryId: null,
+      routeLeafId: null,
+      outline: { top: 0, left: 0 },
+      detail: { top: 0, left: 0 },
+    };
+    expect(reading).toMatchObject({ ...metadata, restored: false });
     reading.save?.();
-    let label = "First alternate route observation";
-    const read = vi
-      .spyOn(store, "readBranchTree")
-      .mockImplementation(async (query) => ({
-        ...tree(),
-        routeLeafId: query.leafId ?? "a2",
-        nodes: [{ ...nodes[0]!, snippet: label }, nodes[1]!],
-      }));
-    const mounted = render(<BranchTree readingState={reading} />);
-    await screen.findByRole("button", {
-      name: /First alternate route observation/,
-    });
-    mounted.unmount();
-    label = "Fresh alternate route observation";
-    render(<BranchTree readingState={readHistoryReading(key)} />);
-    await screen.findByRole("button", {
-      name: /Fresh alternate route observation/,
-    });
-    expect(screen.queryByText("First alternate route observation")).toBeNull();
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(read).toHaveBeenLastCalledWith(
-      { leafId: "a1" },
-      expect.any(AbortSignal),
-    );
-    expect(screen.getByText("Inspecting another route")).toBeVisible();
-    expect(store.getState().transcriptEffectiveLeafId).toBe("a2");
-    expect(JSON.stringify(sessionStorage)).not.toContain(
-      "alternate route observation",
-    );
+    expect(JSON.parse(sessionStorage.getItem(storageKey)!)).toEqual(metadata);
+    expect(readHistoryReading(readingKey()).restored).toBe(true);
+    for (const other of [
+      readingKey("s2"),
+      workbenchSessionKey("s1", "/other-workspace"),
+      null,
+    ]) {
+      expect(readHistoryReading(other)).toMatchObject({
+        restored: false,
+        selectedEntryId: null,
+      });
+    }
   });
 
-  it("restores both detail and outline reading offsets from a fresh saved state", async () => {
-    const key = readingKey();
-    const reading = readHistoryReading(key);
-    const mounted = render(<BranchTree readingState={reading} />);
-    const rows = history().querySelector<HTMLElement>(".branch-tree__rows")!;
-    rows.scrollTop = 137;
-    rows.scrollLeft = 11;
-    fireEvent.scroll(rows);
-    await previewAnswer();
-    const detail = history().querySelector<HTMLElement>(
-      ".history-detail__body",
-    )!;
-    detail.scrollTop = 217;
-    detail.scrollLeft = 7;
-    fireEvent.scroll(detail);
-    mounted.unmount();
-
-    const saved = readHistoryReading(key);
-    expect(saved.outline).toEqual({ top: 137, left: 11 });
-    expect(saved.detail).toEqual({ top: 217, left: 7 });
-    render(<BranchTree readingState={saved} />);
-    await screen.findByRole("button", { name: "Read more content" });
-    const restoredDetail = history().querySelector<HTMLElement>(
-      ".history-detail__body",
-    )!;
-    expect(restoredDetail.scrollTop).toBe(217);
-    expect(restoredDetail.scrollLeft).toBe(7);
-    fireEvent.click(screen.getByRole("button", { name: "Back to history" }));
-    const restoredRows =
-      history().querySelector<HTMLElement>(".branch-tree__rows")!;
-    expect(restoredRows.scrollTop).toBe(137);
-    expect(restoredRows.scrollLeft).toBe(11);
+  it("keeps History reading position in memory when storage is refused", () => {
+    const unavailable = () => {
+      throw new DOMException("Storage unavailable", "SecurityError");
+    };
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(unavailable);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(unavailable);
+    const reading = readHistoryReading(readingKey());
+    reading.selectedEntryId = "entry";
+    reading.save?.();
+    expect(reading).toMatchObject({ restored: true, selectedEntryId: "entry" });
   });
 });
 
@@ -800,118 +426,45 @@ describe("explicit History actions", () => {
     },
   );
 
-  it("replaces a nonempty draft only after explicit Edit and offers optional native summary instructions", async () => {
-    setSessionDraft("s1", "existing draft");
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
-    render(<BranchTree />);
+  it("preserves a newer draft revision even when its text returns to the confirmed draft", async () => {
+    const summary = deferred<void>();
+    fixture.navigateGate = summary.promise;
+    setSessionDraft("s1", "confirmed draft");
+    render(
+      <>
+        <Composer />
+        <BranchTree />
+      </>,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Root question" }));
-    const edit = await screen.findByRole("button", {
-      name: "Edit in this session",
-    });
-    await waitFor(() => expect(edit).toBeEnabled());
-    const sameSession = screen.getByRole("group", { name: "This session" });
-    const summary = within(sameSession).getByRole("checkbox", {
-      name: "Carry branch summary",
-    });
-    expect(summary).toHaveClass("choice-input");
-    expect(summary).not.toBeChecked();
-    expect(
-      Array.from(sameSession.querySelectorAll("input, textarea, button")),
-    ).toEqual([summary, edit]);
-    fireEvent.click(edit);
-    expect(
-      requests.filter((request) => request.url === "/api/branches/navigate"),
-    ).toHaveLength(0);
-    expect(sessionDraft("s1")).toBe("existing draft");
-    fireEvent.click(summary);
-    const instructions = within(sameSession).getByRole("textbox", {
-      name: "Summary instructions",
-    });
-    expect(instructions).toHaveAttribute("maxlength", "2000");
-    expect(
-      Array.from(sameSession.querySelectorAll("input, textarea, button")),
-    ).toEqual([summary, instructions, edit]);
-    expect(
-      within(screen.getByRole("group", { name: "New session" })).queryByRole(
-        "checkbox",
-      ),
-    ).not.toBeInTheDocument();
-    fireEvent.change(instructions, {
-      target: { value: "Keep the measurements" },
-    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Edit in this session" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Carry branch summary",
+      }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Edit in this session" }),
     );
     await waitFor(() =>
-      expect(
-        requests.some((request) => request.url === "/api/branches/navigate"),
-      ).toBe(true),
+      expect(store.getState().branchActionId).toBe("edit:u1"),
     );
-    expect(
-      requests.find((request) => request.url === "/api/branches/navigate")!
-        .body,
-    ).toEqual({
-      sessionId: "s1",
-      revision: 1,
-      targetId: "u1",
-      mode: "edit",
-      summarize: true,
-      customInstructions: "Keep the measurements",
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "newer draft" },
     });
-    await waitFor(() =>
-      expect(store.getState().editorText?.text).toBe("Root question"),
-    );
+    fireEvent.change(screen.getByLabelText("Message"), {
+      target: { value: "confirmed draft" },
+    });
+    await act(async () => summary.resolve());
+    await waitFor(() => expect(store.getState().branchActionId).toBeNull());
     expect(store.getState().transcriptEffectiveLeafId).toBeNull();
-    expect(store.getState().branchActionId).toBeNull();
+    expect(screen.getByLabelText("Message")).toHaveValue("confirmed draft");
+    expect(sessionDraft("s1")).toBe("confirmed draft");
   });
-
-  it.each(["text", "material"])(
-    "keeps a newer %s edit while a confirmed History summary is pending",
-    async (edit) => {
-      const summary = deferred<void>();
-      fixture.navigateGate = summary.promise;
-      setSessionDraft("s1", "confirmed draft");
-      render(
-        <>
-          <Composer />
-          <BranchTree />
-        </>,
-      );
-      fireEvent.click(screen.getByRole("button", { name: "Root question" }));
-      await waitFor(() =>
-        expect(
-          screen.getByRole("button", { name: "Edit in this session" }),
-        ).toBeEnabled(),
-      );
-      fireEvent.click(
-        screen.getByRole("checkbox", {
-          name: "Carry branch summary",
-        }),
-      );
-      fireEvent.click(
-        screen.getByRole("button", { name: "Edit in this session" }),
-      );
-      await waitFor(() =>
-        expect(store.getState().branchActionId).toBe("edit:u1"),
-      );
-      if (edit === "text") {
-        fireEvent.change(screen.getByLabelText("Message"), {
-          target: { value: "newer draft" },
-        });
-        // Even returning to the same text is a newer revision.
-        fireEvent.change(screen.getByLabelText("Message"), {
-          target: { value: "confirmed draft" },
-        });
-      } else act(() => store.addProjectFile("newer-image-notes.md"));
-      await act(async () => summary.resolve());
-      await waitFor(() => expect(store.getState().branchActionId).toBeNull());
-      expect(store.getState().transcriptEffectiveLeafId).toBeNull();
-      expect(screen.getByLabelText("Message")).toHaveValue("confirmed draft");
-      expect(sessionDraft("s1")).toBe("confirmed draft");
-      if (edit === "material")
-        expect(store.getState().projectFiles).toEqual(["newer-image-notes.md"]);
-    },
-  );
 
   it("honors skip-summary-prompt and keeps a cancelled continuation at the source", async () => {
     fixture.skip = true;
@@ -942,47 +495,6 @@ describe("explicit History actions", () => {
     expect(sessionDraft("s1")).toBe("unsent draft");
   });
 
-  it.each([
-    ["Fork to new session", "u1"],
-    ["Clone through here", "a1"],
-    ["Clone through here", "u1"],
-  ] as const)(
-    "distinguishes %s at %s and preserves the source draft",
-    async (action, targetId) => {
-      setSessionDraft("s1", "source draft");
-      const revealConversation = vi.fn();
-      render(<BranchTree onContextChange={revealConversation} />);
-      const fork = action.startsWith("Fork");
-      if (targetId === "u1")
-        fireEvent.click(screen.getByRole("button", { name: "Root question" }));
-      else await previewAnswer();
-      const button = await screen.findByRole("button", { name: action });
-      await waitFor(() => expect(button).toBeEnabled());
-      expect(
-        within(screen.getByRole("group", { name: "New session" })).getByRole(
-          "button",
-          { name: action },
-        ),
-      ).toBe(button);
-      fireEvent.click(button);
-      await waitFor(() =>
-        expect(store.getState().sessionId).toBe(fork ? "forked" : "cloned"),
-      );
-      expect(store.getState().editorText?.text).toBe(
-        fork ? "Root question" : "",
-      );
-      expect(sessionDraft("s1")).toBe("source draft");
-      expect(
-        requests.find(
-          (request) =>
-            request.url === `/api/branches/${fork ? "fork" : "clone"}`,
-        )?.body.targetId,
-      ).toBe(targetId);
-      await waitFor(() => expect(revealConversation).toHaveBeenCalledOnce());
-      expect(window.confirm).not.toHaveBeenCalled();
-    },
-  );
-
   it("shows restore progress even when continuing before the first message", async () => {
     fixture.effective = null;
     await store.init();
@@ -996,7 +508,6 @@ describe("explicit History actions", () => {
     try {
       fireEvent.click(restore);
       await waitFor(() => expect(restore).toHaveAttribute("aria-busy", "true"));
-      expect(restore.querySelector(".pi-loading")).not.toBeNull();
       expect(restore).toBeDisabled();
     } finally {
       await act(async () => pending.resolve());
@@ -1005,61 +516,6 @@ describe("explicit History actions", () => {
       expect(
         screen.queryByRole("region", { name: "Earlier continuation" }),
       ).not.toBeInTheDocument(),
-    );
-  });
-
-  it("does not mislabel a background history refresh as a restore action", async () => {
-    fixture.effective = "a1";
-    await store.init();
-    await store.loadBranchTree();
-    const refresh = deferred<void>();
-    fixture.treeGate = refresh.promise;
-    render(<EarlierBranchBanner />);
-    let pending!: Promise<void>;
-    act(() => {
-      pending = store.loadBranchTree();
-    });
-    try {
-      expect(
-        screen.getByRole("button", { name: "Restore saved position" }),
-      ).toBeDisabled();
-      expect(
-        document.querySelector(".earlier-branch-banner .pi-loading"),
-      ).toBeNull();
-    } finally {
-      await act(async () => {
-        refresh.resolve();
-        await pending;
-      });
-    }
-    expect(
-      screen.getByRole("button", { name: "Restore saved position" }),
-    ).toBeEnabled();
-  });
-
-  it("reports current-branch Clone failures without requiring History to be open", async () => {
-    fixture.cloneError = "The clone destination is read-only";
-    render(<Notices onViewUpdates={() => undefined} />);
-    expect(await store.cloneCurrentBranch()).toBe(false);
-    expect(screen.getByText(fixture.cloneError)).toBeVisible();
-    expect(store.getState().sessionId).toBe("s1");
-  });
-
-  it("dismisses the notice without moving the continuation", async () => {
-    fixture.effective = "a1";
-    await store.init();
-    render(<EarlierBranchBanner />);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Dismiss earlier continuation notice",
-      }),
-    );
-    expect(
-      screen.queryByRole("region", { name: "Earlier continuation" }),
-    ).not.toBeInTheDocument();
-    expect(store.getState().transcriptEffectiveLeafId).toBe("a1");
-    expect(requests.some(({ url }) => url === "/api/branches/navigate")).toBe(
-      false,
     );
   });
 

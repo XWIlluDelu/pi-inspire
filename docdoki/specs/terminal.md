@@ -16,8 +16,7 @@ covers:
   - src/styles.css
   - src/styles/{terminal,responsive,settings-overlays,workbench}.css
   - tests/{server,shared,web}/**/*terminal*
-  - tests/browser/{context-tabs,project-terminals,operation-lifecycles,terminal-settings,terminal-theme}.spec.ts
-  - tests/browser/fixtures/terminal-theme.ts
+  - tests/browser/{context-tabs,project-terminals,terminal-settings,terminal-theme}.spec.ts
   - tests/deploy/systemd-control.test.mjs
   - tests/launcher.test.ts
   - vite.config.ts
@@ -174,8 +173,8 @@ lazy panels.
 Palette UI intent binds the originating project before opening a lazy pane. Close, Restart and
 other terminal-targeted actions resolve an active terminal in that scope immediately or end without
 an HTTP request; they never wait for a later project or terminal. Only New, Focus and Settings may
-wait for their matching project surface to mount. `terminal-actions.test.ts` and
-`terminal-pane.test.tsx` cover the pre-request cross-project boundary.
+wait for their matching project surface to mount. `terminal-pane.test.tsx` covers the
+pre-request cross-project boundary.
 
 ## Stream, input, and authentication
 

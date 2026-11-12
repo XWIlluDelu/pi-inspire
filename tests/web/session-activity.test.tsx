@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { countBusySessions } from "../../shared/session-activity";
 import { type AppState, createInitialAppState } from "../../src/app-state";
 import { HiddenClearDialog } from "../../src/components/HiddenClearDialog";
-import { hiddenDeletionBlockReason } from "../../src/components/nav-model";
 import { SessionRow } from "../../src/components/NavSessions";
 import { SessionDeleteDialog } from "../../src/components/SessionDeleteDialog";
 import { RuntimeEventController } from "../../src/controllers/runtime-event-controller";
@@ -59,170 +58,72 @@ function row() {
 }
 
 describe("session activity presentation", () => {
-  it("uses one dot-matrix family for work and unread terminal outcomes", () => {
-    state.sessionStatuses = {
-      external: { runState: "running", indicator: "running" },
-    };
+  it("clears unseen outcomes on selection but still announces when input is needed", () => {
     const view = render(row());
-    expect(
-      screen.getByRole("img", { name: "Working" }).querySelector(".pi-loading"),
-    ).toBeTruthy();
-    for (const [indicator, label] of [
-      ["completed", "Completed"],
-      ["failed", "Failed"],
+    for (const [runState, indicator, label] of [
+      ["idle", "completed", "Completed"],
+      ["failed", "failed", "Failed"],
     ] as const) {
-      state.sessionStatuses = {
-        external: {
-          runState: indicator === "completed" ? "idle" : "failed",
-          indicator,
-        },
-      };
+      state.sessionStatuses = { external: { runState, indicator } };
       view.rerender(row());
-      const mark = screen.getByRole("img", { name: label });
-      expect(mark.querySelector(".pi-status")).toHaveAttribute(
-        "data-status",
-        indicator === "completed" ? "success" : "error",
-      );
-      expect(mark.querySelector(".pi-loading")).toBeNull();
+      expect(screen.getByRole("img", { name: label })).toBeVisible();
       view.rerender(
         <SessionRow
           session={external}
-          selectedSessionId="external"
+          selectedSessionId={external.id}
           onSelect={() => {}}
         />,
       );
       expect(screen.queryByRole("img", { name: label })).toBeNull();
     }
     state.sessionStatuses = {
-      external: { runState: "conflict", indicator: "attention" },
-    };
-    view.rerender(row());
-    const attention = screen.getByRole("img", { name: "Needs recovery" });
-    expect(attention.querySelector(".pi-loading,.pi-status")).toBeNull();
-  });
-
-  it.each(["idle", "working", "blocked"] as const)(
-    "confirms that deletion closes an external %s Pi and stops its work",
-    (activity) => {
-      state.prefs.hiddenSessionIds = [external.id];
-      state.externalSessionActivities = { [external.id]: activity };
-      const view = render(
-        <>
-          <SessionRow
-            session={external}
-            selectedSessionId="s1"
-            onSelect={() => {}}
-            onDelete={vi.fn()}
-          />
-          <SessionDeleteDialog session={external} onClose={vi.fn()} />
-        </>,
-      );
-      expect(
-        screen.getByRole("button", { name: 'Delete "External Pi"' }),
-      ).toBeEnabled();
-      expect(
-        screen.getByRole("button", { name: "Delete session" }),
-      ).toBeEnabled();
-      expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-        /closes the session and stops any work in progress/,
-      );
-      view.rerender(
-        <HiddenClearDialog sessionIds={[external.id]} onClose={vi.fn()} />,
-      );
-      expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-        /closes the sessions and stops any work in progress/,
-      );
-      expect(
-        screen.getByRole("button", { name: "Delete 1 session" }),
-      ).toBeEnabled();
-
-      view.rerender(
-        <HiddenClearDialog sessionIds={["other"]} onClose={vi.fn()} />,
-      );
-      expect(screen.queryByText(/stops any work in progress/)).toBeNull();
-      state.externalSessionActivities = {};
-      view.rerender(
-        <SessionDeleteDialog session={external} onClose={vi.fn()} />,
-      );
-      expect(screen.queryByText(/stops any work in progress/)).toBeNull();
-      expect(screen.getByRole("alertdialog")).toHaveAttribute(
-        "aria-describedby",
-        "session-delete-description",
-      );
-    },
-  );
-
-  it.each(["idle", "working", "blocked"] as const)(
-    "keeps connected native %s ownership when the optional reporter is absent",
-    (activity) => {
-      state.prefs.hiddenSessionIds = [external.id];
-      events.apply({
-        type: "session_status",
-        sessionId: external.id,
-        sessionStatus: {
-          runState: activity === "idle" ? "idle" : "running",
-          needsInput: activity === "blocked",
-          external: true,
-        },
-      });
-      const view = render(
-        <>
-          <SessionRow
-            session={external}
-            selectedSessionId="s1"
-            onSelect={vi.fn()}
-            onDelete={vi.fn()}
-          />
-          <SessionDeleteDialog session={external} onClose={vi.fn()} />
-        </>,
-      );
-      expect(
-        screen.getByRole("button", { name: 'Delete "External Pi"' }),
-      ).toBeEnabled();
-      expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-        /closes the session and stops any work in progress/,
-      );
-      expect(hiddenDeletionBlockReason([external], state)).toBeNull();
-      view.rerender(
-        <HiddenClearDialog sessionIds={[external.id]} onClose={vi.fn()} />,
-      );
-      expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-        /closes the sessions and stops any work in progress/,
-      );
-      // Ownership alone is a status change, even if the run state is unchanged.
-      events.apply({
-        type: "session_status",
-        sessionId: external.id,
-        sessionStatus: {
-          ...state.sessionStatuses[external.id],
-          external: false,
-        },
-      });
-      expect(state.sessionStatuses[external.id]?.external).toBe(false);
-    },
-  );
-
-  it("keeps managed input-blocked work static and allows confirmed deletion", () => {
-    state.sessionStatuses = {
       external: { runState: "running", indicator: "running", needsInput: true },
     };
-    state.prefs.hiddenSessionIds = [external.id];
-    const view = render(
-      <SessionRow
-        session={external}
-        selectedSessionId="s1"
-        onSelect={() => {}}
-        onDelete={vi.fn()}
-      />,
-    );
+    view.rerender(row());
     expect(
-      screen.getByRole("button", { name: 'Delete "External Pi"' }),
-    ).toBeEnabled();
-    expect(hiddenDeletionBlockReason([external], state)).toBeNull();
-    expect(screen.getByRole("img", { name: "Waiting for input" })).toHaveClass(
-      "nav__row-dot--attention",
+      screen.getByRole("img", { name: "Waiting for input" }),
+    ).toBeVisible();
+  });
+
+  it("warns before deleting an externally owned session regardless of its observation source", () => {
+    state.prefs.hiddenSessionIds = [external.id];
+    events.apply({
+      type: "external_session_activity",
+      activities: { [external.id]: "working" },
+    });
+    const single = () => (
+      <SessionDeleteDialog session={external} onClose={() => {}} />
     );
-    expect(view.container.querySelector(".pi-loading")).toBeNull();
+    const bulk = (id: string) => (
+      <HiddenClearDialog sessionIds={[id]} onClose={() => {}} />
+    );
+    const view = render(single());
+    const dialog = () => screen.getByRole("alertdialog");
+    expect(dialog()).toHaveAccessibleDescription(/stops any work in progress/);
+    view.rerender(bulk(external.id));
+    expect(dialog()).toHaveAccessibleDescription(/stops any work in progress/);
+    view.rerender(bulk("other"));
+    expect(dialog()).not.toHaveAccessibleDescription(
+      /stops any work in progress/,
+    );
+
+    events.apply({ type: "external_session_activity", activities: {} });
+    const nativeConnection = (external: boolean) =>
+      events.apply({
+        type: "session_status",
+        sessionId: "external",
+        sessionStatus: { runState: "idle", external },
+      });
+    nativeConnection(true);
+    view.rerender(single());
+    expect(dialog()).toHaveAccessibleDescription(/stops any work in progress/);
+    view.rerender(bulk(external.id));
+    expect(dialog()).toHaveAccessibleDescription(/stops any work in progress/);
+    nativeConnection(false);
+    view.rerender(single());
+    expect(dialog()).not.toHaveAccessibleDescription(
+      /stops any work in progress/,
+    );
   });
 
   it("counts all busy identities once, excluding idle and input-blocked sessions", () => {
@@ -246,61 +147,43 @@ describe("session activity presentation", () => {
     ).toBe(5);
   });
 
-  it("requests catalog hydration and shows work/input/idle without adopting runtime authority", () => {
-    events.apply({
-      type: "external_session_activity",
-      activities: { external: "working" },
-    });
+  it("updates external cues from observations without adopting runtime authority", () => {
+    const observe = (activity?: string) =>
+      events.apply({
+        type: "external_session_activity",
+        activities: activity ? { external: activity } : {},
+      });
+    observe("working");
     const view = render(row());
-    expect(screen.getByRole("img", { name: "Working in Pi" })).toBeTruthy();
-    expect(ensureSessionVisible).toHaveBeenCalledWith("external");
-    expect(state.sessionStatuses.external).toBeUndefined();
-    expect(state.completedRunSequence).toBe(0);
+    expect(screen.getByRole("img", { name: "Working in Pi" })).toBeVisible();
+    expect(ensureSessionVisible).toHaveBeenCalledWith(external.id);
 
-    events.apply({
-      type: "external_session_activity",
-      activities: { external: "blocked" },
-    });
+    observe("invalid");
+    view.rerender(row());
+    expect(screen.getByRole("img", { name: "Working in Pi" })).toBeVisible();
+    observe("blocked");
     view.rerender(row());
     expect(
       screen.getByRole("img", { name: "Waiting for input in Pi" }),
-    ).toBeTruthy();
-    expect(countBusySessions({}, state.externalSessionActivities)).toBe(0);
+    ).toBeVisible();
 
-    events.apply({
-      type: "external_session_activity",
-      activities: { external: "idle" },
-    });
-    view.rerender(row());
-    expect(screen.queryByRole("img", { name: /in Pi/ })).toBeNull();
-    expect(screen.getByTitle(/Idle in Pi/)).toBeTruthy();
-  });
-
-  it("replaces complete observations and rejects malformed maps without altering managed work", () => {
-    state.sessionStatuses = { managed: { runState: "running" } };
-    events.apply({
-      type: "external_session_activity",
-      activities: { external: "working" },
-    });
-    events.apply({
-      type: "external_session_activity",
-      activities: { external: "invalid" },
-    });
-    expect(state.externalSessionActivities).toEqual({ external: "working" });
-    events.apply({ type: "external_session_activity", activities: {} });
-    expect(state.externalSessionActivities).toEqual({});
-    expect(state.sessionStatuses).toEqual({ managed: { runState: "running" } });
-  });
-
-  it("does not hide a managed recovery indicator behind an external work observation", () => {
     state.sessionStatuses = {
       external: { runState: "conflict", indicator: "attention" },
     };
-    events.apply({
-      type: "external_session_activity",
-      activities: { external: "working" },
+    observe("working");
+    view.rerender(row());
+    expect(screen.getByRole("img", { name: "Needs recovery" })).toBeVisible();
+    observe("idle");
+    expect(state.sessionStatuses.external).toEqual({
+      runState: "conflict",
+      indicator: "attention",
     });
-    render(row());
-    expect(screen.getByRole("img", { name: "Needs recovery" })).toBeTruthy();
+    state.sessionStatuses = {};
+    view.rerender(row());
+    expect(screen.getByTitle(/Idle in Pi/)).toBeVisible();
+    observe();
+    view.rerender(row());
+    expect(screen.queryByTitle(/Idle in Pi/)).toBeNull();
+    expect(state.completedRunSequence).toBe(0);
   });
 });

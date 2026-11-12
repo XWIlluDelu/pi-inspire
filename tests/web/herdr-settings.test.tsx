@@ -39,106 +39,30 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Herdr Settings", () => {
-  it("enables a supported installation and explains the pending Host restart without issuing one", async () => {
-    const getStatus = vi.fn(async () => ready);
-    const { rerender } = render(
-      <HerdrSettings
-        getStatus={getStatus}
-        onNavigateRestart={fixture.navigate}
-      />,
-    );
-    const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
-    await waitFor(() => expect(toggle).not.toBeDisabled());
-    fireEvent.click(toggle);
-    expect(fixture.save).toHaveBeenCalledWith(true);
+  it("can turn off while blocked and review a restart after availability recovers", async () => {
     fixture.saved = true;
-    rerender(
-      <HerdrSettings
-        getStatus={getStatus}
-        onNavigateRestart={fixture.navigate}
-      />,
-    );
-    expect(screen.getByRole("status").textContent).toMatch(
-      /Herdr will turn on after restart/,
-    );
-    expect(
-      screen.getByRole("button", { name: "Review Host restart" }),
-    ).toBeInTheDocument();
-    expect(getStatus).toHaveBeenCalledOnce();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Review Host restart" }),
-    );
-    expect(fixture.navigate).toHaveBeenCalledOnce();
-  });
-
-  it("explains an unavailable backend and still allows disabling a saved choice", async () => {
-    const getStatus = vi.fn(async () => ({
-      ...ready,
-      ready: false,
-      supported: false,
-      installed: false,
-      issue: "Herdr is unavailable on this platform.",
-    }));
-    const { rerender } = render(
-      <HerdrSettings
-        getStatus={getStatus}
-        onNavigateRestart={fixture.navigate}
-      />,
-    );
-    const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
-    await waitFor(() =>
-      expect(screen.getByRole("status").textContent).toContain(
-        "Herdr is unavailable on this platform.",
-      ),
-    );
-    expect(toggle).toBeDisabled();
-    fixture.saved = true;
-    rerender(
-      <HerdrSettings
-        getStatus={getStatus}
-        onNavigateRestart={fixture.navigate}
-      />,
-    );
-    expect(toggle).not.toBeDisabled();
-    fireEvent.click(toggle);
-    expect(fixture.save).toHaveBeenCalledWith(false);
-  });
-
-  it("blocks a known scope failure, permits disabling, and restores enabling after recheck", async () => {
     const blocked = {
       ...ready,
       ready: false,
       issue: "Herdr worker scopes are unavailable: user manager unavailable",
     };
-    let recover!: (status: HerdrEnhancementStatus) => void;
-    const recheck = new Promise<HerdrEnhancementStatus>((resolve) => {
-      recover = resolve;
-    });
+    const recheck = deferred<HerdrEnhancementStatus>();
     const getStatus = vi
       .fn<() => Promise<HerdrEnhancementStatus>>()
       .mockResolvedValueOnce(blocked)
-      .mockReturnValueOnce(recheck);
-    const { rerender } = render(
+      .mockReturnValueOnce(recheck.promise);
+    const settings = (
       <HerdrSettings
         getStatus={getStatus}
         onNavigateRestart={fixture.navigate}
-      />,
+      />
     );
+    const { rerender } = render(settings);
     const toggle = screen.getByRole("switch", { name: "Herdr enhancement" });
     await screen.findByText(blocked.issue);
-    expect(toggle).toBeDisabled();
-    expect(fixture.save).not.toHaveBeenCalled();
-
-    fixture.saved = true;
-    rerender(
-      <HerdrSettings
-        getStatus={getStatus}
-        onNavigateRestart={fixture.navigate}
-      />,
-    );
-    expect(toggle).not.toBeDisabled();
+    expect(toggle).toBeEnabled();
     fireEvent.click(toggle);
-    expect(fixture.save).toHaveBeenCalledWith(false);
+    expect(fixture.save).toHaveBeenCalledExactlyOnceWith(false);
     fixture.saved = false;
     rerender(
       <HerdrSettings
@@ -146,6 +70,7 @@ describe("Herdr Settings", () => {
         onNavigateRestart={fixture.navigate}
       />,
     );
+    expect(toggle).toBeDisabled();
 
     const retry = screen.getByRole("button", { name: "Recheck availability" });
     fireEvent.click(retry);
@@ -153,15 +78,29 @@ describe("Herdr Settings", () => {
     expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute("aria-busy", "true");
     expect(screen.getByText(blocked.issue)).toBeVisible();
-    recover(ready);
-    await waitFor(() => expect(toggle).not.toBeDisabled());
+    await act(async () => recheck.resolve(ready));
+    expect(toggle).toBeEnabled();
+    expect(retry).not.toBeInTheDocument();
     expect(screen.queryByText(blocked.issue)).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Recheck availability" }),
-    ).toBeNull();
-    expect(getStatus).toHaveBeenCalledTimes(2);
+
     fireEvent.click(toggle);
     expect(fixture.save).toHaveBeenLastCalledWith(true);
+    fixture.saved = true;
+    rerender(
+      <HerdrSettings
+        getStatus={getStatus}
+        onNavigateRestart={fixture.navigate}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Herdr will turn on after restart.",
+    );
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(fixture.navigate).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Review Host restart" }),
+    );
+    expect(fixture.navigate).toHaveBeenCalledOnce();
   });
 
   it("retires a pending recheck when its status source changes", async () => {

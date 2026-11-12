@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export const browserTestToken = "inspire-browser-test-token";
 
@@ -74,6 +74,52 @@ export async function pairAndOpen(page: Page) {
   await expect(
     page.getByRole("textbox", { name: "Message", exact: true }),
   ).toBeVisible();
+}
+
+async function openContextPane(page: Page) {
+  const toggle = page.getByRole("button", {
+    name: "Toggle resources panel",
+    exact: true,
+  });
+  if ((await toggle.getAttribute("aria-expanded")) === "false")
+    await toggle.click();
+  const pane = page.locator(".ctx");
+  await expect(pane).toBeVisible();
+  return pane;
+}
+
+export async function openHistoryPane(page: Page) {
+  const pane = await openContextPane(page);
+  await pane.getByRole("tab", { name: "History", exact: true }).click();
+  const history = pane.getByRole("region", { name: "Conversation history" });
+  await expect(history).toBeVisible();
+  return history;
+}
+
+export async function openResourceFixture(page: Page) {
+  await pairedPage(page);
+  await openFixtureSession(
+    page,
+    /Resource virtualization and sandbox fixture/,
+    "fixture-resources",
+  );
+  return openContextPane(page);
+}
+
+export async function openWorkspaceFile(pane: Locator, workspacePath: string) {
+  const search = pane.getByRole("searchbox", {
+    name: "Search workspace files",
+  });
+  if (!(await search.isVisible()))
+    await pane.getByRole("tab", { name: "Files", exact: true }).click();
+  await search.fill(workspacePath);
+  await pane
+    .locator(`[data-workspace-path=${JSON.stringify(workspacePath)}]`)
+    .click();
+}
+
+export async function openPreviewFixture(pane: Locator, name: string) {
+  await openWorkspaceFile(pane, `tests/browser/fixtures/file-previews/${name}`);
 }
 
 export async function openCommandPalette(page: Page) {

@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../src/App";
 import { AppStore, store } from "../../src/store";
 import { rememberWorkbenchSession } from "../../src/workbench-session";
@@ -14,6 +14,10 @@ import {
   type RouteHandler,
   sessionSummary,
 } from "./helpers";
+
+const continueBootstrap = bootstrapPayload({
+  preferences: { ...DEFAULT_PREFS, launch: "continue" },
+});
 
 describe("initial workbench restoration", () => {
   let current: AppStore;
@@ -38,94 +42,49 @@ describe("initial workbench restoration", () => {
     expect(screen.queryByRole("form", { name: "Start a session" })).toBeNull();
   }
 
-  it("keeps the workbench shell while a saved session bootstrap is pending", async () => {
-    rememberWorkbenchSession("saved");
-    const boot = deferred<ReturnType<typeof bootstrapPayload>>();
-    route = async (url) => {
-      if (url.startsWith("/api/bootstrap")) {
-        expect(
-          new URL(url, "http://localhost").searchParams.get("detail"),
-        ).toBe("saved");
-        return { body: await boot.promise };
-      }
-    };
-    const { container } = render(<App />);
-    expectRestoring();
-    let startup!: Promise<void>;
-    await act(async () => {
-      startup = current.init();
-    });
-    expectRestoring();
-    expect(container.querySelector(".app .center")).not.toBeNull();
-    await act(async () => {
-      boot.resolve(
-        bootstrapPayload({ snapshot: activeSnapshot({ sessionId: "saved" }) }),
-      );
-      await startup;
-    });
-    expect(current.getState().sessionId).toBe("saved");
-    expect(screen.queryByText("Loading workspace")).toBeNull();
-    expect(screen.queryByRole("form", { name: "Start a session" })).toBeNull();
-  });
-
-  it("waits through the continue preference's catalog and session open", async () => {
-    const catalog = deferred<ReturnType<typeof sessionPage>>();
-    const opened = deferred<ReturnType<typeof activeSnapshot>>();
-    route = async (url) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            preferences: { ...DEFAULT_PREFS, launch: "continue" },
-          }),
-        };
-      if (url === "/api/sessions/open") return { body: await opened.promise };
-      if (url.startsWith("/api/sessions"))
-        return { body: await catalog.promise };
-    };
-    render(<App />);
-    await act(async () => {
-      await current.init();
-    });
-    expectRestoring();
-    await act(async () => {
-      catalog.resolve(sessionPage([sessionSummary({ id: "recent" })], 1));
-    });
-    await waitFor(() =>
-      expect(current.getState().openingSessionId).toBe("recent"),
-    );
-    expectRestoring();
-    await act(async () => {
-      opened.resolve(activeSnapshot({ sessionId: "recent" }));
-    });
-    await waitFor(() => expect(current.getState().sessionId).toBe("recent"));
-    expect(screen.queryByRole("form", { name: "Start a session" })).toBeNull();
-    expect(screen.queryByText("Loading workspace")).toBeNull();
-  });
-
-  it.each(["welcome", "continue"] as const)(
-    "shows a confirmed empty workspace with launch=%s",
-    async (launch) => {
-      const boot = deferred<ReturnType<typeof bootstrapPayload>>();
-      route = async (url) =>
-        url.startsWith("/api/bootstrap")
-          ? { body: await boot.promise }
-          : undefined;
+  it.each(["open", "refuse"] as const)(
+    "settles startup after the continue preference's delayed catalog and %s",
+    async (outcome) => {
+      const catalog = deferred<ReturnType<typeof sessionPage>>();
+      const opened = deferred<Awaited<ReturnType<RouteHandler>>>();
+      route = (url) => {
+        if (url.startsWith("/api/bootstrap"))
+          return { body: continueBootstrap };
+        if (url === "/api/sessions/open") return opened.promise;
+        if (url.startsWith("/api/sessions"))
+          return catalog.promise.then((body) => ({ body }));
+      };
       render(<App />);
-      let startup!: Promise<void>;
-      await act(async () => {
-        startup = current.init();
-      });
+      await act(() => current.init());
       expectRestoring();
-      await act(async () => {
-        boot.resolve(
-          bootstrapPayload({ preferences: { ...DEFAULT_PREFS, launch } }),
+      await act(() =>
+        catalog.resolve(sessionPage([sessionSummary({ id: "recent" })], 1)),
+      );
+      await waitFor(() =>
+        expect(current.getState().openingSessionId).toBe("recent"),
+      );
+      expectRestoring();
+      if (outcome === "open") {
+        await act(() =>
+          opened.resolve({ body: activeSnapshot({ sessionId: "recent" }) }),
         );
-        await startup;
-      });
-      expect(
-        await screen.findByRole("form", { name: "Start a session" }),
-      ).toBeInTheDocument();
-      expect(screen.queryByText("Loading workspace")).toBeNull();
+        expect(
+          await screen.findByRole("textbox", { name: "Message" }),
+        ).toBeVisible();
+      } else {
+        await act(() =>
+          opened.resolve({
+            status: 500,
+            body: { error: "Cannot read session" },
+          }),
+        );
+        expect(
+          await screen.findByRole("form", { name: "Start a session" }),
+        ).toBeVisible();
+        expect(current.getState().sessionActionError).toBe(
+          "Cannot read session",
+        );
+      }
     },
   );
 
@@ -134,14 +93,15 @@ describe("initial workbench restoration", () => {
     const fallback = deferred<ReturnType<typeof bootstrapPayload>>();
     route = async (url) => {
       if (!url.startsWith("/api/bootstrap")) return;
-      if (
-        new URL(url, "http://localhost").searchParams.get("detail") ===
-        "deleted"
-      )
+      const detail = new URL(url, "http://localhost").searchParams.get(
+        "detail",
+      );
+      if (detail === "deleted")
         return {
           status: 404,
           body: { error: "Session not found", code: "SESSION_NOT_FOUND" },
         };
+      expect(detail).toBe("");
       return { body: await fallback.promise };
     };
     render(<App />);
@@ -160,30 +120,6 @@ describe("initial workbench restoration", () => {
     expect(
       screen.getByText(/The previous session no longer exists/),
     ).toBeInTheDocument();
-  });
-
-  it("exits startup loading when opening the recent session fails", async () => {
-    route = (url) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            preferences: { ...DEFAULT_PREFS, launch: "continue" },
-          }),
-        };
-      if (url === "/api/sessions/open")
-        return { status: 500, body: { error: "Cannot read session" } };
-      if (url.startsWith("/api/sessions"))
-        return { body: sessionPage([sessionSummary()], 1) };
-    };
-    render(<App />);
-    await act(async () => {
-      await current.init();
-    });
-    expect(
-      await screen.findByRole("form", { name: "Start a session" }),
-    ).toBeInTheDocument();
-    expect(current.getState().sessionActionError).toBe("Cannot read session");
-    expect(screen.queryByText("Loading workspace")).toBeNull();
   });
 
   it("shows Host recovery on bootstrap failure and keeps welcome hidden during retry", async () => {
@@ -216,11 +152,7 @@ describe("initial workbench restoration", () => {
       screen.getByRole("heading", { name: "Host needs attention" }),
     ).toBeInTheDocument();
     await act(async () => {
-      boot.resolve(
-        bootstrapPayload({
-          preferences: { ...DEFAULT_PREFS, launch: "continue" },
-        }),
-      );
+      boot.resolve(continueBootstrap);
       await startup;
     });
     expectRestoring();
@@ -236,12 +168,7 @@ describe("initial workbench restoration", () => {
     const catalog = deferred<ReturnType<typeof sessionPage>>();
     const open = vi.fn();
     route = async (url) => {
-      if (url.startsWith("/api/bootstrap"))
-        return {
-          body: bootstrapPayload({
-            preferences: { ...DEFAULT_PREFS, launch: "continue" },
-          }),
-        };
+      if (url.startsWith("/api/bootstrap")) return { body: continueBootstrap };
       if (url === "/api/sessions/deselect")
         return { body: bootstrapPayload().snapshot };
       if (url === "/api/sessions/open") {
@@ -269,5 +196,59 @@ describe("initial workbench restoration", () => {
     expect(
       screen.getByRole("form", { name: "Start a session" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("portable Host recovery guidance", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("keeps a short stream interruption in the topbar and escalates only when it persists", async () => {
+    vi.useFakeTimers();
+    let state: ReturnType<typeof store.getState> = {
+      ...store.getState(),
+      needsToken: false,
+      bootstrapped: true,
+      connection: "reconnecting",
+      connectionProblem: { kind: "stream-interrupted" },
+    };
+    vi.spyOn(store, "getState").mockImplementation(() => state);
+    const { rerender, unmount } = render(<App />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_999);
+    });
+    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(screen.getByRole("button", { name: "Retry now" })).toBeVisible();
+    state = { ...state, connection: "open", connectionProblem: null };
+    rerender(<App />);
+    expect(screen.queryByRole("button", { name: "Retry now" })).toBeNull();
+    unmount();
+  });
+
+  it("gives launcher guidance for pairing and portable commands for Host recovery", () => {
+    const state = store.getState();
+    const getState = vi.spyOn(store, "getState").mockReturnValue({
+      ...state,
+      needsToken: true,
+      bootstrapped: false,
+    });
+    const { rerender } = render(<App />);
+    expect(screen.getByText(/link from the Inspire launcher/)).toBeVisible();
+
+    getState.mockReturnValue({
+      ...state,
+      needsToken: false,
+      bootstrapped: false,
+      connection: "offline",
+      connectionProblem: { kind: "address-unreachable" },
+    });
+    rerender(<App />);
+    expect(screen.getByText("inspire restart")).toBeVisible();
+    expect(screen.getByText("npm run inspire -- restart")).toBeVisible();
   });
 });

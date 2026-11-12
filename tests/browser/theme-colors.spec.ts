@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { PALETTE_PREFERENCES } from "../../shared/contracts";
+import { VISUAL_PREFERENCES_STORAGE_KEY } from "../../src/visual-preferences";
 import {
   renderedColorSamples,
   renderedColors,
@@ -93,35 +94,105 @@ const sharedPairs: Pair[] = [
 
 test.use({ contextOptions: { reducedMotion: "reduce" } });
 
+// Preserve the documented palette identities alongside the actual contrast checks.
+const paletteIdentity = {
+  wisteria: [
+    ["#6E5494", "#FAF9FC", "#684E8E", "#4663AC"],
+    ["#B39DDB", "#16151D", "#B39DDB", "#7AA2F7"],
+  ],
+  hydrangea: [
+    ["#1F7A68", "#FBFBF9", "#1E7564", "#6554B8"],
+    ["#5EC4AE", "#151A17", "#5EC4AE", "#A393EB"],
+  ],
+  lycoris: [
+    ["#BC5042", "#FCFBF9", "#B5493B", "#4A6696"],
+    ["#EE8474", "#1A1515", "#EE8474", "#88A4E0"],
+  ],
+  chimonanthus: [
+    ["#B36010", "#FCFBF8", "#A6570B", "#6652BA"],
+    ["#EAA03E", "#181613", "#EAA03E", "#A490F0"],
+  ],
+  "classic-jade": [
+    ["#007D78", "#F6F8F7", "#E9EEEB"],
+    ["#52D2C9", "#171C19", "#232B26"],
+  ],
+  "classic-amber": [
+    ["#D95A00", "#F8F7F5", "#EEECE8"],
+    ["#FF781F", "#171A1E", "#23272C"],
+  ],
+  mono: null,
+} as const;
+
 for (const palette of PALETTE_PREFERENCES) {
-  for (const theme of ["light", "dark"]) {
-    test(`${palette} ${theme}: shipped palette roles retain text and control contrast`, async ({
-      page,
-    }) => {
-      await page.goto("/");
-      await expect(page.getByLabel("Access token")).toBeVisible();
-      const activityMinimum = [
-        "wisteria",
-        "hydrangea",
-        "lycoris",
-        "chimonanthus",
-      ].includes(palette)
-        ? 4.5
-        : 3;
-      const colorPairs = [
-        ...sharedPairs,
-        ...pairs(
-          ["activity-tool", "activity-think"],
-          ["bg-stage"],
-          activityMinimum,
-        ),
-      ];
-      await page.evaluate(
-        ({ palette, theme, colorPairs }) => {
-          const root = document.documentElement;
-          Object.assign(root.dataset, { palette, theme });
-          const roles = getComputedStyle(root);
-          const probes = document.createDocumentFragment();
+  test(`${palette} paints the saved theme and retains contrast in both luminosities`, async ({
+    page,
+  }) => {
+    // Let the real prepaint script and stylesheet run before React.
+    await page.route("**/*", (route) => {
+      const request = route.request();
+      return request.resourceType() === "script" &&
+        new URL(request.url()).pathname !== "/theme-init.js"
+        ? route.abort()
+        : route.continue();
+    });
+    await page.addInitScript(() => {
+      const match = window.matchMedia.bind(window);
+      window.matchMedia = (query) => {
+        const result = match(query);
+        if (query === "(display-mode: window-controls-overlay)")
+          Object.defineProperty(result, "matches", { value: true });
+        return result;
+      };
+    });
+    await page.goto("/");
+
+    for (const theme of ["light", "dark"] as const)
+      await test.step(theme, async () => {
+        await page.evaluate(
+          ({ key, palette, theme }) =>
+            localStorage.setItem(key, JSON.stringify({ palette, theme })),
+          { key: VISUAL_PREFERENCES_STORAGE_KEY, palette, theme },
+        );
+        await page.emulateMedia({
+          colorScheme: theme === "light" ? "dark" : "light",
+        });
+        await page.reload();
+        const html = page.locator("html");
+        await expect(html).toHaveAttribute("data-palette", palette);
+        await expect(html).toHaveAttribute("data-theme", theme);
+        const rail = await resolvedColor(html, "bg-rail");
+        const firstPaint = await page
+          .locator('meta[name="theme-color"]')
+          .evaluate((meta) => {
+            const probe = document.createElement("span");
+            probe.style.color = meta.getAttribute("content") ?? "";
+            document.body.append(probe);
+            const color = getComputedStyle(probe).color;
+            probe.remove();
+            return color;
+          });
+        expect(firstPaint).toBe(rail);
+        const activityMinimum = [
+          "wisteria",
+          "hydrangea",
+          "lycoris",
+          "chimonanthus",
+        ].includes(palette)
+          ? 4.5
+          : 3;
+        const colorPairs = [
+          ...sharedPairs,
+          ...pairs(
+            ["activity-tool", "activity-think"],
+            ["bg-stage"],
+            activityMinimum,
+          ),
+        ];
+        const identity = await page.evaluate((colorPairs) => {
+          const roles = getComputedStyle(document.documentElement);
+          document.querySelector("[data-color-probes]")?.remove();
+          const probes = document.createElement("div");
+          probes.dataset.colorProbes = "";
           for (const { ink, backgrounds } of colorPairs) {
             for (const role of [
               ink,
@@ -133,7 +204,7 @@ for (const palette of PALETTE_PREFERENCES) {
             ])
               if (!roles.getPropertyValue(`--${role}`).trim())
                 throw new Error(`Missing palette role: --${role}`);
-            let container: DocumentFragment | HTMLElement = probes;
+            let container = probes;
             for (const background of backgrounds) {
               const surface = document.createElement("div");
               surface.style.backgroundColor = background;
@@ -146,26 +217,67 @@ for (const palette of PALETTE_PREFERENCES) {
             container.append(sample);
           }
           document.body.append(probes);
-        },
-        { palette, theme, colorPairs },
-      );
-      const samples = await renderedColorSamples(
-        page.getByTestId("color-pair"),
-      );
-      expect(samples).toHaveLength(colorPairs.length);
-      for (const [
-        index,
-        { ink, backgrounds, minimum },
-      ] of colorPairs.entries()) {
-        expect
-          .soft(
-            samples[index]!.contrast,
-            `${ink} on ${backgrounds.join(" + ")}`,
-          )
-          .toBeGreaterThanOrEqual(minimum);
-      }
-    });
-  }
+          return Object.fromEntries(
+            [
+              "accent",
+              "accent-focus",
+              "accent-soft",
+              "accent-tint",
+              "activity-tool",
+              "activity-think",
+              "activity-error",
+              "activity-event",
+              "think",
+              "bg-stage",
+              "bg-prompt",
+              "bg-surface",
+              "nav-active-bg",
+              "error",
+            ].map((role) => [
+              role,
+              roles.getPropertyValue(`--${role}`).trim().toUpperCase(),
+            ]),
+          );
+        }, colorPairs);
+        const samples = await renderedColorSamples(
+          page.getByTestId("color-pair"),
+        );
+        expect(samples).toHaveLength(colorPairs.length);
+        for (const [
+          index,
+          { ink, backgrounds, minimum },
+        ] of colorPairs.entries()) {
+          expect
+            .soft(
+              samples[index]!.contrast,
+              `${ink} on ${backgrounds.join(" + ")}`,
+            )
+            .toBeGreaterThanOrEqual(minimum);
+        }
+        const colors = paletteIdentity[palette]?.[theme === "light" ? 0 : 1];
+        if (colors) {
+          const [accent, stage] = colors;
+          expect(identity).toMatchObject({ accent, "bg-stage": stage });
+          if (colors.length === 3)
+            expect(identity["bg-prompt"]).toBe(colors[2]);
+          if (colors.length === 4) {
+            expect(identity).toMatchObject({
+              "activity-tool": colors[2],
+              "activity-think": colors[3],
+              "accent-focus": accent,
+              "accent-soft": "TRANSPARENT",
+              "nav-active-bg": identity["accent-tint"],
+            });
+            expect(identity["bg-prompt"]).not.toBe(identity["bg-surface"]);
+            expect(identity.error).not.toBe(accent);
+          }
+        }
+        expect(identity["activity-tool"]).not.toBe(identity["activity-error"]);
+        expect(identity["activity-think"]).not.toBe(identity["activity-tool"]);
+        expect(identity["activity-event"]).toBe(identity["activity-tool"]);
+        expect(identity.think).toBe(identity["activity-think"]);
+      });
+  });
 }
 
 test("context selection and keyboard focus keep distinct color roles", async ({

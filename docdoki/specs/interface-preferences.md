@@ -7,8 +7,8 @@ covers:
   - src/{visual-preferences,session-actions,update-availability,use-modal-focus}.ts
   - src/components/{Settings,SettingsControls,SettingsDialog,SettingsSection,SessionActionsSettings,SystemVersionsCard}.tsx
   - src/styles/{settings-overlays,responsive}.css
-  - tests/server/{preferences,update-checker,pi-update-checker,update-coordinator}.test.ts
-  - tests/web/{preferences,session-actions,settings-navigation,settings-loading,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
+  - tests/server/{preferences,update-checker,update-coordinator}.test.ts
+  - tests/web/{preferences,session-actions,settings-navigation,system-versions,notices,update-controller,attention,modal-focus}.test.ts*
   - tests/browser/{settings-layout,loading-states}.spec.ts
 ---
 

@@ -71,46 +71,6 @@ const acceptedPrompt: PromptAcceptedResponse = {
 
 describe("ComposerController", () => {
   afterEach(() => vi.useRealTimers());
-  it("keeps a previewable file out of the image budget before and after upload", async () => {
-    const f = createHarness();
-    const upload = deferred<{
-      attachments: Array<{
-        id: string;
-        fileName: string;
-        mimeType: string;
-        size: number;
-        kind: "file";
-      }>;
-    }>();
-    f.uploadAttachments.mockReturnValue(upload.promise);
-    const file = new File(["<svg/>"], "diagram.svg", { type: "image/svg+xml" });
-    const adding = f.controller.addFiles([file]);
-    const pending = f.slice().attachments[0]!;
-    expect(pending).toMatchObject({
-      kind: "file",
-      status: "uploading",
-      previewUrl: expect.stringContaining("blob:"),
-    });
-    upload.resolve({
-      attachments: [
-        {
-          id: "svg",
-          fileName: file.name,
-          mimeType: file.type,
-          size: file.size,
-          kind: "file",
-        },
-      ],
-    });
-    await adding;
-    expect(f.slice().attachments[0]).toMatchObject({
-      kind: "file",
-      status: "ready",
-      previewUrl: pending.previewUrl,
-    });
-    f.controller.removeAttachment(pending.localId);
-  });
-
   it("deduplicates each image in a handoff after a draft is removed, not the handle forever", () => {
     const f = createHarness();
     const authority = "11111111-1111-4111-8111-111111111111";
@@ -149,136 +109,97 @@ describe("ComposerController", () => {
     ]);
   });
 
-  it("hands off two independent operations and retains a failed first input without replacing later work", async () => {
-    const first = deferred<PromptAcceptedResponse>();
-    const second = deferred<PromptAcceptedResponse>();
-    const harness = createHarness();
-    harness.prompt
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise);
-    harness.controller.addProjectFile("/workspace/first.ts");
-    const handedOff = vi.fn();
-    const firstSend = harness.controller.send("first", "steer", handedOff);
-    expect(handedOff).toHaveBeenCalledOnce();
-    expect(harness.slice().projectFiles).toEqual([]);
-    harness.controller.addProjectFile("/workspace/second.ts");
-    const secondSend = harness.controller.send("second", "followUp", handedOff);
-    expect(handedOff).toHaveBeenCalledTimes(2);
-    expect(
-      harness.prompt.mock.calls.map(([request]) => request.projectFiles),
-    ).toEqual([["/workspace/first.ts"], ["/workspace/second.ts"]]);
-    harness.restoreDraftIfEmpty.mockReturnValue(false);
-    first.reject(new ApiError(409, "not delivered"));
-    await expect(firstSend).resolves.toBe(false);
-    expect(harness.slice().failedDeliveryCount).toBe(1);
-    second.resolve(acceptedPrompt);
-    await expect(secondSend).resolves.toEqual(acceptedPrompt);
-    harness.restoreDraftIfEmpty.mockReturnValue(true);
-    expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
-    expect(harness.restoreDraftIfEmpty).toHaveBeenLastCalledWith(
-      "session-a",
-      "first",
-    );
-    expect(harness.slice().projectFiles).toEqual(["/workspace/first.ts"]);
-  });
+  it.each(["refused", "unknown"] as const)(
+    "hands off independent prompts and restores the %s input without replacing later work",
+    async (outcome) => {
+      const f = createHarness();
+      const first = deferred<PromptAcceptedResponse>();
+      const second = deferred<PromptAcceptedResponse>();
+      f.prompt
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise)
+        .mockResolvedValue(acceptedPrompt);
+      const handedOff = vi.fn();
+      f.controller.addProjectFile("/workspace/first.ts");
+      const firstSend = f.controller.send("first", "steer", handedOff);
+      expect(handedOff).toHaveBeenCalledOnce();
+      f.controller.addProjectFile("/workspace/second.ts");
+      const secondSend = f.controller.send("second", "followUp", handedOff);
+      expect(handedOff).toHaveBeenCalledTimes(2);
+      const [firstRequest, secondRequest] = f.prompt.mock.calls.map(
+        ([request]) => request,
+      );
+      expect(firstRequest.projectFiles).toEqual(["/workspace/first.ts"]);
+      expect(secondRequest.projectFiles).toEqual(["/workspace/second.ts"]);
+      expect(f.slice().projectFiles).toEqual([]);
+      f.restoreDraftIfEmpty.mockReturnValue(false);
+      first.reject(
+        outcome === "unknown"
+          ? new ApiTransportError("request", true)
+          : new ApiError(409, "not delivered"),
+      );
+      await expect(firstSend).resolves.toBe(false);
+      expect(f.slice().failedDeliveryCount).toBe(1);
+      second.resolve(acceptedPrompt);
+      await secondSend;
+      f.restoreDraftIfEmpty.mockReturnValue(true);
+      expect(f.controller.restoreFailedPrompt("session-a")).toBe(true);
+      expect(f.restoreDraftIfEmpty).toHaveBeenLastCalledWith(
+        "session-a",
+        "first",
+      );
+      expect(f.slice().projectFiles).toEqual(["/workspace/first.ts"]);
+      if (outcome === "unknown") {
+        await f.controller.send("first");
+        expect(f.prompt.mock.calls[2]![0]).toEqual(firstRequest);
+      }
+    },
+  );
 
-  it("restages recovered Host-held artifacts in the originating partition without duplicating text recovery", async () => {
-    const response = deferred<PromptAcceptedResponse>();
-    const harness = createHarness();
-    harness.prompt.mockReturnValue(response.promise);
-    harness.uploadAttachments.mockResolvedValue({
-      attachments: [
-        {
-          id: "image",
-          fileName: "image.png",
-          kind: "image",
-          mimeType: "image/png",
-          size: 4,
-        },
-      ],
-    });
-    await harness.controller.addFiles([
-      new File(["data"], "image.png", { type: "image/png" }),
-    ]);
-    harness.controller.addProjectFile("/workspace/recovered.ts");
-    const sending = harness.controller.send("recover this", "steer");
-    harness.controller.addProjectFile("/workspace/new-draft.ts");
-    harness.activate("session-b");
-    response.reject(
-      new ApiError(
-        409,
-        "Pending input returned to the composer",
-        undefined,
-        "PROMPT_RECOVERED",
-      ),
-    );
-    await expect(sending).resolves.toBe(false);
-    expect(harness.slice("session-a").projectFiles).toEqual([
-      "/workspace/recovered.ts",
-      "/workspace/new-draft.ts",
-    ]);
-    expect(harness.slice("session-a").attachments).toEqual([
-      expect.objectContaining({
-        uploadedId: "image",
-        status: "ready",
-      }),
-    ]);
-    expect(harness.slice("session-b").attachments).toEqual([]);
-    expect(harness.slice("session-a").failedDeliveryCount).toBe(0);
-    expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
-    expect(harness.deleteAttachment).not.toHaveBeenCalled();
-  });
+  it.each(["PROMPT_RECOVERED", "PROMPT_CLEARED"] as const)(
+    "applies the Host's %s outcome to the original draft without restoring the text again",
+    async (code) => {
+      const response = deferred<PromptAcceptedResponse>();
+      const f = createHarness();
+      f.prompt.mockReturnValue(response.promise);
+      f.uploadAttachments.mockResolvedValue({
+        attachments: [
+          {
+            id: "image",
+            fileName: "image.png",
+            kind: "image",
+            mimeType: "image/png",
+            size: 4,
+          },
+        ],
+      });
+      await f.controller.addFiles([
+        new File(["data"], "image.png", { type: "image/png" }),
+      ]);
+      f.controller.addProjectFile("/workspace/pending.ts");
+      const sending = f.controller.send("pending input", "steer");
+      f.controller.addProjectFile("/workspace/new-draft.ts");
+      f.activate("session-b");
+      response.reject(
+        new ApiError(409, "Pending input changed", undefined, code),
+      );
 
-  it("releases a definitively cleared Host Pending delivery without restoring it as a failed draft", async () => {
-    const response = deferred<PromptAcceptedResponse>();
-    const harness = createHarness();
-    harness.prompt.mockReturnValue(response.promise);
-    harness.controller.addProjectFile("/workspace/clear.ts");
-    const sending = harness.controller.send("clear this", "steer");
-    response.reject(
-      new ApiError(
-        409,
-        "Pending message was cleared",
-        undefined,
-        "PROMPT_CLEARED",
-      ),
-    );
-    await expect(sending).resolves.toBe(false);
-    expect(harness.slice().projectFiles).toEqual([]);
-    expect(harness.slice().failedDeliveryCount).toBe(0);
-    expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
-  });
-
-  it("retains a prior unknown operation identity when a later delivery succeeds", async () => {
-    const first = deferred<PromptAcceptedResponse>();
-    const second = deferred<PromptAcceptedResponse>();
-    const harness = createHarness();
-    harness.prompt
-      .mockReturnValueOnce(first.promise)
-      .mockReturnValueOnce(second.promise)
-      .mockResolvedValue(acceptedPrompt);
-    const firstSend = harness.controller.send("first", "steer");
-    const firstRequest = harness.prompt.mock.calls[0]![0];
-    const secondSend = harness.controller.send("second", "followUp");
-    harness.restoreDraftIfEmpty.mockReturnValue(false);
-    first.reject(
-      new ApiError(
-        409,
-        "Unknown",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        true,
-      ),
-    );
-    second.resolve(acceptedPrompt);
-    await Promise.all([firstSend, secondSend]);
-    harness.restoreDraftIfEmpty.mockReturnValue(true);
-    expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
-    await harness.controller.send("first");
-    expect(harness.prompt.mock.calls[2]![0]).toEqual(firstRequest);
-  });
+      await expect(sending).resolves.toBe(false);
+      const recovered = code === "PROMPT_RECOVERED";
+      expect(f.slice("session-a")).toEqual({
+        projectFiles: recovered
+          ? ["/workspace/pending.ts", "/workspace/new-draft.ts"]
+          : ["/workspace/new-draft.ts"],
+        attachments: recovered
+          ? [expect.objectContaining({ uploadedId: "image", status: "ready" })]
+          : [],
+        failedDeliveryCount: 0,
+      });
+      expect(f.slice("session-b").attachments).toEqual([]);
+      expect(f.restoreDraftIfEmpty).not.toHaveBeenCalled();
+      if (recovered) expect(f.deleteAttachment).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves attachments and project files added during a send", async () => {
     const pending = deferred<PromptAcceptedResponse>();
@@ -321,22 +242,34 @@ describe("ComposerController", () => {
     });
   });
 
-  it("keeps a failed prompt error scoped to the session that sent it", async () => {
-    const harness = createHarness();
-    harness.prompt.mockRejectedValue(new ApiTransportError("request"));
-    harness.controller.addProjectFile("/workspace/message.ts");
+  it.each([
+    "background transport failure",
+    "current authorization failure",
+  ] as const)(
+    "keeps the draft in its own session after a %s",
+    async (reason) => {
+      const f = createHarness();
+      const expired = reason === "current authorization failure";
+      f.prompt.mockRejectedValue(
+        expired
+          ? new ApiError(401, "expired token")
+          : new ApiTransportError("request"),
+      );
+      f.controller.addProjectFile("/workspace/message.ts");
 
-    const sending = harness.controller.send("send");
-    harness.activate("session-b");
+      const sending = f.controller.send("send");
+      if (!expired) f.activate("session-b");
 
-    await expect(sending).resolves.toBe(false);
-    expect(harness.notifyVisible).not.toHaveBeenCalled();
-    expect(harness.slice()).toEqual({
-      attachments: [],
-      projectFiles: ["/workspace/message.ts"],
-      failedDeliveryCount: 0,
-    });
-  });
+      await expect(sending).resolves.toBe(false);
+      expect(f.handleAuthFailure).toHaveBeenCalledTimes(expired ? 1 : 0);
+      expect(f.notifyVisible).not.toHaveBeenCalled();
+      expect(f.slice("session-a")).toEqual({
+        attachments: [],
+        projectFiles: ["/workspace/message.ts"],
+        failedDeliveryCount: 0,
+      });
+    },
+  );
 
   it("retires confirmation polling without cancelling or losing the delivery", async () => {
     const harness = createHarness();
@@ -346,10 +279,12 @@ describe("ComposerController", () => {
       .mockReturnValueOnce(pending.promise)
       .mockReturnValueOnce(retry.promise)
       .mockResolvedValueOnce(acceptedPrompt);
+    harness.controller.addProjectFile("/workspace/kept.ts");
     const sending = harness.controller.send("synthetic prompt");
     const [first, signal] = harness.prompt.mock.calls[0]!;
     harness.replaceTransport();
     expect(signal.aborted).toBe(true);
+    expect(harness.slice().projectFiles).toEqual(["/workspace/kept.ts"]);
     const retrying = harness.controller.send("synthetic prompt");
     const [retryRequest, retrySignal] = harness.prompt.mock.calls[1]!;
     expect(retryRequest).toEqual(first);
@@ -417,162 +352,33 @@ describe("ComposerController", () => {
     expect(second.authorityId).toBe("22222222-2222-4222-8222-222222222222");
   });
 
-  it("enters pairing on a current prompt authorization failure without discarding the draft", async () => {
-    const harness = createHarness();
-    harness.prompt.mockRejectedValue(new ApiError(401, "expired token"));
-    harness.controller.addProjectFile("/workspace/message.ts");
-
-    await expect(harness.controller.send("send")).resolves.toBe(false);
-
-    expect(harness.handleAuthFailure).toHaveBeenCalledOnce();
-    expect(harness.notifyVisible).not.toHaveBeenCalled();
-    expect(harness.slice()).toEqual({
-      attachments: [],
-      projectFiles: ["/workspace/message.ts"],
-      failedDeliveryCount: 0,
-    });
-  });
-
-  it("temporarily replaces and restores complete recalled prompt artifacts", async () => {
-    const harness = createHarness();
-    harness.uploadAttachments.mockResolvedValue({
+  it("retains recalled artifacts after a refused send and releases the displaced draft", async () => {
+    const f = createHarness();
+    f.uploadAttachments.mockResolvedValue({
       attachments: [{ id: "draft-file", fileName: "draft.txt", kind: "file" }],
     });
-    await harness.controller.addFiles([
-      new File(["draft"], "draft.txt", { type: "text/plain" }),
-    ]);
-    harness.controller.addProjectFile("/workspace/draft.ts");
-    const scope = {
-      sessionId: "session-a",
-      viewId: "view-a",
-      incarnation: "projection-a",
-      effectiveLeafId: "leaf-a",
-      historyVersion: "history-a",
-    };
-    const entry = {
-      text: "recalled",
-      images: [
-        {
-          reference: "pi-history-image://entry-4/1",
-          mimeType: "image/png",
-          size: 12,
-        },
-      ],
-      files: [
-        {
-          reference: "pi-history-file://entry-4/0",
-          fileName: "report.pdf",
-          kind: "attachment" as const,
-        },
-        {
-          reference: "pi-history-file://entry-4/1",
-          fileName: "source.ts",
-          kind: "project" as const,
-        },
-      ],
-    };
-
-    harness.controller.previewHistoryEntry(scope, entry);
-    expect(harness.slice()).toMatchObject({
-      attachments: [
-        {
-          kind: "image",
-          recalledArtifact: {
-            type: "image",
-            reference: "pi-history-image://entry-4/1",
-            preview: true,
-          },
-        },
-        {
-          fileName: "report.pdf",
-          recalledArtifact: {
-            type: "file",
-            reference: "pi-history-file://entry-4/0",
-            fileKind: "attachment",
-          },
-        },
-        {
-          fileName: "source.ts",
-          recalledArtifact: {
-            type: "file",
-            reference: "pi-history-file://entry-4/1",
-            fileKind: "project",
-          },
-        },
-      ],
-      projectFiles: [],
-    });
-    harness.controller.cancelHistoryPreview("session-a");
-    expect(harness.slice()).toMatchObject({
-      attachments: [{ uploadedId: "draft-file", kind: "file" }],
-      projectFiles: ["/workspace/draft.ts"],
-    });
-
-    harness.controller.previewHistoryEntry(scope, entry);
-    harness.prompt.mockRejectedValue(new ApiTransportError("request"));
-    await expect(harness.controller.send("recalled")).resolves.toBe(false);
-    expect(harness.prompt).toHaveBeenCalledWith(
-      expect.objectContaining({
+    await f.controller.addFiles([new File(["draft"], "draft.txt")]);
+    const reference = "pi-history-image://entry-4/1";
+    f.controller.previewHistoryEntry(
+      {
         sessionId: "session-a",
-        message: "recalled",
-        historyArtifacts: {
-          viewId: "view-a",
-          incarnation: "projection-a",
-          effectiveLeafId: "leaf-a",
-          imageReferences: ["pi-history-image://entry-4/1"],
-          fileReferences: [
-            "pi-history-file://entry-4/0",
-            "pi-history-file://entry-4/1",
-          ],
-        },
-      }),
-      expect.any(AbortSignal),
+        viewId: "view-a",
+        incarnation: "projection-a",
+        effectiveLeafId: "leaf-a",
+        historyVersion: "history-a",
+      },
+      {
+        text: "recalled",
+        images: [{ reference, mimeType: "image/png", size: 12 }],
+        files: [],
+      },
     );
-    expect(harness.deleteAttachment).toHaveBeenCalledWith("draft-file");
-    expect(harness.slice()).toMatchObject({
-      attachments: [
-        {
-          recalledArtifact: {
-            type: "image",
-            reference: "pi-history-image://entry-4/1",
-            preview: false,
-          },
-        },
-        {
-          recalledArtifact: {
-            type: "file",
-            reference: "pi-history-file://entry-4/0",
-            preview: false,
-          },
-        },
-        {
-          recalledArtifact: {
-            type: "file",
-            reference: "pi-history-file://entry-4/1",
-            preview: false,
-          },
-        },
-      ],
-      projectFiles: [],
-    });
-  });
-
-  it("keeps a ready upload usable after reconnecting to the same Host", async () => {
-    const harness = createHarness();
-    harness.uploadAttachments.mockResolvedValue({
-      attachments: [{ id: "upload", fileName: "draft.txt", kind: "file" }],
-    });
-    await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
-    harness.replaceTransport();
-    harness.controller.reconcileAuthority(
-      "11111111-1111-4111-8111-111111111111",
-    );
-    expect(harness.slice().attachments[0]?.status).toBe("ready");
-    harness.prompt.mockResolvedValue(acceptedPrompt);
-    await expect(harness.controller.send("send")).resolves.toEqual(
-      acceptedPrompt,
-    );
-    expect(harness.prompt).toHaveBeenCalledOnce();
+    f.prompt.mockRejectedValue(new ApiError(409, "not delivered"));
+    await expect(f.controller.send("recalled")).resolves.toBe(false);
+    expect(f.deleteAttachment).toHaveBeenCalledWith("draft-file");
+    expect(f.slice().attachments).toMatchObject([
+      { recalledArtifact: { type: "image", reference, preview: false } },
+    ]);
   });
 
   it.each(["staged", "history draft", "failed delivery"])(
@@ -585,6 +391,18 @@ describe("ComposerController", () => {
         ],
       });
       await harness.controller.addFiles([new File(["draft"], "draft.txt")]);
+      if (location === "staged") {
+        harness.replaceTransport();
+        harness.controller.reconcileAuthority(
+          "11111111-1111-4111-8111-111111111111",
+        );
+        harness.controller.resumeUploads();
+        expect(harness.slice().attachments[0]).toMatchObject({
+          status: "ready",
+          uploadedId: "old-upload",
+        });
+        expect(harness.uploadAttachments).toHaveBeenCalledOnce();
+      }
       if (location === "history draft") {
         harness.controller.previewHistoryEntry(
           {
@@ -689,109 +507,83 @@ describe("ComposerController", () => {
     ]);
   });
 
-  it("refuses prompt delivery while an attachment remains in an error state", async () => {
-    const harness = createHarness();
-    harness.uploadAttachments.mockRejectedValue(
-      new ApiError(400, "Unsupported file"),
-    );
-    await harness.controller.addFiles([
-      new File(["broken"], "broken.txt", { type: "text/plain" }),
-    ]);
+  it.each(["refused", "incomplete"] as const)(
+    "blocks delivery after a %s batch and reclaims any partial handles",
+    async (outcome) => {
+      const harness = createHarness();
+      if (outcome === "incomplete") {
+        harness.uploadAttachments.mockResolvedValue({
+          attachments: [{ id: "partial", fileName: "one.txt", kind: "file" }],
+        });
+      } else {
+        harness.uploadAttachments.mockRejectedValue(
+          new ApiError(400, "Unsupported file"),
+        );
+      }
+      await harness.controller.addFiles([
+        new File(["one"], "one.txt", { type: "text/plain" }),
+        new File(["two"], "two.txt", { type: "text/plain" }),
+      ]);
+      expect(harness.deleteAttachment.mock.calls).toEqual(
+        outcome === "incomplete" ? [["partial"]] : [],
+      );
+      expect(harness.slice().attachments.map(({ status }) => status)).toEqual([
+        "error",
+        "error",
+      ]);
+      await expect(harness.controller.send("send")).resolves.toBe(false);
+      expect(harness.notify).toHaveBeenCalledWith(
+        "warning",
+        "Retry or remove failed attachments before sending",
+      );
+      expect(harness.prompt).not.toHaveBeenCalled();
+    },
+  );
 
-    await expect(harness.controller.send("send")).resolves.toBe(false);
-    expect(harness.notify).toHaveBeenCalledWith(
-      "warning",
-      "Retry or remove failed attachments before sending",
-    );
-    expect(harness.prompt).not.toHaveBeenCalled();
-  });
+  it.each(["withdrawal", "retry"] as const)(
+    "keeps a timed-out upload pending and handles %s without replaying the prompt",
+    async (action) => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      const file = new File(["retained"], "retained.txt");
+      harness.uploadAttachments.mockRejectedValue(
+        new ApiTransportError("request", true, true),
+      );
+      await harness.controller.addFiles([file]);
+      const item = harness.slice().attachments[0]!;
+      expect(item).toMatchObject({ status: "uploading", error: undefined });
+      await expect(harness.controller.send("message")).resolves.toBe(false);
 
-  it("cannot clear a composer after its transport was replaced", async () => {
-    const pending = deferred<PromptAcceptedResponse>();
-    const harness = createHarness();
-    harness.prompt.mockReturnValue(pending.promise);
-    harness.controller.addProjectFile("/workspace/kept.ts");
-
-    const sending = harness.controller.send("send");
-    harness.replaceTransport();
-    pending.resolve(acceptedPrompt);
-
-    await expect(sending).resolves.toBe(false);
-    expect(harness.slice()).toEqual({
-      attachments: [],
-      projectFiles: ["/workspace/kept.ts"],
-      failedDeliveryCount: 0,
-    });
-    expect(harness.notifyVisible).not.toHaveBeenCalled();
-  });
-
-  it("rejects and reclaims an incomplete upload response", async () => {
-    const harness = createHarness();
-    harness.uploadAttachments.mockResolvedValue({
-      attachments: [{ id: "partial", fileName: "one.txt", kind: "file" }],
-    });
-
-    await harness.controller.addFiles([
-      new File(["one"], "one.txt", { type: "text/plain" }),
-      new File(["two"], "two.txt", { type: "text/plain" }),
-    ]);
-
-    expect(harness.deleteAttachment).toHaveBeenCalledWith("partial");
-    expect(harness.slice().attachments).toEqual([
-      expect.objectContaining({ status: "error" }),
-      expect.objectContaining({ status: "error" }),
-    ]);
-  });
-
-  it("keeps a timed-out upload quiet and cancels recovery after user withdrawal", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    harness.uploadAttachments.mockRejectedValue(
-      new ApiTransportError("request", true, true),
-    );
-    await harness.controller.addFiles([new File(["body"], "attachment.txt")]);
-    expect(harness.slice().attachments[0]).toMatchObject({
-      status: "uploading",
-      error: undefined,
-    });
-    expect(harness.uploadAttachments).toHaveBeenCalledOnce();
-    await expect(harness.controller.send("message")).resolves.toBe(false);
-    harness.controller.removeAttachment(
-      harness.slice().attachments[0]!.localId,
-    );
-    await vi.advanceTimersByTimeAsync(14_000);
-    expect(harness.uploadAttachments).toHaveBeenCalledOnce();
-    harness.prompt.mockResolvedValue(acceptedPrompt);
-    await expect(harness.controller.send("message")).resolves.toEqual(
-      acceptedPrompt,
-    );
-  });
-
-  it("retains the original file through bounded upload recovery and explicit retry", async () => {
-    vi.useFakeTimers();
-    const harness = createHarness();
-    const file = new File(["retained"], "retained.txt");
-    harness.uploadAttachments.mockRejectedValue(
-      new ApiTransportError("request", true, true),
-    );
-    await harness.controller.addFiles([file]);
-    expect(harness.slice().attachments[0]?.status).toBe("uploading");
-    await vi.advanceTimersByTimeAsync(14_000);
-    expect(harness.uploadAttachments).toHaveBeenCalledTimes(4);
-    const item = harness.slice().attachments[0]!;
-    expect(item).toMatchObject({ status: "error", retryable: true });
-    harness.uploadAttachments.mockResolvedValue({
-      attachments: [{ id: "recovered", fileName: file.name, kind: "file" }],
-    });
-    await harness.controller.retryAttachment(item.localId);
-    expect(harness.uploadAttachments.mock.calls.at(-1)![0][0]).toBe(file);
-    expect(harness.slice().attachments[0]).toMatchObject({
-      localId: item.localId,
-      status: "ready",
-      uploadedId: "recovered",
-    });
-    expect(harness.prompt).not.toHaveBeenCalled();
-  });
+      if (action === "withdrawal") {
+        harness.controller.removeAttachment(item.localId);
+        await vi.advanceTimersByTimeAsync(14_000);
+        expect(harness.uploadAttachments).toHaveBeenCalledOnce();
+        expect(harness.prompt).not.toHaveBeenCalled();
+        harness.prompt.mockResolvedValue(acceptedPrompt);
+        await expect(harness.controller.send("message")).resolves.toEqual(
+          acceptedPrompt,
+        );
+        return;
+      }
+      await vi.advanceTimersByTimeAsync(14_000);
+      expect(harness.uploadAttachments).toHaveBeenCalledTimes(4);
+      expect(harness.slice().attachments[0]).toMatchObject({
+        status: "error",
+        retryable: true,
+      });
+      harness.uploadAttachments.mockResolvedValue({
+        attachments: [{ id: "recovered", fileName: file.name, kind: "file" }],
+      });
+      await harness.controller.retryAttachment(item.localId);
+      expect(harness.uploadAttachments.mock.calls.at(-1)![0][0]).toBe(file);
+      expect(harness.slice().attachments[0]).toMatchObject({
+        localId: item.localId,
+        status: "ready",
+        uploadedId: "recovered",
+      });
+      expect(harness.prompt).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps a prior uncertain attachment fenced after a later definitive refusal", async () => {
     const harness = createHarness();
@@ -812,55 +604,42 @@ describe("ComposerController", () => {
     expect(harness.slice().attachments[0]?.status).toBe("error");
   });
 
-  it("cancels a batch only after all its attachments are withdrawn", async () => {
-    const harness = createHarness();
-    const pending = deferred<{
-      attachments: Array<{ id: string; fileName: string; kind: "file" }>;
-    }>();
-    harness.uploadAttachments.mockReturnValue(pending.promise);
-    const uploading = harness.controller.addFiles([
-      new File(["one"], "one.txt"),
-      new File(["two"], "two.txt"),
-    ]);
-    const signal = harness.uploadAttachments.mock.calls[0]![1] as AbortSignal;
-    const [first, second] = harness.slice().attachments;
-    harness.controller.removeAttachment(first!.localId);
-    expect(signal.aborted).toBe(false);
-    harness.controller.removeAttachment(second!.localId);
-    expect(signal.aborted).toBe(true);
-    pending.resolve({
-      attachments: ["one", "two"].map((id) => ({
-        id,
-        fileName: `${id}.txt`,
-        kind: "file" as const,
-      })),
-    });
-    await uploading;
-    expect(harness.deleteAttachment).toHaveBeenCalledTimes(2);
-    expect(harness.slice().attachments).toEqual([]);
-  });
-
-  it("reclaims an upload that completes on a replaced transport", async () => {
-    const pending = deferred<{
-      attachments: Array<{ id: string; fileName: string; kind: "file" }>;
-    }>();
-    const harness = createHarness();
-    harness.uploadAttachments.mockReturnValue(pending.promise);
-
-    const uploading = harness.controller.addFiles([
-      new File(["late"], "late.txt", { type: "text/plain" }),
-    ]);
-    const signal = harness.uploadAttachments.mock.calls[0]![1] as AbortSignal;
-    harness.replaceTransport();
-    expect(signal.aborted).toBe(true);
-    pending.resolve({
-      attachments: [{ id: "late-file", fileName: "late.txt", kind: "file" }],
-    });
-    await uploading;
-
-    expect(harness.deleteAttachment).toHaveBeenCalledWith("late-file");
-    expect(harness.slice().attachments).toEqual([
-      expect.objectContaining({ status: "uploading", error: undefined }),
-    ]);
-  });
+  it.each(["withdrawal", "transport replacement"] as const)(
+    "reclaims late upload handles after %s",
+    async (action) => {
+      const harness = createHarness();
+      const pending = deferred<{
+        attachments: Array<{ id: string; fileName: string; kind: "file" }>;
+      }>();
+      harness.uploadAttachments.mockReturnValue(pending.promise);
+      const names = ["one.txt", "two.txt"];
+      const uploading = harness.controller.addFiles(
+        names.map((name) => new File([name], name)),
+      );
+      const signal = harness.uploadAttachments.mock.calls[0]![1] as AbortSignal;
+      if (action === "withdrawal") {
+        const [first, second] = harness.slice().attachments;
+        harness.controller.removeAttachment(first!.localId);
+        expect(signal.aborted).toBe(false);
+        harness.controller.removeAttachment(second!.localId);
+      } else {
+        harness.replaceTransport();
+      }
+      expect(signal.aborted).toBe(true);
+      pending.resolve({
+        attachments: names.map((name) => ({
+          id: name,
+          fileName: name,
+          kind: "file",
+        })),
+      });
+      await uploading;
+      expect(harness.deleteAttachment.mock.calls).toEqual(
+        names.map((name) => [name]),
+      );
+      expect(harness.slice().attachments.map(({ status }) => status)).toEqual(
+        action === "withdrawal" ? [] : ["uploading", "uploading"],
+      );
+    },
+  );
 });

@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HiddenClearDialog } from "../../src/components/HiddenClearDialog";
 import { SessionDeleteDialog } from "../../src/components/SessionDeleteDialog";
@@ -145,7 +151,9 @@ describe("deletion review recovery", () => {
   it.each(["expanded", "empty"])(
     "refreshes %s Hidden membership without repeating the deletion",
     async (change) => {
-      const { model, clear, refresh } = await setup();
+      const { model, clear, refresh, preferencesRead } = await setup();
+      const read = deferred<typeof model.preferences>();
+      preferencesRead.mockReturnValueOnce(read.promise);
       clear.mockImplementationOnce(async () => {
         model.rows =
           change === "empty"
@@ -167,6 +175,12 @@ describe("deletion review recovery", () => {
       fireEvent.click(
         screen.getByRole("button", { name: "Delete 2 sessions" }),
       );
+      await vi.waitFor(() => expect(preferencesRead).toHaveBeenCalledOnce());
+      await act(async () => {
+        const stale = { ...model.preferences, theme: "light" as const };
+        store.setTheme("dark");
+        read.resolve(stale);
+      });
       await waitFor(() =>
         expect(
           screen.getByRole("button", { name: "Review Hidden" }),
@@ -178,6 +192,7 @@ describe("deletion review recovery", () => {
       expect(store.getState().prefs.hiddenProjectCwds).toEqual(
         model.preferences.hiddenProjectCwds,
       );
+      expect(store.getState().prefs.theme).toBe("dark");
       expect(refresh).toHaveBeenCalledOnce();
       expect(clear).toHaveBeenCalledOnce();
     },
@@ -207,24 +222,5 @@ describe("deletion review recovery", () => {
     expect(remove).toHaveBeenCalledOnce();
     expect(refresh).toHaveBeenCalledOnce();
     expect(screen.getByRole("alert")).toHaveTextContent("Session not found");
-  });
-
-  it("preserves a newer preference while refreshing the rejected review", async () => {
-    const { model, clear, preferencesRead } = await setup();
-    const read = deferred<typeof model.preferences>();
-    const priorPreferences = { ...model.preferences, theme: "light" as const };
-    preferencesRead.mockReturnValueOnce(read.promise);
-    clear.mockResolvedValueOnce({
-      status: 409,
-      body: { error: "Hidden changed", code: "HIDDEN_SELECTION_CHANGED" },
-    });
-    const clearing = store.clearHiddenSessions(["s2", "s3"]);
-    await vi.waitFor(() => expect(preferencesRead).toHaveBeenCalledOnce());
-    store.setTheme("dark");
-    read.resolve(priorPreferences);
-    await clearing;
-    expect(store.getState().prefs.theme).toBe("dark");
-    expect(store.getState().sessionDeleteReviewRequired).toBe(true);
-    expect(clear).toHaveBeenCalledOnce();
   });
 });

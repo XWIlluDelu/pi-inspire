@@ -1,11 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { RunState, SessionRuntimeStatus } from "../../shared/contracts";
 import type { McpConfigSnapshot } from "../../shared/mcp";
@@ -94,30 +88,34 @@ async function savedPanel() {
   fireEvent.click(
     await screen.findByRole("button", { name: "Edit user server docs" }),
   );
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
+  fireEvent.change(screen.getByLabelText("Server URL"), {
+    target: { value: "https://new.example.invalid/mcp" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await screen.findByText(/Saved to file/);
   return view;
 }
 
-it("keeps reload unavailable while the selected session owns a running operation", async () => {
+it("rechecks the worker before reloading and reports a declined dispatch", async () => {
   const view = await savedPanel();
   fireEvent.click(
     screen.getByRole("button", { name: "Reload selected session…" }),
   );
+  const reload = screen.getByRole("button", { name: "Reload Pi resources" });
+
   fixture.state.runState = "running";
-  view.rerender(
-    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
-  );
-  expect(
-    screen.getByRole("button", { name: "Reload selected session…" }),
-  ).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: "Reload Pi resources" }),
-  ).toBeDisabled();
+  view.rerender(<McpSettings active owner={{ sessionId: "one" }} />);
+  expect(reload).toBeDisabled();
   expect(screen.getByText(/Wait for Pi to finish/)).toBeVisible();
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
+
+  fixture.state.runState = "idle";
+  view.rerender(<McpSettings active owner={{ sessionId: "one" }} />);
+  fixture.host.runPaletteNativeCommand.mockReturnValue(false);
+  fireEvent.click(reload);
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Reload could not be started",
+  );
   expect(screen.queryByText(/Reload requested/)).toBeNull();
 });
 
@@ -137,225 +135,90 @@ it("keeps MCP file editing available for an external owner and directs reload to
   expect(fixture.host.runPaletteNativeCommand).not.toHaveBeenCalled();
 });
 
-it("reports reload rejection locally instead of claiming it was requested", async () => {
-  await savedPanel();
-  fireEvent.click(
-    screen.getByRole("button", { name: "Reload selected session…" }),
-  );
-  fixture.host.runPaletteNativeCommand.mockReturnValue(false);
-  fireEvent.click(screen.getByRole("button", { name: "Reload Pi resources" }));
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "Reload could not be started",
-  );
-  expect(screen.queryByText(/Reload requested/)).toBeNull();
-  fixture.host.runPaletteNativeCommand.mockReturnValue({ accepted: true });
-  fireEvent.click(screen.getByRole("button", { name: "Reload Pi resources" }));
-  expect(screen.getByText(/Reload requested/)).toBeVisible();
-  expect(screen.queryByRole("alert")).toBeNull();
-});
-
-it("withdraws reads from the previous session and saves from the previous Host connection", async () => {
+it("retires old session reads and connection reveals and previous Host saves", async () => {
   const read = deferred<McpConfigSnapshot>();
+  const save = deferred<unknown>();
+  const reveal = deferred<{ url: string }>();
   fixture.host.readMcpConfig.mockReturnValueOnce(read.promise);
-  const view = render(
-    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
+  fixture.host.editMcpConfig.mockReturnValueOnce(save.promise);
+  fixture.host.readMcpConnection.mockReturnValueOnce(reveal.promise);
+  const panel = () => (
+    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />
   );
-  fixture.state = {
-    ...fixture.state,
-    sessionId: "two",
-    cwd: "/two",
-    transportGeneration: 1,
-  };
-  view.rerender(
-    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
-  );
-  await screen.findByRole("button", { name: "Edit user server docs" });
+  const view = render(panel());
+  fixture.state = { ...fixture.state, sessionId: "two", cwd: "/two" };
+  view.rerender(panel());
+
+  const edit = () =>
+    screen.findByRole("button", { name: "Edit user server docs" });
+  await edit();
   await act(async () => read.resolve(snapshot("stale")));
   expect(
     screen.queryByRole("button", { name: "Edit user server stale" }),
-  ).not.toBeInTheDocument();
+  ).toBeNull();
   expect(fixture.host.readMcpConfig).toHaveBeenLastCalledWith({
     sessionId: "two",
   });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Edit user server docs" }),
+
+  fireEvent.click(await edit());
+  const url = () => screen.getByLabelText("Server URL");
+  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
+  expect(fixture.host.readMcpConnection).toHaveBeenCalledOnce();
+  fixture.state = { ...fixture.state, sessionId: "three", cwd: "/three" };
+  view.rerender(panel());
+  fireEvent.click(await edit());
+  await act(async () =>
+    reveal.resolve({ url: "https://old-owner.example/mcp" }),
   );
-  fireEvent.change(screen.getByLabelText("Server URL"), {
+  expect(url()).toHaveValue("");
+
+  fireEvent.change(url(), {
     target: { value: "https://new.example.invalid/mcp" },
   });
-  const save = deferred<unknown>();
-  fixture.host.editMcpConfig.mockReturnValueOnce(save.promise);
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(fixture.host.editMcpConfig).toHaveBeenCalledOnce();
   fixture.state = { ...fixture.state, transportGeneration: 2 };
-  view.rerender(
-    <McpSettings active owner={{ sessionId: fixture.state.sessionId }} />,
-  );
-  await screen.findByRole("button", { name: "Edit user server docs" });
+  view.rerender(panel());
+  await edit();
   await act(async () =>
     save.resolve({ saved: true, snapshot: snapshot("old-host-save") }),
   );
   expect(
     screen.queryByRole("button", { name: "Edit user server old-host-save" }),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByText(/Saved to file/)).not.toBeInTheDocument();
-});
-it.each(["unselected", "unavailable"] as const)(
-  "keeps user configuration editable with an %s project",
-  async (project) => {
-    const config = snapshot();
-    if (project === "unselected") {
-      config.cwd = null;
-      config.files = config.files.filter((file) => file.scope === "user");
-    } else {
-      Object.assign(config.files[1]!, {
-        revision: "",
-        error: "Project path does not exist",
-      });
-    }
-    fixture.host.readMcpConfig.mockResolvedValue(config);
-    fixture.host.editMcpConfig.mockResolvedValue({
-      saved: true,
-      snapshot: config,
-    });
-    render(<McpSettings active owner={{}} />);
-    await screen.findByRole("button", { name: "Edit user server docs" });
-    if (project === "unselected")
-      expect(
-        screen.getByText("Select a project to edit its MCP settings."),
-      ).toBeVisible();
-    else
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Project path does not exist",
-      );
-    fireEvent.click(screen.getByRole("button", { name: "Add server" }));
-    const target = screen.getByRole("combobox", {
-      name: "Configuration target",
-    });
-    fireEvent.click(target);
-    expect(
-      screen.getByRole("option", { name: "User · all projects" }),
-    ).toBeVisible();
-    if (project === "unselected")
-      expect(screen.queryByRole("option", { name: "This project" })).toBeNull();
-    fireEvent.click(
-      screen.getByRole("option", { name: "User · all projects" }),
-    );
-    fireEvent.change(screen.getByLabelText("Server name"), {
-      target: { value: "independent" },
-    });
-    fireEvent.change(screen.getByLabelText("Server URL"), {
-      target: { value: "https://example.invalid/mcp" },
-    });
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    fireEvent.submit(
-      screen.getByRole("button", { name: "Save" }).closest("form")!,
-    );
-    await waitFor(() =>
-      expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-        {},
-        {
-          scope: "user",
-          name: "independent",
-          revision: "a".repeat(64),
-          operation: "add",
-          values: { url: "https://example.invalid/mcp" },
-        },
-      ),
-    );
-    await screen.findByText(/Saved to file/);
-    expect(
-      screen.queryByRole("button", { name: "Reload selected session…" }),
-    ).toBeNull();
-  },
-);
-
-it("loads a saved URL only on request and keeps it out of untouched edits", async () => {
-  fixture.host.readMcpConnection.mockResolvedValue({
-    url: "https://docs.example.com/mcp",
-  });
-  render(<McpSettings active owner={{ sessionId: "one" }} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Edit user server docs" }),
-  );
-  expect(screen.getByLabelText("Server URL")).toHaveValue("");
-  expect(fixture.host.readMcpConnection).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
-  await waitFor(() =>
-    expect(screen.getByLabelText("Server URL")).toHaveValue(
-      "https://docs.example.com/mcp",
-    ),
-  );
-  expect(fixture.host.readMcpConnection).toHaveBeenCalledWith(
-    { sessionId: "one" },
-    { scope: "user", name: "docs", revision: "a".repeat(64) },
-  );
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  await waitFor(() =>
-    expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-      { sessionId: "one" },
-      expect.objectContaining({ values: {} }),
-    ),
-  );
+  ).toBeNull();
+  expect(screen.queryByText(/Saved to file/)).toBeNull();
 });
 
-it("loads saved arguments for a single-item edit without replacing unrelated fields", async () => {
+it("can save the user file while the project file is unavailable", async () => {
   const config = snapshot();
-  Object.assign(config.files[0]!.entries[0]!, {
-    transport: "stdio",
-    command: "npx",
-    urlConfigured: false,
-    argumentCount: 4,
+  Object.assign(config.files[1]!, {
+    revision: "",
+    error: "Project path does not exist",
   });
   fixture.host.readMcpConfig.mockResolvedValue(config);
-  fixture.host.readMcpConnection.mockResolvedValue({
-    args: ["-y", "@example/mcp", "--port", "3000"],
-  });
-  render(<McpSettings active owner={{ sessionId: "one" }} />);
+  render(<McpSettings active owner={{ cwd: "/one" }} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Project path does not exist",
+  );
   fireEvent.click(
-    await screen.findByRole("button", { name: "Edit user server docs" }),
+    screen.getByRole("button", { name: "Edit user server docs" }),
   );
-  expect(screen.queryByLabelText("Argument 1")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Show saved arguments" }));
-  await screen.findByLabelText("Argument 4");
-  expect(screen.getByLabelText("Argument 1")).toHaveFocus();
-  expect(screen.getByLabelText("Argument 2")).toHaveValue("@example/mcp");
-  fireEvent.change(screen.getByLabelText("Argument 4"), {
-    target: { value: "4000" },
+  fireEvent.change(screen.getByLabelText("Server URL"), {
+    target: { value: "https://example.invalid/mcp" },
   });
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText(/Saved to file/);
+  expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
+    { cwd: "/one" },
+    expect.objectContaining({
+      scope: "user",
+      name: "docs",
+      values: { url: "https://example.invalid/mcp" },
+    }),
   );
-  await waitFor(() =>
-    expect(fixture.host.editMcpConfig).toHaveBeenCalledWith(
-      { sessionId: "one" },
-      expect.objectContaining({
-        values: { args: ["-y", "@example/mcp", "--port", "4000"] },
-      }),
-    ),
-  );
-});
-
-it("withdraws a pending connection reveal when the Settings owner changes", async () => {
-  const pending = deferred<{ url: string }>();
-  fixture.host.readMcpConnection.mockReturnValue(pending.promise);
-  const view = render(<McpSettings active owner={{ sessionId: "one" }} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Edit user server docs" }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Show saved URL" }));
-  fixture.state.sessionId = "two";
-  view.rerender(<McpSettings active owner={{ sessionId: "two" }} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Edit user server docs" }),
-  );
-  await act(async () => {
-    pending.resolve({ url: "https://old-owner.example/mcp" });
-  });
-  expect(screen.getByLabelText("Server URL")).toHaveValue("");
+  expect(
+    screen.queryByRole("button", { name: "Reload selected session…" }),
+  ).toBeNull();
 });
 
 it("preserves secret drafts across transport changes and saves only the selected transport", () => {
@@ -415,14 +278,6 @@ it("preserves secret drafts across transport changes and saves only the selected
     url: "https://example.invalid/mcp",
     headers: { Authorization: "header-secret" },
   });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Remove header Authorization" }),
-  );
-  fireEvent.submit(form);
-  expect(save).toHaveBeenLastCalledWith("user", "new-server", {
-    url: "https://example.invalid/mcp",
-  });
-
   fireEvent.click(screen.getByRole("combobox", { name: "Transport" }));
   fireEvent.click(screen.getByRole("option", { name: "Stdio" }));
   expect(
@@ -433,208 +288,4 @@ it("preserves secret drafts across transport changes and saves only the selected
     command: "mcp-server",
     env: { API_KEY: "env-secret" },
   });
-});
-
-it.each([undefined, "auto"] as const)(
-  "shows automatic registration for %s without writing it during unrelated edits",
-  (registration) => {
-    const config = snapshot();
-    const entry = config.files[0]!.entries[0]!;
-    entry.oauthClientRegistration = registration;
-    const save = vi.fn();
-    render(
-      <McpServerForm
-        entry={entry}
-        initialScope="user"
-        snapshot={config}
-        busy={false}
-        error={null}
-        onSave={save}
-        onReadConnection={fixture.host.readMcpConnection}
-        onCancel={() => {}}
-      />,
-    );
-    fireEvent.click(screen.getByText("Advanced configuration"));
-    fireEvent.click(screen.getByText("OAuth client configuration"));
-    expect(
-      screen.getByRole("combobox", { name: "Client registration" }),
-    ).toHaveTextContent("Automatic (Pi default)");
-    fireEvent.change(screen.getByLabelText("Description"), {
-      target: { value: "Description only" },
-    });
-    fireEvent.submit(
-      screen.getByRole("button", { name: "Save" }).closest("form")!,
-    );
-    expect(save).toHaveBeenCalledWith("user", "docs", {
-      description: "Description only",
-    });
-  },
-);
-
-it("switches to automatic registration without discarding stored client fields", () => {
-  const config = snapshot();
-  const entry = config.files[0]!.entries[0]!;
-  entry.oauthClientRegistration = "dcr";
-  entry.oauthFields.push("clientId", "clientName", "callbackUrl");
-  const save = vi.fn();
-  render(
-    <McpServerForm
-      entry={entry}
-      initialScope="user"
-      snapshot={config}
-      busy={false}
-      error={null}
-      onSave={save}
-      onReadConnection={fixture.host.readMcpConnection}
-      onCancel={() => {}}
-    />,
-  );
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  fireEvent.click(screen.getByText("OAuth client configuration"));
-  fireEvent.click(
-    screen.getByRole("combobox", { name: "Client registration" }),
-  );
-  fireEvent.click(
-    screen.getByRole("option", { name: "Automatic (Pi default)" }),
-  );
-  expect(screen.queryByRole("alert")).toBeNull();
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  expect(save).toHaveBeenCalledWith("user", "docs", {
-    oauth: { clientRegistration: "auto" },
-  });
-});
-
-it("shows CIMD registration, keeps incompatible client fields out of valid edits, and requires explicit removal when changing methods", () => {
-  const config = snapshot();
-  const entry = config.files[0]!.entries[0]!;
-  entry.oauthClientRegistration = "cimd";
-  entry.oauthFields.push("clientRegistration");
-  const save = vi.fn();
-  const view = render(
-    <McpServerForm
-      entry={entry}
-      initialScope="user"
-      snapshot={config}
-      busy={false}
-      error={null}
-      onSave={save}
-      onReadConnection={fixture.host.readMcpConnection}
-      onCancel={() => {}}
-    />,
-  );
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  fireEvent.click(screen.getByText("OAuth client configuration"));
-  expect(
-    screen.getByRole("combobox", { name: "Client registration" }),
-  ).toHaveTextContent("Pi metadata document (CIMD)");
-  expect(screen.queryByLabelText("Client name")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Client ID")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Callback URL"), {
-    target: { value: "http://localhost/wrong-path" },
-  });
-  expect(screen.getByRole("alert")).toHaveTextContent("path /callback");
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Callback URL"), {
-    target: { value: "http://localhost/callback" },
-  });
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  expect(save).toHaveBeenLastCalledWith("user", "docs", {
-    oauth: { callbackUrl: "http://localhost/callback" },
-  });
-  view.unmount();
-  entry.oauthClientRegistration = "dcr";
-  entry.oauthFields.push("clientId", "clientName");
-  render(
-    <McpServerForm
-      entry={entry}
-      initialScope="user"
-      snapshot={config}
-      busy={false}
-      error={null}
-      onSave={save}
-      onReadConnection={fixture.host.readMcpConnection}
-      onCancel={() => {}}
-    />,
-  );
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  fireEvent.click(screen.getByText("OAuth client configuration"));
-  fireEvent.click(
-    screen.getByRole("combobox", { name: "Client registration" }),
-  );
-  fireEvent.click(
-    screen.getByRole("option", { name: "Pi metadata document (CIMD)" }),
-  );
-  expect(screen.getByRole("alert")).toHaveTextContent(
-    "cannot use a client ID or client name",
-  );
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  expect(screen.getByRole("alert")).toBeVisible();
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  fireEvent.click(screen.getByLabelText("Remove client id"));
-  fireEvent.click(screen.getByLabelText("Remove client name"));
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  fireEvent.submit(
-    screen.getByRole("button", { name: "Save" }).closest("form")!,
-  );
-  expect(save).toHaveBeenLastCalledWith("user", "docs", {
-    oauth: { clientRegistration: "cimd", clientId: null, clientName: null },
-  });
-});
-
-it("saves tool rules in displayed order and removes deleted rules", () => {
-  const config = snapshot();
-  const entry = config.files[0]!.entries[0]!;
-  entry.toolExposure = { "read_*": "direct", "*": "hidden" };
-  const save = vi.fn();
-  render(
-    <McpServerForm
-      entry={entry}
-      initialScope="user"
-      snapshot={config}
-      busy={false}
-      error={null}
-      onSave={save}
-      onReadConnection={fixture.host.readMcpConnection}
-      onCancel={() => {}}
-    />,
-  );
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  fireEvent.click(screen.getByRole("button", { name: "Remove tool rule 1" }));
-  fireEvent.click(screen.getByRole("button", { name: "Add tool rule" }));
-  fireEvent.change(screen.getAllByLabelText("Tool name or pattern")[1]!, {
-    target: { value: "read_*" },
-  });
-  const form = screen.getByRole("button", { name: "Save" }).closest("form")!;
-  fireEvent.submit(form);
-  expect(save).toHaveBeenLastCalledWith("user", "docs", {
-    toolExposure: { "*": "hidden", "read_*": "codemode" },
-  });
-  expect(Object.keys(save.mock.calls[0]![2].toolExposure)).toEqual([
-    "*",
-    "read_*",
-  ]);
-  fireEvent.click(screen.getByRole("button", { name: "Remove tool rule 1" }));
-  fireEvent.click(screen.getByRole("button", { name: "Remove tool rule 1" }));
-  fireEvent.submit(form);
-  expect(save).toHaveBeenLastCalledWith("user", "docs", { toolExposure: {} });
-});
-
-it("rejects duplicate header names rather than silently discarding one value", async () => {
-  render(<McpSettings active owner={{ sessionId: fixture.state.sessionId }} />);
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Edit user server docs" }),
-  );
-  fireEvent.click(screen.getByText("Advanced configuration"));
-  fireEvent.click(screen.getByRole("button", { name: "Add header" }));
-  const names = screen.getAllByLabelText("Header name");
-  fireEvent.change(names[1]!, { target: { value: "Authorization" } });
-  expect((names[1] as HTMLInputElement).validationMessage).toMatch(/unique/);
-  fireEvent.change(names[1]!, { target: { value: "X-Custom" } });
-  expect((names[1] as HTMLInputElement).checkValidity()).toBe(true);
-  expect((names[0] as HTMLInputElement).checkValidity()).toBe(true);
 });

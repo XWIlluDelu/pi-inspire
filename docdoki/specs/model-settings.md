@@ -8,12 +8,11 @@ covers:
   - src/{App,api,app-state,store,model-options,use-modal-focus}.ts*
   - src/components/{Settings,SettingsControls,SettingsSection,ModelsSettings,ModelDeclarationForms,ConfigurationForm,ProviderAuthentication,ModelSelector,ModelList,Composer,Welcome,CommandPalette,CommandHelp}.tsx
   - src/styles/model-settings.css
-  - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,session-model-selection,provider-auth,provider-auth-bridge.integration}.test.ts
+  - tests/server/{model-settings,model-catalog,model-metadata.integration,model-workflow.integration,provider-auth,provider-auth-bridge.integration}.test.ts
   - tests/server/configuration-file.test.ts
   - tests/integration/model-cycle-native.test.ts
   - tests/web/{model-settings,model-store,model-selector,modal-focus,provider-authentication,welcome-model-transition,welcome-new-session}.test.ts*
-  - tests/browser/{model-settings*,model-workflow,provider-authentication}.spec.ts
-  - tests/browser/fixtures/model-scale.ts
+  - tests/browser/{model-selection,model-settings*,model-workflow,provider-authentication}.spec.ts
 progress: in-progress
 ---
 

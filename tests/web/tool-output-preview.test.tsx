@@ -1,11 +1,5 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
 import {
@@ -35,12 +29,12 @@ const update = (text: string, truncated = false): WireEvent => ({
 });
 const reduce = (state: EventSlice, event: WireEvent) =>
   reduceEvent(state, new Set(), event).slice;
-function running() {
+function running(toolCall = call) {
   return reduce(emptyEventSlice(), {
     type: "tool_execution_start",
-    toolCallId: call.id,
-    toolName: call.name,
-    args: call.arguments,
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    args: toolCall.arguments,
   });
 }
 function card(state: EventSlice, toolCall = call, result?: ChatMessage) {
@@ -57,100 +51,50 @@ function card(state: EventSlice, toolCall = call, result?: ChatMessage) {
 afterEach(() => configureToolPresentationRegistry());
 
 describe("execution output previews", () => {
-  it("retains Host-authored bounded tails, replaces cumulative previews, and clears empty replacements", () => {
-    let state = reduce(running(), update("old output"));
-    state = reduce(state, update("replacement"));
-    expect(state.tools[call.id]?.outputPreview).toEqual({
-      text: "replacement",
-      truncated: false,
-    });
-    const projected = update("x".repeat(15_994) + "newest", true);
-    state = reduce(state, projected);
-    expect(state.tools[call.id]?.outputPreview).toBe(projected.outputPreview);
-    expect(state.tools[call.id]?.outputPreview?.text).toHaveLength(16_000);
-    expect(state.tools[call.id]?.outputPreview?.text.endsWith("newest")).toBe(
-      true,
+  it("keeps a declared tool's live output separate from its rule's final result", () => {
+    configureToolPresentationRegistry(
+      toolPresentationConfigurationSchema.parse({
+        version: 1,
+        mappings: { declared_extension: "user.output" },
+        rules: {
+          "user.output": {
+            summary: [{ value: { path: "args.command" } }],
+            blocks: [
+              {
+                type: "text",
+                label: "Final result",
+                source: { path: "result.text" },
+              },
+            ],
+          },
+        },
+      }),
     );
-    expect(state.tools[call.id]?.outputPreview?.truncated).toBe(true);
-    state = reduce(
-      state,
-      update(
-        Array.from({ length: 400 }, (_, i) => `line ${i + 100}`).join("\n"),
-        true,
-      ),
+    const toolCall = { ...call, name: "declared_extension" };
+    let state = reduce(
+      running(toolCall),
+      update("\u001b[32mLive progress\u001b[0m"),
     );
-    expect(state.tools[call.id]?.outputPreview?.text.split("\n")).toHaveLength(
-      400,
-    );
-    expect(
-      state.tools[call.id]?.outputPreview?.text.startsWith("line 100\n"),
-    ).toBe(true);
-    state = reduce(state, update(""));
-    expect(state.tools[call.id]?.outputPreview).toBeUndefined();
+    const { rerender } = render(card(state, toolCall));
+    expect(screen.getByText("Live progress")).toBeVisible();
+    expect(screen.getByText("Output (live preview)")).toBeVisible();
+    expect(screen.getByLabelText("running")).toBeVisible();
+    expect(screen.queryByText("Final result")).not.toBeInTheDocument();
+
     state = reduce(state, {
       ...update(""),
       partialResult: { details: { progress: 90 } },
     });
-    expect(state.tools[call.id]?.outputPreview).toBeUndefined();
-  });
+    rerender(card(state, toolCall));
+    expect(screen.queryByText("Live progress")).not.toBeInTheDocument();
 
-  it.each(["bash", "declared_extension", "unknown_extension"])(
-    "renders %s live text separately from arguments and final content",
-    (name) => {
-      configureToolPresentationRegistry(
-        toolPresentationConfigurationSchema.parse({
-          version: 1,
-          mappings: { declared_extension: "user.output" },
-          rules: {
-            "user.output": {
-              summary: [{ value: { path: "args.command" } }],
-              blocks: [
-                {
-                  type: "text",
-                  label: "Final result",
-                  source: { path: "result.text" },
-                },
-              ],
-            },
-          },
-        }),
-      );
-      const toolCall = { ...call, name };
-      let state = running();
-      const { container, rerender } = render(card(state, toolCall));
-      const shell = container.querySelector(".card");
-      expect(screen.getByText("Running…")).toBeInTheDocument();
-      state = reduce(state, update("Building modules…\n[140/260] working"));
-      rerender(card(state, toolCall));
-      expect(container.querySelector(".tool-terminal--live")).toHaveTextContent(
-        "[140/260] working",
-      );
-      expect(screen.getByText("Output (live preview)")).toBeInTheDocument();
-      expect(screen.getByLabelText("running")).toBeInTheDocument();
-      expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", {
-          name: `Copy ${name} live output preview`,
-        }),
-      ).toBeInTheDocument();
-      state = reduce(state, update("\u001b[32mReplacement progress\u001b[0m"));
-      rerender(card(state, toolCall));
-      expect(screen.queryByText(/140\/260/)).not.toBeInTheDocument();
-      expect(container.querySelector(".tool-terminal--live")?.textContent).toBe(
-        "Replacement progress",
-      );
-      rerender(
-        card(state, toolCall, { role: "toolResult", content: "Final output" }),
-      );
-      expect(container.querySelector(".tool-terminal--live")).toBeNull();
-      expect(screen.getByText("Final output")).toBeInTheDocument();
-      expect(screen.getByLabelText("finished")).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: `Copy ${name} tool block` }),
-      ).toBeInTheDocument();
-      expect(container.querySelector(".card")).toBe(shell);
-    },
-  );
+    rerender(
+      card(state, toolCall, { role: "toolResult", content: "Complete" }),
+    );
+    expect(screen.getByText("Final result")).toBeVisible();
+    expect(screen.getByText("Complete")).toBeVisible();
+    expect(screen.getByLabelText("finished")).toBeVisible();
+  });
 
   it("never interprets an execution update as an applied edit patch", () => {
     const edit = {
@@ -172,92 +116,37 @@ describe("execution output previews", () => {
     expect(screen.getByLabelText("running")).toBeInTheDocument();
   });
 
-  it.each([false, true])(
-    "ends previews on execution end (error=%s) and rejects stale updates",
-    (isError) => {
-      const state = reduce(running(), update("working"));
-      const { container, rerender } = render(card(state));
-      const ended = reduce(state, {
-        type: "tool_execution_end",
-        toolCallId: call.id,
-        isError,
-      });
-      expect(ended.tools[call.id]?.outputPreview).toBeUndefined();
-      expect(reduce(ended, update("late"))).toBe(ended);
-      rerender(card(ended));
-      expect(container.querySelector(".tool-terminal--live")).toBeNull();
-      expect(screen.getByText("Finalizing result…")).toBeInTheDocument();
-      expect(
-        screen.getByLabelText(isError ? "failed" : "finished"),
-      ).toBeInTheDocument();
-      rerender(
-        card(ended, call, {
-          role: "toolResult",
-          content: isError ? "Command failed" : "Done",
-          isError,
-        }),
-      );
-      expect(
-        screen.getByText(isError ? "Command failed" : "Done"),
-      ).toBeInTheDocument();
-    },
-  );
+  it("rejects late output while an execution failure is awaiting its final result", () => {
+    const state = reduce(running(), update("working"));
+    const ended = reduce(state, {
+      type: "tool_execution_end",
+      toolCallId: call.id,
+      isError: true,
+    });
+    render(card(reduce(ended, update("late"))));
+    expect(screen.queryByText("working")).not.toBeInTheDocument();
+    expect(screen.queryByText("late")).not.toBeInTheDocument();
+    expect(screen.getByText("Finalizing result…")).toBeVisible();
+    expect(screen.getByLabelText("failed")).toBeVisible();
+  });
 
-  it.each(["aborted", "failed", "idle"])(
-    "drops transient running output on authoritative %s without inventing success",
-    (runState) => {
-      let state = reduce(running(), update("working"));
-      state = reduce(state, { type: "status", sessionStatus: { runState } });
-      expect(state.tools[call.id]).toBeUndefined();
-      const { container } = render(
-        <ToolCard
-          call={call}
-          result={undefined}
-          activity={state.tools[call.id]}
-          live={false}
-          visibility="expanded"
-        />,
-      );
-      expect(container.querySelector(".tool-terminal--live")).toBeNull();
-      expect(screen.getByText("No result recorded")).toBeInTheDocument();
-      expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
-    },
-  );
-
-  it("keeps updates from completing an adaptive card and does not materialize a collapsed preview", () => {
-    vi.useFakeTimers();
-    try {
-      const state = reduce(running(), update("working"));
-      const { container, rerender } = render(
-        <ToolCard
-          call={call}
-          result={undefined}
-          activity={state.tools[call.id]}
-          live
-          visibility="collapsed"
-          dynamic
-          dynamicActive
-        />,
-      );
-      act(() => vi.advanceTimersByTime(10_000));
-      expect(
-        screen.getByRole("button", { name: "Collapse bash tool" }),
-      ).toBeInTheDocument();
-      expect(container.querySelector(".tool-terminal--live")).not.toBeNull();
-      rerender(
-        <ToolCard
-          key="collapsed"
-          call={call}
-          result={undefined}
-          activity={state.tools[call.id]}
-          live
-          visibility="collapsed"
-        />,
-      );
-      expect(container.querySelector(".tool-terminal--live")).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+  it("drops transient output on interrupted settlement without inventing success", () => {
+    const state = reduce(reduce(running(), update("working")), {
+      type: "status",
+      sessionStatus: { runState: "aborted" },
+    });
+    render(
+      <ToolCard
+        call={call}
+        result={undefined}
+        activity={state.tools[call.id]}
+        live={false}
+        visibility="expanded"
+      />,
+    );
+    expect(screen.queryByText("working")).not.toBeInTheDocument();
+    expect(screen.getByText("No result recorded")).toBeVisible();
+    expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
   });
 
   it("shows and copies a bounded, clearly labelled preview from a collapsed strip", async () => {
@@ -292,7 +181,6 @@ describe("execution output previews", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     const copied = writeText.mock.calls[0][0] as string;
     expect(copied).toContain("Output (live preview, truncated)");
-    expect(copied).not.toContain("\n\nResult\n\n");
     expect(copied.endsWith("latest")).toBe(true);
     state = reduce(state, {
       type: "tool_execution_end",

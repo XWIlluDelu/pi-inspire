@@ -6,7 +6,7 @@ covers:
   - server/runtime.ts
   - src/controllers/session-management-controller.ts
   - src/components/{HiddenClearDialog,SessionDeleteDialog}.tsx
-  - tests/server/{session-delete,desktop-trash,desktop-trash-native,native-session-trash-smoke,linux-trash,session-recovery,session-recovery-launcher,runtime-session-deletion}.test.ts
+  - tests/server/{session-delete,desktop-trash-native,native-session-trash-smoke,linux-trash,session-recovery,runtime-session-deletion}.test.ts
   - tests/web/{store-deletion,session-deletion-recovery,nav-render}.test.ts*
 ---
 

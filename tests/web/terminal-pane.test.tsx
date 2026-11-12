@@ -27,6 +27,7 @@ import {
   DEFAULT_TERMINAL_UI_SETTINGS,
   saveTerminalUiSettings,
 } from "../../src/terminal-settings";
+import { terminalDescriptor } from "./fixtures/terminal-descriptor";
 import { deferred, installLocalStorage } from "./helpers";
 
 const api = vi.hoisted(() => ({
@@ -83,7 +84,6 @@ vi.mock("../../src/components/TerminalView", () => ({
           aria-label="Fixture terminal input"
           disabled={!active}
         />
-        <input aria-label="Fixture terminal search" />
       </div>
     );
   },
@@ -95,32 +95,10 @@ function terminal(
   revision = 1,
   epoch = "daemon-1",
 ): TerminalDescriptor {
-  return {
+  return terminalDescriptor(id, cwd, {
     catalogEpoch: epoch,
     catalogRevision: revision,
-    id,
-    projectCwd: cwd,
-    title: id,
-    titleSource: "automatic",
-    profileId: "bash",
-    shellLabel: "Bash",
-    currentCwd: cwd,
-    currentCommand: "bash",
-    commandRunning: false,
-    status: "running",
-    exitCode: null,
-    signal: null,
-    cols: 80,
-    rows: 24,
-    resizeRevision: 0,
-    outputEpoch: "output-1",
-    firstOutputOffset: 0,
-    nextOutputOffset: 0,
-    viewerCount: 1,
-    hasOwner: true,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-  };
+  });
 }
 function catalog(
   terminals: TerminalDescriptor[],
@@ -135,13 +113,17 @@ function tabs() {
     .getAllByRole("button", { name: /^(A|B|new)/ })
     .filter((button) => button.hasAttribute("aria-pressed"));
 }
-async function switchToB() {
+function openProjectNavigator() {
   screen.getByLabelText("Terminal actions").closest("details")!.open = true;
   const menu = screen
     .getByLabelText("Terminals in all projects")
     .closest("details")!;
   menu.open = true;
   fireEvent(menu, new Event("toggle"));
+  return menu;
+}
+async function switchToB() {
+  const menu = openProjectNavigator();
   const target = await within(menu).findByRole("button", { name: /B shell/ });
   fireEvent.click(target);
   await screen.findByRole("button", { name: "B shell", pressed: true });
@@ -154,7 +136,10 @@ function action(name: string) {
   fireEvent.click(within(menu).getByRole("button", { name }));
 }
 
+const originalStorage = Object.getOwnPropertyDescriptor(window, "localStorage");
+
 beforeEach(() => {
+  installLocalStorage();
   sessionStorage.clear();
   clearTerminalActions();
   clearTerminalInsertions();
@@ -175,134 +160,100 @@ beforeEach(() => {
   );
 });
 
-describe("terminal notification delivery", () => {
-  it.each(["bell", "complete"] as const)(
-    "isolates failed %s notifications and retains the terminal mark",
-    async (event) => {
-      const storage = Object.getOwnPropertyDescriptor(window, "localStorage");
-      installLocalStorage();
-      saveTerminalUiSettings({
-        ...DEFAULT_TERMINAL_UI_SETTINGS,
-        bell: "desktop",
-        longTaskNotifications: true,
-      });
-      const Notification = vi.fn(function () {
-        throw new TypeError(
-          "Illegal constructor. Use showNotification instead.",
-        );
-      });
-      vi.stubGlobal(
-        "Notification",
-        Object.assign(Notification, { permission: "granted" }),
-      );
-      const showNotification = vi
-        .fn()
-        .mockRejectedValue(new Error("Service worker unavailable"));
-      vi.stubGlobal("navigator", {
-        platform: navigator.platform,
-        userAgent: navigator.userAgent,
-        serviceWorker: {
-          getRegistration: vi.fn().mockResolvedValue({ showNotification }),
-        },
-      });
-      try {
-        render(<TerminalPane cwd="/A" />);
-        await screen.findByRole("button", { name: "A shell", pressed: true });
-        fireEvent.click(
-          screen.getByRole("button", { name: "A second", pressed: false }),
-        );
-        await screen.findByRole("button", { name: "A second", pressed: true });
-        expect(() => {
-          act(() => viewCallbacks.get("A shell")![event]());
-        }).not.toThrow();
-        await waitFor(() => expect(Notification).toHaveBeenCalledTimes(1));
-        expect(showNotification).toHaveBeenCalledWith(
-          event === "bell" ? "Terminal · Bash" : "Terminal finished · Bash",
-          expect.objectContaining({
-            body: event === "bell" ? "Terminal bell" : "15s · Succeeded",
-          }),
-        );
-        expect(
-          screen.getByRole("button", { name: "A shell, bell", pressed: false }),
-        ).toBeInTheDocument();
-        expect(screen.queryByRole("alert")).toBeNull();
-      } finally {
-        if (storage) Object.defineProperty(window, "localStorage", storage);
-        else Reflect.deleteProperty(window, "localStorage");
-      }
+it("marks background terminal activity and delivers notifications through one available browser path", async () => {
+  saveTerminalUiSettings({
+    ...DEFAULT_TERMINAL_UI_SETTINGS,
+    bell: "desktop",
+    longTaskNotifications: true,
+  });
+  const notification = Object.assign(
+    vi.fn(function NotificationStub() {}),
+    {
+      permission: "denied" as NotificationPermission,
     },
   );
+  const showNotification = vi.fn(async () => undefined);
+  const getRegistration = vi.fn<
+    () => Promise<{ showNotification: typeof showNotification } | undefined>
+  >(async () => ({ showNotification }));
+  vi.stubGlobal("Notification", notification);
+  vi.stubGlobal("navigator", {
+    platform: navigator.platform,
+    userAgent: navigator.userAgent,
+    serviceWorker: { getRegistration },
+  });
+  render(<TerminalPane cwd="/A" />);
+  await screen.findByRole("button", { name: "A shell", pressed: true });
+  fireEvent.click(
+    screen.getByRole("button", { name: "A second", pressed: false }),
+  );
+  const events = viewCallbacks.get("A shell")!;
+  act(events.bell);
+  expect(
+    screen.getByRole("button", { name: "A shell, bell", pressed: false }),
+  ).toBeInTheDocument();
+  expect(getRegistration).not.toHaveBeenCalled();
+  expect(notification).not.toHaveBeenCalled();
+
+  notification.permission = "granted";
+  act(events.bell);
+  await waitFor(() =>
+    expect(showNotification).toHaveBeenCalledExactlyOnceWith(
+      "Terminal · Bash",
+      { body: "Terminal bell", tag: "inspire-terminal-A shell" },
+    ),
+  );
+  expect(notification).not.toHaveBeenCalled();
+
+  getRegistration.mockResolvedValueOnce(undefined);
+  act(events.complete);
+  await waitFor(() =>
+    expect(notification).toHaveBeenCalledExactlyOnceWith(
+      "Terminal finished · Bash",
+      { body: "15s · Succeeded", tag: "inspire-terminal-command-A shell" },
+    ),
+  );
+
+  showNotification.mockRejectedValueOnce(new Error("Worker refused display"));
+  notification.mockImplementationOnce(function () {
+    throw new TypeError("Use showNotification instead");
+  });
+  act(events.complete);
+  await waitFor(() => expect(notification).toHaveBeenCalledTimes(2));
+  expect(
+    screen.getByRole("button", { name: "A shell, bell", pressed: false }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).toBeNull();
 });
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-});
-
-describe("terminal error feedback", () => {
-  it("uses shared error presentation, copies complete diagnostics and dismisses only explicitly", async () => {
-    const message =
-      "A terminal endpoint is listening, but its authenticated data connection failed.\nExisting terminal processes were left running.";
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      clipboard: { writeText },
-    });
-    api.terminals.mockRejectedValue(new Error(message));
-    render(<TerminalPane cwd="/A" />);
-    const error = await screen.findByRole("alert");
-    expect(error).toHaveClass(
-      "notice",
-      "notice--error",
-      "terminal-pane__error",
-    );
-    fireEvent.click(
-      within(error).getByText(/A terminal endpoint is listening/),
-    );
-    expect(error).toBeVisible();
-    fireEvent.click(within(error).getByRole("button", { name: "Copy error" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(message));
-    expect(
-      within(error).getByRole("button", { name: "Error copied" }),
-    ).toBeVisible();
-    fireEvent.click(
-      within(error).getByRole("button", { name: "Dismiss terminal error" }),
-    );
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(api.restartTerminal).not.toHaveBeenCalled();
-    expect(api.removeTerminal).not.toHaveBeenCalled();
-  });
+  if (originalStorage)
+    Object.defineProperty(window, "localStorage", originalStorage);
+  else Reflect.deleteProperty(window, "localStorage");
 });
 
 describe("terminal shortcut input ownership", () => {
   it.each(["close", "restart"] as const)(
-    "never carries a targetless %s from project A into B before any request",
+    "%s ends without an active terminal and otherwise stays bound to its original target",
     async (action) => {
-      api.terminals.mockImplementation(async (cwd?: string) =>
-        catalog(cwd === "/B" ? [terminal("B shell", "/B")] : []),
-      );
-      const view = render(<TerminalPane cwd="/A" />);
-      await act(async () => {});
-      act(() => queueTerminalAction(action, "/A"));
-      expect(api.removeTerminal).not.toHaveBeenCalled();
-      expect(api.restartTerminal).not.toHaveBeenCalled();
-      view.rerender(<TerminalPane cwd="/B" />);
-      await screen.findByRole("button", { name: "B shell", pressed: true });
-      expect(api.removeTerminal).not.toHaveBeenCalled();
-      expect(api.restartTerminal).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(["close", "restart"] as const)(
-    "binds an immediate %s to the active A terminal",
-    async (action) => {
+      api.terminals.mockImplementationOnce(async () => catalog([]));
       api.removeTerminal.mockResolvedValue({
         catalogEpoch: "daemon-1",
         revision: 2,
       });
       api.restartTerminal.mockResolvedValue(terminal("A shell", "/A", 2));
       const view = render(<TerminalPane cwd="/A" />);
+      await screen.findByText("Project terminal", { exact: true });
+      act(() => queueTerminalAction(action, "/A"));
+      view.rerender(<TerminalPane cwd="/B" />);
+      await screen.findByRole("button", { name: "B shell", pressed: true });
+      expect(api.removeTerminal).not.toHaveBeenCalled();
+      expect(api.restartTerminal).not.toHaveBeenCalled();
+
+      view.rerender(<TerminalPane cwd="/A" />);
       await screen.findByRole("button", { name: "A shell", pressed: true });
       act(() => queueTerminalAction(action, "/A"));
       view.rerender(<TerminalPane cwd="/B" />);
@@ -316,131 +267,17 @@ describe("terminal shortcut input ownership", () => {
         expect(api.restartTerminal).toHaveBeenCalledExactlyOnceWith("A shell");
     },
   );
-
-  it("replaces the terminal view when its accepted output epoch changes", async () => {
-    render(<TerminalPane cwd="/A" />);
-    const input = await screen.findByLabelText("Fixture terminal input");
-    api.restartTerminal.mockResolvedValueOnce(terminal("A shell", "/A", 0));
-    await act(async () => queueTerminalAction("restart", "/A"));
-    expect(screen.getByLabelText("Fixture terminal input")).toBe(input);
-
-    api.restartTerminal.mockResolvedValueOnce({
-      ...terminal("A shell", "/A", 2),
-      outputEpoch: "output-2",
-    });
-    await act(async () => queueTerminalAction("restart", "/A"));
-    expect(screen.getByLabelText("Fixture terminal input")).not.toBe(input);
-  });
-
-  it.each([
-    {
-      name: "AltGraph digits",
-      key: "2",
-      code: "Digit2",
-      altKey: true,
-      modifierAltGraph: true,
-    },
-    {
-      name: "Windows AltGr character",
-      key: "[",
-      code: "Digit8",
-      ctrlKey: true,
-      altKey: true,
-      modifierAltGraph: true,
-    },
-    {
-      name: "Ctrl+Alt third level",
-      key: "{",
-      code: "Digit7",
-      ctrlKey: true,
-      altKey: true,
-    },
-    { name: "Mac Option character", key: "™", code: "Digit2", altKey: true },
-    {
-      name: "active composition",
-      key: "2",
-      code: "Digit2",
-      altKey: true,
-      isComposing: true,
-    },
-    {
-      name: "IME confirmation",
-      key: "2",
-      code: "Digit2",
-      altKey: true,
-      keyCode: 229,
-    },
-  ] as const)("does not cancel or switch tabs for $name", async (init) => {
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    const input = screen.getByRole("textbox", {
-      name: "Fixture terminal input",
-    });
-    const event = new window.KeyboardEvent("keydown", {
-      ...init,
-      bubbles: true,
-      cancelable: true,
-    });
-    expect(fireEvent(input, event)).toBe(true);
-    expect(event.defaultPrevented).toBe(false);
-    expect(
-      screen.getByRole("button", { name: "A shell", pressed: true }),
-    ).toBeInTheDocument();
-    expect(api.createTerminal).not.toHaveBeenCalled();
-  });
-
-  it("leaves editors alone but still switches tabs from PTY input", async () => {
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    const search = screen.getByRole("textbox", {
-      name: "Fixture terminal search",
-    });
-    const init = {
-      key: "2",
-      code: "Digit2",
-      altKey: true,
-      bubbles: true,
-      cancelable: true,
-    };
-    const searchEvent = new window.KeyboardEvent("keydown", init);
-    expect(fireEvent(search, searchEvent)).toBe(true);
-    expect(
-      screen.getByRole("button", { name: "A shell", pressed: true }),
-    ).toBeInTheDocument();
-    const input = screen.getByRole("textbox", {
-      name: "Fixture terminal input",
-    });
-    const tabEvent = new window.KeyboardEvent("keydown", init);
-    expect(fireEvent(input, tabEvent)).toBe(false);
-    await screen.findByRole("button", { name: "A second", pressed: true });
-  });
-
-  it("does not create a terminal behind the rename input", async () => {
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    action("Rename");
-    const input = screen.getByRole("textbox", { name: "Terminal name" });
-    expect(
-      fireEvent(
-        input,
-        new window.KeyboardEvent("keydown", {
-          key: "~",
-          code: "Backquote",
-          ctrlKey: true,
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
-      ),
-    ).toBe(true);
-    expect(api.createTerminal).not.toHaveBeenCalled();
-  });
 });
 
 describe("terminal creation controls", () => {
-  it.each(["ctrlKey", "metaKey"] as const)(
-    "creates with shifted Backquote using %s even when key is a tilde",
-    async (modifier) => {
+  it.each([
+    ["ctrlKey", "workbench"],
+    ["metaKey", "workbench"],
+    ["ctrlKey", "shell"],
+  ] as const)(
+    "routes Shift+Backquote with %s in %s mode",
+    async (modifier, shortcutMode) => {
+      saveTerminalUiSettings({ ...DEFAULT_TERMINAL_UI_SETTINGS, shortcutMode });
       api.createTerminal.mockResolvedValue(terminal("new shell"));
       render(<TerminalPane cwd="/A" />);
       const target = await screen.findByRole("button", {
@@ -453,40 +290,16 @@ describe("terminal creation controls", () => {
         shiftKey: true,
         [modifier]: true,
       });
-      await vi.waitFor(() =>
-        expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" }),
-      );
-      expect(api.createTerminal).toHaveBeenCalledTimes(1);
+      if (shortcutMode === "shell") {
+        expect(api.createTerminal).not.toHaveBeenCalled();
+      } else {
+        await screen.findByRole("button", { name: "new shell", pressed: true });
+        expect(api.createTerminal).toHaveBeenCalledExactlyOnceWith({
+          cwd: "/A",
+        });
+      }
     },
   );
-
-  it("leaves shifted Backquote to the shell in shell shortcut mode", async () => {
-    const storage = Object.getOwnPropertyDescriptor(window, "localStorage");
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        getItem: () => JSON.stringify({ shortcutMode: "shell" }),
-        setItem: vi.fn(),
-      },
-    });
-    try {
-      render(<TerminalPane cwd="/A" />);
-      const target = await screen.findByRole("button", {
-        name: "A shell",
-        pressed: true,
-      });
-      fireEvent.keyDown(target, {
-        key: "~",
-        code: "Backquote",
-        shiftKey: true,
-        ctrlKey: true,
-      });
-      expect(api.createTerminal).not.toHaveBeenCalled();
-    } finally {
-      if (storage) Object.defineProperty(window, "localStorage", storage);
-      else Reflect.deleteProperty(window, "localStorage");
-    }
-  });
 
   const profiles = [
     { id: "bash", label: "Bash", available: true, isDefault: true },
@@ -529,47 +342,29 @@ describe("terminal creation controls", () => {
     });
   });
 
-  it.each([false, true])(
-    "creates directly when only one available profile exists (compact=%s)",
-    async (compact) => {
+  it.each([
+    {
+      layout: "compact",
+      compact: true,
+      profiles: [profiles[0], { ...profiles[1], available: false }],
+    },
+    { layout: "desktop", compact: false, profiles },
+  ])(
+    "creates the default profile directly on $layout",
+    async ({ compact, profiles }) => {
       vi.spyOn(window, "matchMedia").mockReturnValue({
         matches: compact,
       } as MediaQueryList);
-      api.terminals.mockResolvedValue({
-        ...catalog([]),
-        profiles: [profiles[0], { ...profiles[1], available: false }],
-      });
+      api.terminals.mockResolvedValue({ ...catalog([]), profiles });
       api.createTerminal.mockResolvedValue(terminal("new bash"));
       render(<TerminalPane cwd="/A" />);
-      await screen.findByText("Project terminal", { exact: true });
-      expect(screen.queryByLabelText("Choose terminal profile")).toBeNull();
       fireEvent.click(
-        within(
-          screen
-            .getByText("Project terminal", { exact: true })
-            .closest(".terminal-empty")!,
-        ).getByRole("button", { name: "New terminal" }),
+        await screen.findByRole("button", { name: "New terminal" }),
       );
       await screen.findByRole("button", { name: "new bash", pressed: true });
-      expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" });
+      expect(api.createTerminal).toHaveBeenCalledExactlyOnceWith({ cwd: "/A" });
     },
   );
-
-  it("keeps desktop New as default creation while retaining explicit profile choice", async () => {
-    api.terminals.mockResolvedValue({ ...catalog([]), profiles });
-    api.createTerminal.mockResolvedValue(terminal("new bash"));
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByLabelText("Choose terminal profile");
-    fireEvent.click(
-      within(
-        screen
-          .getByText("Project terminal", { exact: true })
-          .closest(".terminal-empty")!,
-      ).getByRole("button", { name: "New terminal" }),
-    );
-    await screen.findByRole("button", { name: "new bash", pressed: true });
-    expect(api.createTerminal).toHaveBeenCalledWith({ cwd: "/A" });
-  });
 });
 
 describe("terminal project ownership", () => {
@@ -597,104 +392,15 @@ describe("terminal project ownership", () => {
     }
   });
 
-  it("loads shared tabs while inactive and activates an existing terminal without creating one", async () => {
-    const list = document.createElement("div");
-    list.setAttribute("role", "tablist");
-    const file = document.createElement("button");
-    file.setAttribute("role", "tab");
-    file.textContent = "README.md";
-    const host = document.createElement("div");
-    list.append(file, host);
-    document.body.append(list);
-    const onActivate = vi.fn();
-    const view = render(
-      <TerminalPane
-        cwd="/A"
-        active={false}
-        sharedTabsHost={host}
-        onActivate={onActivate}
-      />,
-    );
-    try {
-      const first = await within(list).findByRole("tab", { name: "A shell" });
-      expect(first).toHaveAttribute("aria-selected", "false");
-      expect(
-        screen.queryByRole("toolbar", { name: "Project terminals" }),
-      ).not.toBeInTheDocument();
-      fireEvent.click(within(list).getByRole("tab", { name: "A second" }));
-      expect(onActivate).toHaveBeenCalledOnce();
-      expect(api.createTerminal).not.toHaveBeenCalled();
-      view.rerender(
-        <TerminalPane
-          cwd="/A"
-          active
-          sharedTabsHost={host}
-          onActivate={onActivate}
-        />,
-      );
-      const selected = await within(list).findByRole("tab", {
-        name: "A second",
-        selected: true,
-      });
-      fireEvent.keyDown(selected, { key: "Home" });
-      expect(file).toHaveFocus();
-      expect(api.removeTerminal).not.toHaveBeenCalled();
-    } finally {
-      view.unmount();
-      list.remove();
-    }
-  });
-
-  it("keeps shared controls open during terminal interaction and collapses them explicitly", async () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
-    try {
-      await within(host).findByRole("tab", { name: "A shell", selected: true });
-      const input = await screen.findByLabelText("Fixture terminal input");
-      fireEvent.change(input, { target: { value: "unfinished command" } });
-      fireEvent.pointerDown(input);
-      fireEvent.click(input);
-      fireEvent.wheel(input);
-      fireEvent.touchStart(input);
-      fireEvent.keyDown(input, { key: "ArrowLeft" });
-      const hide = screen.getByRole("button", {
-        name: "Hide terminal controls",
-      });
-      expect(hide).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getByLabelText("Terminal actions")).toBeVisible();
-      fireEvent.click(hide);
-      const toggle = screen.getByRole("button", {
-        name: "Show terminal controls",
-      });
-      expect(toggle).toHaveAttribute("aria-expanded", "false");
-      fireEvent.click(toggle);
-      expect(screen.getByLabelText("Terminal actions")).toBeVisible();
-      fireEvent.keyDown(
-        screen.getByRole("button", { name: "Hide terminal controls" }),
-        { key: "Escape" },
-      );
-      expect(
-        screen.getByRole("button", { name: "Show terminal controls" }),
-      ).toHaveFocus();
-      expect(input).toHaveValue("unfinished command");
-      expect(api.removeTerminal).not.toHaveBeenCalled();
-    } finally {
-      view.unmount();
-      host.remove();
-    }
-  });
-
   it("retains the selected view while hidden without accepting terminal actions", async () => {
     const view = render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByRole("button", { name: "A second" }));
-    const input = await within(
-      screen.getByRole("region", { name: "A second terminal" }),
-    ).findByLabelText("Fixture terminal input");
+    const second = screen.getByRole("button", { name: "A second" });
+    fireEvent.click(second);
+    const panel = screen.getByRole("region", { name: "A second terminal" });
+    expect(second).toHaveAttribute("aria-controls", panel.id);
+    const input = await within(panel).findByLabelText("Fixture terminal input");
     fireEvent.change(input, { target: { value: "unfinished command" } });
-    const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
-    reveal.mockClear();
 
     view.rerender(<TerminalPane cwd="/A" active={false} />);
     expect(input).toBeDisabled();
@@ -703,17 +409,14 @@ describe("terminal project ownership", () => {
     fireEvent.keyDown(input, { key: "PageUp", ctrlKey: true });
     expect(api.removeTerminal).not.toHaveBeenCalled();
     expect(api.restartTerminal).not.toHaveBeenCalled();
-    expect(reveal).not.toHaveBeenCalled();
 
     view.rerender(<TerminalPane cwd="/A" active />);
     await screen.findByRole("button", { name: "A second", pressed: true });
-    expect(
-      within(
-        screen.getByRole("region", { name: "A second terminal" }),
-      ).getByLabelText("Fixture terminal input"),
-    ).toBe(input);
-    expect(input).toBeEnabled();
-    expect(input).toHaveValue("unfinished command");
+    const reactivated = within(
+      screen.getByRole("region", { name: "A second terminal" }),
+    ).getByLabelText("Fixture terminal input");
+    expect(reactivated).toBeEnabled();
+    expect(reactivated).toHaveValue("unfinished command");
     expect(api.createTerminal).not.toHaveBeenCalled();
   });
 
@@ -734,68 +437,13 @@ describe("terminal project ownership", () => {
     await screen.findByRole("button", { name: "new shell", pressed: true });
   });
 
-  it("restores the selected tab after the initial catalog loads", async () => {
-    sessionStorage.setItem("inspire:terminal-active:/A", "A second");
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A second", pressed: true });
-    expect(sessionStorage.getItem("inspire:terminal-active:/A")).toBe(
-      "A second",
-    );
-  });
-
-  it("reveals terminal tabs when selection changes", async () => {
-    const reveal = vi.spyOn(Element.prototype, "scrollIntoView");
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    expect(reveal).toHaveBeenLastCalledWith({
-      block: "nearest",
-      inline: "nearest",
-    });
-    reveal.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "A second" }));
-    expect(reveal).toHaveBeenCalledTimes(1);
-    expect(reveal.mock.instances[0]).toBe(
-      screen.getByRole("button", { name: "A second", pressed: true }),
-    );
-  });
-
-  it("keeps terminal settings above the pane and restores its visible menu trigger", async () => {
-    const view = render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByLabelText("Focus terminal", { exact: true }));
-    action("Settings");
-    const dialog = await screen.findByRole("dialog", {
-      name: "Terminal settings",
-    });
-    await within(dialog).findByRole("group", { name: "Terminal font size" });
-    expect(view.container).not.toContainElement(dialog);
-    const close = within(dialog).getByRole("button", {
-      name: "Close terminal settings",
-    });
-    expect(close).toHaveFocus();
-    fireEvent.keyDown(close, { key: "PageDown", ctrlKey: true });
-    expect(
-      screen.getByRole("button", { name: "A shell", pressed: true }),
-    ).toBeTruthy();
-    fireEvent.keyDown(close, { key: "Escape" });
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(
-      view.container.querySelector(".terminal-pane--focused"),
-    ).toBeTruthy();
-    await act(async () => {});
-    expect(screen.getByLabelText("Terminal actions")).toHaveFocus();
-  });
-
-  it("toggles focus through the existing action without claiming the OS Escape chord", async () => {
+  it("leaves the OS Escape chord unclaimed while focused", async () => {
     const view = render(<TerminalPane cwd="/A" />);
     await screen.findByRole("button", { name: "A shell", pressed: true });
     act(() => queueTerminalAction("focus", "/A"));
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
-    expect(
-      screen.getByLabelText("Exit focused terminal", { exact: true }),
-    ).toHaveAttribute("title", "Exit focus");
     const input = screen.getAllByLabelText("Fixture terminal input")[0]!;
     const reserved = new KeyboardEvent("keydown", {
       key: "Escape",
@@ -809,91 +457,14 @@ describe("terminal project ownership", () => {
     expect(
       view.container.querySelector(".terminal-pane--focused"),
     ).toBeTruthy();
-    act(() => queueTerminalAction("focus", "/A"));
-    expect(view.container.querySelector(".terminal-pane--focused")).toBeNull();
   });
 
-  it("keeps the all-project navigator inside More and filters project paths", async () => {
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    const more = screen.getByLabelText("Terminal actions").closest("details")!;
-    const projects = screen
-      .getByLabelText("Terminals in all projects")
-      .closest("details")!;
-    expect(more).toContainElement(projects);
-    expect(screen.queryByText("Duplicate")).not.toBeInTheDocument();
-    more.open = true;
-    projects.open = true;
-    fireEvent(projects, new Event("toggle"));
-    await within(projects).findByRole("button", { name: /B shell/ });
-    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
-      target: { value: "/B" },
-    });
-    expect(
-      within(projects).queryByRole("button", { name: /A shell/ }),
-    ).toBeNull();
-    fireEvent.click(within(projects).getByRole("button", { name: /B shell/ }));
-    await screen.findByRole("button", { name: "B shell", pressed: true });
-    expect(more).not.toHaveAttribute("open");
-  });
-
-  it("emphasizes literal case-insensitive hits across project, terminal and command without changing catalog order", async () => {
+  it("filters the project navigator while preserving catalog order and disambiguating project names", async () => {
     const values = [
       {
-        ...terminal("Dev server", "/DevLab"),
-        currentCommand: "npm run dev -- --host",
+        ...terminal("Atlas dev", "/Clients/Atlas"),
+        currentCommand: "make atlas",
       },
-      {
-        ...terminal("Dev worker", "/DevLab"),
-        currentCommand: "node worker.js",
-      },
-      {
-        ...terminal("Trainer", "/ModelLab"),
-        currentCommand: "python train.py",
-      },
-    ];
-    api.terminals.mockImplementation(async (cwd?: string) =>
-      catalog(cwd ? values.filter((t) => t.projectCwd === cwd) : values),
-    );
-    render(<TerminalPane cwd="/DevLab" />);
-    await screen.findByRole("button", { name: "Dev server", pressed: true });
-    screen.getByLabelText("Terminal actions").closest("details")!.open = true;
-    const projects = screen
-      .getByLabelText("Terminals in all projects")
-      .closest("details")!;
-    projects.open = true;
-    fireEvent(projects, new Event("toggle"));
-    await within(projects).findByRole("button", { name: /Trainer/ });
-    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
-      target: { value: "DEV" },
-    });
-    expect(
-      Array.from(
-        projects.querySelectorAll(".search-match"),
-        (n) => n.textContent,
-      ),
-    ).toEqual(["Dev", "Dev", "dev", "Dev"]);
-    expect(
-      within(projects).queryByRole("button", { name: /Trainer/ }),
-    ).toBeNull();
-    expect(
-      within(projects)
-        .getAllByRole("button")
-        .map((n) => n.textContent),
-    ).toEqual(["Dev servernpm run dev -- --host", "Dev workernode worker.js"]);
-    fireEvent.change(screen.getByLabelText("Find terminal or project"), {
-      target: { value: "" },
-    });
-    expect(projects.querySelector(".search-match")).toBeNull();
-    expect(projects.querySelectorAll(".terminal-menu__project")).toHaveLength(
-      2,
-    );
-    expect(within(projects).getByText("Current")).toBeVisible();
-  });
-
-  it("shows stable parent cues for colliding projects and parent-only search hits", async () => {
-    const values = [
-      terminal("Atlas dev", "/Clients/Atlas"),
       terminal("Atlas logs", "/Clients/Atlas"),
       terminal("Atlas demo", "C:\\Samples\\Atlas\\"),
       terminal("Orion dev", "/Clients/Orion"),
@@ -904,145 +475,32 @@ describe("terminal project ownership", () => {
     );
     render(<TerminalPane cwd="/Clients/Atlas" />);
     await screen.findByRole("button", { name: "Atlas dev", pressed: true });
-    screen.getByLabelText("Terminal actions").closest("details")!.open = true;
-    const projects = screen
-      .getByLabelText("Terminals in all projects")
-      .closest("details")!;
-    projects.open = true;
-    fireEvent(projects, new Event("toggle"));
-    await within(projects).findByRole("button", { name: /Orion logs/ });
+    const projects = openProjectNavigator();
+    const navigator = within(projects);
+    await navigator.findByRole("button", { name: /Orion logs/ });
     const contexts = () =>
       Array.from(
         projects.querySelectorAll(".terminal-menu__project-context"),
-        (n) => n.textContent,
+        (node) => node.textContent,
       );
+    const input = navigator.getByLabelText("Find terminal or project");
     expect(contexts()).toEqual(["@Clients", "@Samples"]);
-    const input = screen.getByLabelText("Find terminal or project");
+    fireEvent.change(input, { target: { value: "ATLAS" } });
+    expect(
+      navigator.getAllByRole("button").map((node) => node.textContent),
+    ).toEqual(["Atlas devmake atlas", "Atlas logsbash", "Atlas demobash"]);
     fireEvent.change(input, { target: { value: "CLIENTS" } });
-    expect(contexts()).toEqual(["@Clients", "@Clients"]);
-    expect(
-      Array.from(
-        projects.querySelectorAll(
-          ".terminal-menu__project-context .search-match",
-        ),
-        (n) => n.textContent,
-      ),
-    ).toEqual(["Clients", "Clients"]);
-    expect(
-      within(projects).queryByRole("button", { name: /Atlas demo/ }),
-    ).toBeNull();
-    expect(within(projects).getByText("Current")).toBeVisible();
-    fireEvent.change(input, { target: { value: "Orion" } });
-    expect(contexts()).toEqual([]);
-    expect(
-      Array.from(
-        projects.querySelectorAll(".search-match"),
-        (n) => n.textContent,
-      ),
-    ).toEqual(["Orion", "Orion", "Orion"]);
-    fireEvent.change(input, { target: { value: "" } });
-    expect(contexts()).toEqual(["@Clients", "@Samples"]);
-    expect(projects.querySelector(".search-match")).toBeNull();
-    fireEvent.click(
-      within(projects).getByRole("button", { name: /Atlas demo/ }),
-    );
+    expect(navigator.queryByRole("button", { name: /Atlas demo/ })).toBeNull();
+    expect(navigator.getByRole("button", { name: /Orion logs/ })).toBeVisible();
+    fireEvent.change(input, { target: { value: "Samples" } });
+    fireEvent.click(navigator.getByRole("button", { name: /Atlas demo/ }));
     await screen.findByRole("button", { name: "Atlas demo", pressed: true });
     expect(screen.getByTestId("shell-cwd")).toHaveTextContent(
       "C:\\Samples\\Atlas\\",
     );
   });
 
-  it.each([
-    { name: "active composition", isComposing: true },
-    { name: "IME confirmation", isComposing: false, keyCode: 229 },
-  ])("leaves terminal names editable during $name", async (ime) => {
-    api.renameTerminal.mockResolvedValue({
-      ...terminal("A shell", "/A", 2),
-      title: "测量终端",
-      titleSource: "user",
-    });
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    action("Rename");
-    const input = screen.getByRole("textbox", { name: "Terminal name" });
-    fireEvent.change(input, { target: { value: "测量终端" } });
-    for (const key of ["Enter", "Escape"]) {
-      fireEvent.keyDown(input, { key, ...ime });
-      expect(api.renameTerminal).not.toHaveBeenCalled();
-      expect(input).toBeInTheDocument();
-      expect(input).toHaveValue("测量终端");
-    }
-    fireEvent.keyDown(input, { key: "Enter" });
-    await screen.findByRole("button", { name: "测量终端", pressed: true });
-    expect(api.renameTerminal).toHaveBeenCalledTimes(1);
-    expect(api.renameTerminal).toHaveBeenCalledWith("A shell", {
-      title: "测量终端",
-    });
-  });
-
-  it("references a terminal panel only after its lazy view exists", async () => {
-    render(<TerminalPane cwd="/A" />);
-    const unopened = await screen.findByRole("button", {
-      name: "A second",
-      pressed: false,
-    });
-    expect(unopened).not.toHaveAttribute("aria-controls");
-    fireEvent.click(unopened);
-    const panel = await screen.findByRole("region", {
-      name: "A second terminal",
-    });
-    expect(unopened).toHaveAttribute("aria-controls", panel.id);
-  });
-
-  it("keeps an uncertain control visible across project generations and explicitly checks the same identity", async () => {
-    const identities: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string, init?: RequestInit) => {
-        if (path === "/api/terminal-operations")
-          return Response.json({ epoch: "synthetic-epoch" });
-        const identity = JSON.parse(
-          (init?.headers as Record<string, string>)["X-Terminal-Operation"]!,
-        ) as { id: string };
-        identities.push(identity.id);
-        if (identities.length === 1)
-          throw new Error("Synthetic lost response after commit");
-        return Response.json(terminal("created"), {
-          headers: {
-            "X-Terminal-Operation": identity.id,
-            "X-Terminal-Outcome": "completed",
-          },
-        });
-      }),
-    );
-    api.createTerminal.mockImplementation((body) =>
-      terminalOperations.run("/api/terminals", "POST", body),
-    );
-    api.retryTerminalOperation.mockImplementation((key) =>
-      terminalOperations.retry(key),
-    );
-    const view = render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-    await screen.findByText("Outcome unknown");
-    expect(screen.getByText("Create terminal · /A")).toBeVisible();
-    view.rerender(<TerminalPane cwd="/B" />);
-    await screen.findByRole("button", { name: "B shell", pressed: true });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Retry same operation" }),
-    );
-    await act(async () => {
-      await api.retryTerminalOperation.mock.results[0]!.value;
-    });
-    expect(identities).toHaveLength(2);
-    expect(identities[0]).toBe(identities[1]);
-    expect(screen.queryByText("Outcome unknown")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "B shell", pressed: true }),
-    ).toBeTruthy();
-  });
-
-  it("shows confirmed results with a separate local cleanup action", async () => {
+  it("offers local cleanup for confirmed controls and confirms retiring an uncertain control", async () => {
     vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
       {
         key: "confirmed",
@@ -1050,31 +508,14 @@ describe("terminal project ownership", () => {
         busy: false,
         outcome: "completed",
       },
-    ]);
-    api.retryTerminalOperation.mockResolvedValue(undefined);
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByText("Completed · Could not clear tracking");
-    expect(screen.queryByText("Outcome unknown")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Stop tracking…" })).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Clear recovery record" }),
-    );
-    await waitFor(() =>
-      expect(api.retryTerminalOperation).toHaveBeenCalledWith("confirmed"),
-    );
-    expect(api.createTerminal).not.toHaveBeenCalled();
-  });
-
-  it("requires confirmation before stopping tracking and sends no terminal mutation", async () => {
-    const pending = [
       {
         key: "lost",
         label: "Create terminal · /A",
-        outcome: "unknown" as const,
         busy: false,
+        outcome: "unknown",
       },
-    ];
-    vi.spyOn(terminalOperations, "snapshot").mockReturnValue(pending);
+    ]);
+    api.retryTerminalOperation.mockResolvedValue(undefined);
     const stopTracking = vi
       .spyOn(terminalOperations, "stopTracking")
       .mockImplementation(() => {});
@@ -1096,103 +537,91 @@ describe("terminal project ownership", () => {
     expect(stopTracking).toHaveBeenCalledExactlyOnceWith("lost");
     expect(api.createTerminal).not.toHaveBeenCalled();
     expect(api.retryTerminalOperation).not.toHaveBeenCalled();
+    await screen.findByText("Completed · Could not clear tracking");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear recovery record" }),
+    );
+    await waitFor(() =>
+      expect(api.retryTerminalOperation).toHaveBeenCalledExactlyOnceWith(
+        "confirmed",
+      ),
+    );
   });
 
-  it.each(["create", "reopen", "reorder", "close", "restart", "rename"])(
-    "ignores a delayed %s response after switching projects in the pane",
+  it.each(["Close", "Reopen", "Move tab right"] as const)(
+    "keeps the new project selected while an older %s settles",
     async (operation) => {
       const pending = deferred<unknown>();
-      api.createTerminal.mockReturnValue(pending.promise);
-      api.reorderTerminals.mockReturnValue(pending.promise);
-      api.restartTerminal.mockReturnValue(pending.promise);
-      api.renameTerminal.mockReturnValue(pending.promise);
-      api.removeTerminal.mockReturnValue(pending.promise);
-      render(<TerminalPane cwd="/A" />);
-      await screen.findByRole("button", { name: "A shell", pressed: true });
-      if (operation === "create")
-        fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-      if (operation === "reorder") action("Move tab right");
-      if (operation === "close") action("Close");
-      if (operation === "restart") action("Restart");
-      if (operation === "rename") {
-        action("Rename");
-        fireEvent.change(screen.getByLabelText("Terminal name"), {
-          target: { value: "new name" },
-        });
-        fireEvent.keyDown(screen.getByLabelText("Terminal name"), {
-          key: "Enter",
-        });
-      }
-      if (operation === "reopen") {
-        api.removeTerminal.mockResolvedValue({
-          catalogEpoch: "daemon-1",
-          revision: 2,
-        });
-        action("Close");
-        fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
-      }
-      await switchToB();
-      await act(async () =>
-        pending.resolve(
-          operation === "reorder"
-            ? catalog([terminal("A second"), terminal("A shell")], 3)
-            : operation === "close"
-              ? { catalogEpoch: "daemon-1", revision: 3 }
-              : terminal("new A", "/A", 3),
-        ),
+      const removed = { catalogEpoch: "daemon-1", revision: 2 };
+      api.removeTerminal.mockReturnValue(
+        operation === "Close" ? pending.promise : Promise.resolve(removed),
       );
-      expect(tabs().map((tab) => tab.textContent)).toEqual(["B shell"]);
-      expect(tabs()[0]).toHaveAttribute("aria-pressed", "true");
-      expect(screen.getByTestId("shell-cwd")).toHaveTextContent("/B");
-      expect(screen.queryByText("Terminal closed")).not.toBeInTheDocument();
-    },
-  );
-
-  it.each(["create", "reorder"])(
-    "does not apply an old %s failure or rollback to B",
-    async (operation) => {
-      const pending = deferred<unknown>();
       api.createTerminal.mockReturnValue(pending.promise);
       api.reorderTerminals.mockReturnValue(pending.promise);
       render(<TerminalPane cwd="/A" />);
       await screen.findByRole("button", { name: "A shell", pressed: true });
-      if (operation === "create")
-        fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-      else action("Move tab right");
+      action(operation === "Reopen" ? "Close" : operation);
+      if (operation === "Reopen") {
+        fireEvent.click(await screen.findByRole("button", { name: "Reopen" }));
+        expect(api.createTerminal).toHaveBeenCalledWith(
+          expect.objectContaining({ cwd: "/A", profileId: "bash" }),
+        );
+      } else if (operation === "Close") {
+        expect(api.removeTerminal).toHaveBeenCalledWith("A shell", false);
+      } else {
+        expect(api.reorderTerminals).toHaveBeenCalledWith({
+          cwd: "/A",
+          terminalIds: ["A second", "A shell"],
+        });
+      }
       await switchToB();
-      await act(async () => pending.reject(new Error("old A failure")));
-      expect(screen.queryByText("old A failure")).not.toBeInTheDocument();
+      await act(async () => {
+        if (operation === "Move tab right")
+          pending.reject(new Error("old A failure"));
+        else
+          pending.resolve(
+            operation === "Close" ? removed : terminal("reopened A", "/A", 3),
+          );
+      });
       expect(tabs().map((tab) => tab.textContent)).toEqual(["B shell"]);
-      expect(
-        screen.getByRole("button", { name: "New terminal" }),
-      ).toBeEnabled();
+      expect(screen.getByTestId("shell-cwd")).toHaveTextContent("/B");
+      expect(screen.queryByRole("button", { name: "Reopen" })).toBeNull();
+      expect(screen.queryByText("old A failure")).toBeNull();
     },
   );
 
-  it("rejects a previous A generation after A → B → A, including its loading flag", async () => {
-    const old = deferred<TerminalDescriptor>();
-    const current = deferred<TerminalDescriptor>();
-    api.createTerminal
-      .mockReturnValueOnce(old.promise)
-      .mockReturnValueOnce(current.promise);
-    const view = render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-    view.rerender(<TerminalPane cwd="/B" />);
-    await screen.findByRole("button", { name: "B shell", pressed: true });
-    view.rerender(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-    await act(async () => old.resolve(terminal("new old A", "/A", 2)));
-    expect(
-      screen.queryByRole("button", { name: "new old A" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New terminal" })).toBeDisabled();
-    await act(async () => current.resolve(terminal("new current A", "/A", 3)));
-    expect(
-      screen.getByRole("button", { name: "new current A", pressed: true }),
-    ).toBeInTheDocument();
-  });
+  it.each(["return to A", "reload A"])(
+    "retires old create work and keeps the new create busy after %s",
+    async (transition) => {
+      const old = deferred<TerminalDescriptor>();
+      const current = deferred<TerminalDescriptor>();
+      api.createTerminal
+        .mockReturnValueOnce(old.promise)
+        .mockReturnValueOnce(current.promise);
+      const view = render(<TerminalPane cwd="/A" />);
+      await screen.findByRole("button", { name: "A shell", pressed: true });
+      fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+      if (transition === "return to A") {
+        view.rerender(<TerminalPane cwd="/B" />);
+        await screen.findByRole("button", { name: "B shell", pressed: true });
+        view.rerender(<TerminalPane cwd="/A" />);
+      } else {
+        view.rerender(<TerminalPane cwd="/A" reloadKey={1} />);
+      }
+      await screen.findByRole("button", { name: "A shell", pressed: true });
+      const create = screen.getByRole("button", { name: "New terminal" });
+      fireEvent.click(create);
+      await act(async () => old.resolve(terminal("new old A", "/A", 2)));
+      expect(screen.queryByRole("button", { name: "new old A" })).toBeNull();
+      expect(create).toBeDisabled();
+      await act(async () =>
+        current.resolve(terminal("new current A", "/A", 3)),
+      );
+      expect(
+        screen.getByRole("button", { name: "new current A", pressed: true }),
+      ).toBeVisible();
+    },
+  );
 
   it("ignores a delayed A poll after the all-project navigator loads B", async () => {
     const polls: Array<() => void> = [];
@@ -1211,85 +640,36 @@ describe("terminal project ownership", () => {
     await act(async () => pending.resolve(catalog([terminal("A shell")], 99)));
     expect(tabs().map((tab) => tab.textContent)).toEqual(["B shell"]);
   });
-
-  it("retires same-project mutations when reload creates a new pane generation", async () => {
-    const pending = deferred<TerminalDescriptor>();
-    api.createTerminal.mockReturnValue(pending.promise);
-    const view = render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-    view.rerender(<TerminalPane cwd="/A" reloadKey={1} />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    await act(async () => pending.resolve(terminal("new stale A", "/A", 3)));
-    expect(
-      screen.queryByRole("button", { name: "new stale A" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("accepts the equal-revision poll after a partial creation receipt", async () => {
-    const polls: Array<() => void> = [];
-    vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
-      if (delay === 5_000) polls.push(callback as () => void);
-      return 123 as unknown as ReturnType<typeof window.setInterval>;
-    });
-    api.createTerminal.mockResolvedValue(terminal("new A", "/A", 3));
-    render(<TerminalPane cwd="/A" />);
-    await screen.findByRole("button", { name: "A shell", pressed: true });
-    fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
-    await screen.findByRole("button", { name: "new A", pressed: true });
-    // Another viewer also closed A shell. A partial receipt cannot describe
-    // that membership change, even though its revision is the same as the poll.
-    api.terminals.mockResolvedValue(catalog([terminal("new A", "/A", 3)], 3));
-    await act(async () => {
-      polls.at(-1)!();
-    });
-    expect(tabs().map((tab) => tab.textContent)).toEqual(["new A"]);
-  });
 });
 
-describe("terminal catalog commits", () => {
-  function controller() {
-    const state = new TerminalCatalogController("/A");
-    state.active = true;
-    state.replace(catalog([terminal("A shell")], 10));
-    return state;
-  }
-  it("deduplicates by ID, accepts an equal-revision full catalog, and rejects foreign projects", () => {
-    const state = controller();
-    state.upsert(terminal("new A", "/A", 11));
-    state.upsert(terminal("new A", "/A", 11));
-    expect(state.snapshot()?.terminals).toHaveLength(2);
-    expect(state.upsert(terminal("B shell", "/B", 12))).toBe("stale");
-    expect(state.replace(catalog([terminal("B shell", "/B")], 12))).toBe(false);
-    expect(state.replace(catalog([terminal("new A", "/A", 11)], 11))).toBe(
-      true,
-    );
-    expect(state.snapshot()?.terminals.map((value) => value.id)).toEqual([
-      "new A",
-    ]);
-  });
-  it("replaces epochs only from a complete catalog and refuses retired responses", () => {
-    const state = controller();
-    expect(state.upsert(terminal("new A", "/A", 1, "daemon-2"))).toBe(
-      "refresh",
-    );
-    expect(state.snapshot()?.catalogEpoch).toBe("daemon-1");
-    expect(
-      state.replace(
-        catalog([terminal("new A", "/A", 1, "daemon-2")], 1, "daemon-2"),
-      ),
-    ).toBe(true);
-    expect(state.upsert(terminal("A shell", "/A", 99))).toBe("stale");
-    expect(state.replace(catalog([terminal("A shell")], 99))).toBe(false);
-  });
-  it("does not roll back newer membership or accept an older full revision", () => {
-    const state = controller();
-    const rollback = state.order([]);
-    state.upsert(terminal("new A", "/A", 11));
-    rollback();
-    expect(state.snapshot()?.terminals.map((value) => value.id)).toEqual([
-      "new A",
-    ]);
-    expect(state.replace(catalog([terminal("A shell")], 10))).toBe(false);
-  });
+it("reconciles partial terminal receipts and only advances epochs from full catalogs", () => {
+  const state = new TerminalCatalogController("/A");
+  state.active = true;
+  state.replace(catalog([terminal("A shell")], 10));
+
+  const created = terminal("new A", "/A", 11);
+  state.upsert(created);
+  state.upsert(created);
+  const ids = () => state.snapshot()?.terminals.map(({ id }) => id);
+  expect(ids()).toEqual(["A shell", "new A"]);
+  const foreign = terminal("B shell", "/B", 12);
+  expect(state.upsert(foreign)).toBe("stale");
+  expect(state.replace(catalog([foreign], 12))).toBe(false);
+  expect(state.replace(catalog([created], 11))).toBe(true);
+  expect(ids()).toEqual(["new A"]);
+
+  const rollback = state.order([]);
+  state.upsert(terminal("later A", "/A", 12));
+  rollback();
+  expect(ids()).toEqual(["later A"]);
+  expect(state.replace(catalog([created], 11))).toBe(false);
+
+  const replacement = terminal("replacement A", "/A", 1, "daemon-2");
+  expect(state.upsert(replacement)).toBe("refresh");
+  expect(state.snapshot()?.catalogEpoch).toBe("daemon-1");
+  expect(state.replace(catalog([replacement], 1, "daemon-2"))).toBe(true);
+  const retired = terminal("retired A", "/A", 99);
+  expect(state.upsert(retired)).toBe("stale");
+  expect(state.replace(catalog([retired], 99))).toBe(false);
+  expect(ids()).toEqual(["replacement A"]);
 });

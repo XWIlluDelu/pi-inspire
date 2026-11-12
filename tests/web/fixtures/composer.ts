@@ -9,8 +9,6 @@ import {
   installFakeWebSocket,
   installFetch,
   jsonBody,
-  type RouteResponse,
-  TEST_HOST_AUTHORITY,
 } from "../helpers";
 import { baseRoutes } from "../store-fixture";
 
@@ -19,9 +17,6 @@ export async function createComposerFixture() {
   const host = {
     promptBodies: [] as Record<string, unknown>[],
     abortBodies: [] as Record<string, unknown>[],
-    promptFails: false,
-    promptGates: [] as Promise<RouteResponse>[],
-    fileSearchFails: false,
     slowSearchGate: null as Promise<void> | null,
     historyEntries: [] as ComposerHistoryEntry[],
     historyRequests: 0,
@@ -74,23 +69,10 @@ export async function createComposerFixture() {
       };
     }
     if (url.startsWith("/api/files")) {
-      if (host.fileSearchFails)
-        return { status: 500, body: { error: "index unavailable" } };
       if (url.includes("q=slow") && host.slowSearchGate) {
         return host.slowSearchGate.then(() => ({
           body: { files: [{ path: "old/slow.ts", name: "slow.ts" }] },
         }));
-      }
-      if (url.includes("q=keyboard")) {
-        return {
-          body: {
-            files: [
-              { path: "src/keyboard-a.ts", name: "keyboard-a.ts" },
-              { path: "src/keyboard-b.ts", name: "keyboard-b.ts" },
-              { path: "src/keyboard-c.ts", name: "keyboard-c.ts" },
-            ],
-          },
-        };
       }
       return { body: { files: [{ path: "src/index.ts", name: "index.ts" }] } };
     }
@@ -104,20 +86,8 @@ export async function createComposerFixture() {
     }
     if (url.startsWith("/api/prompt")) {
       const body = jsonBody(init);
-      if (host.promptFails)
-        return {
-          status: 500,
-          headers: {
-            "X-Inspire-Authority": TEST_HOST_AUTHORITY,
-            "X-Inspire-Prompt-Operation": String(body.operationId),
-            "X-Inspire-Prompt-Outcome": "rejected",
-          },
-          body: { error: "boom" },
-        };
       host.promptBodies.push(body);
-      return (
-        host.promptGates.shift() ?? { status: 202, body: { accepted: true } }
-      );
+      return { status: 202, body: { accepted: true } };
     }
     if (url.startsWith("/api/preferences")) return { body: jsonBody(init) };
     return baseRoutes(url, init);
@@ -129,13 +99,13 @@ export async function createComposerFixture() {
   return host;
 }
 
-export async function attachFile(name = "notes.txt") {
+export async function attachFile() {
   const input = document.querySelector(
     'input[type="file"]',
   ) as HTMLInputElement;
   await userEvent.upload(
     input,
-    new File(["hello"], name, { type: "text/plain" }),
+    new File(["hello"], "notes.txt", { type: "text/plain" }),
   );
 }
 

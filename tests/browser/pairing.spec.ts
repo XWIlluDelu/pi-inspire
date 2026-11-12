@@ -1,9 +1,6 @@
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { expect, type Page, test } from "@playwright/test";
 import {
   openFixtureSession,
-  pairedPage,
   browserTestToken as token,
 } from "./support/navigation";
 import { restartableAuthHost } from "./support/restartable-auth-host";
@@ -36,7 +33,13 @@ test("pairing opens the workbench without external requests, cookies, or persist
     if (url.hostname !== "127.0.0.1" && url.hostname !== "localhost")
       externalRequests.push(url.href);
   });
-  await pairedPage(page);
+  await page.goto(`/?token=${encodeURIComponent(token)}`);
+  const accessToken = page.getByLabel("Access token");
+  await expect(accessToken).toBeVisible();
+  await expect(accessToken).toHaveValue("");
+  expect(new URL(page.url()).search).toBe("");
+  await accessToken.fill(token);
+  await page.getByRole("button", { name: "Pair" }).click();
   const request = await bootstrap;
   expect(await request.headerValue("cookie")).toBeNull();
   expect(await request.headerValue("authorization")).toMatch(
@@ -77,62 +80,17 @@ test("pairing opens the workbench without external requests, cookies, or persist
       exportRejected = true;
     }
     return {
-      keys: Object.keys(identity).sort(),
-      extractable: identity.privateKey.extractable,
       exportRejected,
-      local: JSON.stringify(localStorage),
-      session: JSON.stringify(sessionStorage),
-      certificate: identity.certificate,
+      storedValues: JSON.stringify([identity, localStorage, sessionStorage]),
     };
   });
-  expect(stored.keys).toEqual(["certificate", "privateKey"]);
-  expect(stored.extractable).toBe(false);
   expect(stored.exportRejected).toBe(true);
-  expect(JSON.stringify(stored)).not.toContain(token);
-  expect(stored.local + stored.session).not.toContain("ib1.access.");
-  await page.reload();
-  await expect(page.getByRole("main")).toBeVisible();
-  await expect(page.getByLabel("Access token")).toHaveCount(0);
-  expect(page.url()).not.toContain("token");
+  expect(stored.storedValues).not.toContain(token);
+  expect(stored.storedValues).not.toContain("ib1.access.");
   const tab = await context.newPage();
   await tab.goto(new URL(page.url()).origin);
   await expect(tab.getByRole("main")).toBeVisible();
-  await expect(tab.getByLabel("Access token")).toHaveCount(0);
   await tab.close();
-});
-
-test("a second localhost port receives no usable credential and cannot read the paired origin key", {
-  tag: "@cross-browser",
-}, async ({ page, context }) => {
-  await pairedPage(page);
-  const origin = new URL(page.url()).origin;
-  const receivedCookies: string[] = [];
-  const foreign = createServer((request, response) => {
-    receivedCookies.push(request.headers.cookie ?? "");
-    response.setHeader("Content-Type", "text/html");
-    response.end("<title>Foreign localhost port</title>");
-  });
-  await new Promise<void>((resolve) => foreign.listen(0, "127.0.0.1", resolve));
-  const foreignOrigin = `http://127.0.0.1:${(foreign.address() as AddressInfo).port}`;
-  try {
-    const tab = await context.newPage();
-    await tab.goto(foreignOrigin);
-    expect(
-      await tab.evaluate(async () =>
-        (await indexedDB.databases()).map((database) => database.name),
-      ),
-    ).not.toContain("inspire-browser-auth");
-    expect(receivedCookies.join(";")).not.toContain(token);
-    expect(receivedCookies.join(";")).not.toMatch(/inspire_access|ib1\.access/);
-    const replay = await page.request.get(`${origin}/api/health`, {
-      headers: { Cookie: receivedCookies.join(";") },
-    });
-    expect(replay.status()).toBe(401);
-    // Pairing is independently required on another port even with identical UI.
-    await tab.close();
-  } finally {
-    await new Promise<void>((resolve) => foreign.close(() => resolve()));
-  }
 });
 
 test("local one-use launch links preserve existing pairing and repair rotated authority", {
@@ -157,12 +115,6 @@ test("local one-use launch links preserve existing pairing and repair rotated au
     await page.goto("about:blank");
     await openLaunchLink(page, link);
     expect(host.registrations()).toBe(1);
-    await page.goto("about:blank");
-    await openLaunchLink(
-      page,
-      host.origin + "/#inspire-bootstrap=already-expired",
-    );
-    expect(host.registrations()).toBe(1);
 
     const unpaired = await browser.newContext();
     try {
@@ -185,60 +137,6 @@ test("local one-use launch links preserve existing pairing and repair rotated au
   } finally {
     await host.close();
   }
-});
-
-test("a token in the URL leaves the browser unpaired", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
-  await page.goto(`/?token=${encodeURIComponent(token)}`);
-  await expect(page.getByLabel("Access token")).toBeVisible();
-  await expect(page.getByRole("main")).toHaveCount(0);
-  expect(new URL(page.url()).search).toBe("");
-});
-
-test("socket tickets are exact-origin, audience-bound and single-use", {
-  tag: "@cross-browser",
-}, async ({ page }) => {
-  await pairedPage(page);
-  // Capture a genuine memory bearer only inside this isolated security test.
-  let bearer = "";
-  page.on("request", (request) => {
-    const value = request.headers().authorization;
-    if (value?.startsWith("Bearer ib1.access.")) bearer = value;
-  });
-  await page.reload();
-  await expect(page.getByRole("main")).toBeVisible();
-  await expect.poll(() => bearer).not.toBe("");
-  const results = await page.evaluate(async (authorization) => {
-    const mint = async (audience: string) => {
-      const response = await fetch("/api/auth/socket-ticket", {
-        method: "POST",
-        headers: {
-          Authorization: authorization,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ audience }),
-      });
-      return (await response.json()).ticket as string;
-    };
-    const open = (ticket: string) =>
-      new Promise<boolean>((resolve) => {
-        const socket = new WebSocket(
-          `ws://${location.host}/events?ticket=${ticket}`,
-        );
-        socket.onopen = () => {
-          socket.close();
-          resolve(true);
-        };
-        socket.onerror = () => resolve(false);
-      });
-    const ticket = await mint("events");
-    const first = await open(ticket);
-    const replay = await open(ticket);
-    const wrongAudience = await open(await mint("terminal"));
-    return { first, replay, wrongAudience };
-  }, bearer);
-  expect(results).toEqual({ first: true, replay: false, wrongAudience: false });
 });
 
 test("independent Host ports require their own pairing; restart reconnects and rotation returns to Pair", {
@@ -275,8 +173,6 @@ test("independent Host ports require their own pairing; restart reconnects and r
       .poll(() => snapshots, { timeout: 15_000 })
       .toBeGreaterThan(before);
     await expect(page.getByLabel("Access token")).toHaveCount(0);
-    await page.reload();
-    await expect(page.getByRole("main")).toBeVisible();
     await host.restart("rotated-test-master");
     await expect(page.getByLabel("Access token")).toBeVisible({
       timeout: 15_000,

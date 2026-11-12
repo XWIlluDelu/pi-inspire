@@ -27,22 +27,21 @@ covers:
   - src/controllers/host-restart-controller.ts
   - src/components/HostRestartSettings.tsx
   - src/App.tsx
-  - tests/web/host-recovery.test.tsx
+  - tests/web/startup-restoration.test.tsx
   - tests/restart-launcher.test.ts
-  - tests/server/{runtime-worker-lifecycle,runtime-worker-pool,runtime-maintenance-restart,pi-startup-retirement.integration}.test.ts
+  - tests/server/{runtime-worker-lifecycle,runtime-worker-pool,runtime-maintenance-restart,pi-startup.integration}.test.ts
   - tests/{server,web}/host-restart*.{ts,tsx}
   - server/{file-lock,static-asset-cache,instance-state}.mjs
   - server/instance-state.d.mts
   - server/instance-control.{mjs,d.mts}
-  - tests/server/{instance-state,instance-control,instance-shutdown-control,host-shutdown.integration}.test.ts
+  - tests/server/{instance-state,instance-control,host-shutdown.integration}.test.ts
   - tests/fixtures/host-control-faults.mjs
   - server/*diagnostic*.ts
   - server/host-restart*.ts
   - server/pi-worker-keeper.mjs
   - tests/server/pi-worker-keeper.test.ts
   - tests/launcher.test.ts
-  - tests/user-environment-launcher.test.ts
-  - tests/server/terminal-daemon-environment.test.ts
+  - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
   - tests/server/{app,access-token,pi-installation,pi-rpc,static-asset-cache}.test.ts
 ---

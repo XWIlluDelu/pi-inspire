@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type HostUpdateStatus,
   type InspireUpdateCheckResult,
@@ -21,8 +21,6 @@ import {
 } from "./helpers";
 
 interface State {
-  version: string;
-  piVersion: string;
   inspireUpdateCheck: UpdateCheckResponse | null;
   piUpdateCheck: PiUpdateCheckResponse | null;
   inspireUpdateChecking: boolean;
@@ -98,8 +96,6 @@ function piResult(updateStatus: HostUpdateStatus): PiUpdateCheckResult {
 
 function harness() {
   let state: State = {
-    version: "1.0.0",
-    piVersion: "0.84.2",
     inspireUpdateCheck: null,
     piUpdateCheck: null,
     inspireUpdateChecking: false,
@@ -111,26 +107,13 @@ function harness() {
     availableUpdateIdentity: null,
     updateSnoozedUntil: null,
   };
-  let inspireResponse = updateStatus(2, {
-    inspireUpdateCheck: available(),
-    availableUpdateIdentity: '[["inspire","1.1.0"]]',
-  });
-  let piResponse = updateStatus(4, {
-    inspireUpdateCheck: available(),
-    piUpdateCheck: piAvailable(),
-    availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
-  });
-  let snoozeResponse = updateStatus(5, {
-    inspireUpdateCheck: available(),
-    piUpdateCheck: piAvailable(),
-    availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
-    updateSnoozedUntil: 2_000_000,
-  });
   const notify = vi.fn();
   const api = {
-    update: vi.fn(async () => inspireResult(inspireResponse)),
-    piUpdate: vi.fn(async () => piResult(piResponse)),
-    snoozeUpdate: vi.fn(async () => snoozeResponse),
+    update: vi.fn(async () =>
+      inspireResult(updateStatus(2, { inspireUpdateCheck: available() })),
+    ),
+    piUpdate: vi.fn<(force?: boolean) => Promise<PiUpdateCheckResult>>(),
+    snoozeUpdate: vi.fn<(identity: string) => Promise<HostUpdateStatus>>(),
   };
   let current = api;
   const controller = new UpdateController({
@@ -148,15 +131,6 @@ function harness() {
     state: () => state,
     bootstrap: (status: HostUpdateStatus) => {
       state = { ...state, ...controller.bootstrap(status) };
-    },
-    respondInspireWith: (status: HostUpdateStatus) => {
-      inspireResponse = status;
-    },
-    respondPiWith: (status: HostUpdateStatus) => {
-      piResponse = status;
-    },
-    respondSnoozeWith: (status: HostUpdateStatus) => {
-      snoozeResponse = status;
     },
     replaceTransport: () => {
       current = { ...api };
@@ -187,141 +161,184 @@ describe("update status controller", () => {
     expect(test.notify).not.toHaveBeenCalled();
   });
 
-  it.each([403, 503])(
-    "settles a failed HTTP %s check locally and clears its error on a successful check",
-    async (status) => {
-      vi.useFakeTimers();
-      const test = harness();
-      test.bootstrap(updateStatus(1, { piUpdateCheck: piAvailable("0.84.2") }));
-      test.api.piUpdate.mockRejectedValue(new ApiError(status, "Unavailable"));
-      test.controller.refreshPi();
-      await vi.runAllTimersAsync();
-      expect(test.api.piUpdate).toHaveBeenCalledTimes(status === 503 ? 4 : 1);
-      expect(test.state().piUpdateRequestPending).toBe(false);
-      expect(test.state().piUpdateRequestError).toBe(
-        "Couldn't check Pi and extension updates.",
-      );
-      expect(test.state().piUpdateCheck).toEqual(piAvailable("0.84.2"));
-      test.api.piUpdate.mockResolvedValue(
-        piResult(updateStatus(2, { piUpdateCheck: piAvailable() })),
-      );
-      test.controller.refreshPi();
-      await vi.runAllTimersAsync();
-      expect(test.state().piUpdateRequestError).toBeNull();
-      expect(test.state().piUpdateCheck).toEqual(piAvailable());
-    },
-  );
-
-  it("stops recovery when the Host acknowledges the check and clears only that check's error", async () => {
+  it("reports exhausted and non-transient failures independently and preserves prior results", async () => {
     vi.useFakeTimers();
     const test = harness();
-    test.api.piUpdate.mockRejectedValue(new ApiError(403, "Forbidden"));
-    test.api.update.mockRejectedValue(new ApiError(503, "Unavailable"));
-    test.controller.refreshPi();
-    test.controller.refreshInspire();
-    await vi.advanceTimersByTimeAsync(0);
-    test.controller.applyEvent({
-      type: "update_status",
-      updateStatus: updateStatus(1, { inspireUpdateChecking: true }),
-    });
-    expect(test.state().inspireUpdateRequestPending).toBe(false);
-    expect(test.state().inspireUpdateRequestError).toBeNull();
-    expect(test.state().piUpdateRequestError).not.toBeNull();
-    test.controller.applySnapshot(
-      updateStatus(2, { inspireUpdateCheck: available() }),
+    const previous = available("1.0.1");
+    test.bootstrap(
+      updateStatus(1, {
+        inspireUpdateCheck: previous,
+        piUpdateCheck: piAvailable("0.84.2"),
+      }),
     );
+    test.api.update.mockRejectedValue(new ApiError(403, "Forbidden"));
+    test.api.piUpdate.mockRejectedValue(new ApiError(503, "Unavailable"));
+    test.controller.refreshInspire();
+    test.controller.refreshPi();
     await vi.runAllTimersAsync();
-    expect(test.api.update).toHaveBeenCalledTimes(1);
-    expect(test.state().inspireUpdateCheck).toEqual(available());
+    expect(test.api.update).toHaveBeenCalledOnce();
+    expect(test.api.piUpdate.mock.calls.length).toBeGreaterThan(1);
+    expect(test.state()).toMatchObject({
+      inspireUpdateCheck: previous,
+      piUpdateCheck: piAvailable("0.84.2"),
+      inspireUpdateRequestPending: false,
+      piUpdateRequestPending: false,
+      inspireUpdateRequestError: "Couldn't check INSΠRE updates.",
+      piUpdateRequestError: "Couldn't check Pi and extension updates.",
+    });
+
+    test.api.piUpdate.mockResolvedValue(
+      piResult(
+        updateStatus(2, {
+          inspireUpdateCheck: previous,
+          piUpdateCheck: piAvailable(),
+        }),
+      ),
+    );
+    test.controller.refreshPi();
+    await vi.runAllTimersAsync();
+    expect(test.api.piUpdate).toHaveBeenLastCalledWith(true);
+    expect(test.state()).toMatchObject({
+      piUpdateCheck: piAvailable(),
+      piUpdateRequestError: null,
+      inspireUpdateRequestError: "Couldn't check INSΠRE updates.",
+    });
     test.controller.applySnapshot(
       updateStatus(3, {
-        inspireUpdateCheck: available(),
-        piUpdateChecking: true,
+        inspireUpdateChecking: true,
+        inspireUpdateCheck: previous,
+        piUpdateCheck: piAvailable(),
       }),
     );
-    expect(test.state().piUpdateRequestError).toBeNull();
+    expect(test.state().inspireUpdateRequestError).toBeNull();
   });
 
-  it("retires scheduled recovery when its transport is replaced", async () => {
+  it("stops scheduled recovery and ignores lost HTTP replies once the Host observes execution", async () => {
     vi.useFakeTimers();
     const test = harness();
-    test.api.update.mockRejectedValueOnce(new ApiError(503, "Unavailable"));
+    const pending = deferred<PiUpdateCheckResult>();
+    test.api.update.mockRejectedValue(new ApiError(503, "Unavailable"));
+    test.api.piUpdate.mockReturnValueOnce(pending.promise);
     test.controller.refreshInspire();
+    test.controller.refreshPi();
     await vi.advanceTimersByTimeAsync(0);
-    test.replaceTransport();
+
+    test.controller.applyEvent({
+      type: "update_status",
+      updateStatus: updateStatus(1, {
+        inspireUpdateChecking: true,
+        piUpdateChecking: true,
+      }),
+    });
+    pending.reject(new Error("HTTP response lost"));
     await vi.runAllTimersAsync();
-    expect(test.api.update).toHaveBeenCalledTimes(1);
-    expect(test.state().inspireUpdateRequestPending).toBe(false);
-    expect(test.state().inspireUpdateRequestError).toBeNull();
+
+    expect(test.api.update).toHaveBeenCalledOnce();
+    expect(test.api.piUpdate).toHaveBeenCalledOnce();
+    expect(test.state()).toMatchObject({
+      inspireUpdateChecking: true,
+      piUpdateChecking: true,
+      inspireUpdateRequestPending: false,
+      piUpdateRequestPending: false,
+      inspireUpdateRequestError: null,
+      piUpdateRequestError: null,
+    });
+    test.controller.applySnapshot(
+      updateStatus(2, {
+        inspireUpdateCheck: available(),
+        piUpdateCheck: piAvailable(),
+      }),
+    );
+    expect(test.state()).toMatchObject({
+      inspireUpdateChecking: false,
+      piUpdateChecking: false,
+      inspireUpdateCheck: available(),
+      piUpdateCheck: piAvailable(),
+    });
+  });
+
+  it("retires a replaced transport's recovery and late reply while retaining observed Host work", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const pending = deferred<PiUpdateCheckResult>();
+    test.api.update.mockRejectedValueOnce(new ApiError(503, "Unavailable"));
+    test.api.piUpdate.mockReturnValueOnce(pending.promise);
+    test.controller.refreshInspire();
+    test.controller.refreshPi();
+    await vi.advanceTimersByTimeAsync(0);
+    test.controller.applySnapshot(updateStatus(1, { piUpdateChecking: true }));
+    test.replaceTransport();
+    pending.resolve(
+      piResult(updateStatus(10, { piUpdateCheck: piAvailable() })),
+    );
+    await vi.runAllTimersAsync();
+
+    expect(test.api.update).toHaveBeenCalledOnce();
+    expect(test.state()).toMatchObject({
+      inspireUpdateRequestPending: false,
+      inspireUpdateRequestError: null,
+      piUpdateChecking: true,
+      piUpdateCheck: null,
+    });
+    test.bootstrap(updateStatus(0));
+    expect(test.state().piUpdateChecking).toBe(false);
     test.controller.refreshInspire();
     await vi.runAllTimersAsync();
-    expect(test.api.update).toHaveBeenCalledTimes(2);
     expect(test.state().inspireUpdateCheck).toEqual(available());
   });
 
-  it("projects one authoritative bootstrap and the two independent manual checks", async () => {
-    const test = harness();
-    test.bootstrap(updateStatus(0));
-
-    test.controller.refreshPi();
-    expect(test.state().piUpdateRequestPending).toBe(true);
-    expect(test.state().piUpdateChecking).toBe(false);
-    await vi.waitFor(() =>
-      expect(test.state().piUpdateRequestPending).toBe(false),
-    );
-    expect(test.api.piUpdate).toHaveBeenCalledWith(true);
-    expect(test.state().piUpdateCheck?.pi).toMatchObject({
-      kind: "available",
-      latestVersion: "0.84.3",
-    });
-
-    test.respondInspireWith(
-      updateStatus(6, {
-        inspireUpdateCheck: { kind: "unreleased" },
-        piUpdateCheck: piAvailable(),
-        availableUpdateIdentity: '[["pi","0.84.3"]]',
-      }),
-    );
-    test.controller.refreshInspire();
-    await vi.waitFor(() =>
-      expect(test.state().inspireUpdateRequestPending).toBe(false),
-    );
-    expect(test.api.update).toHaveBeenCalledWith(true);
-    expect(test.state()).toMatchObject({
-      inspireUpdateCheck: { kind: "unreleased" },
-      availableUpdateIdentity: '[["pi","0.84.3"]]',
-    });
-  });
-
-  it("sends the Host-issued identity and adopts its shared snooze", async () => {
-    const test = harness();
-    test.bootstrap(
-      updateStatus(4, {
-        inspireUpdateCheck: available(),
-        piUpdateCheck: piAvailable(),
-        availableUpdateIdentity: '[["inspire","1.1.0"],["pi","0.84.3"]]',
-      }),
-    );
-
-    test.controller.snooze();
-    await vi.waitFor(() =>
-      expect(test.state().updateSnoozedUntil).toBe(2_000_000),
-    );
-    expect(test.api.snoozeUpdate).toHaveBeenCalledWith(
-      '[["inspire","1.1.0"],["pi","0.84.3"]]',
-    );
-  });
-
-  it("reports a malformed snooze reply without retrying the write and releases the operation", async () => {
+  it("keeps an in-flight check across a same-revision snapshot and discards an older HTTP result", async () => {
     vi.useFakeTimers();
     const test = harness();
-    test.bootstrap(
-      updateStatus(4, {
-        inspireUpdateCheck: available(),
-        availableUpdateIdentity: '[["inspire","1.1.0"]]',
-      }),
+    const initial = updateStatus(1);
+    const pending = deferred<InspireUpdateCheckResult>();
+    test.bootstrap(initial);
+    test.api.update.mockReturnValueOnce(pending.promise);
+
+    test.controller.refreshInspire();
+    test.controller.applySnapshot(initial);
+    test.controller.refreshInspire();
+    expect(test.api.update).toHaveBeenCalledExactlyOnceWith(true);
+    expect(test.state().inspireUpdateRequestPending).toBe(true);
+
+    const newer = updateStatus(8, {
+      inspireUpdateCheck: available("1.2.0"),
+      availableUpdateIdentity: "newer-set",
+      updateSnoozedUntil: 3_000_000,
+    });
+    test.controller.applyEvent({ type: "update_status", updateStatus: newer });
+    pending.resolve(
+      inspireResult(
+        updateStatus(7, {
+          inspireUpdateCheck: available(),
+          availableUpdateIdentity: "older-set",
+        }),
+      ),
     );
-    test.api.snoozeUpdate.mockResolvedValueOnce({} as HostUpdateStatus);
+    await vi.runAllTimersAsync();
+    expect(test.state()).toMatchObject({
+      inspireUpdateCheck: newer.inspireUpdateCheck,
+      availableUpdateIdentity: newer.availableUpdateIdentity,
+      updateSnoozedUntil: newer.updateSnoozedUntil,
+      inspireUpdateRequestPending: false,
+    });
+  });
+
+  it("snoozes the Host-issued update set and lets the user retry a failed write explicitly", async () => {
+    vi.useFakeTimers();
+    const test = harness();
+    const status = updateStatus(4, {
+      inspireUpdateCheck: available(),
+      availableUpdateIdentity: "host-issued-set",
+    });
+    test.bootstrap(status);
+    test.api.snoozeUpdate
+      .mockResolvedValueOnce({} as HostUpdateStatus)
+      .mockResolvedValueOnce({
+        ...status,
+        revision: 5,
+        updateSnoozedUntil: 2_000_000,
+      });
 
     test.controller.snooze();
     test.controller.snooze();
@@ -330,25 +347,27 @@ describe("update status controller", () => {
       "warning",
       "Unable to close the update notice.",
     );
-    expect(test.api.snoozeUpdate).toHaveBeenCalledTimes(1);
+    expect(test.api.snoozeUpdate).toHaveBeenCalledExactlyOnceWith(
+      "host-issued-set",
+    );
     expect(test.state().updateSnoozedUntil).toBeNull();
 
     test.controller.snooze();
     await vi.runAllTimersAsync();
-    expect(test.api.snoozeUpdate).toHaveBeenCalledTimes(2);
+    expect(test.api.snoozeUpdate.mock.calls).toEqual([
+      ["host-issued-set"],
+      ["host-issued-set"],
+    ]);
     expect(test.state().updateSnoozedUntil).toBe(2_000_000);
   });
 
-  it("ignores a malformed snooze reply after its transport is replaced", async () => {
+  it("ignores an invalid snooze reply after its transport is replaced", async () => {
     vi.useFakeTimers();
     const test = harness();
-    test.bootstrap(
-      updateStatus(4, {
-        inspireUpdateCheck: available(),
-        availableUpdateIdentity: '[["inspire","1.1.0"]]',
-      }),
-    );
     const pending = deferred<HostUpdateStatus>();
+    test.bootstrap(
+      updateStatus(4, { availableUpdateIdentity: "host-issued-set" }),
+    );
     test.api.snoozeUpdate.mockReturnValueOnce(pending.promise);
     test.controller.snooze();
     test.replaceTransport();
@@ -357,181 +376,46 @@ describe("update status controller", () => {
     expect(test.notify).not.toHaveBeenCalled();
     expect(test.state().updateSnoozedUntil).toBeNull();
   });
-
-  it("adopts Host broadcasts and ignores an older HTTP completion", async () => {
-    const test = harness();
-    test.bootstrap(updateStatus(1));
-    let resolveUpdate!: (status: HostUpdateStatus) => void;
-    test.api.update.mockImplementationOnce(
-      () =>
-        new Promise<InspireUpdateCheckResult>((resolve) => {
-          resolveUpdate = (status) => resolve(inspireResult(status));
-        }),
-    );
-
-    test.controller.refreshInspire();
-    expect(
-      test.controller.applyEvent({
-        type: "update_status",
-        updateStatus: updateStatus(8, {
-          inspireUpdateCheck: available("1.2.0"),
-          availableUpdateIdentity: '[["inspire","1.2.0"]]',
-          updateSnoozedUntil: 3_000_000,
-        }),
-      }),
-    ).toBe(true);
-    resolveUpdate(
-      updateStatus(7, {
-        inspireUpdateCheck: available("1.1.0"),
-        availableUpdateIdentity: '[["inspire","1.1.0"]]',
-      }),
-    );
-    await vi.waitFor(() =>
-      expect(test.state().inspireUpdateCheck).toMatchObject({
-        kind: "available",
-        update: { latestVersion: "1.2.0" },
-      }),
-    );
-    expect(test.state().updateSnoozedUntil).toBe(3_000_000);
-  });
-
-  it.each([false, true])(
-    "keeps a Host-observed check authoritative after HTTP loss (completed: %s)",
-    async (completed) => {
-      vi.useFakeTimers();
-      const test = harness();
-      test.bootstrap(updateStatus(1));
-      let rejectRequest!: (error: Error) => void;
-      test.api.update.mockImplementationOnce(
-        () =>
-          new Promise((_, reject) => {
-            rejectRequest = reject;
-          }),
-      );
-      test.controller.refreshInspire();
-      test.controller.applyEvent({
-        type: "update_status",
-        updateStatus: updateStatus(2, { inspireUpdateChecking: true }),
-      });
-      if (completed)
-        test.controller.applySnapshot(
-          updateStatus(3, { inspireUpdateCheck: available() }),
-        );
-      rejectRequest(new Error("HTTP response lost"));
-      await vi.runAllTimersAsync();
-      expect(test.state().inspireUpdateChecking).toBe(!completed);
-      expect(test.state().inspireUpdateRequestPending).toBe(false);
-      expect(test.state().inspireUpdateRequestError).toBeNull();
-      expect(test.api.update).toHaveBeenCalledTimes(1);
-      test.controller.applySnapshot(updateStatus(3));
-      expect(test.state().inspireUpdateChecking).toBe(false);
-    },
-  );
-
-  it("does not publish a response owned by a replaced transport", async () => {
-    const test = harness();
-    test.bootstrap(updateStatus(1));
-    let resolveUpdate!: (status: HostUpdateStatus) => void;
-    test.api.update.mockImplementationOnce(
-      () =>
-        new Promise<InspireUpdateCheckResult>((resolve) => {
-          resolveUpdate = (status) => resolve(inspireResult(status));
-        }),
-    );
-
-    test.controller.refreshInspire();
-    test.replaceTransport();
-    resolveUpdate(
-      updateStatus(2, {
-        inspireUpdateCheck: available(),
-        availableUpdateIdentity: '[["inspire","1.1.0"]]',
-      }),
-    );
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(test.state().inspireUpdateCheck).toBeNull();
-    expect(test.state().inspireUpdateRequestPending).toBe(false);
-  });
-
-  it("keeps duplicate request guards separate from same-revision Host snapshots", async () => {
-    const test = harness();
-    test.bootstrap(updateStatus(1));
-    let complete!: (result: InspireUpdateCheckResult) => void;
-    test.api.update.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          complete = resolve;
-        }),
-    );
-    test.controller.refreshInspire();
-    test.controller.applySnapshot(updateStatus(1));
-    test.controller.refreshInspire();
-    expect(test.api.update).toHaveBeenCalledTimes(1);
-    expect(test.state().inspireUpdateRequestPending).toBe(true);
-    expect(test.state().inspireUpdateChecking).toBe(false);
-    complete(inspireResult(updateStatus(2)));
-    await Promise.resolve();
-    expect(test.state().inspireUpdateRequestPending).toBe(false);
-  });
-
-  it("transport loss retires a local request without declaring Host work finished", () => {
-    const test = harness();
-    test.bootstrap(updateStatus(2, { inspireUpdateChecking: true }));
-    test.replaceTransport();
-    expect(test.state().inspireUpdateChecking).toBe(true);
-    test.bootstrap(updateStatus(0));
-    expect(test.state().inspireUpdateChecking).toBe(false);
-  });
-
-  it("fails a malformed Host update event instead of silently diverging", () => {
-    const test = harness();
-    expect(() =>
-      test.controller.applyEvent({
-        type: "update_status",
-        updateStatus: { revision: "new" },
-      }),
-    ).toThrow("invalid update status");
-  });
 });
 
-describe("Host update projection", () => {
-  beforeEach(installFakeWebSocket);
-
-  it("closes the bootstrap race with the shared state carried by the stream snapshot", async () => {
-    let authoritative = updateStatus(3, {
-      piUpdateCheck: piAvailable(),
-      availableUpdateIdentity: '[["pi","0.84.3"]]',
-    });
-    installFetch((url) => {
-      if (url.startsWith("/api/bootstrap")) {
-        return {
-          body: bootstrapPayload({
-            version: "0.3.0",
-            piVersion: "0.84.2",
-            updateStatus: authoritative,
-            snapshot: activeSnapshot(),
-          }),
-        };
-      }
-      if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
-      return undefined;
-    });
-
-    const store = new AppStore();
-    await store.init();
-    expect(store.getState().piUpdateCheck?.pi.kind).toBe("available");
-
-    const socket = FakeWebSocket.instances.at(-1)!;
-    authoritative = updateStatus(4, {
-      piUpdateCheck: piAvailable(),
-      availableUpdateIdentity: '[["pi","0.84.3"]]',
-      updateSnoozedUntil: 4_000_000,
-    });
-    FakeWebSocket.bootstrapUpdateStatus = authoritative;
-    socket.open(activeSnapshot());
-    expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
-
-    await store.init();
-    expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
+it("reconciles Host update state from the stream and closes it on an invalid status", async () => {
+  installFakeWebSocket();
+  let authoritative = updateStatus(3, {
+    piUpdateCheck: piAvailable(),
+    availableUpdateIdentity: '[["pi","0.84.3"]]',
   });
+  installFetch((url) => {
+    if (url.startsWith("/api/bootstrap")) {
+      return {
+        body: bootstrapPayload({
+          version: "0.3.0",
+          piVersion: "0.84.2",
+          updateStatus: authoritative,
+          snapshot: activeSnapshot(),
+        }),
+      };
+    }
+    if (url.startsWith("/api/sessions")) return { body: sessionPage([], 0) };
+    return undefined;
+  });
+
+  const store = new AppStore();
+  await store.init();
+  expect(store.getState().piUpdateCheck?.pi.kind).toBe("available");
+
+  const socket = FakeWebSocket.instances.at(-1)!;
+  authoritative = updateStatus(4, {
+    piUpdateCheck: piAvailable(),
+    availableUpdateIdentity: '[["pi","0.84.3"]]',
+    updateSnoozedUntil: 4_000_000,
+  });
+  FakeWebSocket.bootstrapUpdateStatus = authoritative;
+  socket.open(activeSnapshot());
+  expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
+
+  vi.useFakeTimers();
+  const close = vi.spyOn(socket, "close");
+  socket.emit({ type: "update_status", updateStatus: { revision: "new" } });
+  expect(close).toHaveBeenCalledOnce();
+  expect(store.getState().updateSnoozedUntil).toBe(4_000_000);
 });

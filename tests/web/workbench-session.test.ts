@@ -27,7 +27,6 @@ describe("browser workbench restoration", () => {
   let resolved: string[];
   let bootstrapWait: Promise<void> | null;
   let bootstrapFailure: boolean;
-  let missingSession: string | null;
 
   beforeEach(() => {
     installFakeWebSocket();
@@ -38,7 +37,6 @@ describe("browser workbench restoration", () => {
     resolved = [];
     bootstrapWait = null;
     bootstrapFailure = false;
-    missingSession = null;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap")) {
         const query = new URL(url, "http://localhost").searchParams;
@@ -47,11 +45,6 @@ describe("browser workbench restoration", () => {
         if (bootstrapWait) await bootstrapWait;
         if (bootstrapFailure)
           return { status: 503, body: { error: "Host unavailable" } };
-        if (detail && detail === missingSession)
-          return {
-            status: 404,
-            body: { error: "Session not found", code: "SESSION_NOT_FOUND" },
-          };
         return {
           body: bootstrapPayload({
             authorityId,
@@ -108,7 +101,7 @@ describe("browser workbench restoration", () => {
     return store;
   }
 
-  it("restores ordered tabs, the selected file and independent reading metadata with fresh authorization", async () => {
+  it("reauthorizes the selected file after Host restart and restores ordered tabs and reading positions", async () => {
     const first = await reload();
     await first.openResource("readme.md");
     await first.openResource("other.txt");
@@ -118,6 +111,7 @@ describe("browser workbench restoration", () => {
     reading.mode = "source";
     reading.save?.();
     saveNavCollapsed(true);
+    authorityId = "22222222-2222-4222-8222-222222222222";
     const second = await reload();
     await waitFor(() =>
       expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
@@ -146,25 +140,6 @@ describe("browser workbench restoration", () => {
     expect(JSON.stringify(sessionStorage)).not.toContain("fresh-");
     second.closeResourceTab("readme.md");
     expect(second.fileReadingState("readme.md").source.current).toBeNull();
-  });
-
-  it("restores a tool tab without loading file content or issuing a terminal command", async () => {
-    const first = await reload();
-    await first.openResource("readme.md");
-    first.setContextMode("terminal");
-    const second = await reload();
-    expect(second.getState()).toMatchObject({
-      resourcesOpen: true,
-      contextMode: "terminal",
-      resourceTabs: [{ reference: "readme.md" }],
-      fileInspection: { kind: "file", preview: null },
-    });
-    expect(resolved).toEqual(["readme.md"]);
-    expect(
-      vi
-        .mocked(fetch)
-        .mock.calls.some(([url]) => String(url).includes("/terminal")),
-    ).toBe(false);
   });
 
   it("keeps a missing active file as a tab with its read error", async () => {
@@ -219,67 +194,50 @@ describe("browser workbench restoration", () => {
     expect(differentCwd.getState().resourceTabs).toEqual([]);
   });
 
-  it("reauthorizes saved filenames after the same origin's Host restarts", async () => {
-    const first = await reload();
-    await first.openResource("one.txt");
-    authorityId = "22222222-2222-4222-8222-222222222222";
-    const restarted = await reload();
-    await waitFor(() =>
+  it.each(["terminal", "closed"] as const)(
+    "restores file tabs behind a %s context without reading inactive files",
+    async (context) => {
+      const first = await reload();
+      await first.openResource("one.txt");
+      if (context === "terminal") first.setContextMode("terminal");
+      else first.setResourcesOpen(false);
+
+      const second = await reload();
+      expect(second.getState()).toMatchObject({
+        resourcesOpen: context !== "closed",
+        contextMode: context === "terminal" ? "terminal" : "files",
+        resourceTabs: [{ reference: "one.txt" }],
+        fileInspection: { kind: "file", reference: "one.txt", preview: null },
+      });
+      expect(resolved).toEqual(["one.txt"]);
       expect(
-        inspectedPreview(restarted.getState().fileInspection)?.status,
-      ).toBe("ready"),
-    );
-    expect(restarted.getState().resourceTabs).toEqual([
-      { reference: "one.txt", workspacePath: "one.txt" },
-    ]);
-    expect(resolved).toEqual(["one.txt", "one.txt"]);
-    expect(bootstrapDetails).toEqual([null, "s1"]);
-  });
+        vi
+          .mocked(fetch)
+          .mock.calls.some(([url]) => String(url).includes("/terminal")),
+      ).toBe(false);
 
-  it("keeps a closed context pane closed with its file tabs available", async () => {
-    const first = await reload();
-    await first.openResource("one.txt");
-    first.setResourcesOpen(false);
-    const second = await reload();
-    expect(second.getState()).toMatchObject({
-      resourcesOpen: false,
-      resourceTabs: [{ reference: "one.txt" }],
-      fileInspection: { kind: "file", preview: null },
-    });
-    expect(second.getState()).toMatchObject({
-      fileInspection: { kind: "file", reference: "one.txt" },
-    });
-    expect(resolved).toEqual(["one.txt"]);
-    second.setResourcesOpen(true);
-    await waitFor(() =>
-      expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
-        "ready",
-      ),
-    );
-    expect(resolved).toEqual(["one.txt", "one.txt"]);
-  });
+      if (context === "terminal") return;
+      second.setResourcesOpen(true);
+      await waitFor(() =>
+        expect(inspectedPreview(second.getState().fileInspection)?.status).toBe(
+          "ready",
+        ),
+      );
+      expect(resolved).toEqual(["one.txt", "one.txt"]);
+    },
+  );
 
-  it("keeps a newer file choice made while a reconnect bootstrap is pending", async () => {
-    const store = await reload();
-    await store.openResource("old.txt");
+  async function startReconnect(store: AppStore) {
     const pending = deferred<void>();
     bootstrapWait = pending.promise;
     const reconnect = store.init();
     await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
-    await store.openResource("new.txt");
-    pending.resolve();
-    await reconnect;
-    await waitFor(() =>
-      expect(inspectedPreview(store.getState().fileInspection)?.status).toBe(
-        "ready",
-      ),
-    );
-    expect(store.getState().fileInspection.reference).toBe("new.txt");
-    expect(store.getState().resourceTabs.map((tab) => tab.reference)).toEqual([
-      "old.txt",
-      "new.txt",
-    ]);
-  });
+    return async () => {
+      pending.resolve();
+      await reconnect;
+      bootstrapWait = null;
+    };
+  }
 
   it.each(["none", "terminal", "browse", "close"] as const)(
     "retains file navigation through reconnect with a %s gesture",
@@ -293,10 +251,7 @@ describe("browser workbench restoration", () => {
       await waitFor(() =>
         expect(store.getState().workspaceMatches).toHaveLength(1),
       );
-      const pending = deferred<void>();
-      bootstrapWait = pending.promise;
-      const reconnect = store.init();
-      await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
+      const reconnect = await startReconnect(store);
       expect(store.getState()).toMatchObject({
         resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
         fileInspection: {
@@ -307,14 +262,11 @@ describe("browser workbench restoration", () => {
         workspaceQuery: "known",
         workspaceExpandedDirs: ["src"],
         workspaceShowHidden: true,
-        workspaceLevels: {},
-        workspaceMatches: [],
       });
       if (gesture === "terminal") store.setContextMode("terminal");
       if (gesture === "browse") store.showFileBrowser();
       if (gesture === "close") store.setResourcesOpen(false);
-      pending.resolve();
-      await reconnect;
+      await reconnect();
       expect(store.getState()).toMatchObject({
         resourceTabs: [{ reference: "one.txt" }, { reference: "two.txt" }],
         fileInspection: {
@@ -362,52 +314,35 @@ describe("browser workbench restoration", () => {
     expect(resolved).toEqual(["one.txt"]);
   });
 
-  it("keeps a newer session's navigation when an old reconnect finishes", async () => {
-    const store = await reload();
-    await store.openResource("old.txt");
-    const pending = deferred<void>();
-    bootstrapWait = pending.promise;
-    const reconnect = store.init();
-    await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
-    await store.openSession("s2");
-    expect(store.getState()).toMatchObject({
-      sessionId: "s2",
-      resourceTabs: [],
-      fileInspection: { kind: "browse" },
-    });
-    await store.openResource("new.txt");
-    pending.resolve();
-    await reconnect;
-    expect(store.getState()).toMatchObject({
-      sessionId: "s2",
-      resourceTabs: [{ reference: "new.txt" }],
-      fileInspection: {
-        kind: "file",
-        reference: "new.txt",
-        preview: { status: "ready", reference: "new.txt" },
-      },
-    });
-    await store.openSession("s1");
-    expect(store.getState().resourceTabs).toEqual([
-      { reference: "old.txt", workspacePath: "old.txt" },
-    ]);
-  });
-
-  it("recovers a missing remembered session to an empty read-only bootstrap", async () => {
-    const first = await reload();
-    await first.openResource("one.txt");
-    missingSession = "s1";
-    const second = await reload();
-    expect(bootstrapDetails).toEqual([null, "s1", ""]);
-    expect(second.getState()).toMatchObject({
-      bootstrapped: true,
-      sessionId: null,
-      connectionProblem: null,
-    });
-    expect(second.getState().notices.at(-1)?.text).toContain(
-      "previous session no longer exists",
-    );
-  });
+  it.each(["same", "another"] as const)(
+    "keeps a newer file choice in the %s session when an old reconnect finishes",
+    async (selection) => {
+      const store = await reload();
+      await store.openResource("old.txt");
+      const reconnect = await startReconnect(store);
+      if (selection === "another") await store.openSession("s2");
+      await store.openResource("new.txt");
+      await reconnect();
+      await waitFor(() =>
+        expect(store.getState()).toMatchObject({
+          sessionId: selection === "same" ? "s1" : "s2",
+          fileInspection: {
+            kind: "file",
+            reference: "new.txt",
+            preview: { status: "ready" },
+          },
+        }),
+      );
+      const tabs = () =>
+        store.getState().resourceTabs.map((tab) => tab.reference);
+      if (selection === "same") expect(tabs()).toEqual(["old.txt", "new.txt"]);
+      else {
+        expect(tabs()).toEqual(["new.txt"]);
+        await store.openSession("s1");
+        expect(tabs()).toEqual(["old.txt"]);
+      }
+    },
+  );
 
   it("does not let refused storage interrupt navigation", async () => {
     vi.spyOn(

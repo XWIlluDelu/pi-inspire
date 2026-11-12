@@ -13,10 +13,10 @@ covers:
   - src/App.tsx
   - src/styles.css
   - src/styles/*.css
-  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,resource-reference-identity,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
-  - tests/web/{resources,document-resources,document-image-controller,resource-read-recovery,git-controller,workspace-controller,store-resources}.test.ts
+  - tests/server/{app-resources,app-auth,resources,resources-windows-paths,runtime-reads,git-inspection,git-configuration,runtime-selection}.test.ts
+  - tests/web/{resources,document-resources,document-image-controller,resource-controller,git-controller,workspace-controller,store-preview-lifecycle}.test.ts
   - tests/web/{document-preview,pdf-preview,file-preview,resources-pane,search-match-text,changes-pane,pane-resize,rich-text}.test.tsx
-  - tests/web/{source-diff,file-icons,syntax-highlighting,delimited-text,pdf-find,reader-quote}.test.ts
+  - tests/web/{source-presentation,reader-quote}.test.ts
   - tests/web/table-preview.test.tsx
   - tests/server/html-preview.test.ts
   - tests/browser/{context-tabs,filesystem-files,document-images,pdf-preview,html-preview,resource-reading}.spec.ts
@@ -489,6 +489,6 @@ selection races. The workbench browser test also opens a cited HTML fixture cont
 and checks that static rendering sends no external HTTP(S) request. Interactive HTML API/component
 and desktop/narrow browser checks cover explicit start/stop, loaded-version execution, local modules,
 fetch and ranged media, external resources, opaque-origin isolation, revocation, stale starts,
-branch/file changes, and local scope. PDF checks cover painted pixels, selectable text, page/zoom
+branch/file changes, and local scope. PDF checks cover painted pixels, selectable text, Find, page/zoom
 state across layout changes, worker disposal, and inactive document actions.
 [[workbench-implementation]] explains reference resolution and filesystem/Git separation.

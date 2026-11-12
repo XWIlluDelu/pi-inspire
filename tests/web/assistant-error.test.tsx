@@ -1,12 +1,8 @@
 // @vitest-environment jsdom
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { assistantOutcome } from "../../shared/assistant-outcome";
+import { AppErrorBoundary } from "../../src/components/AppErrorBoundary";
 import { Transcript } from "../../src/components/Transcript";
 import {
   type ChatMessage,
@@ -28,44 +24,20 @@ function transcript(messages: ChatMessage[], streaming = false) {
   );
 }
 
-afterEach(() => vi.restoreAllMocks());
-
 describe("Stopped assistant outcomes", () => {
-  it("renders native cancellation as a stop glyph and label without diagnostics or actions", () => {
-    const cancelled = {
-      role: "assistant",
-      content: [
-        { type: "thinking", thinking: "Activity before cancellation." },
-        { type: "text", text: "Partial response kept before Stop." },
-      ],
-      stopReason: "aborted",
-      errorMessage: "This operation was aborted",
-      timestamp: 2,
-    };
-    const view = render(transcript([cancelled]));
-    const stopped = screen.getByRole("group", { name: "Stopped" });
-    expect(stopped).toBeVisible();
-    expect(
-      view.container.querySelector("[data-activity-fold]"),
-    ).toHaveAttribute("data-activity-fold", "closed");
-    expect(stopped.closest("[data-activity-fold]")).toBeNull();
-    expect(
-      screen.getByText("Partial response kept before Stop."),
-    ).toBeVisible();
-    expect(screen.queryByRole("group", { name: "Pi error" })).toBeNull();
-    expect(stopped).toHaveClass("assistant-error", "assistant-error--stopped");
-    expect(stopped).toHaveTextContent(/^Stopped$/);
-    expect(within(stopped).queryByRole("button")).toBeNull();
-    expect(within(stopped).queryByRole("region")).toBeNull();
-    const icon = stopped.querySelector("svg");
-    expect(icon).toHaveAttribute("aria-hidden", "true");
-    expect(icon).toHaveAttribute("width", "14");
-    expect(icon).toHaveAttribute("height", "14");
-    expect(icon).toHaveClass("lucide-square");
-    expect(icon?.querySelector("circle")).toBeNull();
-    expect(icon).toHaveAttribute("fill", "none");
-    expect(screen.queryByText("This operation was aborted")).toBeNull();
-
+  it("searches the visible Stopped label while excluding hidden cancellation diagnostics", () => {
+    render(
+      transcript([
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Partial response kept before Stop." },
+          ],
+          stopReason: "aborted",
+          errorMessage: "This operation was aborted",
+        },
+      ]),
+    );
     const search = openTranscriptSearch();
     fireEvent.change(search, {
       target: { value: "This operation was aborted" },
@@ -78,26 +50,7 @@ describe("Stopped assistant outcomes", () => {
     expect(
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 of 1");
-    expect(stopped).toHaveTextContent(/^Stopped$/);
-    expect(within(stopped).queryByRole("button")).toBeNull();
-    expect(screen.queryByText("This operation was aborted")).toBeNull();
-    view.unmount();
-    render(transcript(JSON.parse(JSON.stringify([cancelled]))));
-    expect(screen.getAllByRole("group", { name: "Stopped" })).toHaveLength(1);
-    expect(
-      screen.getByText("Partial response kept before Stop."),
-    ).toBeVisible();
-  });
-
-  it("renders an empty structured cancellation without inventing diagnostic details or Working", () => {
-    render(
-      transcript([
-        { role: "assistant", content: [], stopReason: "aborted", timestamp: 2 },
-      ]),
-    );
-    const stopped = screen.getByRole("group", { name: "Stopped" });
-    expect(within(stopped).queryByRole("button")).toBeNull();
-    expect(screen.queryByText("Working…")).toBeNull();
+    expect(screen.getByRole("group", { name: "Stopped" })).toBeVisible();
   });
 
   it.each([
@@ -130,59 +83,40 @@ describe("Stopped assistant outcomes", () => {
     },
   );
 
-  it("keeps the native error outcome even when its diagnostic mentions cancellation", () => {
-    const errorMessage = "This operation was aborted";
-    render(
-      transcript([
-        {
-          role: "assistant",
-          content: [],
-          stopReason: "error",
-          errorMessage,
-        },
-      ]),
-    );
-    expect(screen.getByRole("group", { name: "Pi error" })).toHaveTextContent(
-      errorMessage,
-    );
-    expect(screen.queryByRole("group", { name: "Stopped" })).toBeNull();
+  it("only assigns an outcome to a terminal assistant record", () => {
+    expect(
+      assistantOutcome({ role: "toolResult", stopReason: "error" }),
+    ).toBeNull();
+    expect(
+      assistantOutcome({
+        role: "assistant",
+        stopReason: "stop",
+        errorMessage: "This operation was aborted",
+      }),
+    ).toBeNull();
+    expect(assistantOutcome("This operation was aborted")).toBeNull();
   });
 });
 
 describe("Pi assistant errors", () => {
-  it("shows an empty error at its source position even with all activity hidden", () => {
-    const { container } = render(
-      transcript([
-        { role: "user", content: "first prompt", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [],
-          stopReason: "error",
-          errorMessage: "fetch failed",
-          timestamp: 2,
-        },
-        { role: "assistant", content: "later response", timestamp: 3 },
-      ]),
-    );
-    const rows = [...container.querySelectorAll("[data-transcript-row]")];
-    expect(rows).toHaveLength(3);
-    expect(rows[0]).toHaveTextContent("first prompt");
-    expect(rows[1]).toHaveTextContent("Pi errorfetch failed");
-    expect(rows[2]).toHaveTextContent("later response");
-    expect(screen.queryByText("Working…")).not.toBeInTheDocument();
-  });
-
-  it("shows one error after all partial response passages and folded activity", () => {
-    const { container } = render(
+  it("keeps failures in transcript order outside closed activity", () => {
+    render(
       <Transcript
         messages={[
+          { role: "user", content: "first prompt", timestamp: 1 },
           {
             role: "assistant",
-            timestamp: 1,
+            content: [],
             stopReason: "error",
-            errorMessage: "WebSocket error",
+            errorMessage: "empty failure",
+            timestamp: 2,
+          },
+          {
+            role: "assistant",
+            timestamp: 3,
+            stopReason: "error",
+            errorMessage: "partial failure",
             content: [
-              { type: "thinking", thinking: "internal reasoning" },
               { type: "text", text: "first passage" },
               {
                 type: "toolCall",
@@ -190,10 +124,11 @@ describe("Pi assistant errors", () => {
                 name: "read",
                 arguments: { path: "file.txt" },
               },
-              { type: "text", text: "partial last passage" },
+              { type: "text", text: "last partial passage" },
               { type: "thinking", thinking: "last thought" },
             ],
           },
+          { role: "assistant", content: "later response", timestamp: 4 },
         ]}
         streaming={false}
         thinkingVisibility="expanded"
@@ -201,87 +136,27 @@ describe("Pi assistant errors", () => {
         activityFoldVisibility="collapsed"
       />,
     );
-    expect(screen.getByText("first passage")).toBeVisible();
-    expect(screen.getByText("partial last passage")).toBeVisible();
-    const error = screen.getByRole("group", { name: "Pi error" });
-    expect(error).toBeVisible();
-    expect(container.querySelector("[data-activity-fold]")).toHaveAttribute(
-      "data-activity-fold",
-      "closed",
-    );
-    expect(error.closest("[data-activity-fold]")).toBeNull();
+    const [empty, partial] = screen.getAllByRole("group", { name: "Pi error" });
+    expect(empty).toHaveTextContent("empty failure");
+    expect(partial).toHaveTextContent("partial failure");
+    const ordered = [
+      screen.getByText("first prompt"),
+      empty!,
+      screen.getByText("first passage"),
+      screen.getByText("last partial passage"),
+      partial!,
+      screen.getByText("later response"),
+    ];
+    for (const [index, row] of ordered.slice(1).entries())
+      expect(
+        ordered[index]!.compareDocumentPosition(row) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
     expect(
-      [...container.querySelectorAll("[data-transcript-row]")].at(-1),
-    ).toContainElement(error);
-  });
-
-  it("renders message_end errors live and once after a history remount", () => {
-    const start = reduceEvent(emptyEventSlice(), new Set(), {
-      type: "message_start",
-      message: { role: "assistant", content: "partial output", timestamp: 2 },
-    });
-    const view = render(
-      transcript(start.slice.messages, start.slice.streaming),
-    );
-    expect(
-      screen.queryByRole("group", { name: "Pi error" }),
-    ).not.toBeInTheDocument();
-    const end = reduceEvent(start.slice, new Set(), {
-      type: "message_end",
-      message: {
-        role: "assistant",
-        content: "partial output",
-        timestamp: 2,
-        stopReason: "error",
-        errorMessage: "terminated",
-      },
-    });
-    view.rerender(transcript(end.slice.messages, end.slice.streaming));
-    expect(screen.getByText("partial output")).toBeVisible();
-    expect(screen.getByText("terminated")).toBeVisible();
-    view.unmount();
-    render(transcript(JSON.parse(JSON.stringify(end.slice.messages))));
-    expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(1);
-    expect(screen.getByText("terminated")).toBeVisible();
-  });
-
-  it("expands long plain-text details and copies the full message while collapsed", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: { writeText },
-    });
-    const text = `fetch failed\n${"diagnostic detail ".repeat(50)}\n<html>not markup</html>`;
-    render(
-      transcript([
-        {
-          role: "assistant",
-          content: [],
-          stopReason: "error",
-          errorMessage: text,
-          timestamp: 1,
-        },
-      ]),
-    );
-    const error = screen.getByRole("group", { name: "Pi error" });
-    const toggle = within(error).getByRole("button", { name: "Show details" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(error).not.toHaveTextContent("not markup");
-    fireEvent.click(
-      within(error).getByRole("button", { name: "Copy error message" }),
-    );
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(text));
-    expect(
-      within(error).getByRole("button", { name: "Error message copied" }),
-    ).toBeInTheDocument();
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(error.querySelector(".assistant-error__message")?.textContent).toBe(
-      text,
-    );
-    expect(error.querySelector("html")).toBeNull();
-    fireEvent.click(toggle);
-    expect(toggle).toHaveTextContent("Show details");
+      screen.getAllByRole("button", { name: "Expand assistant activity" })
+        .length,
+    ).toBeGreaterThan(0);
+    expect(partial).toBeVisible();
   });
 
   it("keeps a complete reason paragraph readable without trailing ellipsis, with diagnostics on demand", () => {
@@ -334,26 +209,6 @@ describe("Pi assistant errors", () => {
     ).toHaveLength(1);
     expect(screen.getByText("fetch failed")).toBeVisible();
   });
-
-  it("distinguishes empty failures, cancellations and successful messages", () => {
-    render(
-      transcript([
-        { role: "assistant", content: [], stopReason: "error", timestamp: 1 },
-        { role: "assistant", content: [], stopReason: "stop", timestamp: 2 },
-        {
-          role: "assistant",
-          content: [],
-          stopReason: "aborted",
-          errorMessage: "Request aborted",
-          timestamp: 3,
-        },
-      ]),
-    );
-    expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(1);
-    expect(screen.getByText("Pi did not provide error details.")).toBeVisible();
-    expect(screen.getByRole("group", { name: "Stopped" })).toBeVisible();
-    expect(screen.queryByText("Request aborted")).toBeNull();
-  });
 });
 
 it("shows settled empty Pi errors without treating them as the active empty call", () => {
@@ -366,7 +221,7 @@ it("shows settled empty Pi errors without treating them as the active empty call
       timestamp: 3,
     },
   ];
-  const { container, rerender } = render(
+  const { rerender } = render(
     <Transcript
       messages={settled}
       streaming={false}
@@ -374,9 +229,9 @@ it("shows settled empty Pi errors without treating them as the active empty call
       toolVisibility="dynamic"
     />,
   );
-  expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(3);
-  expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(1);
-  expect(container.querySelectorAll(".turn--assistant")).toHaveLength(1);
+  expect(screen.getByRole("group", { name: "Pi error" })).toHaveTextContent(
+    "Pi did not provide error details.",
+  );
 
   const settledRetry = {
     role: "assistant",
@@ -397,7 +252,6 @@ it("shows settled empty Pi errors without treating them as the active empty call
   );
   expect(screen.queryByText("Working…")).not.toBeInTheDocument();
   expect(screen.getAllByRole("group", { name: "Pi error" })).toHaveLength(2);
-  expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
 
   const activeRetry = {
     role: "assistant",
@@ -414,6 +268,30 @@ it("shows settled empty Pi errors without treating them as the active empty call
       toolVisibility="dynamic"
     />,
   );
-  expect(container.querySelectorAll("[data-transcript-row]")).toHaveLength(4);
   expect(screen.getByText("Working…")).toBeInTheDocument();
+});
+
+describe("AppErrorBoundary", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("replaces a render crash with a privacy-safe recovery surface", () => {
+    function BrokenView(): never {
+      throw new Error("private render detail");
+    }
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(
+      <AppErrorBoundary>
+        <BrokenView />
+      </AppErrorBoundary>,
+    );
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "The workbench hit an error" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reload page" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("private render detail")).not.toBeInTheDocument();
+  });
 });

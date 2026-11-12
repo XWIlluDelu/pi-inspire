@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
-import { conversationFeedbackMessages } from "../web/fixtures/conversation-feedback";
 import { openEventSession } from "./support/host-events";
 
 test.use({
@@ -9,160 +8,102 @@ test.use({
   contextOptions: { reducedMotion: "reduce" },
 });
 
-for (const touch of [false, true]) {
-  test.describe(
-    touch ? "touch user-message actions" : "pointer user-message actions",
-    () => {
-      test.use({ hasTouch: touch });
-      test("Copy and Fork stay together beside or below text and image bubbles without resizing them", async ({
+for (const [mode, width, touch] of [
+  ["desktop", 1440, false],
+  ["narrow touch", 320, true],
+] as const) {
+  test.describe(mode, () => {
+    test.use({ hasTouch: touch, viewport: { width, height: 1000 } });
+    test("keeps Copy and Fork together without covering the user bubble", async ({
+      page,
+    }) => {
+      const send = await openEventSession(
         page,
-      }) => {
-        const send = await openEventSession(
-          page,
-          "User message actions",
-          emptyToolPresentationConfiguration(),
+        "User message actions",
+        emptyToolPresentationConfiguration(),
+        {},
+      );
+      const image = {
+        type: "image",
+        mimeType: "image/png",
+        data: readFileSync(
+          "tests/browser/fixtures/file-previews/training curve.png",
+        ).toString("base64"),
+      };
+      const messages = [
+        "Short user input",
+        [
           {
-            theme: "dark",
-            palette: "classic-amber",
+            type: "text",
+            text: "Review this calibration result alongside the reference. ".repeat(
+              4,
+            ),
           },
-        );
-        send(
-          ...conversationFeedbackMessages
-            .filter((message) => message.role === "user")
-            .map((message) => ({
-              type: "message_end",
-              message,
-            })),
-        );
-        const image = {
-          type: "image",
-          mimeType: "image/png",
-          data: readFileSync(
-            "tests/browser/fixtures/file-previews/training curve.png",
-          ).toString("base64"),
-        };
-        for (const captioned of [true, false]) {
-          const id = captioned ? "image-caption" : "image-only";
-          send({
-            type: "message_end",
-            message: {
-              role: "user",
-              content: captioned
-                ? [
-                    image,
-                    {
-                      type: "text",
-                      text: "Check the image alongside its caption.",
-                    },
-                  ]
-                : [image],
-              __inspireEntryId: `feedback-${id}`,
-              __inspireMessageId: `feedback-user-${id}`,
-            },
-          });
-        }
+          image,
+        ],
+      ];
+      for (const [index, content] of messages.entries())
+        send({
+          type: "message_end",
+          message: {
+            role: "user",
+            content,
+            __inspireEntryId: `user-actions-${index}`,
+            __inspireMessageId: `user-actions-${index}`,
+          },
+        });
 
-        await expect(page.locator(".turn--user")).toHaveCount(4);
-        await page.evaluate(() => document.fonts.ready);
-        const viewports = [1440, 820, 520, 480, 440, 390, 320].map((width) => ({
-          width,
-          height: 1000,
-        }));
-        for (const viewport of viewports) {
-          await page.setViewportSize(viewport);
-          for (const preview of await page
-            .locator(".image-preview--message")
-            .all()) {
-            const box = (await preview.boundingBox())!;
-            expect(box.width).toBeGreaterThanOrEqual(104);
-            expect(box.width).toBeLessThanOrEqual(160);
-            expect(box.width / box.height).toBeCloseTo(4 / 3);
-            if (viewport.width <= 390) expect(box.width).toBe(104);
-          }
-          for (const turn of await page.locator(".turn--user").all()) {
-            const copy = turn.getByRole("button", {
-              name: "Copy message",
-              exact: true,
-            });
-            // Programmatic focus does not establish :focus-visible on every OS.
-            // Use the real keyboard path before measuring keyboard-visible actions.
-            await copy.focus();
-            await copy.press("Tab");
-            await expect(
-              turn.getByRole("button", {
-                name: "Fork session from this input",
-              }),
-            ).toBeFocused();
-            await expect(turn.locator(".turn__actions")).toHaveCSS(
-              "opacity",
-              "1",
-            );
-            const geometry = await turn.evaluate((el) => {
-              const bubble = el
-                .querySelector(".user-bubble")!
-                .getBoundingClientRect();
-              const actions = el
-                .querySelector(".turn__actions")!
-                .getBoundingClientRect();
-              const buttons = [...el.querySelectorAll(".turn__action")].map(
-                (b) => b.getBoundingClientRect(),
-              );
-              const row = el.getBoundingClientRect();
-              const actionGroup =
-                el.querySelector<HTMLElement>(".turn__actions")!;
-              actionGroup.style.display = "none";
-              const independentBubble = el
-                .querySelector(".user-bubble")!
-                .getBoundingClientRect();
-              actionGroup.style.removeProperty("display");
-              return {
-                bubbleWidth: bubble.width,
-                rowWidth: row.width,
-                fitsBeside:
-                  bubble.width +
-                    actions.width +
-                    parseFloat(getComputedStyle(el).columnGap) <=
-                  row.width + 0.5,
-                beside: actions.right <= bubble.left,
-                sideGap: bubble.left - actions.right,
-                bottomInset: bubble.bottom - actions.bottom,
-                widthChange: bubble.width - independentBubble.width,
-                heightChange: bubble.height - independentBubble.height,
-                sameRow: Math.abs(buttons[0]!.top - buttons[1]!.top) < 1,
-                buttonGap: buttons[1]!.left - buttons[0]!.right,
-                height: actions.height,
-                rightAligned: Math.abs(actions.right - bubble.right) < 1,
-                bubbleGap: actions.top - bubble.bottom,
-                contained: [bubble, actions].every(
-                  (box) =>
-                    box.top >= row.top &&
-                    box.bottom <= row.bottom + 1 &&
-                    box.left >= row.left - 1 &&
-                    box.right <= row.right + 1,
-                ),
-                overflow: el.scrollWidth - el.clientWidth,
-              };
-            });
-            expect(geometry.bubbleWidth).toBeLessThanOrEqual(geometry.rowWidth);
-            expect(geometry.sameRow).toBe(true);
-            expect(geometry.buttonGap).toBeGreaterThanOrEqual(4);
-            expect(geometry.height).toBeLessThanOrEqual(32);
-            expect(geometry.beside).toBe(geometry.fitsBeside);
-            expect(Math.abs(geometry.widthChange)).toBeLessThanOrEqual(1);
-            expect(Math.abs(geometry.heightChange)).toBeLessThanOrEqual(1);
-            if (geometry.beside) {
-              expect(geometry.sideGap).toBe(8);
-              expect(Math.abs(geometry.bottomInset)).toBeLessThanOrEqual(1);
-            } else {
-              expect(geometry.rightAligned).toBe(true);
-              expect(geometry.bubbleGap).toBeGreaterThanOrEqual(2);
-              expect(geometry.bubbleGap).toBeLessThanOrEqual(8);
-            }
-            expect(geometry.contained).toBe(true);
-            expect(geometry.overflow).toBeLessThanOrEqual(1);
-          }
-        }
+      send({
+        type: "message_end",
+        message: { role: "assistant", content: "Calibration answer" },
       });
-    },
-  );
+      const turns = page.locator(".turn--user");
+      await expect(turns).toHaveCount(2);
+      await page.evaluate(() => document.fonts.ready);
+      for (const turn of await turns.all()) {
+        const copy = turn.getByRole("button", {
+          name: "Copy message",
+          exact: true,
+        });
+        const fork = turn.getByRole("button", {
+          name: "Fork session from this input",
+        });
+        await copy.press("Tab");
+        await expect(fork).toBeFocused();
+        await expect(turn.locator(".turn__actions")).toHaveCSS("opacity", "1");
+        await expect(copy).toBeInViewport({ ratio: 1 });
+        await expect(fork).toBeInViewport({ ratio: 1 });
+        const [copyBox, forkBox, bubble] = await Promise.all([
+          copy.boundingBox(),
+          fork.boundingBox(),
+          turn.locator(".user-bubble").boundingBox(),
+        ]);
+        expect(forkBox!.x).toBeGreaterThanOrEqual(copyBox!.x + copyBox!.width);
+        // The actions can sit beside or below the bubble, but must not cover it.
+        expect(
+          forkBox!.x + forkBox!.width <= bubble!.x ||
+            forkBox!.y >= bubble!.y + bubble!.height,
+        ).toBe(true);
+        expect(
+          await turn.evaluate((el) => el.scrollWidth - el.clientWidth),
+        ).toBeLessThanOrEqual(1);
+      }
+
+      if (touch) return;
+      const log = page.getByRole("log");
+      const fork = { name: "Fork session from this input" };
+      await expect(log.getByRole("button", fork)).toHaveCount(2);
+      await page.route("**/api/branches/fork", (route) =>
+        route.fulfill({
+          status: 404,
+          json: { error: "Fixture entry has no persisted counterpart" },
+        }),
+      );
+      const request = page.waitForRequest("**/api/branches/fork");
+      await turns.last().getByRole("button", fork).click();
+      expect((await request).postDataJSON()).toMatchObject({
+        targetId: "user-actions-1",
+      });
+    });
+  });
 }

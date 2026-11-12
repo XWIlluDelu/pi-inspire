@@ -10,9 +10,9 @@ covers:
   - server/git-inspection.ts
   - shared/contracts.ts
   - tests/integration/git-long-prefix.test.ts
-  - tests/web/source-diff.test.ts
+  - tests/web/source-presentation.test.ts
   - src/styles/*.css
-  - tests/web/{app,navigation-attention,workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
+  - tests/web/{workspace-controller,pane-resize,branch-tree,modal-focus}.test.ts*
   - tests/browser/{composer,session-actions}.spec.ts
 ---
 

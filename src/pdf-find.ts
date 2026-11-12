@@ -13,7 +13,7 @@ export function normalizeFindQuery(query: string): string {
   return query.replace(/\s+/gu, " ").trim().toLocaleLowerCase();
 }
 
-export function countOccurrences(text: string, needle: string): number {
+function countOccurrences(text: string, needle: string): number {
   if (!needle) return 0;
   const haystack = text.replace(/\s+/gu, " ").toLocaleLowerCase();
   let count = 0;

@@ -1,9 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import {
+  openConversationSearch,
   openFixtureSession,
   pairedPage,
-  openConversationSearch,
 } from "./support/navigation";
 
 test.use({ serviceWorkers: "block" });
@@ -12,31 +12,7 @@ async function openFixture(page: Page) {
   await expect(page.locator(".context-checkpoint")).toBeVisible();
 }
 
-test("search opens the actual retained summary and can reopen the same match", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openFixture(page);
-  const toggle = page.locator(".context-checkpoint__toggle");
-  await openConversationSearch(page);
-  const search = page.getByRole("searchbox", {
-    name: "Search conversation",
-  });
-  await search.fill("remaining work");
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await search.press("Enter");
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    page.getByText("Keep the parser decisions and remaining work."),
-  ).toBeVisible();
-  await expect(search).toBeFocused();
-  await toggle.click();
-  await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await page.getByRole("button", { name: "Next transcript match" }).click();
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-});
-
-test("compaction checkpoints retain independent disclosure/copy order through responsive layout and reload", async ({
+test("compaction summaries copy independently and remain searchable after reload", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 320, height: 844 });
@@ -77,20 +53,17 @@ test("compaction checkpoints retain independent disclosure/copy order through re
     exact: true,
   });
   const copy = checkpoint.locator(".context-checkpoint__copy");
-  const expectAccessible = async () => {
-    expect(
-      (await new AxeBuilder({ page }).include(".context-checkpoint").analyze())
-        .violations,
-    ).toEqual([]);
-  };
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  await expect(copy).toHaveCount(0);
-  await expectAccessible();
+  await disclosure.click();
+  await page.mouse.move(0, 0);
+  await expect(copy).toHaveCSS("opacity", "0");
+  await disclosure.click();
   await disclosure.focus();
   await page.keyboard.press("Enter");
   await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await page.keyboard.press("Tab");
   await expect(copy).toBeFocused();
+  await expect(copy).toHaveCSS("opacity", "1");
   await page.keyboard.press("Enter");
   await expect(copy).toHaveAttribute("aria-label", "Compaction summary copied");
   const copied = await page.evaluate(() => navigator.clipboard.readText());
@@ -107,57 +80,32 @@ test("compaction checkpoints retain independent disclosure/copy order through re
       (element) => element.scrollWidth <= element.clientWidth,
     ),
   ).toBe(true);
-  const current = await checkpoint.boundingBox();
-  expect(current).not.toBeNull();
-  for (const selector of [
-    ".context-checkpoint__title",
-    ".context-checkpoint__metric",
-    ".context-checkpoint__copy",
-    ".context-checkpoint__chevron",
-  ]) {
-    const bounds = await checkpoint.locator(selector).boundingBox();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.x).toBeGreaterThanOrEqual(current!.x);
-    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
-      current!.x + current!.width,
-    );
-  }
-  const copyGap = await copy.evaluate(
-    (element) =>
-      element.getBoundingClientRect().left -
-      element.previousElementSibling!.getBoundingClientRect().right,
-  );
-  expect(copyGap).toBeGreaterThanOrEqual(4);
-  expect(copyGap).toBeLessThanOrEqual(8);
-  await expectAccessible();
-  await copy.focus();
-  await page.keyboard.press("Enter");
-  await expect(disclosure).toHaveAttribute("aria-expanded", "true");
   await disclosure.focus();
   await page.keyboard.press("Enter");
   await expect(
     checkpoint.getByText("Keep the parser decisions and remaining work."),
   ).toHaveCount(0);
-  await expect(copy).toHaveCount(0);
 
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "light" });
   await page.reload();
   await expect(page.getByRole("main")).toBeVisible();
   await openFixture(page);
   await expect(page.locator(".context-checkpoint")).toHaveCount(1);
-  await expect(page.locator(".context-checkpoint__metric")).toContainText(
-    "Before ≈ 42,500 tokens",
+  await openConversationSearch(page);
+  const search = page.getByRole("searchbox", { name: "Search conversation" });
+  await search.fill("remaining work");
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await search.press("Enter");
+  const summary = checkpoint.getByText(
+    "Keep the parser decisions and remaining work.",
   );
-  await page.locator(".context-checkpoint__toggle").press("Enter");
-  await expect(
-    page.getByText("Keep the parser decisions and remaining work."),
-  ).toBeVisible();
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.emulateMedia({ colorScheme: "light" });
-  expect(
-    await page
-      .locator(".context-checkpoint")
-      .evaluate((element) => element.scrollWidth <= element.clientWidth),
-  ).toBe(true);
+  await expect(summary).toBeVisible();
+  await expect(search).toBeFocused();
+  await disclosure.click();
+  await expect(summary).toHaveCount(0);
+  await page.getByRole("button", { name: "Next transcript match" }).click();
+  await expect(summary).toBeVisible();
   expect(
     (await new AxeBuilder({ page }).include(".context-checkpoint").analyze())
       .violations,

@@ -76,35 +76,50 @@ for (const width of [1280, 390]) {
   });
 }
 
-test("@cross-browser message input honors every content size across responsive layouts", async ({
+test("@cross-browser live text-size changes reflow the same draft across layouts", async ({
   page,
 }) => {
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
   const message = page.getByRole("textbox", { name: "Message", exact: true });
-  await message.fill("Keep this comparison draft while changing text size.");
-  for (const [label, value, size] of [
-    ["Compact", "compact", "14px"],
-    ["Comfortable", "comfortable", "15.5px"],
-    ["Large", "large", "17px"],
-  ] as const) {
+  const draft = "Keep the complete draft while changing text size.\n"
+    .repeat(4)
+    .trimEnd();
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  async function changeSize(name: string) {
     await openSettings(page);
-    const settings = page.getByRole("dialog", {
-      name: "Settings",
-      exact: true,
-    });
     await settings
-      .getByRole("group", { name: "Content text size", exact: true })
-      .getByRole("button", { name: label, exact: true })
+      .getByRole("button", { name: "Display", exact: true })
       .click();
-    await expect(page.locator("html")).toHaveAttribute(
-      "data-content-text-size",
-      value,
-    );
+    await settings
+      .getByRole("group", { name: "Content text size" })
+      .getByRole("button", {
+        name,
+        exact: true,
+      })
+      .click();
     await page.keyboard.press("Escape");
-    await expectTypeAcrossWidths(page, message, size);
-    await expect(message).toHaveValue(
-      "Keep this comparison draft while changing text size.",
-    );
+    await expect(settings).toBeHidden();
+  }
+  await message.fill(draft);
+  const heights: number[] = [];
+  try {
+    for (const [label, size] of [
+      ["Compact", "14px"],
+      ["Comfortable", "15.5px"],
+      ["Large", "17px"],
+    ] as const) {
+      await changeSize(label);
+      await expectTypeAcrossWidths(page, message, size);
+      await expect(message).toHaveValue(draft);
+      await expect
+        .poll(() => message.evaluate((el) => el.scrollHeight - el.clientHeight))
+        .toBe(0);
+      heights.push((await message.boundingBox())!.height);
+    }
+    expect(heights.at(-1)!).toBeGreaterThan(heights[0]!);
+  } finally {
+    await changeSize("Comfortable");
+    await message.fill("");
   }
 });

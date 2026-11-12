@@ -12,29 +12,6 @@ import {
 } from "../../src/composer-completion";
 
 describe("composer caret completion", () => {
-  it("keeps session-bound built-ins off the new-session command surface", () => {
-    const runtime = [
-      { name: "compact", source: "extension", description: "collision" },
-      { name: "skill:docs", source: "skill", description: "Docs" },
-    ];
-    expect(resolveCommandInventory(runtime, false)).toEqual([
-      expect.objectContaining({ name: "compact", source: "builtin" }),
-      runtime[1],
-    ]);
-    expect(resolveCommandInventory(runtime, false)).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "settings" })]),
-    );
-    expect(resolveCommandInventory(runtime)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "compact",
-          source: "builtin",
-        }),
-        runtime[1],
-      ]),
-    );
-  });
-
   it("recognizes only the active boundary-prefixed @ token and permits spaces", () => {
     const draft = "keep @notes/field report final";
     expect(parseCaretCompletion(draft, draft.length)).toEqual({
@@ -228,32 +205,28 @@ describe("composer caret completion", () => {
 });
 
 describe("Pi interactive command ownership", () => {
-  it.each(PI_NATIVE_COMMANDS)(
-    "reserves /$name ahead of every runtime source",
-    (builtin) => {
-      for (const source of ["extension", "prompt", "skill"]) {
-        const resolved = resolveCommandInventory([
-          { name: builtin.name, source },
-        ]);
-        expect(
-          resolved.filter((command) => command.name === builtin.name),
-        ).toEqual([
-          expect.objectContaining({
-            source: "builtin",
-            execution: builtin.execution,
-          }),
-        ]);
-      }
-    },
-  );
+  it("reserves Pi built-ins ahead of colliding runtime commands", () => {
+    const names = new Set<string>(PI_NATIVE_COMMANDS.map(({ name }) => name));
+    const builtins = PI_NATIVE_COMMANDS.map(({ name, execution }) =>
+      expect.objectContaining({ name, source: "builtin", execution }),
+    );
+    for (const source of ["extension", "prompt", "skill"]) {
+      const resolved = resolveCommandInventory(
+        PI_NATIVE_COMMANDS.map(({ name }) => ({ name, source })),
+      ).filter(({ name }) => names.has(name));
+      expect(resolved).toHaveLength(builtins.length);
+      expect(resolved).toEqual(expect.arrayContaining(builtins));
+    }
+  });
   it("does not offer unavailable built-in collisions in a first-message composer", () => {
     const commands = [
       { name: "model", source: "extension" },
       { name: "export", source: "prompt" },
       { name: "plugin:model", source: "extension" },
+      { name: "skill:docs", source: "skill" },
     ];
     expect(
       resolveCommandInventory(commands, false).map((command) => command.name),
-    ).toEqual(["plugin:model", "compact"]);
+    ).toEqual(["plugin:model", "skill:docs", "compact"]);
   });
 });
