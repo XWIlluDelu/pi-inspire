@@ -156,32 +156,27 @@ export async function hostApiFixture(
     piVersion: "0.80.10",
     updateCoordinator: new UpdateCoordinator({
       currentPiVersion: "0.80.10",
-      inspireChecker: {
-        check: async () => ({
+      probeInspire: async () => ({
+        kind: "available",
+        update: {
+          currentVersion: "0.1.0-test",
+          latestVersion: "0.2.0",
+          releaseUrl: "https://github.com/example/inspire/releases/tag/v0.2.0",
+        },
+      }),
+      probePi: async () => ({
+        currentVersion: "0.80.10",
+        installedVersion: "0.80.10",
+        pi: {
           kind: "available",
-          update: {
-            currentVersion: "0.1.0-test",
-            latestVersion: "0.2.0",
-            releaseUrl:
-              "https://github.com/example/inspire/releases/tag/v0.2.0",
-          },
-        }),
-      },
-      piChecker: {
-        check: async () => ({
-          currentVersion: "0.80.10",
-          installedVersion: "0.80.10",
-          pi: {
-            kind: "available",
-            latestVersion: "0.84.3",
-            releaseUrl: "https://pi.dev/changelog",
-          },
-          extensions: {
-            kind: "available",
-            updates: [{ displayName: "pi-web-access", type: "npm" }],
-          },
-        }),
-      },
+          latestVersion: "0.84.3",
+          releaseUrl: "https://pi.dev/changelog",
+        },
+        extensions: {
+          kind: "available",
+          updates: [{ displayName: "pi-web-access", type: "npm" }],
+        },
+      }),
     }),
     bootstrapModels: () => [fixtureModel],
     modelMetadata: async (cwd) => ({

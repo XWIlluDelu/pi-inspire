@@ -52,7 +52,7 @@ import {
   SettingsManager,
 } from "./pi-runtime.js";
 import { PiSessionActivity } from "./pi-session-activity.js";
-import { PiUpdateChecker } from "./pi-update-checker.js";
+import { probePiUpdate } from "./pi-update-checker.js";
 import { PreferencesStore } from "./preferences.js";
 import {
   nativeOAuthDescriptors,
@@ -79,7 +79,7 @@ import {
   defaultToolPresentationConfigPath,
   ToolPresentationConfigStore,
 } from "./tool-presentation-config.js";
-import { GitHubReleaseUpdateChecker } from "./update-checker.js";
+import { probeInspireUpdate } from "./update-checker.js";
 import {
   defaultUpdateStatePath,
   UpdateCoordinator,
@@ -116,28 +116,30 @@ const repositoryUrl =
   typeof packageJson.repository === "string"
     ? packageJson.repository
     : packageJson.repository?.url;
-const updateChecker = new GitHubReleaseUpdateChecker({
-  currentVersion: packageJson.version,
-  repositoryUrl,
-});
-const piUpdateChecker = new PiUpdateChecker({
-  currentVersion: piInstallation.version,
-  readInstalledVersion: async () =>
-    (await resolvePiInstallationIdentity({ installationRoot: root })).version,
-  checkExtensions: async () => {
-    const agentDir = getAgentDir();
-    const settingsManager = SettingsManager.create(root, agentDir, {
-      projectTrusted: false,
-    });
-    if (settingsManager.drainErrors().length > 0)
-      throw new Error("Pi settings are unavailable");
-    return new DefaultPackageManager({
-      cwd: root,
-      agentDir,
-      settingsManager,
-    }).checkForAvailableUpdates();
-  },
-});
+const probeInspire = () =>
+  probeInspireUpdate({
+    currentVersion: packageJson.version,
+    repositoryUrl,
+  });
+const probePi = () =>
+  probePiUpdate({
+    currentVersion: piInstallation.version,
+    readInstalledVersion: async () =>
+      (await resolvePiInstallationIdentity({ installationRoot: root })).version,
+    checkExtensions: async () => {
+      const agentDir = getAgentDir();
+      const settingsManager = SettingsManager.create(root, agentDir, {
+        projectTrusted: false,
+      });
+      if (settingsManager.drainErrors().length > 0)
+        throw new Error("Pi settings are unavailable");
+      return new DefaultPackageManager({
+        cwd: root,
+        agentDir,
+        settingsManager,
+      }).checkForAvailableUpdates();
+    },
+  });
 const runningSource = await inspectInspireSource(root);
 const configuredLogPath = process.env.INSPIRE_LOG_PATH;
 const diagnosticLogPath =
@@ -263,8 +265,8 @@ const maintenanceRestart = new MaintenanceRestartController({
 });
 const updateCoordinator = new UpdateCoordinator({
   currentPiVersion: piInstallation.version,
-  inspireChecker: updateChecker,
-  piChecker: piUpdateChecker,
+  probeInspire,
+  probePi,
   statePath: defaultUpdateStatePath(root, host, port),
   diagnostics,
 });

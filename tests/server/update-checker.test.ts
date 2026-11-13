@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { PiUpdateChecker } from "../../server/pi-update-checker.js";
-import { GitHubReleaseUpdateChecker } from "../../server/update-checker.js";
+import { probePiUpdate } from "../../server/pi-update-checker.js";
+import { probeInspireUpdate } from "../../server/update-checker.js";
+import { UpdateCoordinator } from "../../server/update-coordinator.js";
 
 const repositoryUrl = "git+https://github.com/example/inspire.git";
 const release = (tag_name: string) => Response.json({ tag_name });
@@ -16,15 +17,23 @@ describe("Inspire release observations", () => {
       .fn<typeof fetch>()
       .mockReturnValueOnce(pending)
       .mockImplementation(async () => release("v2.0.0"));
-    const checker = new GitHubReleaseUpdateChecker({
-      currentVersion: "2.0.0-rc.1",
-      repositoryUrl,
-      fetchLatest,
+    const coordinator = new UpdateCoordinator({
+      currentPiVersion: "1.0.0",
+      probeInspire: () =>
+        probeInspireUpdate({
+          currentVersion: "2.0.0-rc.1",
+          repositoryUrl,
+          fetchLatest,
+        }),
       now: () => now,
     });
-
-    const first = checker.check();
-    const second = checker.check();
+    const check = (force = false) =>
+      coordinator
+        .checkInspire(force)
+        .then((status) => status.inspireUpdateCheck);
+    const first = check();
+    const second = check();
+    await vi.waitFor(() => expect(fetchLatest).toHaveBeenCalledOnce());
     expect(fetchLatest).toHaveBeenCalledExactlyOnceWith(
       "https://api.github.com/repos/example/inspire/releases/latest",
       expect.anything(),
@@ -46,13 +55,13 @@ describe("Inspire release observations", () => {
       result,
     ]);
 
-    await expect(checker.check(true)).resolves.toEqual(result);
+    await expect(check(true)).resolves.toEqual(result);
     expect(fetchLatest).toHaveBeenCalledTimes(2);
     now += 6 * 60 * 60_000 - 1;
-    await expect(checker.check()).resolves.toEqual(result);
+    await expect(check()).resolves.toEqual(result);
     expect(fetchLatest).toHaveBeenCalledTimes(2);
     now++;
-    await expect(checker.check()).resolves.toEqual(result);
+    await expect(check()).resolves.toEqual(result);
     expect(fetchLatest).toHaveBeenCalledTimes(3);
   });
 
@@ -63,16 +72,17 @@ describe("Inspire release observations", () => {
       .mockResolvedValueOnce(new Response(null, { status: 404 }))
       .mockResolvedValueOnce(release("nightly"))
       .mockRejectedValueOnce(new Error("offline"));
-    const checker = new GitHubReleaseUpdateChecker({
-      currentVersion: "1.3.2",
-      repositoryUrl,
-      fetchLatest,
-    });
+    const check = () =>
+      probeInspireUpdate({
+        currentVersion: "1.3.2",
+        repositoryUrl,
+        fetchLatest,
+      });
 
-    await expect(checker.check()).resolves.toEqual({ kind: "current" });
-    await expect(checker.check(true)).resolves.toEqual({ kind: "unreleased" });
-    await expect(checker.check(true)).resolves.toEqual({ kind: "unavailable" });
-    await expect(checker.check(true)).resolves.toEqual({ kind: "unavailable" });
+    await expect(check()).resolves.toEqual({ kind: "current" });
+    await expect(check()).resolves.toEqual({ kind: "unreleased" });
+    await expect(check()).resolves.toEqual({ kind: "unavailable" });
+    await expect(check()).resolves.toEqual({ kind: "unavailable" });
   });
 });
 
@@ -91,15 +101,16 @@ describe("Pi and extension observations", () => {
         { displayName: "a-addon", type: "npm", scope: "user" },
       ])
       .mockResolvedValue([]);
-    const checker = new PiUpdateChecker({
-      currentVersion: "1.3.0",
-      readInstalledVersion,
-      fetchLatest: async () => Response.json({ version: "1.4.0" }),
-      checkExtensions,
-      offline: () => false,
-    });
+    const check = () =>
+      probePiUpdate({
+        currentVersion: "1.3.0",
+        readInstalledVersion,
+        fetchLatest: async () => Response.json({ version: "1.4.0" }),
+        checkExtensions,
+        offline: () => false,
+      });
 
-    const before = await checker.check();
+    const before = await check();
     expect(before).toEqual({
       currentVersion: "1.3.0",
       installedVersion: "1.3.0",
@@ -116,9 +127,8 @@ describe("Pi and extension observations", () => {
         ],
       },
     });
-    expect(await checker.check()).toEqual(before);
     expect(readInstalledVersion).toHaveBeenCalledOnce();
-    await expect(checker.check(true)).resolves.toEqual({
+    await expect(check()).resolves.toEqual({
       currentVersion: "1.3.0",
       installedVersion: "1.4.0",
       pi: { kind: "current", latestVersion: "1.4.0" },
@@ -142,25 +152,26 @@ describe("Pi and extension observations", () => {
         scope: "user" as const,
       },
     ]);
-    const checker = new PiUpdateChecker({
-      currentVersion: "1.3.0",
-      readInstalledVersion,
-      fetchLatest,
-      checkExtensions,
-      offline: () => offline,
-    });
+    const check = () =>
+      probePiUpdate({
+        currentVersion: "1.3.0",
+        readInstalledVersion,
+        fetchLatest,
+        checkExtensions,
+        offline: () => offline,
+      });
     const extensions = {
       kind: "available",
       updates: [{ displayName: "extension", type: "git" }],
     };
-    await expect(checker.check()).resolves.toMatchObject({
+    await expect(check()).resolves.toMatchObject({
       installedVersion: null,
       pi: { kind: "unavailable" },
       extensions,
     });
     expect(fetchLatest).not.toHaveBeenCalled();
 
-    await expect(checker.check(true)).resolves.toMatchObject({
+    await expect(check()).resolves.toMatchObject({
       installedVersion: "1.4.0",
       pi: { kind: "unavailable" },
       extensions,
@@ -169,7 +180,7 @@ describe("Pi and extension observations", () => {
     offline = true;
     fetchLatest.mockClear();
     checkExtensions.mockClear();
-    await expect(checker.check(true)).resolves.toMatchObject({
+    await expect(check()).resolves.toMatchObject({
       installedVersion: "1.4.0",
       pi: { kind: "unavailable" },
       extensions: { kind: "unavailable" },

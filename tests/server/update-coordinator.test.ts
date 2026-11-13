@@ -34,8 +34,8 @@ describe("Host update coordinator", () => {
     }));
     const options = {
       currentPiVersion: "0.84.2",
-      inspireChecker: { check: inspireCheck },
-      piChecker: { check: piCheck },
+      probeInspire: inspireCheck,
+      probePi: piCheck,
       statePath: path,
       now: () => now,
     };
@@ -69,31 +69,30 @@ describe("Host update coordinator", () => {
   it("persists one exact-set snooze and reveals a changed update set", async () => {
     const now = new Date(2026, 7, 21, 9, 0).getTime();
     const path = await statePath();
-    let latestInspireVersion = "1.1.0";
+    let latestInspireVersion: string | null = "1.1.0";
     const options = {
       currentPiVersion: "0.84.2",
-      inspireChecker: {
-        check: async () => ({
+      probeInspire: async () =>
+        !latestInspireVersion
+          ? { kind: "unavailable" as const }
+          : {
+              kind: "available" as const,
+              update: {
+                currentVersion: "1.0.0",
+                latestVersion: latestInspireVersion,
+                releaseUrl: `https://github.com/example/inspire/releases/v${latestInspireVersion}`,
+              },
+            },
+      probePi: async () => ({
+        currentVersion: "0.84.2",
+        installedVersion: "0.84.2",
+        pi: {
           kind: "available" as const,
-          update: {
-            currentVersion: "1.0.0",
-            latestVersion: latestInspireVersion,
-            releaseUrl: `https://github.com/example/inspire/releases/v${latestInspireVersion}`,
-          },
-        }),
-      },
-      piChecker: {
-        check: async () => ({
-          currentVersion: "0.84.2",
-          installedVersion: "0.84.2",
-          pi: {
-            kind: "available" as const,
-            latestVersion: "0.84.3",
-            releaseUrl: "https://pi.dev/changelog",
-          },
-          extensions: { kind: "none" as const },
-        }),
-      },
+          latestVersion: "0.84.3",
+          releaseUrl: "https://pi.dev/changelog",
+        },
+        extensions: { kind: "none" as const },
+      }),
       statePath: path,
       now: () => now,
     };
@@ -116,6 +115,11 @@ describe("Host update coordinator", () => {
     expect((await reloaded.status()).updateSnoozedUntil).toBe(
       now + UPDATE_SNOOZE_MS,
     );
+
+    latestInspireVersion = null;
+    const unavailable = await reloaded.checkInspire(true);
+    expect(unavailable.inspireUpdateCheck).toEqual({ kind: "unavailable" });
+    expect(unavailable.updateSnoozedUntil).toBe(now + UPDATE_SNOOZE_MS);
 
     latestInspireVersion = "1.2.0";
     await reloaded.checkInspire(true);
