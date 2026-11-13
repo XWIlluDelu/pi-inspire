@@ -1,16 +1,6 @@
-import { expect, type Page, type Route, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { DEFAULT_TERMINAL_UI_SETTINGS } from "../../src/terminal-settings";
 import { openCommandPalette, pairAndOpen } from "./support/navigation";
-
-function receiptHeaders(route: Route): Record<string, string> {
-  const identity = route.request().headers()["x-terminal-operation"];
-  return identity
-    ? {
-        "X-Terminal-Operation": JSON.parse(identity).id as string,
-        "X-Terminal-Outcome": "completed",
-      }
-    : {};
-}
 
 async function openTerminalSettings(page: Page) {
   const palette = await openCommandPalette(page);
@@ -30,25 +20,38 @@ test.describe("narrow terminal settings", () => {
     let clears = 0;
     const loading = Promise.withResolvers<void>();
     const savingRetention = Promise.withResolvers<void>();
-    await page.route("**/api/terminal-operations", (route) =>
-      route.fulfill({ json: { epoch: "settings-fixture" } }),
-    );
-    await page.route("**/api/terminal-settings", async (route) => {
-      if (route.request().method() === "PATCH") {
-        const patch = route.request().postDataJSON();
+    await page.route("**/api/terminal-operations", async (route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          json: { epoch: "11111111-1111-4111-8111-111111111111" },
+        });
+        return;
+      }
+      const {
+        executor,
+        operationId,
+        intent: { command, params },
+      } = route.request().postDataJSON();
+      if (command === "updateSettings") {
+        const { patch } = params;
         patches.push(patch);
         if (patch.historyRetentionDays !== undefined)
           await savingRetention.promise;
         service = { ...service, ...patch };
-      } else await loading.promise;
-      await route.fulfill({ json: service, headers: receiptHeaders(route) });
-    });
-    await page.route("**/api/terminal-history", async (route) => {
-      clears++;
+      } else if (command === "clearHistory") clears++;
       await route.fulfill({
-        json: { ok: true },
-        headers: receiptHeaders(route),
+        json: {
+          executor,
+          operationId,
+          command,
+          state: "completed",
+          result: command === "clearHistory" ? null : service,
+        },
       });
+    });
+    await page.route("**/api/terminal-settings", async (route) => {
+      await loading.promise;
+      await route.fulfill({ json: service });
     });
     await pairAndOpen(page);
     const settings = await openTerminalSettings(page);

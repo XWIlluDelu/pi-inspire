@@ -1,3 +1,8 @@
+import { z } from "zod";
+import type { OperationReceipt } from "./host-operations.js";
+
+export const HOST_RESTART_PATH = "/api/host/restart";
+
 /** `host` replaces owned Pi workers.
  * `all` also restarts terminals. `all-pi` closes current-user Pi processes,
  * including Herdr Pi only in enhanced mode, then restarts Host and terminals.
@@ -29,10 +34,55 @@ export interface HostRestartStatus {
   operation: HostRestartOperation | null;
 }
 
-export interface HostRestartRequest {
-  hostId: string;
-  operationId: string;
-  scope: HostRestartScope;
-  interruptWork?: true;
-  skipAttachedStop?: true;
+export const hostRestartRequestSchema = z
+  .object({
+    hostId: z.string().uuid(),
+    operationId: z.string().uuid(),
+    scope: z.enum(["host", "all", "all-pi"]),
+    interruptWork: z.literal(true).optional(),
+    skipAttachedStop: z.literal(true).optional(),
+  })
+  .strict()
+  .refine(
+    ({ scope, interruptWork, skipAttachedStop }) =>
+      (scope !== "all-pi" && !skipAttachedStop) || interruptWork === true,
+    "Confirm which Pi work may be interrupted before restarting.",
+  );
+
+export type HostRestartRequest = z.output<typeof hostRestartRequestSchema>;
+
+export function restartReceiptIdentity(intent: HostRestartRequest) {
+  return {
+    executor: { kind: "lifecycle", hostId: intent.hostId } as const,
+    operationId: intent.operationId,
+    command: "restart" as const,
+  };
+}
+
+export function restartObservation(
+  intent: HostRestartRequest,
+  result: HostRestartOperation,
+) {
+  const receipt = { ...restartReceiptIdentity(intent), result };
+  // Submission is a process handoff. Only observation of a replacement Host
+  // can settle the restart as completed.
+  switch (result.phase) {
+    case "preparing":
+    case "submitted":
+      return { ...receipt, state: "pending" } as const;
+    case "unknown":
+    case "rejected":
+      return {
+        ...receipt,
+        state: result.phase,
+        error: {
+          status: result.phase === "unknown" ? 503 : 409,
+          message: result.error ?? "Restart was not confirmed.",
+        },
+      } satisfies OperationReceipt<
+        typeof receipt.executor,
+        "restart",
+        HostRestartOperation
+      > & { result: HostRestartOperation };
+  }
 }

@@ -7,7 +7,7 @@ import {
   openWorkspaceFile,
   pairedPage,
 } from "./support/navigation";
-import { terminalMutationHeaders } from "./support/terminal-operations";
+import { terminalOperation } from "./support/terminal-operations";
 
 test.use({ contextOptions: { reducedMotion: "reduce" } });
 
@@ -157,8 +157,9 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
       }
     }
   } finally {
-    const closed = await hostRequest(page).delete(`/api/terminals/${id}`, {
-      headers: await terminalMutationHeaders(page),
+    const closed = await terminalOperation(page, {
+      command: "remove",
+      params: { id, force: false },
     });
     expect(closed.ok()).toBe(true);
   }

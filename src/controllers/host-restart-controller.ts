@@ -1,12 +1,12 @@
-import type {
-  HostRestartRequest,
-  HostRestartScope,
-  HostRestartStatus,
+import {
+  hostRestartRequestSchema,
+  type HostRestartRequest,
+  type HostRestartScope,
+  type HostRestartStatus,
 } from "../../shared/host-restart";
 import { createApi } from "../api";
 
 const KEY = "inspire:host-restart:v1";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 interface State {
   status: HostRestartStatus | null;
   pending: HostRestartRequest | null;
@@ -57,26 +57,9 @@ export class HostRestartClient {
       recordRead = true;
       if (raw !== null) {
         if (raw.length > 512) throw new Error();
-        const value = JSON.parse(raw) as HostRestartRequest;
-        if (
-          !value ||
-          typeof value !== "object" ||
-          ![
-            "hostId,operationId,scope",
-            "hostId,interruptWork,operationId,scope",
-            "hostId,interruptWork,operationId,scope,skipAttachedStop",
-          ].includes(Object.keys(value).sort().join()) ||
-          typeof value.hostId !== "string" ||
-          !UUID.test(value.hostId) ||
-          typeof value.operationId !== "string" ||
-          !UUID.test(value.operationId) ||
-          !["host", "all", "all-pi"].includes(value.scope) ||
-          (value.scope === "all-pi" && value.interruptWork !== true) ||
-          ("interruptWork" in value && value.interruptWork !== true) ||
-          ("skipAttachedStop" in value && value.skipAttachedStop !== true)
-        )
-          throw new Error();
-        this.patch({ pending: value });
+        this.patch({
+          pending: hostRestartRequestSchema.parse(JSON.parse(raw)),
+        });
       } else {
         this.patch({ pending: null });
       }

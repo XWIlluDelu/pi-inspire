@@ -1,90 +1,30 @@
+import { matchOperationReceipt } from "../../shared/host-operations";
 import { isJsonRecord } from "../../shared/json-record";
-import type { TerminalOperationIdentity } from "../../shared/terminal-contracts";
+import {
+  TERMINAL_OPERATIONS_PATH,
+  terminalIntentSchema,
+  terminalOperationSchema,
+  terminalReceiptIdentity,
+  type TerminalIntent,
+  type TerminalOperation,
+  type TerminalOperationResults,
+} from "../../shared/terminal-operations";
 import { authenticatedFetch } from "../browser-auth";
 
-const STORAGE_KEY = "inspire:terminal-operations:v1";
+const STORAGE_KEY = "inspire:terminal-operations:v2";
+const RETIRED_STORAGE_KEY = "inspire:terminal-operations:v1";
 const MAX_PENDING = 128;
-// Covers even fully JSON-escaped maximum cwd/profile/order request fields.
-const MAX_BODY_CHARS = 32 * 1024;
-const MAX_KEY_CHARS = 2 * MAX_BODY_CHARS + 256;
-const MAX_STORAGE_CHARS =
-  MAX_PENDING * (2 * MAX_KEY_CHARS + 2 * MAX_BODY_CHARS + 1024);
-const IDENTITY_PART = /^[A-Za-z0-9_-]{1,80}$/u;
-
-function canonicalBody(body: unknown): string | undefined {
-  return JSON.stringify(body, (_key, value: unknown) => {
-    if (!value || typeof value !== "object" || Array.isArray(value))
-      return value;
-    return Object.fromEntries(
-      Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
-    );
-  });
-}
-interface TerminalIntent {
-  key: string;
-  path: string;
-  method: string;
-  body?: string;
-}
-
-interface PendingOperation extends TerminalIntent {
-  identity: TerminalOperationIdentity;
-}
-
+// Allows maximum-length terminal names and fully JSON-escaped paths.
+const MAX_STORAGE_CHARS = MAX_PENDING * 32 * 1024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 type RecoveryOutcome = "unknown" | "completed" | "rejected";
-
 interface TrackedOperation {
-  intent: PendingOperation;
+  operation: TerminalOperation;
   outcome?: RecoveryOutcome;
 }
 
-function operationKey(path: string, method: string, body?: string): string {
-  const knownMutation =
-    (method === "POST" &&
-      (path === "/api/terminals" ||
-        path === "/api/terminals/reorder" ||
-        /^\/api\/terminals\/[A-Za-z0-9_-]{1,80}\/restart$/u.test(path))) ||
-    (method === "PATCH" &&
-      (path === "/api/terminal-settings" ||
-        /^\/api\/terminals\/[A-Za-z0-9_-]{1,80}$/u.test(path))) ||
-    (method === "DELETE" &&
-      (path === "/api/terminal-history" ||
-        /^\/api\/terminals\/[A-Za-z0-9_-]{1,80}(?:\?force=1)?$/u.test(path)));
-  if (!knownMutation || (body !== undefined && body.length > MAX_BODY_CHARS))
-    throw new Error("Terminal operation is invalid; controls are blocked.");
-  return JSON.stringify([path, method, body ?? null]);
-}
-
-function restoredOperation(value: unknown): PendingOperation {
-  if (
-    !isJsonRecord(value) ||
-    Object.keys(value).some(
-      (key) => !["key", "path", "method", "body", "identity"].includes(key),
-    ) ||
-    typeof value.key !== "string" ||
-    value.key.length > MAX_KEY_CHARS ||
-    typeof value.path !== "string" ||
-    value.path.length > 128 ||
-    typeof value.method !== "string" ||
-    (value.body !== undefined && typeof value.body !== "string") ||
-    !isJsonRecord(value.identity) ||
-    Object.keys(value.identity).some((key) => !["id", "epoch"].includes(key)) ||
-    typeof value.identity.id !== "string" ||
-    !IDENTITY_PART.test(value.identity.id) ||
-    typeof value.identity.epoch !== "string" ||
-    !IDENTITY_PART.test(value.identity.epoch) ||
-    value.key !== operationKey(value.path, value.method, value.body) ||
-    (value.body !== undefined &&
-      canonicalBody(JSON.parse(value.body)) !== value.body)
-  )
-    throw new Error("Invalid stored terminal operation");
-  return {
-    key: value.key,
-    path: value.path,
-    method: value.method,
-    body: value.body,
-    identity: { id: value.identity.id, epoch: value.identity.epoch },
-  };
+function intentKey(intent: TerminalIntent): string {
+  return JSON.stringify(intent);
 }
 
 interface TerminalRecoveryRow {
@@ -92,34 +32,28 @@ interface TerminalRecoveryRow {
   label: string;
   busy: boolean;
   outcome: RecoveryOutcome;
+  canRetry: boolean;
 }
 
-function operationLabel(entry: PendingOperation): string {
-  const action =
-    entry.path === "/api/terminals"
-      ? "Create terminal"
-      : entry.path === "/api/terminals/reorder"
-        ? "Reorder terminals"
-        : entry.path === "/api/terminal-settings"
-          ? "Terminal settings"
-          : entry.path === "/api/terminal-history"
-            ? "Clear terminal history"
-            : entry.path.endsWith("/restart")
-              ? "Restart terminal"
-              : entry.method === "DELETE"
-                ? "Close terminal"
-                : "Rename terminal";
-  const body = entry.body
-    ? (JSON.parse(entry.body) as { cwd?: unknown } | null)
-    : null;
+function operationLabel(intent: TerminalIntent): string {
+  const label = {
+    create: "Create terminal",
+    rename: "Rename terminal",
+    reorder: "Reorder terminals",
+    restart: "Restart terminal",
+    remove: "Close terminal",
+    updateSettings: "Terminal settings",
+    clearHistory: "Clear terminal history",
+  }[intent.command];
   const target =
-    typeof body?.cwd === "string"
-      ? body.cwd
-      : entry.path.startsWith("/api/terminals/") &&
-          entry.path !== "/api/terminals/reorder"
-        ? entry.path.split("/")[3]!.split("?")[0]
-        : "";
-  return target ? `${action} · ${target}` : action;
+    intent.command === "create"
+      ? intent.params.request.cwd
+      : intent.command === "reorder"
+        ? intent.params.projectCwd
+        : "id" in intent.params
+          ? intent.params.id
+          : "";
+  return target ? `${label} · ${target}` : label;
 }
 
 /** Browser-owned delivery identity, never terminal/process authority. Unknown
@@ -131,6 +65,7 @@ export class TerminalOperationController {
   private readonly listeners = new Set<() => void>();
   private state: TerminalRecoveryRow[] = [];
   private loaded = false;
+  private retiredRecords = false;
 
   constructor(
     private readonly transport: typeof fetch = (...args) => fetch(...args),
@@ -146,7 +81,9 @@ export class TerminalOperationController {
   restore(): void {
     if (this.loaded) return;
     // Storage failure must not silently discard uncertain identities.
-    const raw = this.storage().getItem(STORAGE_KEY);
+    const storage = this.storage();
+    const raw = storage.getItem(STORAGE_KEY);
+    const retired = storage.getItem(RETIRED_STORAGE_KEY);
     const restored = new Map<string, TrackedOperation>();
     const identities = new Set<string>();
     try {
@@ -156,11 +93,12 @@ export class TerminalOperationController {
       if (!Array.isArray(entries) || entries.length > MAX_PENDING)
         throw new Error("Invalid stored terminal operations");
       for (const value of entries) {
-        const intent = restoredOperation(value);
-        const identity = `${intent.identity.epoch}:${intent.identity.id}`;
-        if (restored.has(intent.key) || identities.has(identity))
+        const operation = terminalOperationSchema.parse(value);
+        const key = intentKey(operation.intent);
+        const identity = `${operation.executor.epoch}:${operation.operationId}`;
+        if (restored.has(key) || identities.has(identity))
           throw new Error("Duplicate stored terminal operation");
-        restored.set(intent.key, { intent, outcome: "unknown" });
+        restored.set(key, { operation, outcome: "unknown" });
         identities.add(identity);
       }
     } catch {
@@ -171,29 +109,29 @@ export class TerminalOperationController {
     // Validate the whole set before publishing any recoverable identity. A bad
     // later entry must not allow an earlier entry (or a new intent) to dispatch.
     this.pending = restored;
+    this.retiredRecords = retired !== null && retired !== "[]";
     this.loaded = true;
     this.publish();
   }
 
-  run<T>(path: string, method: string, body?: unknown): Promise<T> {
-    let intent: TerminalIntent;
+  run<I extends TerminalIntent>(
+    intent: I,
+  ): Promise<TerminalOperationResults[I["command"]]> {
     try {
       this.restore();
-      const serialized = canonicalBody(body);
-      intent = {
-        key: operationKey(path, method, serialized),
-        path,
-        method,
-        body: serialized,
-      };
+      if (this.retiredRecords)
+        throw new Error(
+          "Check your terminals and stop tracking the previous version’s operations before sending new controls.",
+        );
+      const valid = terminalIntentSchema.parse(intent);
+      return this.dispatch<TerminalOperationResults[I["command"]]>(valid);
     } catch (error) {
       return Promise.reject(error);
     }
-    return this.dispatch<T>(intent);
   }
 
   private dispatch<T>(intent: TerminalIntent): Promise<T> {
-    const { key } = intent;
+    const key = intentKey(intent);
     const running = this.running.get(key);
     if (running) return running as Promise<T>;
     // A confirmed result makes another click a new intent, not a replay.
@@ -206,7 +144,7 @@ export class TerminalOperationController {
         return Promise.reject(error);
       }
     }
-    const task = this.deliver<T>(intent).finally(() => {
+    const task = this.deliver<T>(key, intent).finally(() => {
       this.running.delete(key);
       const pending = this.pending.get(key);
       if (pending) pending.outcome ??= "unknown";
@@ -230,12 +168,18 @@ export class TerminalOperationController {
       return Promise.reject(error);
     }
     if (!pending) return Promise.resolve();
-    return this.dispatch(pending.intent);
+    return this.dispatch(pending.operation.intent);
   }
 
   /** Retire a recovery record; never dispatch or claim cancellation. */
   stopTracking(key: string): void {
     this.restore();
+    if (key === RETIRED_STORAGE_KEY && this.retiredRecords) {
+      this.storage().removeItem(RETIRED_STORAGE_KEY);
+      this.retiredRecords = false;
+      this.publish();
+      return;
+    }
     if (this.running.has(key))
       throw new Error(
         "Wait for the current terminal operation check to finish.",
@@ -252,8 +196,7 @@ export class TerminalOperationController {
     this.publish();
   }
 
-  private async deliver<T>(intent: TerminalIntent): Promise<T> {
-    const { key, path, method, body } = intent;
+  private async deliver<T>(key: string, intent: TerminalIntent): Promise<T> {
     let pending = this.pending.get(key);
     if (!pending) {
       if (this.pending.size >= MAX_PENDING)
@@ -261,7 +204,7 @@ export class TerminalOperationController {
           "Too many unresolved terminal operations. Resolve existing operations first.",
         );
       const response = await authenticatedFetch(
-        "/api/terminal-operations",
+        TERMINAL_OPERATIONS_PATH,
         {
           signal: AbortSignal.timeout(10_000),
         },
@@ -278,7 +221,7 @@ export class TerminalOperationController {
         throw new Error(`${reason} No terminal control was sent.`);
       }
       const { epoch } = (await response.json()) as { epoch?: unknown };
-      if (typeof epoch !== "string" || !IDENTITY_PART.test(epoch))
+      if (typeof epoch !== "string" || !UUID.test(epoch))
         throw new Error(
           "Terminal operation epoch is invalid. No terminal control was sent.",
         );
@@ -286,59 +229,60 @@ export class TerminalOperationController {
       if (this.pending.size >= MAX_PENDING)
         throw new Error("Too many unresolved terminal operations.");
       pending = {
-        intent: {
-          ...intent,
-          identity: { id: crypto.randomUUID(), epoch },
+        operation: {
+          executor: { kind: "terminal", epoch },
+          operationId: crypto.randomUUID(),
+          intent,
         },
       };
       this.pending.set(key, pending);
     }
     this.persist(); // A previous storage failure cannot make a retry untracked.
-    const { identity } = pending.intent;
-    let response: Response;
+    const { operation } = pending;
     try {
-      response = await authenticatedFetch(
-        path,
+      const response = await authenticatedFetch(
+        TERMINAL_OPERATIONS_PATH,
         {
-          method,
-          body,
-          headers: {
-            ...(body === undefined
-              ? {}
-              : { "Content-Type": "application/json" }),
-            "X-Terminal-Operation": JSON.stringify(identity),
-          },
+          method: "POST",
+          body: JSON.stringify(operation),
+          headers: { "Content-Type": "application/json" },
           signal: AbortSignal.timeout(20_000),
         },
         this.transport,
       );
-      const outcome = response.headers.get("X-Terminal-Outcome");
-      const matched =
-        response.headers.get("X-Terminal-Operation") === identity.id;
-      const result =
-        response.status === 204
-          ? undefined
-          : ((await response.json()) as { error?: string });
-      if (
-        matched &&
-        ((response.ok && outcome === "completed") || outcome === "rejected")
-      ) {
+      const receipt = matchOperationReceipt(
+        await response.json(),
+        terminalReceiptIdentity(operation),
+      );
+      const error = isJsonRecord(receipt?.error) ? receipt.error : null;
+      const message =
+        typeof error?.message === "string" ? error.message : undefined;
+      const completed =
+        receipt &&
+        response.ok &&
+        receipt.state === "completed" &&
+        "result" in receipt;
+      const rejected =
+        receipt &&
+        !response.ok &&
+        receipt.state === "rejected" &&
+        error?.status === response.status &&
+        !!message;
+      if (completed || rejected) {
         this.pending.delete(key);
         try {
           this.persist();
         } catch {
           // Local bookkeeping failure cannot undo the daemon's confirmed result.
           // Keep the identity for cleanup without reporting an unknown operation.
-          pending.outcome = response.ok ? "completed" : "rejected";
+          pending.outcome = completed ? "completed" : "rejected";
           this.pending.set(key, pending);
         }
-        if (response.ok) return result as T;
-        throw new TerminalDefiniteRefusal(
-          result?.error ?? "The terminal operation was refused.",
-        );
+        if (completed) return receipt.result as T;
+        throw new TerminalDefiniteRefusal(message);
       }
       throw new Error(
-        result?.error ?? "The terminal operation response was not confirmed.",
+        message ?? "The terminal operation response was not confirmed.",
       );
     } catch (error) {
       if (error instanceof TerminalDefiniteRefusal) throw error;
@@ -351,18 +295,31 @@ export class TerminalOperationController {
   private persist(): void {
     this.storage().setItem(
       STORAGE_KEY,
-      JSON.stringify([...this.pending.values()].map(({ intent }) => intent)),
+      JSON.stringify(
+        [...this.pending.values()].map(({ operation }) => operation),
+      ),
     );
   }
   private publish(): void {
-    const rows: TerminalRecoveryRow[] = [];
-    for (const { intent, outcome } of this.pending.values()) {
+    const rows: TerminalRecoveryRow[] = this.retiredRecords
+      ? [
+          {
+            key: RETIRED_STORAGE_KEY,
+            label: "Terminal operations from a previous version",
+            busy: false,
+            outcome: "unknown",
+            canRetry: false,
+          },
+        ]
+      : [];
+    for (const [key, { operation, outcome }] of this.pending) {
       if (!outcome) continue;
       rows.push({
-        key: intent.key,
-        label: operationLabel(intent),
-        busy: this.running.has(intent.key),
+        key,
+        label: operationLabel(operation.intent),
+        busy: this.running.has(key),
         outcome,
+        canRetry: true,
       });
     }
     this.state = rows;

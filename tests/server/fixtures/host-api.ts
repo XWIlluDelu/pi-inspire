@@ -109,6 +109,7 @@ export async function hostApiFixture(
     promptObservationWindowMs?: number;
     runtime?: Parameters<typeof createInspireServer>[0]["runtime"];
     distDir?: string;
+    terminal?: Parameters<typeof createInspireServer>[0]["terminal"];
     developmentBrowserBuild?: string;
   } = {},
 ) {

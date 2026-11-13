@@ -93,7 +93,14 @@ describe("Host administration API", () => {
     await submit({ ...intent, scope: "host-only" }).expect(400);
     await submit({ ...intent, interruptWork: false }).expect(400);
     await submit({ ...intent, hostId: randomUUID() }).expect(409);
-    await submit(intent).expect(202);
+    const admitted = await submit(intent).expect(202);
+    expect(admitted.body).toMatchObject({
+      executor: { kind: "lifecycle", hostId: intent.hostId },
+      operationId: intent.operationId,
+      command: "restart",
+      state: "pending",
+      result: { phase: "preparing" },
+    });
     await submit(intent).expect(202);
     await submit({ ...intent, scope: "host" }).expect(409);
     await submit({ ...intent, interruptWork: undefined }).expect(409);
@@ -111,7 +118,10 @@ describe("Host administration API", () => {
         error: "Synthetic preparation failure",
       });
     });
-    expect((await submit(intent).expect(202)).body.phase).toBe("rejected");
+    expect((await submit(intent).expect(202)).body).toMatchObject({
+      state: "rejected",
+      result: { phase: "rejected" },
+    });
     expect(prepare).toHaveBeenCalledOnce();
     expect(reserve).not.toHaveBeenCalled();
     expect(restart).not.toHaveBeenCalled();

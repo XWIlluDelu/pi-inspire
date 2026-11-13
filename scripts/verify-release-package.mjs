@@ -609,15 +609,18 @@ try {
       );
     return response.json();
   }
-  async function terminalMutation(path, method, body) {
+  async function terminalMutation(command, params) {
     const { epoch } = await request("/terminal-operations");
-    return request(path, {
-      method,
-      body,
-      headers: {
-        "X-Terminal-Operation": JSON.stringify({ id: randomUUID(), epoch }),
+    const receipt = await request("/terminal-operations", {
+      method: "POST",
+      body: {
+        operationId: randomUUID(),
+        executor: { kind: "terminal", epoch },
+        intent: { command, params },
       },
     });
+    assert.equal(receipt.state, "completed");
+    return receipt.result;
   }
 
   host = startProcess(bin, [], processOptions);
@@ -651,10 +654,8 @@ try {
     assert.equal(released?.kind, "released");
   }
 
-  const terminal = await terminalMutation("/terminals", "POST", {
-    cwd: canonicalWorkspace,
-    cols: 80,
-    rows: 24,
+  const terminal = await terminalMutation("create", {
+    request: { cwd: canonicalWorkspace, cols: 80, rows: 24 },
   });
   const { decodeTerminalServerDataFrame } = await installed(
     "build/shared/terminal-contracts.js",
@@ -723,10 +724,7 @@ try {
     terminals.some((row) => row.id === terminal.id && row.status === "running"),
     "Packaged Host restart lost the real PTY",
   );
-  await terminalMutation(
-    `/terminals/${encodeURIComponent(terminal.id)}?force=1`,
-    "DELETE",
-  );
+  await terminalMutation("remove", { id: terminal.id, force: true });
 
   await cli(["stop"]);
   await waitForExit(host.child);

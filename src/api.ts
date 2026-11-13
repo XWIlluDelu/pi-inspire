@@ -46,12 +46,16 @@ import {
   type HostOperationCommand,
   type HostOperationIdentity,
   type HostOperationReceipt,
+  hostReceipt,
   INPUT_OPERATION_PATHS,
+  matchOperationReceipt,
 } from "../shared/host-operations";
-import type {
-  HostRestartOperation,
-  HostRestartRequest,
-  HostRestartStatus,
+import {
+  HOST_RESTART_PATH,
+  restartReceiptIdentity,
+  type HostRestartOperation,
+  type HostRestartRequest,
+  type HostRestartStatus,
 } from "../shared/host-restart";
 import type { HtmlPreviewResponse } from "../shared/html-preview";
 import { isJsonRecord } from "../shared/json-record";
@@ -78,8 +82,6 @@ import type {
   TerminalAttachTicketResponse,
   TerminalCatalogResponse,
   TerminalCreateRequest,
-  TerminalDescriptor,
-  TerminalRemoveResponse,
   TerminalRenameRequest,
   TerminalReorderRequest,
   TerminalServiceSettings,
@@ -449,18 +451,11 @@ async function hostOperation<Command extends HostOperationCommand>(
 > {
   const options = { mutation: true, timeoutMs, readErrorBody: true };
   const init = { signal };
-  const receipt = await (body === undefined
+  const value = await (body === undefined
     ? request<unknown>(path, init, options)
     : post<unknown>(path, body, init, options));
-  if (
-    !isJsonRecord(receipt) ||
-    !isJsonRecord(receipt.executor) ||
-    receipt.executor.kind !== "host" ||
-    receipt.executor.authorityId !== identity.authorityId ||
-    receipt.operationId !== identity.operationId ||
-    receipt.command !== command
-  )
-    throw new ApiTransportError("response", true);
+  const receipt = matchOperationReceipt(value, hostReceipt(command, identity));
+  if (!receipt) throw new ApiTransportError("response", true);
   if (receipt.state === "pending")
     return receipt as HostOperationReceipt<Command> & { state: "pending" };
   if (receipt.state === "completed") {
@@ -625,15 +620,33 @@ export function createApi() {
         signal: AbortSignal.timeout(10_000),
       }),
     hostRestartStatus: () =>
-      request<HostRestartStatus>("/api/host/restart", {
+      request<HostRestartStatus>(HOST_RESTART_PATH, {
         signal: AbortSignal.timeout(10_000),
       }),
-    restartHost: (intent: HostRestartRequest) =>
-      request<HostRestartOperation>("/api/host/restart", {
-        method: "POST",
-        body: JSON.stringify(intent),
+    restartHost: async (intent: HostRestartRequest) => {
+      const value = await post<unknown>(HOST_RESTART_PATH, intent, {
         signal: AbortSignal.timeout(10_000),
-      }),
+      });
+      const receipt = matchOperationReceipt(
+        value,
+        restartReceiptIdentity(intent),
+      );
+      const result = receipt?.result;
+      if (
+        !isJsonRecord(result) ||
+        result.id !== intent.operationId ||
+        result.scope !== intent.scope ||
+        !["preparing", "submitted", "unknown", "rejected"].includes(
+          String(result.phase),
+        ) ||
+        receipt?.state !==
+          (result.phase === "submitted" || result.phase === "preparing"
+            ? "pending"
+            : result.phase)
+      )
+        throw new ApiTransportError("response", true);
+      return result as unknown as HostRestartOperation;
+    },
     bootstrap: (signal?: AbortSignal) =>
       withTransportMeasure("bootstrap-metadata", () =>
         request<BootstrapResponse>("/api/bootstrap", { signal }),
@@ -873,34 +886,19 @@ export function createApi() {
           : "/api/terminals",
       ),
     retryTerminalOperation: (key: string) => terminalOperations.retry(key),
-    createTerminal: (body: TerminalCreateRequest) =>
-      terminalOperations.run<TerminalDescriptor>(
-        "/api/terminals",
-        "POST",
-        body,
-      ),
-    renameTerminal: (id: string, body: TerminalRenameRequest) =>
-      terminalOperations.run<TerminalDescriptor>(
-        `/api/terminals/${encodeURIComponent(id)}`,
-        "PATCH",
-        body,
-      ),
-    reorderTerminals: (body: TerminalReorderRequest) =>
-      terminalOperations.run<TerminalCatalogResponse>(
-        "/api/terminals/reorder",
-        "POST",
-        body,
-      ),
+    createTerminal: (request: TerminalCreateRequest) =>
+      terminalOperations.run({ command: "create", params: { request } }),
+    renameTerminal: (id: string, { title }: TerminalRenameRequest) =>
+      terminalOperations.run({ command: "rename", params: { id, title } }),
+    reorderTerminals: ({ cwd, terminalIds }: TerminalReorderRequest) =>
+      terminalOperations.run({
+        command: "reorder",
+        params: { projectCwd: cwd, ids: terminalIds },
+      }),
     restartTerminal: (id: string) =>
-      terminalOperations.run<TerminalDescriptor>(
-        `/api/terminals/${encodeURIComponent(id)}/restart`,
-        "POST",
-      ),
+      terminalOperations.run({ command: "restart", params: { id } }),
     removeTerminal: (id: string, force = false) =>
-      terminalOperations.run<TerminalRemoveResponse>(
-        `/api/terminals/${encodeURIComponent(id)}${force ? "?force=1" : ""}`,
-        "DELETE",
-      ),
+      terminalOperations.run({ command: "remove", params: { id, force } }),
     terminalAttachTicket: (id: string, signal?: AbortSignal) =>
       post<TerminalAttachTicketResponse>(
         `/api/terminals/${encodeURIComponent(id)}/attach-ticket`,
@@ -909,14 +907,11 @@ export function createApi() {
       ),
     terminalSettings: () =>
       request<TerminalServiceSettings>("/api/terminal-settings"),
-    updateTerminalSettings: (body: TerminalServiceSettingsPatch) =>
-      terminalOperations.run<TerminalServiceSettings>(
-        "/api/terminal-settings",
-        "PATCH",
-        body,
-      ),
-    clearTerminalHistory: () =>
-      terminalOperations.run<void>("/api/terminal-history", "DELETE"),
+    updateTerminalSettings: (patch: TerminalServiceSettingsPatch) =>
+      terminalOperations.run({ command: "updateSettings", params: { patch } }),
+    clearTerminalHistory: async () => {
+      await terminalOperations.run({ command: "clearHistory", params: {} });
+    },
     prompt: (
       body: PromptDeliveryRequest,
       signal?: AbortSignal,

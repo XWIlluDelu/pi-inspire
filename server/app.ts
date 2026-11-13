@@ -39,6 +39,11 @@ import {
   pendingOperationSchema,
   promptSchema,
 } from "../shared/host-operations.js";
+import {
+  HOST_RESTART_PATH,
+  hostRestartRequestSchema,
+  restartObservation,
+} from "../shared/host-restart.js";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
 import {
   MAX_RESOURCE_PROBE_REFERENCES,
@@ -909,7 +914,7 @@ export function createInspireServer(deps: AppDependencies): {
     response.json(await deps.getHerdrStatus());
   });
 
-  app.get("/api/host/restart", async (_request, response) => {
+  app.get(HOST_RESTART_PATH, async (_request, response) => {
     response.json(
       deps.hostRestart
         ? await deps.hostRestart.status()
@@ -926,26 +931,20 @@ export function createInspireServer(deps: AppDependencies): {
           },
     );
   });
-  const hostRestartSchema = z
-    .object({
-      hostId: z.string().uuid(),
-      operationId: z.string().uuid(),
-      scope: z.enum(["host", "all", "all-pi"]),
-      interruptWork: z.literal(true).optional(),
-      skipAttachedStop: z.literal(true).optional(),
-    })
-    .strict();
-  app.post("/api/host/restart", (request, response) => {
-    const intent = hostRestartSchema.parse(request.body);
+  app.post(HOST_RESTART_PATH, (request, response) => {
+    const intent = hostRestartRequestSchema.parse(request.body);
     if (!deps.hostRestart)
       throw requestError("Page restart is unavailable for this Host.", 503);
-    response.status(202).json(deps.hostRestart.start(intent));
+    response
+      .status(202)
+      .json(restartObservation(intent, deps.hostRestart.start(intent)));
   });
 
   const terminalGateway = createTerminalGateway(
     app,
     deps.terminal,
     heartbeatIntervalMs,
+    currentBrowserBuild,
   );
 
   app.get("/api/update", async (request, response) => {
@@ -1923,11 +1922,13 @@ export function createInspireServer(deps: AppDependencies): {
     if (browserAuthenticated && !(await browserBuildAllowed(browserBuild))) {
       if (url.pathname === "/events")
         runtimeEvents.rejectUpgrade(request, socket, head);
+      else if (url.pathname === "/terminal" && deps.terminal)
+        terminalGateway.rejectUpgrade(request, socket, head);
       else socket.destroy();
       return;
     }
     if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
-      terminalGateway.upgrade(request, socket, head);
+      terminalGateway.upgrade(request, socket, head, browserBuild);
       return;
     }
     if (

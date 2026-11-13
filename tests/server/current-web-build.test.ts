@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliCompressSync, gzipSync } from "node:zlib";
 import request from "supertest";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 import { CURRENT_WEB_ASSETS_MANIFEST } from "../../server/current-web-build.mjs";
+import type { TerminalService } from "../../server/terminal-service.js";
 import {
   BROWSER_BUILD_HEADER,
   BROWSER_UPGRADE_CLOSE,
@@ -166,11 +167,25 @@ it("retires an already connected page after a new manifest is published", async 
     await rename(staging, manifest);
   };
   await publish("index-first.js");
+  const detach = vi.fn();
+  const attach = vi.fn(async () => ({
+    id: "peer",
+    terminalId: "terminal",
+    detach,
+    writeInput: vi.fn(),
+    control: vi.fn(),
+  }));
   const host = await hostApiFixture({
     distDir: dist,
     websocketHeartbeatIntervalMs: 30,
+    terminal: {
+      list: () => ({ terminals: [{ id: "terminal" }] }),
+      attach,
+      close: async () => {},
+    } as unknown as TerminalService,
   });
   let socket: WebSocket | undefined;
+  let terminal: WebSocket | undefined;
   try {
     const { server } = host.application;
     const { bearer } = await pairedBrowser(server, host.baseUrl);
@@ -190,9 +205,62 @@ it("retires an already connected page after a new manifest is published", async 
     const closed = once(socket, "close");
     const [first] = await once(socket, "message");
     expect(JSON.parse(String(first)).type).toBe("snapshot");
+    const terminalTicket = await socketAdmission(
+      server,
+      host.baseUrl,
+      bearer,
+      "terminal",
+      {
+        [BROWSER_BUILD_HEADER]: "index-first.js",
+      },
+    );
+    const attachTicket = await request(server)
+      .post("/api/terminals/terminal/attach-ticket")
+      .set({
+        Origin: host.baseUrl,
+        Authorization: `Bearer ${bearer}`,
+        [BROWSER_BUILD_HEADER]: "index-first.js",
+      })
+      .expect(200);
+    terminal = new WebSocket(
+      `${host.baseUrl.replace("http:", "ws:")}/terminal?ticket=${terminalTicket}&build=index-first.js`,
+      { origin: host.baseUrl },
+    );
+    const terminalClosed = once(terminal, "close");
+    await once(terminal, "open");
+    terminal.send(
+      JSON.stringify({
+        type: "attach",
+        ticket: attachTicket.body.ticket,
+        clientId: "browser",
+        cols: 80,
+        rows: 24,
+      }),
+    );
+    await vi.waitFor(() => expect(attach).toHaveBeenCalledOnce());
+
     await publish("index-next.js");
     expect((await closed)[0]).toBe(BROWSER_UPGRADE_CLOSE);
+    expect((await terminalClosed)[0]).toBe(BROWSER_UPGRADE_CLOSE);
+    expect(detach).toHaveBeenCalledOnce();
+
+    const staleTicket = await socketAdmission(
+      server,
+      host.baseUrl,
+      bearer,
+      "terminal",
+      {
+        [BROWSER_BUILD_HEADER]: "index-next.js",
+      },
+    );
+    const stale = new WebSocket(
+      `${host.baseUrl.replace("http:", "ws:")}/terminal?ticket=${staleTicket}&build=index-first.js`,
+      { origin: host.baseUrl },
+    );
+    expect((await once(stale, "close"))[0]).toBe(BROWSER_UPGRADE_CLOSE);
+    expect(attach).toHaveBeenCalledOnce();
   } finally {
+    terminal?.terminate();
     socket?.terminate();
     await closeHostApiFixture(host);
     await rm(dist, { recursive: true, force: true });

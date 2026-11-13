@@ -1,23 +1,24 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
-import type { Express, Response } from "express";
+import type { Express } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
+import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
+import type { OperationReceipt } from "../shared/host-operations.js";
 import {
   decodeTerminalInputFrame,
-  MAX_TERMINAL_COLS,
-  MAX_TERMINAL_HISTORY_DAYS,
   MAX_TERMINAL_INPUT_BYTES,
-  MAX_TERMINAL_PROFILE_ID_CHARS,
-  MAX_TERMINAL_ROWS,
-  MAX_TERMINAL_TITLE_CHARS,
-  MIN_TERMINAL_COLS,
-  MIN_TERMINAL_HISTORY_DAYS,
-  MIN_TERMINAL_ROWS,
   type TerminalClientControlMessage,
-  type TerminalMutationMethod,
 } from "../shared/terminal-contracts.js";
+import {
+  TERMINAL_OPERATIONS_PATH,
+  terminalDimensionsSchema,
+  terminalIdSchema,
+  terminalOperationIdentitySchema,
+  terminalOperationSchema,
+  terminalReceiptIdentity,
+} from "../shared/terminal-operations.js";
 import { canonicalOrigin } from "./browser-auth.js";
 import { requestError } from "./request-error.js";
 import type {
@@ -25,54 +26,9 @@ import type {
   TerminalService,
 } from "./terminal-service.js";
 
-const terminalOperationSchema = z
-  .object({
-    id: z.string().uuid(),
-    epoch: z.string().uuid(),
-  })
-  .strict();
-
-const terminalIdSchema = z
-  .string()
-  .min(1)
-  .max(80)
-  .regex(/^[A-Za-z0-9_-]+$/u);
-const terminalDimensionsSchema = {
-  cols: z.number().int().min(MIN_TERMINAL_COLS).max(MAX_TERMINAL_COLS),
-  rows: z.number().int().min(MIN_TERMINAL_ROWS).max(MAX_TERMINAL_ROWS),
-};
 const terminalListSchema = z.object({
   cwd: z.string().min(1).max(4_096).optional(),
 });
-const terminalCreateSchema = z
-  .object({
-    cwd: z.string().min(1).max(4_096),
-    profileId: z.string().min(1).max(MAX_TERMINAL_PROFILE_ID_CHARS).optional(),
-    cols: terminalDimensionsSchema.cols.optional(),
-    rows: terminalDimensionsSchema.rows.optional(),
-  })
-  .strict();
-const terminalRenameSchema = z
-  .object({ title: z.string().max(MAX_TERMINAL_TITLE_CHARS).nullable() })
-  .strict();
-const terminalReorderSchema = z
-  .object({
-    cwd: z.string().min(1).max(4_096),
-    terminalIds: z.array(terminalIdSchema).max(32),
-  })
-  .strict();
-const terminalSettingsPatchSchema = z
-  .object({
-    persistOutput: z.boolean().optional(),
-    historyRetentionDays: z
-      .number()
-      .int()
-      .min(MIN_TERMINAL_HISTORY_DAYS)
-      .max(MAX_TERMINAL_HISTORY_DAYS)
-      .optional(),
-  })
-  .strict()
-  .refine((value) => Object.keys(value).length > 0);
 const terminalAttachSchema = z
   .object({
     type: z.literal("attach"),
@@ -106,6 +62,8 @@ const MAX_TERMINAL_SOCKETS = 128;
 interface TerminalSocketState {
   responsive: boolean;
   attachment: TerminalAttachment | "attaching" | null;
+  build?: string;
+  detach(): void;
 }
 
 /** Register after /api authentication. Upgrade admission remains in the Host:
@@ -115,6 +73,7 @@ export function createTerminalGateway(
   app: Express,
   service: TerminalService | undefined,
   heartbeatIntervalMs: number,
+  currentBrowserBuild: () => Promise<string | undefined>,
 ) {
   const terminalTickets = new Map<
     string,
@@ -149,101 +108,73 @@ export function createTerminalGateway(
       });
     return service;
   };
-  // Schema/auth-independent refusals before dispatch are definite. Once a
-  // mutation reaches the daemon transport, default to unknown until a receipt.
-  app.use(
-    ["/api/terminals", "/api/terminal-settings", "/api/terminal-history"],
-    (request, response, next) => {
-      const header = request.get("X-Terminal-Operation");
-      if (header !== undefined && request.method !== "GET") {
-        if (header.length > 256)
-          throw requestError("Invalid terminal operation", 400);
-        const operation = terminalOperationSchema.parse(JSON.parse(header));
-        response.locals.terminalOperation = operation;
-        response.set("X-Terminal-Operation", operation.id);
-        response.set("X-Terminal-Outcome", "rejected");
-      }
-      next();
-    },
-  );
-  const mutate = async <T>(
-    response: Response,
-    method: TerminalMutationMethod,
-    params: unknown,
-  ): Promise<T> => {
-    const operation = response.locals.terminalOperation as
-      | z.infer<typeof terminalOperationSchema>
-      | undefined;
-    if (!operation)
-      throw requestError("A terminal operation identity is required", 400, {
-        code: "terminal_operation_required",
+  app.get(TERMINAL_OPERATIONS_PATH, async (_request, response) => {
+    response.set("Cache-Control", "no-store");
+    response.json({ epoch: await requireTerminal().operationEpoch() });
+  });
+  app.post(TERMINAL_OPERATIONS_PATH, async (request, response) => {
+    const identity = terminalOperationIdentitySchema.parse(request.body);
+    const parsed = terminalOperationSchema.safeParse(request.body);
+    const command = request.body?.intent?.command;
+    if (!parsed.success) {
+      if (typeof command !== "string") throw parsed.error;
+      response.status(400).json({
+        ...identity,
+        command,
+        state: "rejected",
+        error: { status: 400, message: "The terminal operation is invalid." },
       });
+      return;
+    }
+    const { data: operation } = parsed;
+    const receipt = terminalReceiptIdentity(operation);
     const terminal = requireTerminal();
-    response.set("X-Terminal-Outcome", "unknown");
     try {
-      const result = await terminal.operate<T>(method, params, operation);
-      response.set("X-Terminal-Outcome", "completed");
-      return result;
+      const result = await terminal.operate<unknown>(
+        receipt.command,
+        operation.intent.params,
+        { id: receipt.operationId, epoch: receipt.executor.epoch },
+      );
+      response.json({
+        ...receipt,
+        state: "completed",
+        result: result ?? null,
+      } satisfies OperationReceipt<
+        typeof receipt.executor,
+        typeof receipt.command,
+        unknown
+      >);
     } catch (error) {
-      const { status, code } = error as { status?: number; code?: string };
-      const unknown = [
+      const { status = 500, code } = error as {
+        status?: number;
+        code?: string;
+      };
+      const retired = [
         "terminal_operation_epoch_changed",
         "terminal_operation_expired",
         "terminal_operation_mismatch",
       ].includes(code ?? "");
-      response.set(
-        "X-Terminal-Outcome",
-        !unknown && status && status >= 400 && status < 500
-          ? "rejected"
-          : "unknown",
-      );
-      throw error;
+      response.status(status).json({
+        ...receipt,
+        state:
+          !retired && status >= 400 && status < 500 ? "rejected" : "unknown",
+        error: {
+          status,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Terminal operation failed.",
+          ...(code ? { code } : {}),
+        },
+      });
     }
-  };
-  app.get("/api/terminal-operations", async (_request, response) => {
-    response.set("Cache-Control", "no-store");
-    response.json({ epoch: await requireTerminal().operationEpoch() });
   });
   app.get("/api/terminals", async (request, response) => {
     const { cwd } = terminalListSchema.parse(request.query);
     response.json(await requireTerminal().list(cwd));
   });
-  app.post("/api/terminals", async (request, response) => {
-    const body = terminalCreateSchema.parse(request.body);
-    response
-      .status(201)
-      .json(await mutate(response, "create", { request: body }));
-  });
   app.get("/api/terminal-settings", async (_request, response) => {
     response.json(await requireTerminal().getSettings());
-  });
-  app.patch("/api/terminal-settings", async (request, response) => {
-    const patch = terminalSettingsPatchSchema.parse(request.body);
-    response.json(await mutate(response, "updateSettings", { patch }));
-  });
-  app.delete("/api/terminal-history", async (_request, response) => {
-    await mutate(response, "clearHistory", {});
-    response.status(204).end();
-  });
-  app.patch("/api/terminals/:id", async (request, response) => {
-    const id = terminalIdSchema.parse(request.params.id);
-    const body = terminalRenameSchema.parse(request.body);
-    response.json(await mutate(response, "rename", { id, title: body.title }));
-  });
-  app.post("/api/terminals/reorder", async (request, response) => {
-    const { cwd, terminalIds } = terminalReorderSchema.parse(request.body);
-    response.json(
-      await mutate(response, "reorder", { projectCwd: cwd, ids: terminalIds }),
-    );
-  });
-  app.post("/api/terminals/:id/restart", async (request, response) => {
-    const id = terminalIdSchema.parse(request.params.id);
-    response.json(await mutate(response, "restart", { id }));
-  });
-  app.delete("/api/terminals/:id", async (request, response) => {
-    const id = terminalIdSchema.parse(request.params.id);
-    const force = request.query.force === "1";
-    response.json(await mutate(response, "remove", { id, force }));
   });
   app.post("/api/terminals/:id/attach-ticket", async (request, response) => {
     const terminal = requireTerminal();
@@ -292,7 +223,24 @@ export function createTerminalGateway(
     }
   };
   const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
+  let checkingBuild = false;
   const heartbeatInterval = setInterval(() => {
+    if (!checkingBuild && terminalSockets.size > 0) {
+      checkingBuild = true;
+      void currentBrowserBuild()
+        .then((build) => {
+          if (!build) return;
+          for (const [socket, peer] of terminalSockets) {
+            if (peer.build === build) continue;
+            peer.detach();
+            socket.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire");
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          checkingBuild = false;
+        });
+    }
     for (const [socket, peer] of terminalSockets) {
       if (socket.readyState !== WebSocket.OPEN) continue;
       if (!peer.responsive) {
@@ -312,20 +260,29 @@ export function createTerminalGateway(
   }, heartbeatIntervalMs);
   heartbeatInterval.unref();
 
-  terminalWebsocket.on("connection", (socket, upgradeRequest) => {
-    const peer: TerminalSocketState = { responsive: true, attachment: null };
+  function openTerminalSocket(
+    socket: WebSocket,
+    origin: string | undefined,
+    build: string | undefined,
+  ): void {
+    const peer: TerminalSocketState = {
+      responsive: true,
+      attachment: null,
+      build,
+      detach,
+    };
     terminalSockets.set(socket, peer);
     const attachTimeout = setTimeout(() => {
       if (!peer.attachment && socket.readyState === WebSocket.OPEN)
         socket.close(1008, "Terminal attach timed out");
     }, TERMINAL_ATTACH_TICKET_TTL_MS);
     attachTimeout.unref();
-    const close = (): void => {
+    function detach(): void {
       if (!terminalSockets.delete(socket)) return;
       clearTimeout(attachTimeout);
       if (peer.attachment && peer.attachment !== "attaching")
         peer.attachment.detach();
-    };
+    }
     const sendError = (code: string, message: string, fatal: boolean): void => {
       sendTerminalBounded(
         socket,
@@ -349,10 +306,10 @@ export function createTerminalGateway(
       peer.responsive = true;
     });
     socket.on("error", () => {
-      close();
+      detach();
       socket.terminate();
     });
-    socket.on("close", close);
+    socket.on("close", detach);
     socket.on("message", (raw, isBinary) => {
       if (!terminalSockets.has(socket)) return;
       const attachment = peer.attachment;
@@ -380,10 +337,7 @@ export function createTerminalGateway(
           socket.close(1008, "Invalid terminal attach");
           return;
         }
-        const ticket = consumeTerminalTicket(
-          request.ticket,
-          upgradeRequest.headers.origin,
-        );
+        const ticket = consumeTerminalTicket(request.ticket, origin);
         if (!ticket) {
           sendError(
             "terminal_ticket_invalid",
@@ -439,10 +393,24 @@ export function createTerminalGateway(
         socket.close(1008, "Invalid terminal message");
       }
     });
-  });
+  }
 
   return {
-    upgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+    rejectUpgrade(
+      request: IncomingMessage,
+      socket: Duplex,
+      head: Buffer,
+    ): void {
+      terminalWebsocket.handleUpgrade(request, socket, head, (client) =>
+        client.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire"),
+      );
+    },
+    upgrade(
+      request: IncomingMessage,
+      socket: Duplex,
+      head: Buffer,
+      build: string | undefined,
+    ): void {
       if (terminalSockets.size >= MAX_TERMINAL_SOCKETS) {
         socket.write(
           "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n",
@@ -451,7 +419,7 @@ export function createTerminalGateway(
         return;
       }
       terminalWebsocket.handleUpgrade(request, socket, head, (client) => {
-        terminalWebsocket.emit("connection", client, request);
+        openTerminalSocket(client, request.headers.origin, build);
       });
     },
     close(): void {

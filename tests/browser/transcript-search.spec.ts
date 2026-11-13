@@ -1,12 +1,11 @@
 import { expect, type Response, test } from "@playwright/test";
 import { checkpointAdapterConfiguration } from "../web/fixtures/extension-adapters";
 import { openEventSession } from "./support/host-events";
-import { hostRequest } from "./support/host-request";
 import {
   openCommandPalette,
   openConversationSearch,
 } from "./support/navigation";
-import { terminalMutationHeaders } from "./support/terminal-operations";
+import { terminalOperation } from "./support/terminal-operations";
 
 const configuration = checkpointAdapterConfiguration;
 const current = () => {
@@ -517,7 +516,8 @@ test.describe("touch reading controls", () => {
       if (
         response.ok() &&
         response.request().method() === "POST" &&
-        new URL(response.url()).pathname === "/api/terminals"
+        new URL(response.url()).pathname === "/api/terminal-operations" &&
+        response.request().postDataJSON()?.intent?.command === "create"
       )
         createdTerminals.push(response);
     };
@@ -530,11 +530,13 @@ test.describe("touch reading controls", () => {
     } finally {
       page.off("response", recordTerminal);
       for (const response of createdTerminals) {
-        const { id } = (await response.json()) as { id: string };
-        const closed = await hostRequest(page).delete(
-          `/api/terminals/${encodeURIComponent(id)}?force=1`,
-          { headers: await terminalMutationHeaders(page) },
-        );
+        const {
+          result: { id },
+        } = (await response.json()) as { result: { id: string } };
+        const closed = await terminalOperation(page, {
+          command: "remove",
+          params: { id, force: true },
+        });
         expect(closed.ok()).toBe(true);
       }
     }

@@ -77,14 +77,18 @@ attachment-retention and PDF experiments are outside the main plan.
   supplies the only initial transcript projection, then releases events after its sequence cut.
   The snapshot digest and unchanged acknowledgement were removed. A missing addressed session
   settles to an empty view on the same socket, while other read failures retain the current view.
-- Counted source is 237,647 lines, 14,294 below the handbook baseline and 251 above the previous
+- Terminal controls persist a validated intent and receive the shared operation envelope from a
+  single endpoint. The daemon epoch still owns receipt recovery. A retired browser build releases
+  its terminal attachment without stopping the process. Browser-issued Host restart uses the same
+  receipt shape; only observation of the replacement Host settles restart completion.
+- Counted source is 237,677 lines, 14,264 below the handbook baseline and 281 above the previous
   pass. The handbook's full deletion estimate has not been realized.
 
 ## Remaining architecture and test replacement
 
 - Complete the shared typed HTTP boundary beyond current operations and native history.
-- Extend the operation record to terminal and lifecycle executors and persist current typed
-  intents. Finish the shared draft editor and native action/settings registry.
+- Finish the shared operation observer and persistence for remaining typed intents, the shared
+  draft editor and native action/settings registry.
 - Complete shared dock and activity presentation, typed native configuration transactions,
   lifecycle plans and confirmed preference flows. Replace the remaining test matrices with
   the corresponding production owners.

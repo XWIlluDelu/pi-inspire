@@ -149,9 +149,13 @@ users may explicitly stop tracking an unresolved result, including an expired re
 Confirmation explains that this neither cancels the old work nor establishes its outcome. It sends no
 mutation, persists retirement before releasing the local identity, and is unavailable during a check.
 A subsequent deliberate action gets a new identity; retries never silently become new work.
-Unavailable or malformed storage blocks untracked writes. Every control mutation requires an operation identity and receipt support; missing
-identity is refused before dispatch. Valid identified requests rejected during route validation carry
-the matching operation ID and definite rejected outcome, including nested terminal routes.
+Unavailable or malformed storage blocks untracked writes. The browser persists the typed intent
+and sends it to the terminal operation endpoint. Results use the same receipt shape as Host
+operations, with terminal epoch as executor identity. Validation failures with a valid identity
+return a matching rejection before dispatch. Records from a previous format remain explicitly
+unknown. The user can retire their tracking after inspecting the catalog; there is no replay.
+Browser build replacement retires the terminal
+attachment and leaves the PTY with its daemon.
 
 Diagnostics distinguish absent endpoints, unverified connections and data-protocol incompatibility.
 Terminal errors use the shared

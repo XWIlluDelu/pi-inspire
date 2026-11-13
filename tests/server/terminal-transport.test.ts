@@ -14,6 +14,10 @@ import {
   encodeTerminalInputFrame,
   type TerminalDescriptor,
 } from "../../shared/terminal-contracts.js";
+import {
+  TERMINAL_OPERATIONS_PATH,
+  type TerminalIntent,
+} from "../../shared/terminal-operations.js";
 import { hostServices } from "../fixtures/host-services.js";
 import { pairedBrowser, socketAdmission } from "./fixtures/host-api.js";
 import { closeWithoutPeerAck, rawWebSocket } from "./fixtures/raw-websocket.js";
@@ -96,60 +100,38 @@ describe("terminal Host and daemon transport", () => {
     const api = request.agent(application.server).set(headers(bearer));
     const dispatch = vi.spyOn(backend.manager, "operate");
     const epoch = await backend.client.operationEpoch();
-    const routes: Array<{
-      method: "post" | "patch" | "delete";
-      path: string;
-      body?: object;
-      invalid?: { path?: string; body?: object };
-    }> = [
+    const invalid = [
+      { command: "create", params: { request: {} } },
+      { command: "rename", params: { id: "tab", title: 42 } },
       {
-        method: "post",
-        path: "/api/terminals",
-        body: { cwd: backend.directory },
-        invalid: { body: {} },
+        command: "reorder",
+        params: { projectCwd: backend.directory, ids: ["bad/id"] },
       },
+      { command: "restart", params: { id: "bad id" } },
+      { command: "remove", params: { id: "tab", force: "true" } },
       {
-        method: "patch",
-        path: "/api/terminals/tab",
-        body: { title: "Title" },
-        invalid: { body: { title: 42 } },
+        command: "updateSettings",
+        params: { patch: { historyRetentionDays: 0 } },
       },
-      {
-        method: "post",
-        path: "/api/terminals/reorder",
-        body: { cwd: backend.directory, terminalIds: [] },
-        invalid: { body: { cwd: backend.directory, terminalIds: ["bad/id"] } },
-      },
-      {
-        method: "post",
-        path: "/api/terminals/tab/restart",
-        invalid: { path: "/api/terminals/bad%20id/restart" },
-      },
-      {
-        method: "delete",
-        path: "/api/terminals/tab",
-        invalid: { path: "/api/terminals/bad%20id" },
-      },
-      {
-        method: "patch",
-        path: "/api/terminal-settings",
-        body: { persistOutput: true },
-        invalid: { body: { historyRetentionDays: 0 } },
-      },
-      { method: "delete", path: "/api/terminal-history" },
+      { command: "clearHistory", params: { unexpected: true } },
     ];
-    for (const { method, path, body, invalid } of routes) {
-      const route = `${method.toUpperCase()} ${path}`;
-      const missing = await api[method](path).send(body).expect(400);
-      expect(missing.body.code, route).toBe("terminal_operation_required");
-      if (!invalid) continue;
-      const id = randomUUID();
-      const rejected = await api[method](invalid.path ?? path)
-        .set("X-Terminal-Operation", JSON.stringify({ id, epoch }))
-        .send(invalid.body)
+    await api
+      .post(TERMINAL_OPERATIONS_PATH)
+      .send({ intent: invalid[0] })
+      .expect(400);
+    for (const intent of invalid) {
+      const operationId = randomUUID();
+      const executor = { kind: "terminal", epoch };
+      const rejected = await api
+        .post(TERMINAL_OPERATIONS_PATH)
+        .send({ operationId, executor, intent })
         .expect(400);
-      expect(rejected.headers["x-terminal-operation"], route).toBe(id);
-      expect(rejected.headers["x-terminal-outcome"], route).toBe("rejected");
+      expect(rejected.body).toMatchObject({
+        operationId,
+        executor,
+        command: intent.command,
+        state: "rejected",
+      });
     }
     expect(dispatch).not.toHaveBeenCalled();
   });
@@ -200,38 +182,48 @@ describe("terminal Host and daemon transport", () => {
     const {
       body: { epoch },
     } = await api.get("/api/terminal-operations").expect(200);
-    const operation = (id: string = randomUUID()) =>
-      JSON.stringify({ id, epoch });
-    const create = (id: string, cwd = backend.directory) =>
+    const executor = { kind: "terminal", epoch };
+    const operation = (
+      intent: TerminalIntent,
+      operationId: string = randomUUID(),
+    ) =>
       api
-        .post("/api/terminals")
-        .set("X-Terminal-Operation", operation(id))
-        .send({ cwd, cols: 90, rows: 28 });
+        .post(TERMINAL_OPERATIONS_PATH)
+        .send({ executor, operationId, intent });
+    const create = (id: string, cwd = backend.directory) =>
+      operation(
+        { command: "create", params: { request: { cwd, cols: 90, rows: 28 } } },
+        id,
+      );
     const createPty = vi.spyOn(backend.manager, "create");
     const invalidId = randomUUID();
-    const refusal = () =>
-      create(invalidId, "relative/project")
-        .expect(400)
-        .expect("X-Terminal-Outcome", "rejected");
+    const refusal = () => create(invalidId, "relative/project").expect(400);
     const relative = await refusal();
-    expect(relative.body.code).toBe("invalid_cwd");
+    expect(relative.body).toMatchObject({
+      state: "rejected",
+      error: { code: "invalid_cwd" },
+    });
     expect((await refusal()).body).toEqual(relative.body);
     expect(createPty).toHaveBeenCalledOnce();
 
     const creationId = randomUUID();
-    const accepted = () =>
-      create(creationId)
-        .expect(201)
-        .expect("X-Terminal-Operation", creationId)
-        .expect("X-Terminal-Outcome", "completed");
+    const accepted = () => create(creationId).expect(200);
     const created = await accepted();
+    expect(created.body).toMatchObject({
+      executor,
+      operationId: creationId,
+      command: "create",
+      state: "completed",
+    });
     expect((await accepted()).body).toEqual(created.body);
-    await create(creationId, join(backend.directory, "another-project"))
-      .expect(409)
-      .expect("X-Terminal-Outcome", "unknown");
+    const mismatch = await create(
+      creationId,
+      join(backend.directory, "another-project"),
+    ).expect(409);
+    expect(mismatch.body).toMatchObject({ state: "unknown" });
     expect(createPty).toHaveBeenCalledTimes(2);
 
-    const terminal = created.body as TerminalDescriptor;
+    const terminal = created.body.result as TerminalDescriptor;
     expect(terminal).toMatchObject({ profileId: "bash", cols: 90, rows: 28 });
     vi.spyOn(backend.manager, "restart").mockRejectedValueOnce(
       new TerminalServiceError(
@@ -240,20 +232,23 @@ describe("terminal Host and daemon transport", () => {
         "Exit unconfirmed",
       ),
     );
-    await api
-      .post(`/api/terminals/${terminal.id}/restart`)
-      .set("X-Terminal-Operation", operation())
-      .expect(503)
-      .expect("X-Terminal-Outcome", "unknown");
+    const restart = await operation({
+      command: "restart",
+      params: { id: terminal.id },
+    }).expect(503);
+    expect(restart.body).toMatchObject({ state: "unknown" });
     const catalog = await api.get("/api/terminals").expect(200);
     expect(catalog.body.terminals).toMatchObject([
       { id: terminal.id, status: "running" },
     ]);
-    await api
-      .patch("/api/terminal-settings")
-      .set("X-Terminal-Operation", operation())
-      .send({ historyRetentionDays: 14 })
-      .expect(200, { persistOutput: false, historyRetentionDays: 14 });
+    const settings = await operation({
+      command: "updateSettings",
+      params: { patch: { historyRetentionDays: 14 } },
+    }).expect(200);
+    expect(settings.body).toMatchObject({
+      state: "completed",
+      result: { persistOutput: false, historyRetentionDays: 14 },
+    });
 
     const socketUrl = (url: string) => url.replace("http:", "ws:");
     await expectUpgradeRefused(socketUrl(`${baseUrl}/terminal?token=${token}`));

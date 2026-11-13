@@ -1,8 +1,9 @@
 import { expect, type Page, test } from "@playwright/test";
 import type { HostUpdateStatus } from "../../shared/contracts";
-import type {
-  HostRestartRequest,
-  HostRestartStatus,
+import {
+  restartObservation,
+  type HostRestartRequest,
+  type HostRestartStatus,
 } from "../../shared/host-restart";
 import { modelSettingsScenario } from "./fixtures/model-settings";
 import { clipboardLines } from "./support/clipboard";
@@ -140,7 +141,7 @@ test("busy Host restarts submit directly and keep narrow status stable", async (
     };
     if (request.interruptWork) await receiptReady.promise;
     status = { ...status, operation };
-    await route.fulfill({ json: operation });
+    await route.fulfill({ json: restartObservation(request, operation) });
   });
 
   await page.setViewportSize({ width: 320, height: 900 });
@@ -225,7 +226,9 @@ for (const includeHerdr of [false, true]) {
         interruptWork: true,
         phase: "submitted",
       };
-      return route.fulfill({ json: status.operation });
+      return route.fulfill({
+        json: restartObservation(request, status.operation),
+      });
     });
     await pairedPage(page);
     const settings = await openSystemSettings(page);

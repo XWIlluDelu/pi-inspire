@@ -19,7 +19,7 @@ import {
   showTerminalControls,
 } from "./support/navigation";
 import { terminalWriteCommand } from "./support/terminal-command";
-import { terminalMutationHeaders } from "./support/terminal-operations";
+import { terminalOperation } from "./support/terminal-operations";
 import { terminalTransportFixture } from "./support/terminal-transport";
 import { textOverflowsInlineBounds } from "./support/text-bounds";
 
@@ -234,9 +234,9 @@ test("project terminals and a lost create response survive browser reload", {
   const firstTerminal = firstCatalog.terminals[0]!;
   const terminalIds = [firstTerminal.id];
   let foreignId: string | undefined;
-  const deliveries: Array<{ identity: string; body: string | null }> = [];
+  const deliveries: unknown[] = [];
   const check = Promise.withResolvers<void>();
-  const routePattern = "**/api/terminals";
+  const routePattern = "**/api/terminal-operations";
   try {
     const visibleTerminalOutput = page.locator(
       ".terminal-views__item:not([hidden]) .xterm-accessibility-tree",
@@ -272,14 +272,15 @@ test("project terminals and a lost create response survive browser reload", {
 
     await page.route(routePattern, async (route) => {
       const request = route.request();
-      if (request.method() !== "POST") return route.continue();
-      deliveries.push({
-        identity: request.headers()["x-terminal-operation"]!,
-        body: request.postData(),
-      });
+      if (
+        request.method() !== "POST" ||
+        request.postDataJSON()?.intent?.command !== "create"
+      )
+        return route.continue();
+      deliveries.push(request.postDataJSON());
       const response = await route.fetch();
       if (deliveries.length === 1 && response.ok()) {
-        terminalIds.push((await response.json()).id);
+        terminalIds.push((await response.json()).result.id);
         // The daemon committed the create before the browser lost the response.
         return route.abort("failed");
       }
@@ -308,12 +309,12 @@ test("project terminals and a lost create response survive browser reload", {
     await palette.getByRole("option", { name: /^Open Terminal$/ }).click();
     await expect(secondTab).toHaveAttribute("aria-selected", "true");
 
-    const foreignResponse = await hostRequest(page).post("/api/terminals", {
-      headers: await terminalMutationHeaders(page),
-      data: { cwd: join(browserWorkspace, "tests", "browser") },
+    const foreignResponse = await terminalOperation(page, {
+      command: "create",
+      params: { request: { cwd: join(browserWorkspace, "tests", "browser") } },
     });
     expect(foreignResponse.ok()).toBe(true);
-    const foreign = await foreignResponse.json();
+    const { result: foreign } = await foreignResponse.json();
     foreignId = foreign.id;
     await showTerminalControls(page);
     await page.getByLabel("Terminal actions", { exact: true }).click();
@@ -425,10 +426,10 @@ test("project terminals and a lost create response survive browser reload", {
     for (const terminalId of foreignId
       ? [...terminalIds, foreignId]
       : terminalIds) {
-      const response = await hostRequest(page).delete(
-        `/api/terminals/${encodeURIComponent(terminalId)}?force=1`,
-        { headers: await terminalMutationHeaders(page) },
-      );
+      const response = await terminalOperation(page, {
+        command: "remove",
+        params: { id: terminalId, force: true },
+      });
       expect(response.ok()).toBe(true);
     }
   }
@@ -1108,12 +1109,14 @@ test.describe("touch terminal", () => {
     });
     await composer.fill("Existing question");
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    const response = await hostRequest(page).post("/api/terminals", {
-      headers: await terminalMutationHeaders(page),
-      data: { cwd: browserWorkspace },
+    const response = await terminalOperation(page, {
+      command: "create",
+      params: { request: { cwd: browserWorkspace } },
     });
     expect(response.ok()).toBe(true);
-    const terminal = (await response.json()) as { id: string };
+    const { result: terminal } = (await response.json()) as {
+      result: { id: string };
+    };
     try {
       await page.getByRole("button", { name: "Toggle resources panel" }).tap();
       await openProjectTerminal(page);
@@ -1331,10 +1334,10 @@ test.describe("touch terminal", () => {
       await expect(composer).toHaveValue(/Follow-up/);
       expect(sentPrompt).toBe(false);
     } finally {
-      await hostRequest(page).delete(
-        `/api/terminals/${encodeURIComponent(terminal.id)}?force=1`,
-        { headers: await terminalMutationHeaders(page) },
-      );
+      await terminalOperation(page, {
+        command: "remove",
+        params: { id: terminal.id, force: true },
+      });
     }
   });
 });

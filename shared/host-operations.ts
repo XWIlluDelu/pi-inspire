@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isJsonRecord } from "./json-record.js";
 import {
   COMPOSER_HISTORY_FILE_REFERENCE,
   COMPOSER_HISTORY_IMAGE_REFERENCE,
@@ -85,15 +86,45 @@ export type HostOperationResults = {
 
 export type HostOperationCommand = keyof HostOperationResults;
 
-export type HostOperationReceipt<Command extends HostOperationCommand> = {
-  executor: { kind: "host"; authorityId: string };
+export type OperationReceipt<Executor, Command, Result> = {
+  executor: Executor;
   operationId: string;
   command: Command;
 } & (
   | { state: "pending" }
-  | { state: "completed"; result: HostOperationResults[Command] }
+  | { state: "completed"; result: Result }
   | { state: "rejected" | "unknown"; error: HostOperationError }
 );
+
+export function matchOperationReceipt(
+  value: unknown,
+  expected: Pick<
+    OperationReceipt<Record<string, string>, string, unknown>,
+    "executor" | "operationId" | "command"
+  >,
+): Record<string, unknown> | null {
+  if (
+    !isJsonRecord(value) ||
+    !isJsonRecord(value.executor) ||
+    value.operationId !== expected.operationId ||
+    value.command !== expected.command ||
+    Object.keys(value.executor).length !== Object.keys(expected.executor).length
+  )
+    return null;
+  const executor = value.executor;
+  return Object.entries(expected.executor).every(
+    ([key, item]) => executor[key] === item,
+  )
+    ? value
+    : null;
+}
+
+export type HostOperationReceipt<Command extends HostOperationCommand> =
+  OperationReceipt<
+    { kind: "host"; authorityId: string },
+    Command,
+    HostOperationResults[Command]
+  >;
 
 export function hostReceipt<Command extends HostOperationCommand>(
   command: Command,

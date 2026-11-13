@@ -497,12 +497,14 @@ describe("terminal project ownership", () => {
     vi.spyOn(terminalOperations, "snapshot").mockReturnValue([
       {
         key: "confirmed",
+        canRetry: true,
         label: "Create terminal · /A",
         busy: false,
         outcome: "completed",
       },
       {
         key: "lost",
+        canRetry: true,
         label: "Create terminal · /A",
         busy: false,
         outcome: "unknown",

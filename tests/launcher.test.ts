@@ -288,19 +288,23 @@ describe("production launcher", () => {
       headers: terminalHeaders,
     });
     const { epoch } = (await epochResponse.json()) as { epoch: string };
-    const mutationHeaders = () => ({
-      ...terminalHeaders,
-      "X-Terminal-Operation": JSON.stringify({ id: randomUUID(), epoch }),
-    });
-    const createdTerminalResponse = await fetch(`${origin}/api/terminals`, {
-      method: "POST",
-      headers: mutationHeaders(),
-      body: JSON.stringify({ cwd: directory, cols: 80, rows: 24 }),
+    const terminalOperation = (intent: unknown) =>
+      fetch(`${origin}/api/terminal-operations`, {
+        method: "POST",
+        headers: terminalHeaders,
+        body: JSON.stringify({
+          operationId: randomUUID(),
+          executor: { kind: "terminal", epoch },
+          intent,
+        }),
+      });
+    const createdTerminalResponse = await terminalOperation({
+      command: "create",
+      params: { request: { cwd: directory, cols: 80, rows: 24 } },
     });
     expect(createdTerminalResponse.ok).toBe(true);
-    const createdTerminal = (await createdTerminalResponse.json()) as {
-      id: string;
-    };
+    const { result: createdTerminal } =
+      (await createdTerminalResponse.json()) as { result: { id: string } };
 
     const restartStatus = () =>
       fetch(`${origin}/api/host/restart`, {
@@ -372,10 +376,10 @@ describe("production launcher", () => {
     );
     expect((await readState()).token).toBe(firstState.token);
     await assertTerminalPreserved();
-    const closeTerminalResponse = await fetch(
-      `${origin}/api/terminals/${encodeURIComponent(createdTerminal.id)}?force=1`,
-      { method: "DELETE", headers: mutationHeaders() },
-    );
+    const closeTerminalResponse = await terminalOperation({
+      command: "remove",
+      params: { id: createdTerminal.id, force: true },
+    });
     expect(closeTerminalResponse.ok).toBe(true);
     expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
       "Stopped INSΠRE process",

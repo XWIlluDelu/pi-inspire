@@ -1503,41 +1503,43 @@ export const TerminalPane = memo(function TerminalPane({
                     : "Outcome unknown"}
                 </span>
               </span>
-              <button
-                type="button"
-                className="button button--quiet"
-                disabled={operation.busy}
-                aria-busy={operation.busy}
-                onClick={() => {
-                  void api
-                    .retryTerminalOperation(operation.key)
-                    .then(() => {
-                      if (catalogController.active) return load();
-                    })
-                    .catch((retryError: unknown) => {
-                      if (catalogController.active)
-                        setError(
-                          retryError instanceof Error
-                            ? retryError.message
-                            : "Terminal outcome remains unknown",
-                        );
-                    });
-                }}
-              >
-                <ButtonLabel
-                  reserve={
-                    operation.outcome !== "unknown"
-                      ? "Clear recovery record"
-                      : "Retry same operation"
-                  }
+              {operation.canRetry ? (
+                <button
+                  type="button"
+                  className="button button--quiet"
+                  disabled={operation.busy}
+                  aria-busy={operation.busy}
+                  onClick={() => {
+                    void api
+                      .retryTerminalOperation(operation.key)
+                      .then(() => {
+                        if (catalogController.active) return load();
+                      })
+                      .catch((retryError: unknown) => {
+                        if (catalogController.active)
+                          setError(
+                            retryError instanceof Error
+                              ? retryError.message
+                              : "Terminal outcome remains unknown",
+                          );
+                      });
+                  }}
                 >
-                  {operation.busy
-                    ? "Checking…"
-                    : operation.outcome !== "unknown"
-                      ? "Clear recovery record"
-                      : "Retry same operation"}
-                </ButtonLabel>
-              </button>
+                  <ButtonLabel
+                    reserve={
+                      operation.outcome !== "unknown"
+                        ? "Clear recovery record"
+                        : "Retry same operation"
+                    }
+                  >
+                    {operation.busy
+                      ? "Checking…"
+                      : operation.outcome !== "unknown"
+                        ? "Clear recovery record"
+                        : "Retry same operation"}
+                  </ButtonLabel>
+                </button>
+              ) : null}
               {operation.outcome === "unknown" ? (
                 <button
                   type="button"
