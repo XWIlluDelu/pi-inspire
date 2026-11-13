@@ -344,7 +344,7 @@ test("unavailable conversation image references keep their captions aligned", as
   }
 });
 
-test("floating file actions stay above the narrow reader without moving its opening text", async ({
+test("file actions stay available above the narrow reader", async ({
   page,
 }) => {
   const pane = await openReadingPane(page, 320);
@@ -354,13 +354,12 @@ test("floating file actions stay above the narrow reader without moving its open
     name: "Observation log · Station 07",
   });
   await expect(heading).toBeVisible();
-  const hide = header.getByRole("button", { name: "Hide file actions" });
-  expect((await hide.boundingBox())!.height).toBeGreaterThanOrEqual(32);
+  await expect(
+    header.getByRole("button", { name: "Source", exact: true }),
+  ).toBeVisible();
   const actions = (await header.boundingBox())!;
   const opening = (await heading.boundingBox())!.y;
-  expect(opening).toBeGreaterThan(actions.y + actions.height);
-  await hide.click();
-  expect((await heading.boundingBox())!.y).toBeCloseTo(opening, 1);
+  expect(opening).toBeGreaterThanOrEqual(actions.y + actions.height);
   expect(
     await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
   ).toBe(true);

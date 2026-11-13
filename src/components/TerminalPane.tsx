@@ -169,12 +169,6 @@ export const TerminalPane = memo(function TerminalPane({
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(launchTarget?.focus ?? false);
   const sharedTabs = Boolean(onDockTabs && !focused);
-  const [controlsExpanded, setControlsExpanded] = useState(true);
-  const controlsRef = useRef<HTMLDivElement>(null);
-  const controlsToggleRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    setControlsExpanded(true);
-  }, [cwd, activeId]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uiSettings, setUiSettings] = useState<TerminalUiSettings>(() =>
     loadTerminalUiSettings(),
@@ -1002,32 +996,12 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       ) : null}
-      <div
-        className="terminal-tabs-shell"
-        onKeyDown={(event) => {
-          if (
-            event.defaultPrevented ||
-            event.key !== "Escape" ||
-            !sharedTabs ||
-            !controlsExpanded
-          )
-            return;
-          if (dismissTerminalMenu(paneRef.current, event.target)) {
-            event.preventDefault();
-            event.stopPropagation();
-            return;
-          }
-          event.preventDefault();
-          event.stopPropagation();
-          setControlsExpanded(false);
-          controlsToggleRef.current?.focus();
-        }}
-      >
+      <div className="terminal-tabs-shell">
         {!sharedTabs ? <TerminalTabs tabs={tabs} /> : null}
         <div
           className="terminal-controls"
-          ref={controlsRef}
-          hidden={sharedTabs && !controlsExpanded}
+          role="toolbar"
+          aria-label="Terminal controls"
         >
           <div
             className={`terminal-tabs__new${hasProfileChoice ? " terminal-tabs__new--profiles" : ""}`}
@@ -1356,42 +1330,6 @@ export const TerminalPane = memo(function TerminalPane({
             </div>
           </details>
         </div>
-        {sharedTabs ? (
-          <button
-            type="button"
-            className="icon-button terminal-controls-toggle"
-            ref={controlsToggleRef}
-            aria-label={
-              controlsExpanded
-                ? "Hide terminal controls"
-                : "Show terminal controls"
-            }
-            title={
-              controlsExpanded
-                ? "Hide terminal controls"
-                : "Show terminal controls"
-            }
-            aria-expanded={controlsExpanded}
-            onClick={() => {
-              setControlsExpanded(!controlsExpanded);
-              if (!controlsExpanded)
-                requestAnimationFrame(() => {
-                  if (!controlsRef.current?.hidden)
-                    controlsRef.current
-                      ?.querySelector<HTMLElement>(
-                        "button:not(:disabled):not([hidden]), summary",
-                      )
-                      ?.focus();
-                });
-            }}
-          >
-            {controlsExpanded ? (
-              <ChevronRight size={16} aria-hidden />
-            ) : (
-              <MoreHorizontal size={16} aria-hidden />
-            )}
-          </button>
-        ) : null}
       </div>
 
       {loading && !catalog ? (

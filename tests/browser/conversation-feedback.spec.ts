@@ -32,7 +32,7 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
     })),
   );
   const checkpoint = page.locator(".context-checkpoint");
-  const title = checkpoint.locator(".context-checkpoint__title");
+  const title = checkpoint.locator(".card__label");
   const metric = checkpoint.locator(".context-checkpoint__metric");
   await expect(metric).toHaveText("History chunk ≈ 42,500 tokens");
   await page.evaluate(() => document.fonts.ready);
@@ -42,7 +42,7 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
   ]);
   expect(Math.abs(titleBaseline - metricBaseline)).toBeLessThan(0.1);
   const disclosureAlignment = await checkpoint.evaluate((element) => {
-    const chevron = element.querySelector(".context-checkpoint__chevron")!;
+    const chevron = element.querySelector(".card__chevron svg")!;
     const foldChevron = document.querySelector(
       ".activity-fold__boundary--upper > svg, .activity-fold__disclosure > svg",
     )!;
@@ -57,7 +57,7 @@ test("conversation feedback shares an axis and keeps narrow touch actions usable
   await checkpoint
     .getByRole("button", { name: "Magic Context compacted" })
     .tap();
-  const summary = checkpoint.locator(".context-checkpoint__body .rich-text");
+  const summary = checkpoint.locator(".card__body .rich-text");
   await expect(summary).toBeVisible();
   expect((await summary.boundingBox())!.x).toBeCloseTo(
     (await title.boundingBox())!.x,

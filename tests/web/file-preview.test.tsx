@@ -147,25 +147,6 @@ describe("Files Git view", () => {
     ),
   };
 
-  it("keeps actions expanded through programmatic scrolling and collapses on reading intent", () => {
-    const { container } = render(
-      <FilePreview state={fileState(ready("file"))} />,
-    );
-    const content = container.querySelector(".file-preview__content")!;
-    fireEvent.scroll(content);
-    expect(screen.getByRole("button", { name: "Source" })).toBeVisible();
-    fireEvent.wheel(content);
-    expect(screen.queryByRole("button", { name: "Source" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Show file actions" }));
-    expect(screen.getByRole("button", { name: "Source" })).toBeVisible();
-    fireEvent.keyDown(screen.getByRole("button", { name: "Source" }), {
-      key: "Escape",
-    });
-    expect(
-      screen.getByRole("button", { name: "Show file actions" }),
-    ).toHaveFocus();
-  });
-
   it("shows a deleted file's diff while keeping its unavailable download disabled", () => {
     render(
       <FilePreview

@@ -30,7 +30,7 @@ import {
 } from "../terminal-settings";
 import { useModalFocus } from "../use-modal-focus";
 import { ButtonLabel } from "./ButtonLabel";
-import { Dropdown } from "./Dropdown";
+import { NativeSelect } from "./NativeSelect";
 import {
   SegmentedControl,
   SettingField,
@@ -353,9 +353,9 @@ export function TerminalSettingsDialog({
                     />
                   </SettingField>
                   <SettingField label="Scrollback">
-                    <Dropdown
+                    <NativeSelect
                       label="Terminal scrollback lines"
-                      className="dropdown--field"
+                      className="native-select--field"
                       value={String(settings.scrollbackRows)}
                       options={[5000, 20000, 50000, 100000].map((rows) => ({
                         value: String(rows),
@@ -414,9 +414,9 @@ export function TerminalSettingsDialog({
                     </SettingField>
                   ) : null}
                   <SettingField label="Bell" status={permissionStatus("bell")}>
-                    <Dropdown
+                    <NativeSelect
                       label="Terminal bell behavior"
-                      className="dropdown--field"
+                      className="native-select--field"
                       value={settings.bell}
                       options={[
                         { value: "off", label: "Off" },
@@ -449,9 +449,9 @@ export function TerminalSettingsDialog({
                         : ""
                     }`}
                   >
-                    <Dropdown
+                    <NativeSelect
                       label="Long task notification threshold"
-                      className="dropdown--field"
+                      className="native-select--field"
                       value={String(settings.longTaskThresholdSeconds)}
                       disabled={!settings.longTaskNotifications}
                       options={[
@@ -508,9 +508,9 @@ export function TerminalSettingsDialog({
                         />
                       </SettingField>
                       <SettingField label="Retention">
-                        <Dropdown
+                        <NativeSelect
                           label="Terminal output retention"
-                          className="dropdown--field"
+                          className="native-select--field"
                           value={String(serviceSettings.historyRetentionDays)}
                           disabled={
                             savingService || !serviceSettings.persistOutput

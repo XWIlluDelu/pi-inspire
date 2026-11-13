@@ -266,16 +266,6 @@ describe("command discovery and preparation", () => {
     ).toBeNull();
     fireEvent.pointerEnter(meter.parentElement!, { pointerType: "mouse" });
     expect(aborts).toBe(0);
-    const thinking = screen.getByRole("combobox", { name: "Thinking level" });
-    act(() => thinking.focus());
-    fireEvent.keyDown(thinking, { key: "ArrowDown" });
-    expect(thinking).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
-    expect(thinking).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    expect(aborts).toBe(0);
-
     const input = screen.getByLabelText("Message");
     act(() => input.focus());
     fireEvent.change(input, { target: { value: "/rev" } });

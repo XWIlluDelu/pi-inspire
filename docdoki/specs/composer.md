@@ -58,9 +58,11 @@ and selection.
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
 delivery is unavailable.
 
-The textarea grows to a compact maximum based on the visual viewport. Longer text scrolls within
-it. Expand and Collapse change the height of the same input, preserving text, artifacts, focus and
-selection. Completion options appear below the editor and replace the token at the caret.
+The textarea grows with its content up to a viewport-relative maximum in CSS. Browsers without
+content-based sizing use a bounded multiline field. Longer text scrolls inside the textarea.
+The size action sits next to the editor. Expand and Collapse change the height of the same input,
+preserving text, artifacts, focus and selection. Completion options appear below the input and
+replace the token at the caret.
 
 ### Retained prompt history
 

@@ -338,7 +338,7 @@ test("workbench headers keep labels, controls and the live Git count readable", 
   await expect(model).toBeVisible();
   expect(
     await model
-      .locator(".dropdown__value")
+      .locator(".model-picker__value")
       .evaluate((label) => label.scrollWidth - label.clientWidth),
   ).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "Toggle resources panel" }).click();

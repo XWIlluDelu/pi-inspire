@@ -127,15 +127,6 @@ test("PDF scrolls continuously through selectable pages, preserves its reading p
   });
   await expect.poll(readingPoint).toBeGreaterThan(0.05);
   const position = await readingPoint();
-  const actions = page.getByRole("toolbar", { name: "File actions" });
-  const showActions = actions.getByRole("button", {
-    name: "Show file actions",
-  });
-  if (await showActions.isVisible()) await showActions.click();
-  const hideActions = actions.getByRole("button", {
-    name: "Hide file actions",
-  });
-  await expect(hideActions).toBeVisible();
   const zoom = pdf.getByRole("button", { name: "Zoom in PDF" });
   const top = (await zoom.boundingBox())!.y;
   await zoom.click();

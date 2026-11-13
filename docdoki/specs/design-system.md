@@ -190,7 +190,7 @@ both this glow and wordmark color transitions.
 | Selected | Icon buttons retain accent ink/tint. Segments and named palette choices use `--accent-deep` text/icons with surface and weight cues. Hover, press and focus preserve these cues; arbitrary selected lists and semantic status indicators retain their own roles. |
 | Disabled actions and segments | Neutral ink/fill, default cursor and no hover/pressed changes, including underlines or borders. Quiet controls remain transparent. Read-only headings retain readable text without action highlighting. |
 | Disabled switches | Preserve checked/off state with reduced opacity. |
-| Dropdown becomes disabled | Close its menu without changing the selected value. |
+| Disabled select | Keep the current value readable and prevent selection. |
 
 These rules apply across Settings, Terminal settings, Composer/prepared-prompt delivery choices,
 resource modes and standalone actions. Solid controls retain their foreground/fill pair in every
@@ -453,13 +453,13 @@ Attachment file chips put filenames and state ahead of technical metadata. Pendi
 emphasis follows [Action-button presentation](#action-button-presentation); [[composer]] owns
 bounded summaries and action semantics.
 
-Toolbar order is Model, Thinking, project files and attachments, optional Expand or Collapse,
-context usage, optional Stop, and rightmost Send. Expand and Collapse use the local utility-button
-size and keep the writing width fixed. Context usage fits the same toolbar row as Send and preserves
-the empty composer's height. Send is icon-only. Stop has a square glyph and filled error-color
-treatment, including compaction and shell cancellation. DOM and tab order follow visual order.
-At viewport widths up to 460px, Model and Thinking share the first row, with file tools, editor
-size, context and Send/Stop below. Selectors in the compact arrangement stay adjacent with an 8px
+The editor owns its Expand or Collapse action. Its local utility-button size keeps the writing
+width fixed. The toolbar contains Model, Thinking, project files and attachments, context usage,
+optional Stop and rightmost Send. Context usage fits the same row as Send and preserves the empty
+composer's height. Send is icon-only. Stop has a square glyph and filled error-color treatment,
+including compaction and shell cancellation. DOM and tab order follow visual order.
+At viewport widths up to 460px, Model and Thinking share the first row, with file tools, context
+and Send/Stop below. Selectors in the compact arrangement stay adjacent with an 8px
 gap. Thinking keeps its full width and Model shrinks without filling spare space. Long model labels
 truncate inside their trigger. Steer/Queue split their row equally. Constrained desktop panes also use the
 compact arrangement under [[workspace-layout]]. Completion titles wrap without displacing
@@ -602,7 +602,7 @@ blank space for routine progress. Cards and sections do not clip menus or focus.
 the shared accent fill/foreground pair, and category/palette selection retains explicit markers.
 
 Settings and Terminal settings share 32px mouse / 40px touch fields, switches, steppers and
-segmented controls. Ordinary dropdowns, segments and the palette grid share a choice-column width.
+segmented controls. Native selects, segments and the palette grid share a choice-column width.
 Segments use a recessed group with a neutral selected surface and edge; named palettes use independent
 bordered tiles with an accent-tinted selected surface and accent border. Both keep stronger selected
 weight and theme-accent text. Palette names/hue markers stay visible; section icons use accent ink
@@ -612,7 +612,7 @@ Fields wrap controls according to available space and keep descriptions readable
 wrapped controls fill the row; switches, font steppers and model summaries remain compact, and segment
 labels never wrap. Neighboring segment rows stack alike in narrow Terminal cards. In narrow model
 settings, group labels align with model names and empty default values use their text width instead
-of reserving an absent dropdown's width. Herdr availability/restart notes are unboxed, with each
+of reserving the choice column. Herdr availability/restart notes are unboxed, with each
 message and its associated action wrapping as separate items. Disabled controls remain legible and
 distinct from available choices.
 
@@ -702,12 +702,13 @@ roving keyboard navigation.
 
 ## Compact menus
 
-Dropdown options, session actions, Settings move options and terminal menus share a raised surface,
-hairline border, medium radius, compact padding and entry motion.
+Ordinary single-choice fields use native selects. Searchable model and dock tab lists, extension
+controls, session actions, Settings move options and terminal menus retain their own interaction
+semantics. Custom panels share a raised surface, hairline border, medium radius, compact padding
+and entry motion.
 Action rows use the same small UI text, accent-tint interaction feedback and inset focus role.
-Each owner keeps its action/selection semantics, anchor, grouping and viewport constraints;
-searchable model lists and descriptive project groups keep their information hierarchy.
-An open dropdown follows its trigger while scrolling and closes once the trigger is fully clipped.
+Anchored panels follow their trigger while scrolling and close once it is fully clipped.
+Searchable model lists and descriptive project groups keep their information hierarchy.
 Session actions size to their content within viewport bounds, with drag handles in a separate
 trailing column. [[workspace-layout]] owns compact disclosure and [[interface-preferences]] owns
 saved ordering.
@@ -750,8 +751,8 @@ must not report against replacement content.
 Icon-bearing Copy actions show Copy at rest, the shared Π loader while pending, then Check after a
 successful write. The fixed icon slot uses a short fade/scale transition without moving the button or
 nearby labels. Reduced motion removes that transition. Text buttons reserve room for their alternate
-labels; loading is not artificially prolonged. File-preview Copy path uses this icon feedback in its floating action group; other path
-labels and terminal-selection confirmations keep their existing context-specific presentation.
+labels. File-preview Copy path uses this icon feedback in the toolbar. Other path labels and
+terminal-selection confirmations keep their existing context-specific presentation.
 
 ## Searchable-surface focus
 

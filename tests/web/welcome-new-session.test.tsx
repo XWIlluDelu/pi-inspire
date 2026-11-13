@@ -260,10 +260,10 @@ describe("new-session start surface", () => {
     fireEvent.change(screen.getByLabelText("Server URL"), {
       target: { value: "https://example.invalid/mcp" },
     });
-    fireEvent.click(
+    fireEvent.change(
       screen.getByRole("combobox", { name: "Configuration target" }),
+      { target: { value: "project" } },
     );
-    fireEvent.click(screen.getByRole("option", { name: "This project" }));
     fireEvent.submit(
       screen.getByRole("button", { name: "Save" }).closest("form")!,
     );
@@ -335,7 +335,7 @@ describe("new-session start surface", () => {
       await screen.findByRole("option", { name: /Claude Sonnet 4/ }),
     );
     const thinking = screen.getByRole("combobox", { name: "Thinking level" });
-    await waitFor(() => expect(thinking).toHaveTextContent("Default"));
+    await waitFor(() => expect(thinking).toHaveValue(""));
     const start = vi.spyOn(store, "newSession").mockResolvedValue(null);
     const options = {
       createDirectory: true,
@@ -349,8 +349,7 @@ describe("new-session start surface", () => {
       screen.getByRole("button", { name: "Remove attached image" }),
     ).toBeEnabled();
 
-    fireEvent.click(thinking);
-    fireEvent.click(screen.getByRole("option", { name: "High" }));
+    fireEvent.change(thinking, { target: { value: "high" } });
     fireEvent.click(create);
     await waitFor(() =>
       expect(start).toHaveBeenLastCalledWith("/new-project", {
@@ -718,9 +717,11 @@ describe("Welcome capability controls and command completion", () => {
       },
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Thinking level" }),
+      await screen.findByRole("button", { name: "Extension controls" }),
     );
-    expect(screen.getByText("Thinking unavailable")).toBeVisible();
+    expect(
+      screen.getByRole("combobox", { name: "Thinking level" }),
+    ).toBeDisabled();
     expect(screen.getByRole("slider", { name: "Response mode" })).toBeEnabled();
     fireEvent.click(screen.getByText("Quick"));
     expect(screen.getByRole("slider")).toHaveAttribute(
@@ -829,7 +830,7 @@ describe("Welcome capability controls and command completion", () => {
       },
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "Thinking level" }),
+      await screen.findByRole("button", { name: "Extension controls" }),
     );
     expect(screen.getByRole("slider", { name: "Response mode" })).toBeEnabled();
     available = false;

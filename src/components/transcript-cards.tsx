@@ -73,15 +73,17 @@ interface CardHeaderProps {
   onToggle: () => void;
   summary?: React.ReactNode;
   status?: React.ReactNode;
-  copyText?: string | (() => string);
+  copyText?: string;
   copyLabel?: string;
   getCopyContent?: CopyLoader;
   controlsId?: string;
+  accessibleLabel?: string;
+  describedBy?: string;
 }
 
 /** A stretched native disclosure owns the header row. Independent copy and
  * resource controls are siblings above its hit area, never nested buttons. */
-function CardHeader({
+export function CardHeader({
   expanded,
   icon,
   label,
@@ -93,6 +95,8 @@ function CardHeader({
   copyLabel = `${toggleLabel} block`,
   getCopyContent,
   controlsId,
+  accessibleLabel,
+  describedBy,
 }: CardHeaderProps) {
   const action = expanded ? "Collapse" : "Expand";
   return (
@@ -100,9 +104,10 @@ function CardHeader({
       <button
         type="button"
         className="card__disclosure"
-        aria-label={`${action} ${toggleLabel}`}
+        aria-label={accessibleLabel ?? `${action} ${toggleLabel}`}
         aria-expanded={expanded}
         aria-controls={controlsId}
+        aria-describedby={describedBy}
         title={`${action} ${toggleLabel}`}
         onClick={onToggle}
       >
@@ -118,12 +123,9 @@ function CardHeader({
         {status ? <span className="card__status">{status}</span> : null}
       </button>
       {summary}
-      {expanded && copyText ? (
+      {expanded && (copyText || getCopyContent) ? (
         <CopyAction
-          text={typeof copyText === "string" ? copyText : undefined}
-          getText={
-            typeof copyText === "function" ? async () => copyText() : undefined
-          }
+          text={copyText}
           getContent={getCopyContent}
           label={copyLabel}
           className="card__copy"
@@ -146,7 +148,7 @@ interface CardProps {
   summary?: React.ReactNode;
   summaryVisibleWhenOpen?: boolean;
   status?: React.ReactNode;
-  copyText?: string | (() => string);
+  copyText?: string;
   copyLabel?: string;
   getCopyContent?: CopyLoader;
   children: React.ReactNode;
@@ -517,27 +519,25 @@ function hasResultData(value: unknown): boolean {
   return true;
 }
 
-/** Keep structured payloads inspectable without printing transport metadata or
- * large JSON by default. Serialization is deferred until disclosure. */
-function RawResultData({ value }: { value: unknown }) {
-  const [open, setOpen] = useActivityReaderExpanded("result-data");
+/** Mount reader bodies only after disclosure. */
+function ToolDisclosure({
+  reader,
+  label,
+  children,
+}: {
+  reader: string;
+  label: string;
+  children: () => React.ReactNode;
+}) {
+  const [open, setOpen] = useActivityReaderExpanded(reader);
   return (
     <details
       className="tool-result-details"
       open={open}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <DetailSummary>Result details</DetailSummary>
-      {open ? (
-        <pre
-          className="card__mono"
-          tabIndex={0}
-          role="group"
-          aria-label="Result data"
-        >
-          {JSON.stringify(value, null, 2)}
-        </pre>
-      ) : null}
+      <DetailSummary>{label}</DetailSummary>
+      {open ? children() : null}
     </details>
   );
 }
@@ -575,6 +575,7 @@ function RawResultExtras({
       : {}),
     ...(hasResultData(otherContent) ? { content: otherContent } : {}),
   };
+  const hasData = Object.keys(data).length > 0;
   return (
     <>
       {images.map((partIndex, index) => {
@@ -591,8 +592,21 @@ function RawResultExtras({
           </div>
         );
       })}
-      {hasResultData(data) ? <RawResultData value={data} /> : null}
-      {!hasText && images.length === 0 && !hasResultData(data) ? (
+      {hasData ? (
+        <ToolDisclosure reader="result-data" label="Result details">
+          {() => (
+            <pre
+              className="card__mono"
+              tabIndex={0}
+              role="group"
+              aria-label="Result data"
+            >
+              {JSON.stringify(data, null, 2)}
+            </pre>
+          )}
+        </ToolDisclosure>
+      ) : null}
+      {!hasText && !images.length && !hasData ? (
         <div className="tool-empty">No output</div>
       ) : null}
     </>
@@ -631,39 +645,6 @@ function RawArguments({ call }: { call: ToolCallContent }) {
       >
         {argumentsText}
       </pre>
-    </>
-  );
-}
-
-function RawToolDetails({
-  call,
-  result,
-  status,
-}: {
-  call: ToolCallContent;
-  result: ChatMessage | undefined;
-  status: ToolStatus;
-}) {
-  if (
-    !result &&
-    call.__inspireToolCall &&
-    Object.keys(call.arguments ?? {}).length === 0
-  )
-    return <PendingToolResult status={status} />;
-  return (
-    <>
-      {result ? (
-        <>
-          <div className="card__section-label">Result</div>
-          <RawToolResult result={result} />
-          <ToolArguments call={call} />
-        </>
-      ) : (
-        <>
-          <PendingToolResult status={status} />
-          <RawArguments call={call} />
-        </>
-      )}
     </>
   );
 }
@@ -720,13 +701,7 @@ export function ToolResultCard({
   const calls = result.__inspireCalls;
   const output =
     name === "codemode" ? (
-      codeModeResultBlocks(result).map((block, index) => (
-        <ToolPresentationBlockView
-          key={index}
-          readingKey={`${block.type}:${index}`}
-          block={block}
-        />
-      ))
+      <PresentationBlocks blocks={codeModeResultBlocks(result)} />
     ) : (
       <RawToolResult result={result} />
     );
@@ -746,7 +721,6 @@ export function ToolResultCard({
       }
       summaryVisibleWhenOpen={name === "codemode"}
       status={statusIcon(result.isError ? "failure" : "success")}
-      copyText={() => JSON.stringify(result, null, 2)}
       getCopyContent={messageCopyLoader(
         result,
         () => JSON.stringify(result, null, 2),
@@ -792,6 +766,33 @@ function ToolBlockHeading({ label, path }: { label?: string; path?: string }) {
 
 const STRUCTURED_CODE_PREVIEW_LINES = 400;
 
+function useToolLinePreview<T>(reader: string, lines: T[]) {
+  const [showAll, setShowAll] = useActivityReaderExpanded(reader);
+  const partial = useContext(ToolArgumentPreviewContext);
+  if (lines.length <= STRUCTURED_CODE_PREVIEW_LINES) return { lines };
+  return {
+    lines:
+      showAll && !partial
+        ? lines
+        : lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES),
+    disclosure: partial ? (
+      <div className="card__pending">
+        Showing first {STRUCTURED_CODE_PREVIEW_LINES} lines
+      </div>
+    ) : (
+      <button
+        type="button"
+        className="card__show-all"
+        onClick={() => setShowAll(!showAll)}
+      >
+        {showAll
+          ? "Show fewer lines"
+          : `Show all ${lines.length.toLocaleString()} lines`}
+      </button>
+    ),
+  };
+}
+
 function StructuredCode({
   text,
   startLine = 1,
@@ -803,19 +804,16 @@ function StructuredCode({
   lineNumbers?: boolean;
   language?: string;
 }) {
-  const [showAll, setShowAll] = useActivityReaderExpanded("code-all");
   const partial = useContext(ToolArgumentPreviewContext);
   const scroll = useActivityReaderScroll<HTMLPreElement>(
     "code-scroll",
     text,
     partial?.phase === "streaming",
   );
-  const lines = text.split("\n");
-  const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
-  const visible =
-    clipped && (!showAll || partial)
-      ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES)
-      : lines;
+  const { lines: visible, disclosure } = useToolLinePreview(
+    "code-all",
+    text.split("\n"),
+  );
   return (
     <>
       <pre
@@ -850,23 +848,7 @@ function StructuredCode({
           </code>
         )}
       </pre>
-      {clipped ? (
-        partial ? (
-          <div className="card__pending">
-            Showing first {STRUCTURED_CODE_PREVIEW_LINES} lines
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="card__show-all"
-            onClick={() => setShowAll((value) => !value)}
-          >
-            {showAll
-              ? "Show fewer lines"
-              : `Show all ${lines.length.toLocaleString()} lines`}
-          </button>
-        )
-      ) : null}
+      {disclosure}
     </>
   );
 }
@@ -876,44 +858,22 @@ function ReplacementDiff({
 }: {
   block: Extract<ToolPresentationBlock, { type: "replacement" }>;
 }) {
-  const [showAll, setShowAll] = useActivityReaderExpanded("replacement-all");
-  const partial = useContext(ToolArgumentPreviewContext);
-  const lines: DiffLine[] = [
-    ...(block.oldText === undefined ? [] : block.oldText.split("\n")).map(
-      (text) => ({ type: "del" as const, text: `-${text}` }),
-    ),
-    ...(block.newText === undefined ? [] : block.newText.split("\n")).map(
-      (text) => ({ type: "add" as const, text: `+${text}` }),
-    ),
-  ];
-  const clipped = lines.length > STRUCTURED_CODE_PREVIEW_LINES;
+  const { lines, disclosure } = useToolLinePreview<DiffLine>(
+    "replacement-all",
+    [
+      ...(block.oldText === undefined ? [] : block.oldText.split("\n")).map(
+        (text) => ({ type: "del" as const, text: `-${text}` }),
+      ),
+      ...(block.newText === undefined ? [] : block.newText.split("\n")).map(
+        (text) => ({ type: "add" as const, text: `+${text}` }),
+      ),
+    ],
+  );
   return (
     <div className="tool-block">
       <ToolBlockHeading label={block.label} path={block.path} />
-      <DiffView
-        lines={
-          clipped && (!showAll || partial)
-            ? lines.slice(0, STRUCTURED_CODE_PREVIEW_LINES)
-            : lines
-        }
-      />
-      {clipped ? (
-        partial ? (
-          <div className="card__pending">
-            Showing first {STRUCTURED_CODE_PREVIEW_LINES} lines
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="card__show-all"
-            onClick={() => setShowAll((value) => !value)}
-          >
-            {showAll
-              ? "Show fewer lines"
-              : `Show all ${lines.length.toLocaleString()} lines`}
-          </button>
-        )
-      ) : null}
+      <DiffView lines={lines} />
+      {disclosure}
     </div>
   );
 }
@@ -1194,6 +1154,15 @@ function presentationBlocks(
   return blocks;
 }
 
+function PresentationBlocks({ blocks }: { blocks: ToolPresentationBlock[] }) {
+  return blocks.map((block, index) => {
+    const key = `${block.type}:${index}`;
+    return (
+      <ToolPresentationBlockView key={key} readingKey={key} block={block} />
+    );
+  });
+}
+
 function ThinkingDetails({
   text,
   presentation,
@@ -1208,13 +1177,7 @@ function ThinkingDetails({
       className="tool-presentation thinking-presentation"
       data-thinking-presentation="configured"
     >
-      {blocks.map((block, index) => (
-        <ToolPresentationBlockView
-          block={block}
-          key={`${block.type}:${index}`}
-          readingKey={`${block.type}:${index}`}
-        />
-      ))}
+      <PresentationBlocks blocks={blocks} />
     </div>
   );
 }
@@ -1332,34 +1295,24 @@ function PhaseToolDetails({
 }
 
 function ToolArguments({ call }: { call: ToolCallContent }) {
-  const [open, setOpen] = useActivityReaderExpanded("arguments");
   return (
-    <details
-      className="tool-result-details"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+    <ToolDisclosure
+      reader="arguments"
+      label={call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
     >
-      <DetailSummary>
-        {call.__inspireToolCall ? "Arguments (partial)" : "Arguments"}
-      </DetailSummary>
-      {open ? <RawArguments call={call} /> : null}
-    </details>
+      {() => <RawArguments call={call} />}
+    </ToolDisclosure>
   );
 }
 
 function ToolScript({ call }: { call: ToolCallContent }) {
-  const [open, setOpen] = useActivityReaderExpanded("script");
   const args = call.arguments as { code: string };
   return (
-    <details
-      className="tool-result-details"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
+    <ToolDisclosure
+      reader="script"
+      label={call.__inspireToolCall ? "Script (partial)" : "Script"}
     >
-      <DetailSummary>
-        Script{call.__inspireToolCall ? " (partial)" : ""}
-      </DetailSummary>
-      {open ? (
+      {() => (
         <ToolPresentationBlockView
           block={{
             type: "code",
@@ -1367,8 +1320,8 @@ function ToolScript({ call }: { call: ToolCallContent }) {
             language: "javascript",
           }}
         />
-      ) : null}
-    </details>
+      )}
+    </ToolDisclosure>
   );
 }
 
@@ -1390,29 +1343,38 @@ function ToolDetails({
   const calls = result ? result.__inspireCalls : activity?.calls;
   const codemode = presentation?.ruleId === "inspire.pi.codemode";
   const phaseDetails = codemode || calls;
-  const content =
-    presentation || !phaseDetails ? (
-      <ToolDetailsContent
-        call={call}
-        result={result}
-        status={status}
-        presentation={presentation}
-        showPending={!calls?.calls.length}
-      />
-    ) : result ? (
-      <RawToolResult result={result} />
-    ) : !calls?.calls.length ? (
-      <PendingToolResult status={status} />
-    ) : null;
+  const phaseFallback = phaseDetails && !presentation;
+  const blocks = presentation ? presentationBlocks(presentation) : null;
+  const pending = !result && <PendingToolResult status={status} />;
   const body = (
     <>
-      {content}
+      {blocks && presentation ? (
+        <div className="tool-presentation" data-tool-rule={presentation.ruleId}>
+          <PresentationBlocks blocks={blocks} />
+          {!calls?.calls.length && pending}
+        </div>
+      ) : result ? (
+        <>
+          {!phaseFallback && <div className="card__section-label">Result</div>}
+          <RawToolResult result={result} />
+          {!phaseFallback && <ToolArguments call={call} />}
+        </>
+      ) : (
+        <>
+          {(!phaseFallback || !calls?.calls.length) && pending}
+          {!phaseFallback &&
+            (!call.__inspireToolCall ||
+              Object.keys(call.arguments ?? {}).length > 0) && (
+              <RawArguments call={call} />
+            )}
+        </>
+      )}
       {preview ? <LiveToolOutput preview={preview} /> : null}
-      {phaseDetails && !presentation ? <ToolArguments call={call} /> : null}
+      {phaseFallback && <ToolArguments call={call} />}
     </>
   );
   return (
-    <>
+    <ImageGallery>
       {call.__inspireToolCall?.truncated ? (
         <div className="card__pending">Argument preview truncated</div>
       ) : null}
@@ -1428,42 +1390,6 @@ function ToolDetails({
         </PhaseToolDetails>
       ) : (
         body
-      )}
-    </>
-  );
-}
-
-function ToolDetailsContent({
-  call,
-  result,
-  status,
-  presentation,
-  showPending,
-}: {
-  call: ToolCallContent;
-  result: ChatMessage | undefined;
-  status: ToolStatus;
-  presentation: ResolvedToolPresentation | null;
-  showPending: boolean;
-}) {
-  const blocks = presentation ? presentationBlocks(presentation) : null;
-  return (
-    <ImageGallery>
-      {blocks && presentation ? (
-        <div className="tool-presentation" data-tool-rule={presentation.ruleId}>
-          {blocks.map((block, index) => (
-            <ToolPresentationBlockView
-              block={block}
-              key={`${block.type}:${index}`}
-              readingKey={`${block.type}:${index}`}
-            />
-          ))}
-          {!result && showPending ? (
-            <PendingToolResult status={status} />
-          ) : null}
-        </div>
-      ) : (
-        <RawToolDetails call={call} result={result} status={status} />
       )}
     </ImageGallery>
   );
@@ -1604,7 +1530,6 @@ export function ToolCard({
         }
         summaryVisibleWhenOpen={presentation?.ruleId === "inspire.pi.codemode"}
         status={statusIcon(status)}
-        copyText={() => toolClipboardText(call, result, activity)}
         getCopyContent={messageCopyLoader(
           result,
           () => toolClipboardText(call, result, activity),

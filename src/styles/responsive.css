@@ -5,14 +5,12 @@
    surfaces remain dependable beside the pane resize boundary. */
 .nav,
 .nav__list,
-.nav__hidden-content,
 .transcript {
   scrollbar-width: none;
 }
 
 .nav::-webkit-scrollbar,
 .nav__list::-webkit-scrollbar,
-.nav__hidden-content::-webkit-scrollbar,
 .transcript::-webkit-scrollbar {
   display: none;
 }
@@ -179,17 +177,6 @@ body.srail-dragging {
 
   .app--narrow .file-preview__content:not(:has(> .source-reader, > .pdf-preview)) {
     padding: var(--space-2);
-  }
-
-  .app--narrow .file-preview__actions .icon-button,
-  .app--narrow .file-preview__actions .file-detail-header__view {
-    min-height: 32px;
-    height: 32px;
-  }
-
-  .app--narrow .file-preview__actions .icon-button {
-    min-width: 32px;
-    width: 32px;
   }
 
   @keyframes nav-drawer-in {
@@ -435,7 +422,7 @@ body.srail-dragging {
     min-width: 0;
   }
 
-  .composer__meta .dropdown:not(.model-picker) {
+  .composer__meta .composer-thinking-control {
     flex-shrink: 0;
   }
 
@@ -445,7 +432,7 @@ body.srail-dragging {
     max-width: min(220px, 45vw);
   }
 
-  .composer__meta .dropdown__trigger {
+  .composer__meta .thinking-select {
     min-height: 36px;
     padding: 2px 6px;
   }
@@ -462,7 +449,7 @@ body.srail-dragging {
     overflow: hidden;
   }
 
-  .composer__meta .model-picker__trigger-copy > .dropdown__value {
+  .composer__meta .model-picker__trigger-copy > .model-picker__value {
     width: 100%;
     min-width: 0;
     max-width: none;
@@ -705,7 +692,6 @@ body.srail-dragging {
 /* Scroll containers keep their momentum to themselves. */
 .transcript,
 .nav__list,
-.nav__hidden-content,
 .ctx {
   overscroll-behavior: contain;
 }

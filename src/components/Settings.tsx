@@ -49,7 +49,7 @@ import {
 } from "../install-app";
 import { PALETTE_LABELS, preferenceChoiceLabel } from "../preference-labels";
 import { shallowEqual, store, useAppState } from "../store";
-import { Dropdown } from "./Dropdown";
+import { NativeSelect } from "./NativeSelect";
 import { HerdrSettings } from "./HerdrSettings";
 import { HostRestartSettings } from "./HostRestartSettings";
 import { McpSettings } from "./McpSettings";
@@ -414,9 +414,9 @@ export const SettingsContent = memo(function SettingsContent({
                 label="Reasoning detail"
                 description="How much model thinking to show."
               >
-                <Dropdown
+                <NativeSelect
                   label="Reasoning detail"
-                  className="dropdown--field"
+                  className="native-select--field"
                   value={state.prefs.thinkingVisibility}
                   options={REASONING_DETAILS}
                   onChange={(value) =>
@@ -429,9 +429,9 @@ export const SettingsContent = memo(function SettingsContent({
                 label="Tool activity"
                 description="Detail shown for each tool call."
               >
-                <Dropdown
+                <NativeSelect
                   label="Tool activity"
-                  className="dropdown--field"
+                  className="native-select--field"
                   value={state.prefs.toolVisibility}
                   options={TOOL_ACTIVITY}
                   onChange={(value) =>
@@ -441,9 +441,9 @@ export const SettingsContent = memo(function SettingsContent({
               </SettingField>
 
               <SettingField label="Activity groups">
-                <Dropdown
+                <NativeSelect
                   label="Activity groups"
-                  className="dropdown--field"
+                  className="native-select--field"
                   value={state.prefs.activityFoldVisibility}
                   options={ACTIVITY_GROUPS}
                   onChange={(value) =>
@@ -479,9 +479,9 @@ export const SettingsContent = memo(function SettingsContent({
               title="Behavior"
             >
               <SettingField label="On launch">
-                <Dropdown
+                <NativeSelect
                   label="On launch"
-                  className="dropdown--field"
+                  className="native-select--field"
                   value={state.prefs.launch}
                   options={LAUNCH_OPTIONS}
                   onChange={(value) =>
@@ -498,9 +498,9 @@ export const SettingsContent = memo(function SettingsContent({
                   className="settings__notification-control"
                   aria-busy={state.taskAlerts.busy}
                 >
-                  <Dropdown
+                  <NativeSelect
                     label="Task alerts"
-                    className="dropdown--field"
+                    className="native-select--field"
                     value={state.taskAlerts.mode}
                     options={COMPLETION_ALERTS}
                     onChange={(value) =>
@@ -585,9 +585,9 @@ export const SettingsContent = memo(function SettingsContent({
                   className="settings__notification-control"
                   aria-busy={state.taskAlerts.groupingBusy}
                 >
-                  <Dropdown
+                  <NativeSelect
                     label="Notification grouping"
-                    className="dropdown--field"
+                    className="native-select--field"
                     value={state.taskAlerts.grouping}
                     options={[
                       { value: "session", label: "Session" },
@@ -647,9 +647,9 @@ export const SettingsContent = memo(function SettingsContent({
                     : undefined
                 }
               >
-                <Dropdown
+                <NativeSelect
                   label="Steering delivery"
-                  className="dropdown--field"
+                  className="native-select--field"
                   value={state.runtimeSettings?.steeringMode ?? ""}
                   display={
                     state.runtimeSettings?.steeringMode
@@ -679,9 +679,9 @@ export const SettingsContent = memo(function SettingsContent({
                     : undefined
                 }
               >
-                <Dropdown
+                <NativeSelect
                   label="Follow-up delivery"
-                  className="dropdown--field"
+                  className="native-select--field"
                   value={state.runtimeSettings?.followUpMode ?? ""}
                   display={
                     state.runtimeSettings?.followUpMode

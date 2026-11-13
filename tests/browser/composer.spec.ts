@@ -110,13 +110,7 @@ test("a narrow running composer keeps model controls and task actions reachable"
     composer.getByRole("button", { name: "Abort running task" }),
   ).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  await expect
-    .poll(() =>
-      thinking
-        .locator(".dropdown__value")
-        .evaluate((el) => el.scrollWidth - el.clientWidth),
-    )
-    .toBeLessThanOrEqual(1);
+  await expect(thinking).toBeInViewport();
   await expect
     .poll(() =>
       composer
@@ -128,13 +122,6 @@ test("a narrow running composer keeps model controls and task actions reachable"
   expect(selector.y + selector.height).toBeLessThan(
     (await attach.boundingBox())!.y,
   );
-  await thinking.press("Enter");
-  await expect(
-    page.getByRole("listbox", { name: "Thinking level" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(thinking).toBeFocused();
-
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Close context pane" }).click();
   await expect(attach).toBeInViewport();
@@ -372,7 +359,7 @@ test("composer text drafts survive reload and stay partitioned through switching
   await first.fill("");
 });
 
-test("composer expansion follows wrapping and preserves selection, artifacts and completion", async ({
+test("composer expansion preserves selection, artifacts and completion", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
@@ -385,7 +372,7 @@ test("composer expansion follows wrapping and preserves selection, artifacts and
     input.evaluate((element) => element.scrollHeight - element.clientHeight);
   const wrapped = "wrapped layout text ".repeat(55);
   await input.fill(wrapped);
-  await expect(expand).toHaveCount(0);
+  await expect(expand).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(expand).toBeVisible();
   await expect.poll(inputOverflow).toBeGreaterThan(1);
@@ -422,7 +409,7 @@ test("composer expansion follows wrapping and preserves selection, artifacts and
   );
   await collapse.press("Enter");
   await expect(input).toBeFocused();
-  await expect(expand).toHaveCount(0);
+  await expect(expand).toBeVisible();
   await expect.poll(inputOverflow).toBe(0);
   await expect(attachment).toBeVisible();
 });
@@ -444,6 +431,6 @@ test.describe("touch expansion", () => {
     await input.press("Enter");
     await expect(input).toHaveValue("touch multiline\n");
     await page.getByRole("button", { name: "Collapse editor" }).tap();
-    await expect(expand).toHaveCount(0);
+    await expect(expand).toBeVisible();
   });
 });

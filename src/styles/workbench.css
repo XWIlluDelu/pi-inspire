@@ -231,20 +231,20 @@ body.pane-resizing .nav {
   align-items: center;
 }
 
-.ctx__tab-overflow .dropdown__trigger {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  justify-content: center;
+.ctx__tab-overflow .choice-panel__trigger { width: 30px; height: 30px; }
+.ctx__open-tabs-menu input { width: 100%; }
+.ctx__open-tab-results button {
+  display: grid;
+  width: 100%;
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  text-align: start;
+  overflow-wrap: anywhere;
 }
-
-.ctx__tab-overflow .dropdown__value,
-.ctx__tab-overflow .dropdown__trigger > .lucide-chevron-down { display: none; }
-
-.ctx__open-tabs-menu input {
-  margin: var(--space-2);
-  width: calc(100% - 2 * var(--space-2));
+.ctx__open-tab-results button:is(:hover, :focus-visible, [aria-current="true"]) {
+  background: var(--accent-tint);
 }
+.ctx__open-tab-results small { color: var(--muted); }
 
 .ctx__terminal-tabs { display: contents; }
 
@@ -789,27 +789,20 @@ body.pane-resizing .nav {
   padding: 0 var(--space-3);
 }
 
-/* Actions overlay the reader without reserving a header-height band.
-   Reading intent collapses them to the same visible, keyboard-owned entry. */
 .file-preview { position: relative; }
 
 .file-preview__actions {
-  position: absolute;
+  position: relative;
   z-index: 2;
-  top: var(--space-2);
-  right: var(--space-3);
-  max-width: calc(100% - 2 * var(--space-3));
-  box-sizing: border-box;
   display: flex;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 2px;
-  padding: 2px 6px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
+  padding: 2px var(--space-2);
+  border-bottom: 1px solid var(--hairline);
   background: var(--bg-file-surface);
 }
-
-.file-preview__actions-toggle { flex: 0 0 auto; }
 
 /* One contents popover for readers: PDF bookmarks and document headings. */
 .reader-contents {
@@ -922,20 +915,7 @@ body.pane-resizing .nav {
   }
 }
 
-.file-preview__actions:has(> .file-preview__actions-toggle[aria-expanded="false"]) {
-  padding-inline: 2px;
-}
-
-.file-preview__exports {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 2px;
-  margin-inline-start: var(--space-1);
-}
-
-.file-preview__actions-toggle[aria-expanded="true"] {
-  margin-inline-start: var(--space-1);
-}
+.file-preview__exports { display: flex; gap: 2px; }
 
 .res__index-header {
   background: var(--bg-context);
@@ -1033,47 +1013,8 @@ body.pane-resizing .nav {
   color: var(--success-ink);
 }
 
-.file-detail-header__actions {
-  display: flex;
-  min-width: 0;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-}
-
-.file-detail-header__actions[hidden] { display: none; }
-
-.file-preview__actions .icon-button {
-  width: var(--floating-tool-size);
-  height: var(--floating-tool-size);
-  border-radius: var(--radius-control);
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  text-decoration: none;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.file-preview__actions .icon-button > svg {
-  width: var(--floating-tool-icon);
-  height: var(--floating-tool-icon);
-}
-
-.file-preview__actions :is(.icon-button, .file-detail-header__view):focus-visible {
+.file-preview__actions .icon-button:focus-visible {
   outline-offset: -2px;
-}
-
-.file-preview__actions .icon-button:hover:not(:disabled) {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-.file-detail-header__git[aria-pressed="true"] {
-  color: var(--accent-deep);
-  background: var(--accent-tint);
 }
 
 .changes__position {
@@ -1086,74 +1027,21 @@ body.pane-resizing .nav {
   font-variant-numeric: tabular-nums;
 }
 
-.file-detail-header__view {
-  display: inline-flex;
-  width: 52px;
-  height: var(--floating-tool-size);
-  flex: 0 0 52px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted);
-  font: var(--text-xs)/var(--leading-ui) var(--font-sans);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard);
-}
-
-.file-preview__actions .file-detail-header__mode {
-  flex: 0 0 var(--floating-tool-size);
-  padding: 0;
-}
-
-.file-detail-header__interaction[aria-pressed="true"] {
+.file-preview__actions .icon-button[aria-pressed="true"] {
   color: var(--accent-deep);
   background: var(--accent-tint);
 }
 
-/* The floating group retains larger touch targets without a separate path row. */
 @media (pointer: coarse) {
-  .ctx__modes button {
-    min-height: 32px;
-  }
+  .ctx__modes button { min-height: 32px; }
+  .ctx__file-tab > .ctx__file-close { flex-basis: 32px; min-width: 32px; }
+}
 
-  .ctx__file-tab > .ctx__file-close {
-    flex-basis: 32px;
-    min-width: 32px;
-  }
-
-  .file-preview .file-detail-header__actions .icon-button,
-  .file-preview .file-detail-header__actions .file-detail-header__view,
-  .file-preview .file-preview__actions-toggle {
-    height: 32px;
-    min-height: 32px;
-  }
-
-  .file-preview .file-detail-header__actions .icon-button,
-  .file-preview .file-preview__actions-toggle {
+@media (pointer: coarse), (max-width: 900px) {
+  .file-preview__actions .icon-button {
     width: 32px;
-    min-width: 32px;
+    height: 32px;
   }
-
-  .file-detail-header__actions {
-    min-height: 32px;
-  }
-
-}
-
-.file-detail-header__view:hover:not(:disabled) {
-  background: var(--bg-inset);
-  color: var(--ink);
-}
-
-.file-detail-header__view:disabled {
-  color: var(--faint);
-  cursor: default;
-  opacity: 0.4;
 }
 
 .file-preview__content {
@@ -1532,7 +1420,7 @@ button.res__more:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.file-detail-header__actions .changes__stats {
+.file-preview__actions .changes__stats {
   margin-inline-start: var(--space-1);
   padding-inline: 2px;
 }

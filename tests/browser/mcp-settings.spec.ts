@@ -174,11 +174,8 @@ test("MCP reveals saved connection values on request, keeps edits scoped, and re
     const registration = settings.getByRole("combobox", {
       name: "Client registration",
     });
-    await expect(registration).toHaveText("Automatic (Pi default)");
-    await registration.click();
-    await page
-      .getByRole("option", { name: "Pi metadata document (CIMD)" })
-      .click();
+    await expect(registration).toHaveValue("auto");
+    await registration.selectOption("cimd");
     const save = settings.getByRole("button", { name: "Save", exact: true });
     await expect(settings.getByRole("alert")).toContainText(
       "cannot use a client ID or client name",
@@ -300,8 +297,9 @@ test.describe("touch MCP editor", () => {
         .click();
     };
     const choose = async (name: string, option: string) => {
-      await settings.getByRole("combobox", { name, exact: true }).click();
-      await page.getByRole("option", { name: option, exact: true }).click();
+      await settings
+        .getByRole("combobox", { name, exact: true })
+        .selectOption({ label: option });
     };
     try {
       const userBefore = await fixture.json(fixture.userFile);
@@ -364,10 +362,10 @@ test.describe("touch MCP editor", () => {
       ).toBeFocused();
       await expect(
         settings.getByRole("combobox", { name: "Tool exposure" }),
-      ).toHaveText("Inherit from user");
+      ).toHaveValue("inherit");
       await expect(
         settings.getByRole("combobox", { name: "Enabled in this project" }),
-      ).toHaveText("Inherit from user");
+      ).toHaveValue("inherit");
       await expect(save).toBeDisabled();
       await settings.getByRole("button", { name: "Add tool rule" }).click();
       await settings.getByLabel("Tool name or pattern").fill("read_*");

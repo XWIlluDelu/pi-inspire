@@ -57,7 +57,7 @@ and version must remain unchanged through validation.
 
 ### Clear Hidden
 
-The top-level Hidden drawer offers a count-bearing Clear action over the complete hydrated union of
+The top-level Hidden section offers a count-bearing Clear action over the complete hydrated union of
 individually hidden sessions and sessions whose exact cwd is a hidden folder. Search and incomplete
 curation hydration cannot authorize clearing.
 

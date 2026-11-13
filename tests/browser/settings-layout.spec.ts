@@ -383,69 +383,6 @@ test("selected Settings categories remain visible across responsive layouts with
   ).toBeInViewport();
 });
 
-test("Settings dropdown escapes the scroller, separates hover from keyboard selection, and closes when clipped", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 460 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await pairedPage(page);
-  await openSettings(page);
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
-  await settings.getByRole("button", { name: "Behavior", exact: true }).click();
-  await page.evaluate(() => document.fonts.ready);
-  const trigger = settings.getByRole("combobox", {
-    name: "On launch",
-    exact: true,
-  });
-  const content = settings.locator(".settings__content");
-  // Leave viewport room beyond the scroller so the menu must escape its clip.
-  await trigger.evaluate((el) => {
-    const content = el.closest<HTMLElement>(".settings__content")!;
-    const height =
-      el.getBoundingClientRect().bottom - content.getBoundingClientRect().top;
-    content.style.maxHeight = `${height + 12}px`;
-  });
-  expect(
-    await content.evaluate((el) => el.scrollHeight > el.clientHeight),
-  ).toBe(true);
-  await trigger.click();
-  const menu = page.getByRole("listbox", {
-    name: "On launch",
-    exact: true,
-  });
-  const last = menu.getByRole("option").last();
-  await expect(menu).toBeVisible();
-  const clipBounds = (await content.boundingBox())!;
-  const menuBounds = (await menu.boundingBox())!;
-  expect(
-    menuBounds.y < clipBounds.y ||
-      menuBounds.y + menuBounds.height > clipBounds.y + clipBounds.height,
-  ).toBe(true);
-  await last.hover({ trial: true });
-  await expect(trigger).toBeFocused();
-  const first = menu.getByRole("option").first();
-  const active = await first.getAttribute("id");
-  expect(active).toBeTruthy();
-  await last.hover();
-  await trigger.press("Home");
-  await expect(trigger).toHaveAttribute("aria-activedescendant", active!);
-  await trigger.press("Escape");
-  await expect(menu).toHaveCount(0);
-  await content.evaluate((el) => el.style.removeProperty("max-height"));
-
-  await trigger.click();
-  const bounds = (await content.boundingBox())!;
-  await page.mouse.move(bounds.x + 72, bounds.y + 206);
-  await page.mouse.wheel(0, 40);
-  await expect
-    .poll(() => content.evaluate((el) => el.scrollTop))
-    .toBeGreaterThan(0);
-  await expect(menu).toBeVisible();
-  await page.mouse.wheel(0, 85);
-  await expect(menu).toHaveCount(0);
-  await expect(trigger).toBeFocused();
-});
-
 test("category switches retain model search and a login arriving while hidden", async ({
   page,
 }) => {
@@ -464,14 +401,14 @@ test("category switches retain model search and a login arriving while hidden", 
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
   const nav = settings.getByRole("navigation", { name: "Settings categories" });
   await nav.getByRole("button", { name: "Models", exact: true }).click();
-  const grid = settings.getByRole("grid", { name: "Available models" });
-  await expect(grid.getByRole("row").first()).toBeVisible();
+  const grid = settings.getByRole("listbox", { name: "Available models" });
+  await expect(grid.getByRole("option").first()).toBeVisible();
   const search = settings.getByRole("combobox", {
     name: "Search available models",
   });
   const query = scenario.snapshot().models[0]!.id;
   await search.fill(query);
-  await expect(grid.getByRole("row").first()).toBeVisible();
+  await expect(grid.getByRole("option").first()).toBeVisible();
 
   const credentials = settings.getByRole("region", {
     name: "Login & API keys",
@@ -557,20 +494,18 @@ test("narrow Conversation settings persist preferences and restore focus when re
   await reset.click();
   await savePreference(() => confirm.click());
   const activity = dialog.getByRole("combobox", { name: "Activity groups" });
-  await activity.click();
-  const choices = page.getByRole("listbox", { name: "Activity groups" });
-  await savePreference(() =>
-    choices.getByRole("option", { name: /Collapsed/ }).click(),
-  );
+  await savePreference(async () => {
+    await activity.selectOption("collapsed");
+  });
   await page.reload();
   await openConversation();
-  await expect(activity).toHaveText("Collapsed");
+  await expect(activity).toHaveValue("collapsed");
 
   await reset.click();
   await page.keyboard.press("Escape");
   await expect(confirmation).toBeHidden();
   await expect(reset).toBeFocused();
-  await expect(activity).toHaveText("Collapsed");
+  await expect(activity).toHaveValue("collapsed");
   await reset.click();
   await savePreference(() => confirm.click());
 });

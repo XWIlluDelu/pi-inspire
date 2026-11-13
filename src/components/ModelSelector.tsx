@@ -177,7 +177,7 @@ export function ModelSelector({
       <button
         ref={triggerRef}
         type="button"
-        className="dropdown__trigger model-picker__trigger"
+        className="model-picker__trigger"
         aria-label="Model"
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -199,7 +199,7 @@ export function ModelSelector({
         }}
       >
         <span className="model-picker__trigger-copy">
-          <span className="dropdown__value">{display}</span>
+          <span className="model-picker__value">{display}</span>
         </span>
         {loading ? (
           <PiLoader size={11} aria-hidden />
@@ -211,7 +211,7 @@ export function ModelSelector({
         ? createPortal(
             <div
               ref={menuRef}
-              className="model-picker__menu dropdown__menu"
+              className="model-picker__menu"
               data-placement={placement.direction}
               aria-busy={refreshing && models.length === 0}
               style={{

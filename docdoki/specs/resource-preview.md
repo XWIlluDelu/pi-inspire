@@ -56,14 +56,11 @@ Selecting a recent, search, or tree entry opens or selects a filename tab beside
 tabs. Its reader uses the complete content area on desktop and narrow screens. [[workspace-layout]]
 owns tab behavior: Files has no index/detail stack, returning to Files restores its query,
 expansions and scroll, and file/tool tabs share one narrow browser-history level. The browser uses
-`--bg-context`; the selected file's floating action group and reader use `--bg-surface`, with no
-extra shadow or raised frame.
+`--bg-context`. The selected file's toolbar and reader use `--bg-surface` with a shared edge.
 
-Coarse-pointer file close areas are 32px wide. Floating file actions use 28px fine-pointer desktop
-and 32px coarse/narrow targets with 16px glyphs; the group reserves no separate header band.
-Reading a ready preview collapses the group; loading/error interactions keep its actions.
-Compact Markdown previews inset their opening text below the actions. The inset scrolls with the
-document and stays the same when the actions collapse.
+Coarse-pointer file close areas are 32px wide. File actions use 28px fine-pointer desktop and 32px
+coarse/narrow targets with 16px glyphs. The toolbar remains visible above the reader while its
+contents scroll, including during loading and recovery.
 
 The Files tree uses the project basename as its heading. Opening a workspace file expands its
 ancestors and emits one reveal request; unrelated updates do not scroll it. Leaf rows reserve the
@@ -233,8 +230,8 @@ original order; blank or non-numeric cells sink in numeric sorts. The preview re
 drops its possibly partial last record. A notice points to Source or Download for omitted data.
 
 Rendered Markdown and notebooks with at least three `h1`–`h3` headings add a **Contents** action to
-the floating group. It lists the headings currently rendered, marks the one at the reading line,
-and scrolls only the reader's own scroller. Shorter documents keep the group unchanged.
+the toolbar. It lists the headings currently rendered, marks the one at the reading line, and
+scrolls only the reader's own scroller.
 
 Selecting text in a body reader (Source, Markdown, notebook, Table or PDF; not Git Changes or the
 HTML frame) shows one **Quote** control just below the selection. It appends a Markdown block quote
@@ -382,9 +379,7 @@ Only visible pages and one neighbouring page on each side keep canvas/text surfa
 pages reserve estimated space until their actual dimensions are known. Mixed page sizes keep their
 own proportions. The reader renders static page content; document scripts, interactive
 links/forms, and embedded media are inactive. Malformed or password-protected files show a readable
-error and keep Download. Where PDF controls and floating file actions cannot fit side by side, PDF
-controls keep a stable row below the file actions. Expanding or collapsing file actions never moves
-a PDF button during a pointer gesture.
+error and keep Download. PDF controls occupy a stable row in the reader below the file toolbar.
 
 PDF **Find** opens from a trailing search control or Ctrl/⌘+F inside the reader and replaces the
 controls row in place. Matching is case-insensitive and whitespace-normalized within individual

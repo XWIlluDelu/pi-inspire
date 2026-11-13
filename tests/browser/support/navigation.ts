@@ -155,14 +155,6 @@ export async function openProjectTerminal(page: Page) {
   await palette.getByRole("option", { name: /^Open Terminal$/ }).click();
 }
 
-export async function showTerminalControls(page: Page) {
-  const toggle = page.getByRole("button", {
-    name: "Show terminal controls",
-    exact: true,
-  });
-  if (await toggle.isVisible()) await toggle.click();
-}
-
 /** Opens Settings from the header, or from the navigation drawer on narrow layouts. */
 export async function openSettings(page: Page) {
   // Decide from the viewport, not the header's current DOM: a resize just

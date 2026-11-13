@@ -182,7 +182,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   folder headers and session-row surfaces share the same outer inset; their internal icon/text axes
   stay stable.
 
-  Hidden's full-width dock header stays distinct from its inset contents; its root folders and row
+  Hidden's section header stays distinct from its inset contents. Its root folders and row
   surfaces use the normal project axes without an extra section-wide indent. Independent hidden
   sessions stay at that root text axis; grouped sessions keep the compact desktop layout rather
   than adding another 20px indent. Hidden lists independent sessions before folders and their
@@ -196,26 +196,19 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   containing the visible session carries the active highlight on its header, and active search
   results stay visible regardless of saved collapse state.
 
-  Hidden is a bottom curation drawer outside the session list's scroll area. Its neutral 44px
-  header leaves space around the label and aligned icons, with the count at the trailing edge
-  before the disclosure indicator. The header precedes its content; Hidden's independently
-  scrolling body is bounded to leave room for ordinary navigation. Both scrollports keep enough
-  height for complete rows in short windows, including safe-area insets. When those minimums cannot
-  fit alongside New/Search and the drawer header, navigation itself scrolls rather than compressing
-  a list into a sliver. Normal-height navigation keeps independent list scrolling and its existing
-  spacing. Opening Hidden reveals its body without transferring focus.
+  Hidden follows the ordinary session groups in the same scroll area. Its header has a disclosure,
+  count and Clear Hidden action. Opening Hidden expands the section in place and keeps focus on
+  the disclosure.
 
   Project identity on cross-project Hidden rows is quiet text, not a filled badge. On phone-width
   or non-hover layouts, all cross-project rows (Pinned, search and Hidden) place project and age
   beneath the title so persistent actions do not crowd it. Selection and search highlights cover
   the whole row, including its action area.
 
-  The drawer defaults closed and keeps its state when the tab reloads. It is absent when there
-  are no hidden results. Search
-  reveals matching hidden sessions inside it instead of returning them to their folders. Ordinary
+  The section defaults closed and keeps its state when the tab reloads. It is absent when there
+  are no hidden results. Search reveals matching hidden sessions in the section. Ordinary
   session-entry surfaces, including Welcome recents and the command palette's recents/search, share
-  the hidden-session/project filter; hidden sessions stay in the Hidden drawer instead of
-  reappearing as ordinary recommendations.
+  the hidden-session/project filter.
 
   Ordinary rows keep Pin and Hide; Hidden rows reuse those two action slots for Restore and Delete,
   so deletion is a second-stage action rather than a third always-present icon. Every hidden
@@ -225,12 +218,10 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
   curation intact. Folder headers have the same Restore/Delete columns. Folder Delete confirms the
   count and full path and clears only that complete hidden folder.
 
-  Clear Hidden is a persistent header icon action between the count and disclosure, with its own
-  accessible name and click target; it does not consume a content row. The count and controls keep
-  their positions when the drawer opens or closes. Clear confirms the complete drawer with one
-  count-bearing dialog. Search, incomplete catalog data, a target opening, or another deletion
-  block admission. The folder action applies these checks to its own targets. [[session-deletion]]
-  defines target validation, Pi instance shutdown and file removal.
+  Clear Hidden has its own accessible name and click target in the section header. Clear confirms
+  the complete section with one count-bearing dialog. Search, incomplete catalog data, a target
+  opening, or another deletion block admission. The folder action applies these checks to its own
+  targets. [[session-deletion]] defines target validation, Pi instance shutdown and file removal.
 
 ### Search and pagination
 

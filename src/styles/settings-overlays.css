@@ -560,22 +560,22 @@
 
 .settings__field-control > .segmented,
 .settings__field-control > .settings__notification-control,
-.settings__field-control > .dropdown--field {
+.settings__field-control > .native-select--field {
   flex: 1;
 }
 
 .settings__field-control > .settings__notification-control,
-.settings__field-control > .dropdown--field {
+.settings__field-control > .native-select--field {
   width: var(--set-choice-w);
   max-width: 100%;
 }
 
-.settings__notification-control .dropdown__trigger,
-.settings__field-control > .dropdown--field .dropdown__trigger {
+.settings__notification-control .native-select,
+.settings__field-control > .native-select--field {
   width: 100%;
 }
 
-.settings__field .dropdown--field .dropdown__trigger {
+.settings__field .native-select--field {
   min-width: 0;
   min-height: var(--set-control-h);
   height: var(--set-control-h);
@@ -757,8 +757,7 @@
 }
 
 @media (pointer: coarse) {
-  .settings__field .dropdown--field .dropdown__trigger,
-  .settings__field .dropdown__option,
+  .settings__field .native-select--field,
   .settings-switch,
   .settings__nav-item,
   .settings-confirmation__actions .button {
@@ -1943,7 +1942,7 @@
     :is(
       .session-actions-menu,
       .extension-status-popover,
-      .dropdown__menu,
+      .choice-panel__body:not([hidden]),
       .terminal-menu__popover
     )
   )

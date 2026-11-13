@@ -3,11 +3,9 @@ import { Check, Search } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
-  type Ref,
   useCallback,
   useEffect,
   useId,
-  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -158,16 +156,7 @@ function groupPreparedModels(
   ];
 }
 
-export interface ModelListHandle {
-  focusModel: (
-    model: ModelIdentity,
-    canFocus: () => boolean,
-    complete: () => void,
-    options?: { action: string; preserveQuery: boolean },
-  ) => void;
-}
-
-/** Shared bounded model search. Settings uses a grid because its rows contain actions. */
+/** Shared searchable model list. Actions belong to the selected model outside the list. */
 export function ModelList({
   models,
   value,
@@ -177,14 +166,11 @@ export function ModelList({
   status,
   onSelect,
   onKeyDown,
-  renderActions,
-  renderNameAction,
   autoFocus = false,
-  controllerRef,
   searchAction,
   placeholder,
+  searchLabel = "Search models",
   emptyAction,
-  optionSize,
 }: {
   models: ModelOption[];
   value: ModelOption | null;
@@ -194,20 +180,17 @@ export function ModelList({
   status?: string | null;
   onSelect?: (model: ModelOption) => void;
   onKeyDown?: (event: KeyboardEvent) => void;
-  renderActions?: (model: ModelOption, active: boolean) => ReactNode;
-  renderNameAction?: (model: ModelOption, active: boolean) => ReactNode;
   autoFocus?: boolean;
-  controllerRef?: Ref<ModelListHandle>;
   searchAction?: ReactNode;
   placeholder?: string;
+  searchLabel?: string;
   emptyAction?: ReactNode;
-  optionSize?: number;
 }) {
   const id = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState(initialQuery);
-  const [keyboardActive, setKeyboardActive] = useState(!renderActions);
+  const [keyboardActive, setKeyboardActive] = useState(autoFocus);
   const currentKey = value ? modelIdentityKey(value) : "";
   const [activeModelKey, setActiveModelKey] = useState<string | null>(
     initialQuery ? null : currentKey,
@@ -218,32 +201,6 @@ export function ModelList({
     [recent],
   );
   const prepared = useMemo(() => prepareModelOptions(models), [models]);
-  const pendingFocus = useRef<{
-    key: string;
-    action?: string;
-    preserveQuery?: boolean;
-    select?: boolean;
-    canFocus: () => boolean;
-    complete: () => void;
-  } | null>(null);
-  useImperativeHandle(
-    controllerRef,
-    () => ({
-      focusModel(model, canFocus, complete, options) {
-        pendingFocus.current?.complete();
-        const key = modelIdentityKey(model);
-        if (!prepared.some((option) => modelIdentityKey(option) === key)) {
-          complete();
-          return;
-        }
-        pendingFocus.current = { key, canFocus, complete, ...options };
-        if (!options?.preserveQuery) setQuery("");
-        setActiveModelKey(key);
-      },
-    }),
-    [prepared],
-  );
-  useEffect(() => () => pendingFocus.current?.complete(), []);
   const groups = useMemo(
     () => groupPreparedModels(prepared, recent, query, common),
     [prepared, recent, query, common],
@@ -297,12 +254,10 @@ export function ModelList({
     fallbackActiveIndex.current = next;
     setActiveModelKey(options[next] ? modelIdentityKey(options[next]) : null);
   };
-  const grid = Boolean(renderActions);
   const getScrollElement = useCallback(() => listRef.current, []);
   const estimateSize = useCallback(
-    (index: number) =>
-      rows[index]?.kind === "heading" ? 28 : (optionSize ?? 48),
-    [rows, optionSize],
+    (index: number) => (rows[index]?.kind === "heading" ? 28 : 48),
+    [rows],
   );
   const getItemKey = useCallback((index: number) => rows[index]!.key, [rows]);
   const virtualizer = useVirtualizer({
@@ -319,9 +274,6 @@ export function ModelList({
       return indexes.sort((left, right) => left - right);
     },
   });
-  useEffect(() => {
-    virtualizer.measure();
-  }, [optionSize, virtualizer]);
   const visibleGroups = new Map<
     ModelGroup,
     ReturnType<typeof virtualizer.getVirtualItems>
@@ -339,44 +291,9 @@ export function ModelList({
     if (activeModelKey !== key) setActiveModelKey(key);
   }, [options, active, activeModelKey]);
   useLayoutEffect(() => {
-    if (activeRow !== undefined && (keyboardActive || pendingFocus.current))
+    if (activeRow !== undefined && keyboardActive)
       virtualizer.scrollToIndex(activeRow, { align: "auto" });
   }, [activeRow, keyboardActive, rows, virtualizer]);
-  useLayoutEffect(() => {
-    const request = pendingFocus.current;
-    if (!request) return;
-    if (
-      !request.canFocus() ||
-      !prepared.some((option) => modelIdentityKey(option) === request.key)
-    ) {
-      pendingFocus.current = null;
-      request.complete();
-      return;
-    }
-    const index = indexes.get(request.key);
-    if (index === undefined && request.preserveQuery) {
-      pendingFocus.current = null;
-      request.complete();
-      inputRef.current?.focus();
-      return;
-    }
-    if (index === undefined || activeModelKey !== request.key) return;
-    const target = document
-      .getElementById(`${id}-option-${index}`)
-      ?.querySelector<HTMLElement>(
-        request.action === "edit"
-          ? ".models-name-action:not(:disabled)"
-          : request.action
-            ? `[data-model-action="${request.action}"]:not(:disabled)`
-            : ".models-row-actions [data-model-action]:not(:disabled)",
-      );
-    // A just-revealed list may not have measured and mounted this row yet.
-    if (!target) return;
-    pendingFocus.current = null;
-    request.complete();
-    target.focus();
-    if (request.select) target.click();
-  });
   const navigate = (event: KeyboardEvent) => {
     if (event.defaultPrevented || isComposingKeyboardEvent(event.nativeEvent))
       return;
@@ -385,17 +302,12 @@ export function ModelList({
       ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)
     ) {
       event.preventDefault();
-      const start = grid && !keyboardActive;
       setKeyboardActive(true);
       activate(
         event.key === "ArrowDown"
-          ? start
-            ? 0
-            : active + 1
+          ? active + 1
           : event.key === "ArrowUp"
-            ? start
-              ? options.length - 1
-              : active - 1
+            ? active - 1
             : event.key === "Home"
               ? 0
               : options.length - 1,
@@ -405,53 +317,6 @@ export function ModelList({
       onSelect(options[active]!);
     } else onKeyDown?.(event);
   };
-  const navigateAction = (event: KeyboardEvent, index: number) => {
-    const target = event.target;
-    if (
-      event.defaultPrevented ||
-      isComposingKeyboardEvent(event.nativeEvent) ||
-      !(target instanceof HTMLElement) ||
-      !target.dataset.modelAction ||
-      target.matches(":disabled")
-    )
-      return;
-    const radio = target instanceof HTMLInputElement && target.type === "radio";
-    const previous =
-      event.key === "ArrowUp" || (radio && event.key === "ArrowLeft");
-    const next =
-      event.key === "ArrowDown" || (radio && event.key === "ArrowRight");
-    if (!previous && !next && !["Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const destination =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? options.length - 1
-          : radio
-            ? (index + (previous ? -1 : 1) + options.length) % options.length
-            : Math.max(
-                0,
-                Math.min(index + (previous ? -1 : 1), options.length - 1),
-              );
-    const model = options[destination];
-    if (!model) return;
-    if (destination === index) {
-      if (radio) target.click();
-      return;
-    }
-    // Native radio navigation only sees mounted rows. Route through the full
-    // filtered grid, mount/scroll the destination, then focus and select it.
-    pendingFocus.current?.complete();
-    pendingFocus.current = {
-      key: modelIdentityKey(model),
-      action: target.dataset.modelAction,
-      select: radio,
-      canFocus: () => true,
-      complete: () => {},
-    };
-    setKeyboardActive(true);
-    activate(destination);
-  };
   return (
     <>
       <div className="model-picker__search">
@@ -459,9 +324,9 @@ export function ModelList({
         <input
           ref={inputRef}
           role="combobox"
-          aria-label={grid ? "Search available models" : "Search models"}
+          aria-label={searchLabel}
           aria-autocomplete="list"
-          aria-haspopup={grid ? "grid" : "listbox"}
+          aria-haspopup="listbox"
           aria-expanded="true"
           aria-controls={`${id}-list`}
           aria-activedescendant={
@@ -472,7 +337,7 @@ export function ModelList({
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
-            setKeyboardActive(!grid);
+            setKeyboardActive(true);
             fallbackActiveIndex.current = 0;
             setActiveModelKey(null);
             virtualizer.scrollToOffset(0);
@@ -493,23 +358,16 @@ export function ModelList({
         ref={listRef}
         data-keyboard-active={keyboardActive}
         id={`${id}-list`}
-        tabIndex={grid ? undefined : -1}
-        onKeyDown={grid ? undefined : navigate}
-        {...{
-          role: grid ? "grid" : "listbox",
-          "aria-label": "Available models",
-          "aria-activedescendant":
-            !grid && keyboardActive && options[active]
-              ? `${id}-option-${active}`
-              : undefined,
-          "aria-rowcount": grid ? options.length : undefined,
-        }}
-        className={`model-picker__list ${options.length ? "" : "model-picker__list--empty"}`}
-        style={
-          grid && options.length
-            ? { height: Math.min(340, virtualizer.getTotalSize()) }
+        tabIndex={-1}
+        onKeyDown={navigate}
+        role="listbox"
+        aria-label="Available models"
+        aria-activedescendant={
+          keyboardActive && options[active]
+            ? `${id}-option-${active}`
             : undefined
         }
+        className={`model-picker__list ${options.length ? "" : "model-picker__list--empty"}`}
       >
         <div
           className="model-picker__rows"
@@ -519,7 +377,7 @@ export function ModelList({
             <div
               key={group.common ? "common" : `provider/${group.provider}`}
               {...{
-                role: grid ? "rowgroup" : "group",
+                role: "group",
                 "aria-label": group.provider,
               }}
             >
@@ -555,45 +413,27 @@ export function ModelList({
                 const { model, index, key } = row;
                 const selected = key === currentKey;
                 const name = model.name ?? model.id;
-                const showId = !grid || name !== model.id;
                 const matches = modelSearchHighlights(model, query);
                 return (
                   <div
                     key={key}
                     id={`${id}-option-${index}`}
-                    {...(grid
-                      ? {
-                          role: "row",
-                          "aria-selected": selected,
-                          "aria-rowindex": index + 1,
-                        }
-                      : {
-                          role: "option",
-                          "aria-selected": selected,
-                          "aria-posinset": index + 1,
-                          "aria-setsize": options.length,
-                        })}
+                    role="option"
+                    aria-selected={selected}
+                    aria-posinset={index + 1}
+                    aria-setsize={options.length}
                     style={style}
                     title={`${model.name ?? model.id} — ${model.provider}/${model.id}`}
-                    className={`dropdown__option model-picker__option ${grid ? "model-picker__option--actions" : ""} ${index === active && keyboardActive ? "dropdown__option--active" : ""}`}
-                    onMouseDown={
-                      grid ? undefined : (event) => event.preventDefault()
-                    }
+                    className={`model-picker__option ${index === active && keyboardActive ? "model-picker__option--active" : ""}`}
+                    onMouseDown={(event) => event.preventDefault()}
                     onPointerMove={(event) => {
                       if (event.pointerType === "touch") return;
                       setKeyboardActive(false);
                       activate(index);
                     }}
-                    onFocus={grid ? () => activate(index) : undefined}
-                    onKeyDown={
-                      grid ? (event) => navigateAction(event, index) : undefined
-                    }
-                    onClick={grid ? undefined : () => onSelect?.(model)}
+                    onClick={() => onSelect?.(model)}
                   >
-                    <span
-                      role={grid ? "gridcell" : undefined}
-                      className="model-picker__option-copy"
-                    >
+                    <span className="model-picker__option-copy">
                       <span className="model-picker__name">
                         <span className="model-picker__name-text">
                           <SearchMatchText text={name} ranges={matches.name} />
@@ -603,50 +443,33 @@ export function ModelList({
                             Router
                           </span>
                         ) : null}
-                        {renderNameAction?.(model, index === active)}
                       </span>
-                      {group.common || showId ? (
-                        <span className="model-picker__id">
-                          {group.common ? (
-                            <>
-                              <SearchMatchText
-                                text={model.provider}
-                                ranges={matches.provider}
-                              />
-                              {showId ? "/" : ""}
-                            </>
-                          ) : null}
-                          {showId ? (
+                      <span className="model-picker__id">
+                        {group.common ? (
+                          <>
                             <SearchMatchText
-                              text={model.id}
-                              ranges={matches.id}
+                              text={model.provider}
+                              ranges={matches.provider}
                             />
-                          ) : null}
+                            /
+                          </>
+                        ) : null}
+                        <SearchMatchText text={model.id} ranges={matches.id} />
+                      </span>
+                    </span>
+                    <span className="model-picker__badges">
+                      {!selected && recentKeys.has(key) ? (
+                        <span className="model-picker__badge model-picker__badge--recent">
+                          Recent
                         </span>
                       ) : null}
+                      {model.reasoning === false ? (
+                        <span className="model-picker__badge model-picker__badge--neutral">
+                          No thinking
+                        </span>
+                      ) : null}
+                      {selected ? <Check size={12} aria-hidden /> : null}
                     </span>
-                    {renderActions ? (
-                      <div
-                        role="gridcell"
-                        className="models-actions models-row-actions"
-                      >
-                        {renderActions(model, index === active)}
-                      </div>
-                    ) : (
-                      <span className="model-picker__badges">
-                        {!selected && recentKeys.has(key) ? (
-                          <span className="model-picker__badge model-picker__badge--recent">
-                            Recent
-                          </span>
-                        ) : null}
-                        {model.reasoning === false ? (
-                          <span className="model-picker__badge model-picker__badge--neutral">
-                            No thinking
-                          </span>
-                        ) : null}
-                        {selected ? <Check size={12} aria-hidden /> : null}
-                      </span>
-                    )}
                   </div>
                 );
               })}

@@ -126,9 +126,6 @@ export const Welcome = memo(function Welcome({
   const [projectFileRoot, setProjectFileRoot] = useState<string | null>(null);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
-    null,
-  );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [recentOpen, setRecentOpen] = useState(() =>
@@ -836,7 +833,6 @@ export const Welcome = memo(function Welcome({
             event.preventDefault();
             void start();
           }}
-          sizeActionSlot={sizeActionSlot}
         />
         <div className="composer__meta">
           <div className="composer__selectors">
@@ -907,7 +903,6 @@ export const Welcome = memo(function Welcome({
                   ? "Thinking unavailable for this model"
                   : "Thinking level"
               }
-              direction="up"
               value={thinkingDefault ? "" : thinkingLevel}
               display={
                 thinkingDefault
@@ -938,7 +933,6 @@ export const Welcome = memo(function Welcome({
             onAdd={addProjectFile}
           />
           {attachmentInput.button}
-          <span className="composer__action-slot" ref={setSizeActionSlot} />
           <span className="composer__spacer" />
           <button
             type="submit"

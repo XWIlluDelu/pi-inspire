@@ -555,20 +555,28 @@
   padding: var(--space-1);
 }
 
-.composer-dock > .composer .composer__input-wrap {
+.composer__input[data-expanded] {
+  height: 56dvh;
+  max-height: 56dvh;
+}
+
+@supports not (field-sizing: content) {
+  .composer__input { height: 4lh; }
+}
+
+.composer .composer__input-wrap {
   /* The dock can compress this row. The textarea and form keep one line. */
   min-height: 0;
 }
 
-.composer__action-slot {
-  display: contents;
-}
-
 .composer__size-action {
-  align-self: center;
+  align-self: flex-end;
+  margin-inline-end: var(--space-2);
 }
 
 .composer__input {
+  field-sizing: content;
+  max-height: var(--editor-compact-height, 40dvh);
   min-height: calc(1lh + 4px);
   width: 100%;
   padding-block: 2px;
@@ -671,187 +679,50 @@
 }
 
 /* Pixel-stable labels belong to both composers, independent of adapters. */
-.composer__selectors .model-picker__trigger-copy,
-.composer__selectors .dropdown__value {
+.composer__selectors .model-picker__trigger-copy {
   width: calc-size(max-content, round(up, size, 1px));
 }
 
-/* Dropdown: the themed replacement for native selects. The trigger is the
-   quiet chip used in the composer; `.dropdown--field` restyles it as a
-   bordered form field for Settings. The menu is a token-styled listbox —
-   the native option popup is OS-drawn and can match neither theme. */
-.dropdown {
-  position: relative;
-  display: inline-flex;
+.native-select {
+  max-width: 100%;
   min-width: 0;
-}
-
-.dropdown__trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  padding: 3px var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    border-color var(--dur-micro) var(--ease-standard),
-    box-shadow var(--dur-micro) var(--ease-standard);
-}
-
-.dropdown__trigger:hover:where(:not(:disabled)),
-.dropdown__trigger[aria-expanded="true"]:where(:not(:disabled)) {
-  background: var(--bg-inset);
   color: var(--ink);
+  color-scheme: inherit;
+  font: inherit;
+  font-size: var(--text-sm);
+  background: var(--bg-canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 4px var(--space-2);
 }
 
-.dropdown__trigger:focus-visible {
+.native-select:focus-visible {
   outline: 2px solid var(--accent-focus);
   outline-offset: 1px;
 }
 
-.dropdown__trigger:disabled {
-  color: var(--faint);
-  cursor: default;
-}
+.native-select:disabled { color: var(--faint); }
 
-.dropdown__trigger svg {
-  flex: 0 0 auto;
-  color: var(--faint);
-  transition: transform var(--dur-micro) var(--ease-standard);
-}
-
-.dropdown__trigger[aria-expanded="true"] svg {
-  transform: rotate(180deg);
-}
-
-.dropdown__value {
-  min-width: 0;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Menus are portaled; use the shared placement hook, never an ancestor offset. */
-.dropdown__menu {
-  position: fixed;
-  z-index: 40;
-  min-width: 0;
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-/* Both native and composed Thinking menus use the same reading rhythm. */
-.dropdown__menu.thinking-selector__menu {
-  padding: 4px 0;
-}
-
-.thinking-selector__menu > .dropdown__option {
-  width: calc(100% - 12px);
-  margin-inline: 6px;
-  min-height: 30px;
-  padding: 0 6px;
-}
-
-@media (pointer: coarse) {
-  .thinking-selector__menu > .dropdown__option { min-height: 44px; }
-}
-
-.dropdown__option {
+.composer-thinking-control {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-sm);
-  color: var(--ink);
-  white-space: nowrap;
-  cursor: pointer;
+  gap: 2px;
 }
 
-.dropdown__option--active {
-  background: var(--accent-tint);
-}
-
-@media (hover: hover) {
-  :is(.dropdown__menu, .model-picker__list)[data-keyboard-active="false"] .dropdown__option:hover {
-    background: var(--accent-tint);
-  }
-}
-
-.dropdown__option[aria-selected="true"] {
-  color: var(--accent-deep);
-  font-weight: 500;
-}
-
-.dropdown__option svg {
-  flex: 0 0 auto;
-  color: var(--accent-deep);
-}
-
-.dropdown__option-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.dropdown__option-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dropdown__option--described {
-  white-space: normal;
-}
-
-.dropdown__option-description {
+.thinking-select {
+  max-width: 115px;
+  border-color: transparent;
+  background: transparent;
   color: var(--muted);
-  font-size: var(--text-xs);
-  line-height: 1.45;
 }
 
-@media (pointer: coarse) {
-  .dropdown__menu > .dropdown__option {
-    min-height: 44px;
-  }
+.choice-panel { display: inline-flex; }
+.choice-panel__body {
+  position: fixed;
+  z-index: 40;
+  overflow: auto;
 }
-
-/* Bordered form-field variant (Settings): follows the text-field focus
-   grammar — accent border plus soft tint halo. */
-.dropdown--field .dropdown__trigger {
-  min-width: 176px;
-  justify-content: space-between;
-  padding: var(--space-1) var(--space-2);
-  border-color: var(--hairline);
-  background: var(--bg-canvas);
-  color: var(--ink);
-}
-
-.dropdown--field .dropdown__trigger:hover:where(:not(:disabled)) {
-  background: var(--bg-canvas);
-  border-color: color-mix(in srgb, var(--ink) 28%, transparent);
-}
-
-.dropdown--field .dropdown__trigger:focus-visible,
-.dropdown--field .dropdown__trigger[aria-expanded="true"]:where(:not(:disabled)) {
-  outline: none;
-  background: var(--bg-canvas);
-  border-color: var(--accent-focus);
-  box-shadow: 0 0 0 3px var(--accent-tint);
-}
-
-.dropdown--field .dropdown__trigger:disabled {
-  color: var(--faint);
-}
+.choice-panel__body[hidden] { display: none; }
 
 .composer__spacer {
   flex: 1;
@@ -1418,6 +1289,32 @@
   min-width: 0;
 }
 
+.model-picker__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 3px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+.model-picker__trigger:is(:hover, [aria-expanded="true"]):not(:disabled) {
+  background: var(--bg-inset);
+  color: var(--ink);
+}
+.model-picker__trigger:focus-visible { outline: 2px solid var(--accent-focus); }
+.model-picker__trigger:disabled { color: var(--faint); }
+.model-picker__trigger svg { flex: 0 0 auto; }
+.model-picker__value {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .model-picker__trigger-copy,
 .model-picker__option-copy {
   display: flex;
@@ -1438,6 +1335,8 @@
 }
 
 .model-picker__menu {
+  position: fixed;
+  z-index: 40;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -1498,7 +1397,14 @@
 }
 
 .model-picker__option {
-  padding-inline: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-radius: var(--radius-control);
+  padding: var(--space-1) 6px;
+  font-size: var(--text-sm);
+  cursor: pointer;
   white-space: normal;
 }
 
@@ -1536,7 +1442,7 @@
   white-space: nowrap;
 }
 
-.model-picker__option.dropdown__option--active {
+.model-picker__option--active {
   background: var(--accent-tint);
 }
 

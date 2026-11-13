@@ -152,9 +152,6 @@ export const CommandPalette = memo(function CommandPalette({
   const renaming = renameSessionId !== null;
   const [renameValue, setRenameValue] = useState("");
   const [renameInitialValue, setRenameInitialValue] = useState("");
-  const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
-    null,
-  );
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const renameIncarnationRef = useRef(0);
@@ -786,7 +783,6 @@ export const CommandPalette = memo(function CommandPalette({
                   void submitPreparation();
                 }
               }}
-              sizeActionSlot={sizeActionSlot}
             />
             {isBusyRunState(state.runState) &&
             ["prompt", "skill"].includes(preparedCommand?.source ?? "") ? (
@@ -812,7 +808,6 @@ export const CommandPalette = memo(function CommandPalette({
               </div>
             ) : null}
             <div className="palette__prepare-actions">
-              <span className="composer__action-slot" ref={setSizeActionSlot} />
               <button
                 type="button"
                 className="button button--quiet"

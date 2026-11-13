@@ -61,11 +61,6 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   await expect(dialog.getByAltText("Output pipeline")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  const showActions = resources.getByRole("button", {
-    name: "Show file actions",
-    exact: true,
-  });
-  if (await showActions.isVisible()) await showActions.click();
   await resources.getByRole("button", { name: "Source", exact: true }).click();
   await expect(
     resources.getByRole("region", { name: "File source" }),
@@ -96,7 +91,6 @@ test("Markdown and Notebook figures share scoped galleries while authored links 
   ).toBeEnabled();
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
-  if (await showActions.isVisible()) await showActions.click();
   const source = resources.getByRole("button", { name: "Source", exact: true });
   const before = (await source.boundingBox())!;
   await source.click();

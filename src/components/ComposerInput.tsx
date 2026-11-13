@@ -2,6 +2,7 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { Maximize2, Minimize2 } from "lucide-react";
 import {
   type ClipboardEventHandler,
+  type CSSProperties,
   type KeyboardEventHandler,
   type RefObject,
   useCallback,
@@ -12,7 +13,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import type { ModelOption } from "../../shared/contracts";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import {
@@ -306,7 +306,6 @@ export function ComposerInput({
   initialCaretAtEnd = false,
   onPaste,
   onKeyDown,
-  sizeActionSlot,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -329,12 +328,10 @@ export function ComposerInput({
   initialCaretAtEnd?: boolean;
   onPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
-  sizeActionSlot: HTMLSpanElement | null;
 }) {
   const completionId = useId();
   const editorId = useId();
   const [expanded, setExpanded] = useState(false);
-  const [canExpand, setCanExpand] = useState(false);
   const [completionTruncated, setCompletionTruncated] = useState(false);
   const [completion, setCompletion] = useState<CaretCompletion | null>(null);
   const [completionFiles, setCompletionFiles] = useState<ProjectFileResult[]>(
@@ -386,41 +383,6 @@ export function ComposerInput({
     setCompletion(null);
   }, []);
   const inputValueRef = useRef(value);
-  const resizeEditor = useCallback(() => {
-    const input = textareaRef.current;
-    if (!input) return;
-    const limit = Math.floor(
-      (window.visualViewport?.height ?? window.innerHeight) *
-        (expanded ? 0.56 : maxHeightRatio),
-    );
-    const scrollTop = input.scrollTop;
-    input.style.height = "auto";
-    input.style.overflowY = "hidden";
-    const height = input.scrollHeight + 1;
-    input.style.height = `${expanded ? limit : Math.min(height, limit)}px`;
-    input.style.removeProperty("overflow-y");
-    input.scrollTop = scrollTop;
-    setCanExpand(height > input.clientHeight && !expanded);
-  }, [expanded, maxHeightRatio]);
-
-  useLayoutEffect(resizeEditor, [resizeEditor, value]);
-
-  useEffect(() => {
-    let frame = 0;
-    const update = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(resizeEditor);
-    };
-    const observer = new ResizeObserver(update);
-    if (inputWrapRef.current) observer.observe(inputWrapRef.current);
-    window.visualViewport?.addEventListener("resize", update);
-    return () => {
-      observer.disconnect();
-      window.visualViewport?.removeEventListener("resize", update);
-      cancelAnimationFrame(frame);
-    };
-  }, [resizeEditor]);
-
   useEffect(() => {
     if (value !== inputValueRef.current) setCompletion(null);
     inputValueRef.current = value;
@@ -647,6 +609,12 @@ export function ComposerInput({
           ref={textareaRef}
           id={editorId}
           className="composer__input"
+          data-expanded={expanded || undefined}
+          style={
+            {
+              "--editor-compact-height": `${maxHeightRatio * 100}dvh`,
+            } as CSSProperties
+          }
           aria-autocomplete="list"
           aria-controls={completion ? completionId : undefined}
           aria-activedescendant={
@@ -733,35 +701,27 @@ export function ComposerInput({
           {commandUsageHint(value, includeNativeCommands)}
         </div>
       ) : null}
-      {sizeActionSlot && (expanded || canExpand)
-        ? createPortal(
-            <button
-              type="button"
-              className="composer__size-action icon-button"
-              aria-label={expanded ? "Collapse editor" : "Expand editor"}
-              title={expanded ? "Collapse editor" : "Expand editor"}
-              aria-expanded={expanded}
-              aria-controls={editorId}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                const element = textareaRef.current;
-                const start = element?.selectionStart ?? 0;
-                const end = element?.selectionEnd ?? start;
-                const direction = element?.selectionDirection ?? "none";
-                setExpanded((current) => !current);
-                element?.focus({ preventScroll: true });
-                element?.setSelectionRange(start, end, direction);
-              }}
-            >
-              {expanded ? (
-                <Minimize2 size={16} aria-hidden />
-              ) : (
-                <Maximize2 size={16} aria-hidden />
-              )}
-            </button>,
-            sizeActionSlot,
-          )
-        : null}
+      {value || expanded ? (
+        <button
+          type="button"
+          className="composer__size-action icon-button"
+          aria-label={expanded ? "Collapse editor" : "Expand editor"}
+          title={expanded ? "Collapse editor" : "Expand editor"}
+          aria-expanded={expanded}
+          aria-controls={editorId}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            setExpanded(!expanded);
+            textareaRef.current?.focus({ preventScroll: true });
+          }}
+        >
+          {expanded ? (
+            <Minimize2 size={16} aria-hidden />
+          ) : (
+            <Maximize2 size={16} aria-hidden />
+          )}
+        </button>
+      ) : null}
     </>
   );
 }

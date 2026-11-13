@@ -1,6 +1,5 @@
 import {
   Archive,
-  ChevronRight,
   CornerUpLeft,
   GitFork,
   Image as ImageIcon,
@@ -49,6 +48,7 @@ import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ActivityItemBoundary } from "./transcript-activity-visibility";
 import {
+  CardHeader,
   GenericCard,
   type StaticVisibility,
   ThinkingCard,
@@ -397,50 +397,30 @@ export const ContextCheckpointRow = memo(function ContextCheckpointRow({
   return (
     <div className="turn turn--checkpoint">
       <div className="context-checkpoint">
-        <div className="context-checkpoint__head">
-          <button
-            type="button"
-            className="context-checkpoint__toggle"
-            aria-label={title}
-            aria-expanded={open}
-            aria-controls={bodyId}
-            aria-describedby={tokens ? metricId : undefined}
-            onClick={() => setOpen(!open)}
-          >
-            <ChevronRight
-              className="context-checkpoint__chevron"
-              size={14}
-              aria-hidden
-            />
-            <Archive
-              size={14}
-              className="context-checkpoint__icon"
-              aria-hidden
-            />
-            <span className="context-checkpoint__title">{title}</span>
-          </button>
-          {tokens || (open && summary) ? (
-            <div className="context-checkpoint__details">
-              {tokens ? (
-                <span
-                  id={metricId}
-                  className="context-checkpoint__metric"
-                  title={tokensDescription}
-                >
-                  {tokens}
-                </span>
-              ) : null}
-              {open && summary ? (
-                <CopyAction
-                  text={summary}
-                  label={compacted ? "Compaction summary" : "Branch summary"}
-                  className="context-checkpoint__copy"
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-        <div id={bodyId} className="context-checkpoint__body" hidden={!open}>
+        <CardHeader
+          expanded={open}
+          icon={<Archive size={14} aria-hidden />}
+          label={title}
+          toggleLabel={title}
+          accessibleLabel={title}
+          controlsId={bodyId}
+          describedBy={tokens ? metricId : undefined}
+          onToggle={() => setOpen(!open)}
+          summary={
+            tokens && (
+              <span
+                id={metricId}
+                className="context-checkpoint__metric"
+                title={tokensDescription}
+              >
+                {tokens}
+              </span>
+            )
+          }
+          copyText={summary}
+          copyLabel={compacted ? "Compaction summary" : "Branch summary"}
+        />
+        <div id={bodyId} className="card__body" hidden={!open}>
           {open ? (
             summary ? (
               <RichText text={displaySummary} />

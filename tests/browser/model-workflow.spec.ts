@@ -100,7 +100,7 @@ test("New inherits the selected Router and hands off a multiline draft", async (
   ).toHaveText("Auto route");
   await expect(
     page.getByRole("combobox", { name: "Thinking level", exact: true }),
-  ).toHaveText("High");
+  ).toHaveValue("high");
   await page.getByRole("button", { name: "Model", exact: true }).click();
   const option = page.getByRole("option", { name: /Auto route.*Router/ });
   await expect(option.getByText("Router", { exact: true })).toBeVisible();

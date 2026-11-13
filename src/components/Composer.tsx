@@ -242,9 +242,6 @@ export const Composer = memo(function Composer() {
   } | null>(null);
   const draft = useDraftText(sessionId);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
-    null,
-  );
   const [deliveryBehavior, setDeliveryBehavior] = useState<
     "steer" | "followUp"
   >("steer");
@@ -485,7 +482,6 @@ export const Composer = memo(function Composer() {
         label="Message"
         onKeyDown={onKeyDown}
         onPaste={attachmentInput.onPaste}
-        sizeActionSlot={sizeActionSlot}
       />
       {deliveryBusy ? (
         <div className="composer__delivery">
@@ -542,7 +538,6 @@ export const Composer = memo(function Composer() {
                 ? "Thinking level"
                 : "Thinking unavailable for this model"
             }
-            direction="up"
             value={state.thinkingLevel}
             display={
               state.thinkingLevelPending
@@ -592,7 +587,6 @@ export const Composer = memo(function Composer() {
         >
           <History size={16} aria-hidden />
         </button>
-        <span className="composer__action-slot" ref={setSizeActionSlot} />
         <span className="composer__spacer" />
         <ContextMeter />
         {abortable ? (

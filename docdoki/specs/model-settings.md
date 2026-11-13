@@ -43,22 +43,22 @@ Models settings separates three tasks:
 
 | Section | Controls |
 | --- | --- |
-| Models | Searchable available models; Common membership; one Default; saved-default Clear; default thinking; ordered common rules; declared-model editing |
+| Models | Searchable available models; selected-model details for Common, default and declaration actions; saved-default Clear; default thinking; ordered common rules |
 | Login & API keys | Saved credential status and Manage; Connect provider; provider → method → login navigation |
 | Custom providers | Collapsed provider/model list with counts, Add and Edit/Remove; connection fields and advanced model declarations |
 
-Common uses independent checkboxes; Default is a single radio choice whose Clear action removes the
-saved value. Reselecting Default keeps it selected. “Model default” clears explicit default thinking.
-Controls, disclosures and focus styling follow [[design-system]].
+Select a model to inspect its identity and actions below the list. Common uses a checkbox for
+direct membership and a rule action for pattern-based membership. Set as default saves one model,
+and Clear removes that saved value. “Model default” clears explicit default thinking. Controls,
+disclosures and focus styling follow [[design-system]].
 
-Large lists stay reachable through search and keyboard despite virtualization. Up/Down and Home/End
-navigate the full filtered results. Default also supports Left/Right and wrapping selection;
-Common navigation moves focus without changing membership. Focus waits for an unmounted target row.
-Search navigation stays neutral until explicitly used.
+The picker and Settings share one virtualized list. Search, Up/Down and Home/End reach the full
+filtered results. In Settings, Enter or a click selects a model for inspection, and the detail
+controls have their own tab stops.
 
-Display names lead. Provider-group captions omit the repeated provider, while Common shows
-provider/ID. The picker keeps its ID line and selected checkmark/`aria-selected`; Settings omits
-an identical repeated ID. Full-identity tooltips remain available. Search emphasizes original-text
+Display names lead, followed by the model ID. Provider-group captions omit the repeated provider,
+while Common shows provider/ID. The list shows a checkmark and `aria-selected` for the current
+choice. Full-identity tooltips remain available. Search emphasizes original-text
 matches using the existing locale-folded literal-first/greedy-subsequence rule, including queries
 spanning provider/ID, without changing row capacity, ordering or badges.
 
@@ -178,10 +178,9 @@ scrolls. [[design-system]] defines scrolling in short windows. Errors stay in th
 
 Drafts belong to the provider/model and creation mode. Switching categories retains drafts,
 search and loaded data. Hidden forms wait to take focus or scroll. Back and Cancel discard the form
-draft and restore the originating search, disclosure state, scroll and focus. Creating a provider
-focuses Add model. Creating a model focuses its row. Editing a model preserves the query and
-returns focus to search if the new identity falls outside it. Virtualized rows receive focus after
-mounting. Common and Default saves restore row focus unless the user has moved it.
+draft and restore the browsing context and originating control. Creating a provider focuses Add
+model. Creating or renaming an available model selects the saved identity for inspection. Common
+and Default writes leave focus under the user's control.
 
 Candidate declarations are validated in the existing isolated metadata worker against the same
 agent directory, selected working directory and project-trust policy as Pi. Extension provider

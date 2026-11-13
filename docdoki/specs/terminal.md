@@ -223,20 +223,15 @@ are reached through their tabs. The pane reads the catalog when the shared strip
 existing terminal tabs remain reachable after refresh, including from Files. Background catalog
 polling remains limited to the active terminal surface.
 
-Profile choice, connection/control state, search, focus and More form a compact floating group at
-the same 28px desktop / 32px touch/narrow button tier as file actions, with 16px glyphs and shared
-padding. Closely related controls keep 2px gaps, with 6px between the profile, view, utility and
-collapse groups. Search/selection overlays use the same 8px top / 12px right anchor as floating tools.
-The group sits at the output's top-right, with no second tab/header row; a foreign-project
-context row stays above it, so Back to current project is never covered. Its status/focus and
-search slots are reserved before the view mounts, so connection updates do not resize it. Normal
-writable state has no visible Controlling label; its accessible state/tooltip and keyboard-focus
-action remain. Non-writable states keep connection feedback, the ownership message and Take control
-where ready. An explicit Hide/Show toggle and Escape control the group's visibility; terminal
-output/input interactions and background output preserve that choice. Search, selection actions,
-copy confirmation and a connection error temporarily own the same corner; the group is unavailable until those
-overlays close, and its expanded/collapsed state is unchanged. The group has no default-New button;
-the profile chooser keeps named alternatives.
+Profile choice, connection and control state, search, focus and More stay in a toolbar above
+terminal output. In the shared dock, the toolbar uses the same 28px desktop and 32px touch/narrow
+button tier as file actions, with 16px glyphs. A foreign-project context row stays above the tools
+and keeps Back to current project available. The status, focus and search slots are reserved
+before the view mounts. Writable terminals expose control state in an accessible name and tooltip.
+Non-writable terminals keep connection feedback, the ownership message and Take control where
+ready. Search, selection actions, copy confirmation and connection errors have their own output
+overlays. The Terminal shortcut creates a default terminal and the toolbar profile chooser offers
+named alternatives.
 At pane widths up to 480px, Focus remains in More. Focus mode and same-origin focused windows
 attach the existing terminal and retain their own accessible tab strip.
 

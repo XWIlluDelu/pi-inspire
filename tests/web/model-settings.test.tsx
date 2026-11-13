@@ -46,6 +46,11 @@ async function openDeclarations() {
     await within(section).findByRole("button", { name: /^Edit provider / });
   }
 }
+async function inspectModel(name: string) {
+  const list = await screen.findByRole("listbox", { name: "Available models" });
+  fireEvent.click(within(list).getByRole("option", { name: new RegExp(name) }));
+}
+
 beforeEach(() => {
   for (const mock of Object.values(fixture.host)) mock.mockReset();
   mockModelMenuLayout();
@@ -91,9 +96,8 @@ describe("Models settings configuration and ownership", () => {
         snapshot: saved,
       });
       render(<ModelsSettings />);
-      const choice = await screen.findByRole("radio", {
-        name: "Default: Claude Haiku",
-      });
+      await inspectModel("Claude Haiku");
+      const choice = screen.getByRole("button", { name: "Set as default" });
       if (phase === "settings reread") {
         await act(async () => {
           warmup.resolve("Obsolete catalog warning");
@@ -101,13 +105,13 @@ describe("Models settings configuration and ownership", () => {
         });
       }
       fireEvent.click(choice);
-      await waitFor(() => expect(choice).toBeChecked());
+      await waitFor(() => expect(choice).toBeDisabled());
 
       await act(async () => {
         if (phase === "refresh") warmup.resolve("Obsolete catalog warning");
         else reread.reject(new Error("Obsolete settings failure"));
       });
-      expect(choice).toBeChecked();
+      expect(choice).toBeDisabled();
       expect(
         screen.queryByText(
           /Obsolete catalog warning|Obsolete settings failure/,
@@ -211,7 +215,8 @@ describe("Models settings configuration and ownership", () => {
     expect(
       await screen.findByText("Project overrides are unavailable"),
     ).toBeVisible();
-    const choice = screen.getByRole("radio", { name: "Default: Claude Haiku" });
+    await inspectModel("Claude Haiku");
+    const choice = screen.getByRole("button", { name: "Set as default" });
     expect(choice).toBeEnabled();
     fireEvent.click(choice);
     await waitFor(() =>
@@ -231,10 +236,11 @@ describe("Models settings configuration and ownership", () => {
     const thinking = await screen.findByRole("combobox", {
       name: "Default thinking",
     });
-    expect(thinking).toHaveTextContent("Unavailable");
+    expect(thinking).toHaveValue("");
     expect(thinking).toBeDisabled();
+    await inspectModel("Claude Haiku");
     expect(
-      screen.getByRole("radio", { name: "Default: Claude Haiku" }),
+      screen.getByRole("button", { name: "Set as default" }),
     ).toBeDisabled();
   });
 
@@ -271,14 +277,15 @@ describe("Models settings configuration and ownership", () => {
       },
     );
     render(<ModelsSettings />);
-    const list = await screen.findByRole("grid", { name: "Available models" });
+    const list = await screen.findByRole("listbox", {
+      name: "Available models",
+    });
     expect(
       document.querySelector(".models-default-value__name"),
     ).toHaveTextContent("Local model");
     expect(within(list).queryByText("Local model")).not.toBeInTheDocument();
-    fireEvent.click(
-      within(list).getByRole("checkbox", { name: "Common: GPT 5" }),
-    );
+    await inspectModel("GPT 5");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Common: GPT 5" }));
     await waitFor(() =>
       expect(fixture.host.saveModelPreferences).toHaveBeenCalledWith(
         { sessionId: "one" },
@@ -294,18 +301,12 @@ describe("Models settings configuration and ownership", () => {
       ),
     );
     expect(fixture.host.editModelConfig).not.toHaveBeenCalled();
-    const patternRow = within(list)
-      .getByText("Claude Haiku")
-      .closest("[role=row]")! as HTMLElement;
-    expect(within(patternRow).getByText("Via rule")).toBeInTheDocument();
-    expect(within(patternRow).queryByRole("checkbox")).not.toBeInTheDocument();
+    await inspectModel("Claude Haiku");
     expect(
-      within(patternRow).getByRole("button", {
-        name: "Edit common pattern for Claude Haiku",
-      }),
-    ).toHaveAttribute("title", "Included by *haiku*:high — edit rule");
+      screen.queryByRole("checkbox", { name: "Common: Claude Haiku" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(
-      within(patternRow).getByRole("button", {
+      screen.getByRole("button", {
         name: "Edit common pattern for Claude Haiku",
       }),
     );
@@ -353,7 +354,8 @@ describe("Models settings configuration and ownership", () => {
     ];
     fixture.host.readModelSettings.mockResolvedValue(snapshot);
     render(<ModelsSettings />);
-    const remove = await screen.findByRole("checkbox", {
+    await inspectModel("Local model");
+    const remove = screen.getByRole("checkbox", {
       name: "Common: Local model",
     });
     expect(remove).toBeChecked();
@@ -434,7 +436,8 @@ describe("Models settings configuration and ownership", () => {
       },
     );
     render(<ModelsSettings />);
-    const action = await screen.findByRole("checkbox", {
+    await inspectModel("Claude Haiku");
+    const action = screen.getByRole("checkbox", {
       name: "Common: Claude Haiku",
     });
     const search = screen.getByRole("combobox", {

@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import type { RefObject } from "react";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import { Dropdown } from "./Dropdown";
+import { NativeSelect } from "./NativeSelect";
 import {
   TRANSCRIPT_SEARCH_SCOPES,
   type TranscriptSearchScope,
@@ -92,7 +92,7 @@ export function TranscriptUtilities({
         }}
       >
         <Search size={14} className="transcript-search__icon" aria-hidden />
-        <Dropdown
+        <NativeSelect
           label="Search scope"
           value={search.scope}
           options={TRANSCRIPT_SEARCH_SCOPES}

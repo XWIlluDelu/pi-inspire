@@ -1,6 +1,6 @@
-/* Compact transient menus share Dropdown's visual grammar.
-   Positioning, selection and action semantics stay with their owning component. */
-.dropdown__menu,
+/* Shared surface and action styles for compact menus. */
+.choice-panel__body,
+.model-picker__menu,
 .session-actions-menu,
 .terminal-menu__popover {
   padding: var(--space-1);
@@ -12,7 +12,7 @@
   animation: float-in var(--dur-standard) var(--ease-standard);
 }
 
-.dropdown__option,
+.choice-panel__body button,
 .session-actions-menu button,
 .terminal-menu__popover button,
 .terminal-menu__group > summary {

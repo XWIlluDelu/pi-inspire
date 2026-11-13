@@ -5,7 +5,7 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
-import { Dropdown } from "./Dropdown";
+import { ChoicePanel } from "./ChoicePanel";
 
 interface DockTab {
   id: string;
@@ -29,6 +29,7 @@ export function ContextTabStrip({
   tabs: readonly DockTab[];
 }) {
   const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
   const active = tabs.find((tab) => tab.selected)?.id;
   useLayoutEffect(() => {
     const strip = stripRef.current;
@@ -54,38 +55,55 @@ export function ContextTabStrip({
       </div>
       {tabs.length > 1 && (
         <div className="ctx__tab-overflow">
-          <Dropdown
+          <ChoicePanel
             label="Open tabs"
-            title="Open tabs"
-            value={active ?? ""}
-            emptyText="No matching tabs"
-            selectCurrent
-            menuClassName="ctx__open-tabs-menu"
-            display=""
-            indicator={<MoreHorizontal size={16} aria-hidden />}
-            header={
-              <input
-                aria-label="Find open tab"
-                placeholder="Find open tab"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            }
-            options={matching.map(({ id, label, title }) => ({
-              value: id,
-              label,
-              description: title === label ? undefined : title,
-            }))}
-            onChange={(id) => {
-              tabs.find((tab) => tab.id === id)?.select();
-              setQuery("");
-              requestAnimationFrame(() =>
-                stripRef.current
-                  ?.querySelector<HTMLElement>(selector(id))
-                  ?.focus(),
-              );
+            open={open}
+            setOpen={(next) => {
+              setOpen(next);
+              if (!next) setQuery("");
             }}
-          />
+            trigger={<MoreHorizontal size={16} aria-hidden />}
+            className="ctx__open-tabs-menu"
+          >
+            <input
+              aria-label="Find open tab"
+              placeholder="Find open tab"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  event.currentTarget.nextElementSibling
+                    ?.querySelector("button")
+                    ?.focus();
+                }
+              }}
+            />
+            <div className="ctx__open-tab-results">
+              {matching.length === 0 && <p>No matching tabs</p>}
+              {matching.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  aria-current={tab.selected || undefined}
+                  title={tab.title}
+                  onClick={() => {
+                    tab.select();
+                    setOpen(false);
+                    setQuery("");
+                    requestAnimationFrame(() =>
+                      stripRef.current
+                        ?.querySelector<HTMLElement>(selector(tab.id))
+                        ?.focus(),
+                    );
+                  }}
+                >
+                  {tab.label}
+                  {tab.title !== tab.label && <small>{tab.title}</small>}
+                </button>
+              ))}
+            </div>
+          </ChoicePanel>
         </div>
       )}
     </div>

@@ -1,18 +1,4 @@
-/* Generic status-bound choices composed with a native selector. */
-.dropdown--composed .dropdown__trigger { gap: 3px; }
-.dropdown .dropdown__trigger .status-choice-indicator svg { color: inherit; transform: none; transition: none; }
-.dropdown__menu.dropdown__menu--composed { padding: 0 0 4px; }
-.dropdown__menu--composed > .dropdown__option {
-  border: 0;
-  background: transparent;
-  text-align: left;
-  font-family: inherit;
-  cursor: pointer;
-}
-.dropdown__menu--composed > .dropdown__option[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-deep); }
-.dropdown__menu--composed > .dropdown__option:hover { background: var(--accent-tint); }
-.dropdown__menu--composed > .dropdown__option:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: -2px; }
-.dropdown__unavailable { padding: 6px 10px; color: var(--muted); font-size: var(--text-xs); }
+/* Status choices for extension controls. */
 .status-choice {
   font: var(--text-xs)/1.45 var(--font-sans);
   color: var(--body);
@@ -63,7 +49,6 @@
   background: var(--bg-control); color: var(--body); font: inherit; cursor: pointer;
 }
 @media (pointer: coarse) {
-  .dropdown__menu--composed > .dropdown__option { min-height: 44px; }
   .status-choice__track { height: 36px; }
   .status-choice input { height: 44px; }
   .status-choice__dots span:not([data-selected="true"]) { width: 6px; height: 6px; }

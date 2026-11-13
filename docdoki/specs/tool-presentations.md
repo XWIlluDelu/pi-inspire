@@ -3,7 +3,7 @@ purpose: Declarative presentations project tool and Thinking activity and select
 covers:
   - shared/tool-presentation-config.ts
   - src/presentation-adapters.ts
-  - src/components/{ComposerThinkingControl,StatusChoice,PresentationAdapterSettings,Dropdown,ExtensionDisplays}.tsx
+  - src/components/{ComposerThinkingControl,StatusChoice,PresentationAdapterSettings,ChoicePanel,ExtensionDisplays}.tsx
   - src/styles/status-choice.css
   - shared/tool-activity.ts
   - server/tool-presentation-config.ts
@@ -184,11 +184,10 @@ Runtime state and credentials stay outside presentation configuration.
 - Relative paths resolve beside the physical profile. Disabled modules are not read; malformed
   modules warn independently. Later exact identities replace earlier declarations, hidden status
   keys union, and the combined configuration remains bounded. Nested module inclusion is unsupported.
-- Status-bound discrete choices compose above the native Thinking options in both New and active
-  sessions. A shared capability filter uses each lifecycle's command inventory and the same
-  native-name precedence as completion; pages do not separately decide which adapters exist. New
-  discovers registrations from its prospective directory without starting a session or reading
-  another worker's mutable status.
+- Status-bound discrete choices open from the Extension controls panel beside the native Thinking
+  select in both New and active sessions. A shared capability filter uses each lifecycle's command
+  inventory and the same native-name precedence as completion. New discovers registrations from its
+  prospective directory without starting a session or reading another worker's mutable status.
 - Unchanged choices keep Pi defaults. Explicit choices remain draft intent until creation and must
   be confirmed before first input delivery. A failed or uncertain application leaves that input and
   artifacts in the created session instead of sending with an unintended setting.

@@ -172,7 +172,7 @@ test("context and extension glyphs follow Tool through live palette changes", as
       { palette, theme },
     );
     for (const glyph of [
-      checkpoint.locator(".context-checkpoint__icon"),
+      checkpoint.locator(".card__icon svg"),
       message.locator(".custom-message__head > svg"),
     ]) {
       await expect(glyph).toHaveCSS("color", tool);

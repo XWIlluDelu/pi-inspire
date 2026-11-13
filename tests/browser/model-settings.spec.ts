@@ -41,14 +41,13 @@ test("Manage models carries New's prospective project only for its Settings visi
       new URL(request.url()).pathname === "/api/model-settings" &&
       request.method() === "PATCH",
   );
-  const defaultModel = settings.getByRole("radio", {
-    name: "Default: Claude Haiku",
-  });
+  await settings.getByRole("option", { name: /Claude Haiku/ }).click();
+  const defaultModel = settings.getByRole("button", { name: "Set as default" });
   await defaultModel.click();
   expect(Object.fromEntries(new URL((await write).url()).searchParams)).toEqual(
     { cwd: target },
   );
-  await expect(defaultModel).toBeChecked();
+  await expect(defaultModel).toBeDisabled();
 
   await settings.press("Escape");
   await page
@@ -79,22 +78,12 @@ test("search, refresh and keyboard actions preserve the virtual model list and s
   const search = settings.getByRole("combobox", {
     name: "Search available models",
   });
-  const grid = settings.getByRole("grid", { name: "Available models" });
+  const list = settings.getByRole("listbox", { name: "Available models" });
   const refresh = settings.getByRole("button", {
     name: "Refresh available models",
   });
-  await search.fill("openai/z-039");
-  const matching = grid.getByRole("row", { name: /Model 39/ });
-  await expect(matching).toBeVisible();
-  await search.press("Enter");
-  await expect(matching.getByRole("radio")).not.toBeChecked();
-  await search.press("ArrowDown");
-  await expect(search).toHaveAttribute("aria-activedescendant", /.+/);
-  await search.press("Tab");
-  await expect(search).not.toHaveAttribute("aria-activedescendant");
-
-  await search.fill("");
-  const position = await grid.evaluate((element) => {
+  await expect(list.getByRole("option").first()).toBeVisible();
+  const position = await list.evaluate((element) => {
     element.scrollTop = 120;
     return element.scrollTop;
   });
@@ -106,72 +95,32 @@ test("search, refresh and keyboard actions preserve the virtual model list and s
   );
   await refresh.click();
   await refreshed;
-  await expect(refresh).toBeEnabled();
-  await expect
-    .poll(() => grid.evaluate((element) => element.scrollTop))
-    .toBe(position);
-  await search.fill("custom/local");
-  await expect(grid.getByRole("row", { name: /Local model/ })).toBeVisible();
-  await expect
-    .poll(() => grid.evaluate((element) => element.scrollTop))
-    .toBe(0);
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBe(position);
+  await search.fill("openai/z-039");
+  const matching = list.getByRole("option", { name: /Model 39/ });
+  await expect(matching).toBeVisible();
+  await search.press("Enter");
+  await expect(matching).toHaveAttribute("aria-selected", "true");
   expect(scenario.snapshot().saved.defaultModel).toBeNull();
-  await search.fill("");
-
-  const firstDefault = settings.getByRole("radio", {
-    name: "Default: Claude Haiku",
-  });
-  await firstDefault.click();
-  await expect(firstDefault).toBeChecked();
-  await expect(firstDefault).toBeFocused();
-
-  await firstDefault.press("End");
-  const lastDefault = settings.getByRole("radio", {
-    name: "Default: Model 39",
-    exact: true,
-  });
-  await expect(lastDefault).toBeChecked();
-  await expect(lastDefault).toBeFocused();
+  await settings.getByRole("button", { name: "Set as default" }).click();
   await expect
     .poll(() => scenario.snapshot().saved.defaultModel)
-    .toEqual({
-      provider: "openai",
-      id: "z-039",
-    });
-  await lastDefault.press("ArrowDown");
-  await expect(firstDefault).toBeChecked();
-  await expect(firstDefault).toBeFocused();
-
-  const firstCommon = settings.getByRole("checkbox", {
+    .toEqual({ provider: "openai", id: "z-039" });
+  await search.fill("Claude Haiku");
+  await search.press("Enter");
+  const commonChoice = settings.getByRole("checkbox", {
     name: "Common: Claude Haiku",
   });
-  await firstCommon.focus();
-  await firstCommon.press("Space");
-  await expect(firstCommon).toBeChecked();
-  await expect(firstCommon).toBeFocused();
-  const selected = scenario.snapshot().saved.defaultModel;
-  await firstCommon.press("End");
-  const lastCommon = settings.getByRole("checkbox", {
-    name: "Common: Model 39",
-    exact: true,
-  });
-  await expect(lastCommon).toBeFocused();
-  await expect(lastCommon).not.toBeChecked();
-  expect(scenario.snapshot().saved.defaultModel).toEqual(selected);
-  await lastCommon.press("Tab");
-  await expect(lastDefault).toBeFocused();
+  await commonChoice.press("Space");
+  await expect(commonChoice).toBeChecked();
+  await expect(commonChoice).toBeFocused();
 
-  await settings.getByRole("button", { name: "Clear default model" }).click();
-  await expect(settings.getByRole("radio", { checked: true })).toHaveCount(0);
   const thinking = settings.getByRole("combobox", { name: "Default thinking" });
+  await settings.getByRole("button", { name: "Clear default model" }).click();
   await expect(thinking).toBeFocused();
-  await expect(thinking).toHaveText(/^xhigh$/i);
+  await expect(thinking).toHaveValue("xhigh");
   expect(scenario.snapshot().saved.defaultModel).toBeNull();
-  await thinking.click();
-  await page
-    .getByRole("listbox", { name: "Default thinking", exact: true })
-    .getByRole("option", { name: /^Model default\b/ })
-    .click();
+  await thinking.selectOption("unset");
   await expect
     .poll(() => scenario.snapshot().saved.defaultThinkingLevel)
     .toBeNull();
@@ -202,6 +151,7 @@ test.describe("touch model editor", () => {
       name: "Search available models",
     });
     await search.fill("local");
+    await search.press("Enter");
     const opener = settings.getByRole("button", {
       name: "Edit model custom/local",
       exact: true,
@@ -210,7 +160,7 @@ test.describe("touch model editor", () => {
     await opener.scrollIntoViewIfNeeded();
     await expect(opener).toBeInViewport({ ratio: 1 });
     await expect(
-      settings.getByRole("radio", { name: "Default: Local model" }),
+      settings.getByRole("button", { name: "Set as default" }),
     ).toBeInViewport({ ratio: 1 });
     expect(
       await settings
@@ -272,11 +222,12 @@ test("first provider and model setup preserves the current model and composer dr
   });
   await draft.fill("Keep this unfinished draft while managing models");
   const model = page.getByRole("button", { name: "Model", exact: true });
-  const currentModel = await model.textContent();
   await model.click();
   {
     const search = page.getByRole("combobox", { name: "Search models" });
     await expect(search).toBeFocused();
+    // With the empty catalog, the trigger displays the current runtime model ID.
+    await expect(model).toHaveText("offline");
     await search.press("Tab");
     await expect(
       page.getByRole("button", { name: "Manage models", exact: true }),
@@ -331,11 +282,9 @@ test("first provider and model setup preserves the current model and composer dr
   const common = settings.getByRole("checkbox", {
     name: "Common: New available model",
   });
-  await expect(common).toBeFocused();
+  await expect(common).toBeVisible();
   await common.click();
-  await settings
-    .getByRole("radio", { name: "Default: New available model" })
-    .click();
+  await settings.getByRole("button", { name: "Set as default" }).click();
   await expect
     .poll(() => scenario.snapshot().saved.defaultModel)
     .toEqual({ provider: "new-provider", id: "new-model" });
@@ -351,7 +300,7 @@ test("first provider and model setup preserves the current model and composer dr
   await expect(draft).toHaveValue(
     "Keep this unfinished draft while managing models",
   );
-  await expect(model).toHaveText(currentModel!);
+  await expect(model).toHaveText("offline");
   expect(scenario.modelChanges).toEqual([]);
   expect(scenario.errors).toEqual([]);
 });

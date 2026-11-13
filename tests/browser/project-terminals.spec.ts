@@ -16,7 +16,6 @@ import {
   openProjectTerminal,
   pairAndOpen,
   pairedPage,
-  showTerminalControls,
 } from "./support/navigation";
 import { terminalWriteCommand } from "./support/terminal-command";
 import { terminalOperation } from "./support/terminal-operations";
@@ -252,7 +251,6 @@ test("project terminals and a lost create response survive browser reload", {
         (command) => navigator.clipboard.writeText(command),
         terminalWriteCommand("终端✓\n"),
       );
-      await showTerminalControls(page);
       await page.getByLabel("Terminal actions", { exact: true }).click();
       await page.getByRole("button", { name: "Paste into terminal" }).click();
       await expect(
@@ -316,7 +314,6 @@ test("project terminals and a lost create response survive browser reload", {
     expect(foreignResponse.ok()).toBe(true);
     const { result: foreign } = await foreignResponse.json();
     foreignId = foreign.id;
-    await showTerminalControls(page);
     await page.getByLabel("Terminal actions", { exact: true }).click();
     await page.getByLabel("Terminals in all projects", { exact: true }).click();
     await page
@@ -410,7 +407,6 @@ test("project terminals and a lost create response survive browser reload", {
       focusedPage.getByRole("status", { name: "Controlling", exact: true }),
     ).toBeVisible();
     await expect(focusedArrow).toBeEnabled();
-    await showTerminalControls(page);
     await expect(
       page.getByRole("status", { name: "View only", exact: true }),
     ).toBeVisible();
@@ -480,7 +476,6 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
     name: defaultLabel + " Default",
     exact: true,
   });
-  await showTerminalControls(page);
   await actions.press("Enter");
   await expect(projects).toBeVisible();
   await picker.press("Enter");
@@ -523,7 +518,6 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
     .getByRole("button", { name: "Focus terminal", exact: true })
     .click();
   await expect(page.locator(".terminal-pane--focused")).toBeVisible();
-  await showTerminalControls(page);
   await actions.click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   const settings = page.getByRole("dialog", { name: "Terminal settings" });
@@ -541,11 +535,6 @@ test("terminal menus fit the narrow pane and Escape restores their individual ow
   await expect(page.locator(".terminal-pane--focused")).toHaveCount(0);
   await expect(page.locator(".ctx")).toBeVisible();
 
-  await showTerminalControls(page);
-  await actions.press("Escape");
-  await expect(
-    page.getByRole("button", { name: "Show terminal controls", exact: true }),
-  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.locator(".ctx")).toHaveCount(0);
 });
@@ -795,7 +784,6 @@ test.describe("platform terminal keyboard input", () => {
           "aria-selected",
           "true",
         );
-        await showTerminalControls(page);
         await page
           .getByRole("button", { name: "Search terminal output", exact: true })
           .click();
@@ -948,7 +936,6 @@ test("terminal search, last output, and asynchronous paste follow the active tab
     name: "Search terminal output",
     exact: true,
   });
-  await showTerminalControls(page);
   await searchButton.click();
   const searchInput = page.getByRole("textbox", {
     name: "Search terminal output",
@@ -961,13 +948,11 @@ test("terminal search, last output, and asynchronous paste follow the active tab
   await selectTab(secondId);
   await expect.poll(() => secondTerminal.resizes.length).toBeGreaterThan(0);
   await expect(searchButton).toHaveAttribute("aria-expanded", "false");
-  await showTerminalControls(page);
   await searchButton.click();
   await expect(searchInput).toHaveValue("");
   await searchInput.fill("SECOND_VIEW_QUERY");
   // Search owns the floating corner while open; dismiss it before utilities.
   await searchInput.press("Escape");
-  await showTerminalControls(page);
   await page.getByLabel("Terminal actions", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Copy last output", exact: true }),
@@ -982,7 +967,6 @@ test("terminal search, last output, and asynchronous paste follow the active tab
     origin: new URL(page.url()).origin,
   });
   const utility = async (name: string) => {
-    await showTerminalControls(page);
     await page.getByLabel("Terminal actions", { exact: true }).click();
     return page.getByRole("button", { name, exact: true });
   };
@@ -1041,7 +1025,6 @@ test("terminal search, last output, and asynchronous paste follow the active tab
   );
 
   await page.setViewportSize({ width: 320, height: 844 });
-  await showTerminalControls(page);
   await searchButton.click();
   await expect(
     page.getByRole("button", { name: "Close terminal search", exact: true }),

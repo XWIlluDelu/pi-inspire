@@ -94,10 +94,9 @@ closing, renaming and resizing preserve the underlying readers and terminal proc
 Files and Changes use the same content-connected selected-tab background, top corners and fine
 boundary as file/terminal tabs, with no additional accent underline. The Terminal shortcut remains
 an action that creates a terminal. Inactive file hover surfaces share the 4px top corners.
-Fine-pointer desktop headers stay 32px high through loading, empty and opened-tab states, so
-creating the first tab does not move content or floating controls; narrow/touch targets keep their
-existing size. Floating tools use 2px gaps within groups and 6px between action groups, with no
-separator lines; terminal search/selection overlays share the tools' 8px/12px corner insets.
+Fine-pointer desktop headers stay 32px high through loading, empty and opened-tab states.
+Narrow/touch targets keep their existing size. File and terminal actions sit in compact toolbars
+above their content. Terminal search and selection overlays stay within the output area.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
 
 The Files search field starts 8px below contextual chrome with 12px horizontal insets. It uses the
@@ -201,7 +200,7 @@ completion behavior are unchanged.
   not duplicate its tree. The right tool header shares the navigation/titlebar rail background,
   with one weak 1px hairline separating it from the content below. The file tree and file-preview canvas share the main reading-stage background. Selected file/terminal tabs use that
   content surface with weak top/left/right edges, small top-only corners and an open bottom seam;
-  desktop top corners join the frame squarely. Search fields, floating actions, authored documents
+  desktop top corners join the frame squarely. Search fields, toolbars, authored documents
   and the terminal keep their own content-surface roles.
 
 - Open files and project terminals have tabs on the leading side of the contextual header. Files,
@@ -217,10 +216,9 @@ completion behavior are unchanged.
   remain available. Filename tabs fill the header height, starting at its leading edge, with
   internal label spacing instead of floating rounded backgrounds. Title and close action share one
   continuous tab background; close hover changes only its icon ink, and keyboard focus uses a thin
-  outline. Selection indicators remain. File-specific and terminal controls float over their own
-  content instead of adding another full-width toolbar row. Deferred loading preserves the header
-  geometry without a legacy Context title; loading and actionable failure feedback stay in the
-  content area.
+  outline. Selection indicators remain. File-specific and terminal controls have toolbars above
+  their content. Deferred loading preserves the tab header geometry and keeps loading and actionable
+  failure feedback in the content area.
 
   F5 restores the browser tab's navigation, pane widths and visibility, contextual tool, file-tab
   order and selection, and Files query and expansions. Saved session navigation is scoped to Host,
@@ -230,17 +228,14 @@ completion behavior are unchanged.
 
   Changes always gives its grouped list the available height, with no Source split or selection
   hint. Selecting a comparison opens or reuses the ordinary file tab in Git Changes mode; Files
-  opens that same tab in its body view. A compact floating action group at the preview's top-right
+  opens that same tab in its body view. A compact toolbar above the preview
   holds, in order: Source/Preview, Git view, within-file previous/next navigation with its compact
   count, Copy path and trailing Download. Git view also offers Source to open the current file's
   source directly, keeping the tab and body reading state. Known unavailable/binary source stays
-  disabled; a not-yet-read source can be requested. There is no separate path/header row, including
-  on narrow readers; file tabs carry identity and Copy path exposes the full path. The group
-  overlays the normal reading canvas without reserving a full-width top band. Direct reading input
-  collapses it to an explicit entry; programmatic scrolling/restoration does not. The entry expands
-  the controls, and Escape collapses them while keeping keyboard focus. Narrow/touch targets remain
-  available; local wrapping avoids shrinking them. File identity, view and independent
-  reading offsets survive tab switches and F5 under the existing session/workspace storage scope.
+  disabled. An unread source can be requested. File tabs carry identity and Copy path exposes the
+  full path. On narrow screens the toolbar can wrap to keep its touch targets available. File
+  identity, view and independent reading offsets survive tab switches and F5 within the current
+  session/workspace storage schema.
   [[resource-preview]] defines comparison authority and unavailable-content behavior.
 
   Narrow Context, navigation and Settings participate in transient browser history. File and tool

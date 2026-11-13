@@ -63,7 +63,7 @@ export function workbenchSessionKey(
   cwd: string | null,
 ): string | null {
   return sessionId && cwd
-    ? `${PREFIX}${JSON.stringify([sessionId, cwd])}`
+    ? `${PREFIX}dock-v2:${JSON.stringify([sessionId, cwd])}`
     : null;
 }
 
@@ -106,28 +106,22 @@ export function saveNavigationDisclosure(
 export function readWorkbench(key: string | null): SavedWorkbench | null {
   const saved = key ? jsonRecord(read(key)) : null;
   if (!saved || !Array.isArray(saved.resourceTabs)) return null;
-  const resourceTabs: ResourceFileTab[] = [];
+  const tabs = new Map<string, ResourceFileTab>();
   for (const value of saved.resourceTabs) {
     const tab = jsonRecord(value);
     if (
       !tab ||
       !path(tab.reference) ||
       tab.reference.startsWith("pi-embedded://") ||
-      resourceTabs.some((previous) => previous.reference === tab.reference)
+      tabs.has(tab.reference)
     )
       continue;
     const git = jsonRecord(tab.git);
-    resourceTabs.push({
+    tabs.set(tab.reference, {
       reference: tab.reference,
       ...(path(tab.workspacePath) ? { workspacePath: tab.workspacePath } : {}),
       ...(tab.view === "changes" ? { view: "changes" } : {}),
-      ...(git &&
-      path(git.pathId) &&
-      (git.side === undefined ||
-        git.side === "worktree" ||
-        git.side === "staged" ||
-        git.side === "unstaged") &&
-      path(git.displayPath)
+      ...(git && path(git.pathId) && path(git.displayPath)
         ? {
             git: {
               pathId: git.pathId,
@@ -137,9 +131,10 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
         : {}),
     });
   }
-  const selected = resourceTabs.find(
-    (tab) => tab.reference === saved.selectedResourceReference,
-  );
+  const inspection = jsonRecord(saved.inspection);
+  const selected = path(inspection?.reference)
+    ? tabs.get(inspection.reference)
+    : undefined;
   const contextMode = ["files", "changes", "terminal"].includes(
     String(saved.contextMode),
   )
@@ -149,7 +144,7 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
     resourcesOpen: saved.resourcesOpen === true,
     contextMode,
     fileInspection:
-      selected && saved.fileBrowserView === "preview"
+      selected && inspection?.kind === "file"
         ? {
             kind: "file",
             reference: selected.reference,
@@ -157,7 +152,7 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
             preview: null,
           }
         : { kind: "browse", reference: selected?.reference },
-    resourceTabs,
+    resourceTabs: [...tabs.values()],
     workspaceQuery:
       typeof saved.workspaceQuery === "string" ? saved.workspaceQuery : "",
     workspaceExpandedDirs: Array.isArray(saved.workspaceExpandedDirs)
@@ -189,35 +184,16 @@ export function saveWorkbench(
       SAVED_FIELDS.every((field) => previous[field] === state[field]))
   )
     return;
-  const saved = Object.fromEntries(
-    SAVED_FIELDS.map((field) => [field, state[field]]),
-  );
-  // Keep the persisted v1 navigation shape independent of the live reader.
-  saved.fileBrowserView =
-    state.fileInspection.kind === "file" ? "preview" : "browse";
-  if (state.fileInspection.reference !== undefined)
-    saved.selectedResourceReference = state.fileInspection.reference;
-  saved.resourceTabs = state.resourceTabs.filter(
-    (tab) => !tab.reference.startsWith("pi-embedded://"),
-  );
-  // Restoring a tab can save its new mode before its reader mounts. Preserve
-  // the old comparison's position before that write retires its side metadata.
-  const previousTabs = jsonRecord(read(key))?.resourceTabs;
-  if (Array.isArray(previousTabs)) {
-    for (const value of previousTabs) {
-      const tab = jsonRecord(value);
-      const git = jsonRecord(tab?.git);
-      if (
-        path(tab?.reference) &&
-        (git?.side === "staged" || git?.side === "unstaged") &&
-        state.resourceTabs.some(
-          (current) => current.reference === tab.reference && current.git,
-        )
-      )
-        readFileReading(key, tab.reference).save?.();
-    }
-  }
-  write(key, saved);
+  write(key, {
+    ...Object.fromEntries(SAVED_FIELDS.map((field) => [field, state[field]])),
+    inspection: {
+      kind: state.fileInspection.kind,
+      reference: state.fileInspection.reference,
+    },
+    resourceTabs: state.resourceTabs.filter(
+      (tab) => !tab.reference.startsWith("pi-embedded://"),
+    ),
+  });
 }
 
 function readingKey(key: string, reference: string): string {
@@ -261,26 +237,10 @@ export function readFileReading(
         }
       : undefined;
   };
-  let changes = changePosition(saved?.changes);
-  if (!changes) {
-    const savedChanges = jsonRecord(saved?.changes);
-    const tabs = key ? jsonRecord(read(key))?.resourceTabs : null;
-    const tab = Array.isArray(tabs)
-      ? tabs.map(jsonRecord).find((item) => item?.reference === reference)
-      : null;
-    const previousSide = jsonRecord(tab?.git)?.side;
-    changes =
-      changePosition(savedChanges?.worktree) ??
-      (previousSide === "staged" || previousSide === "unstaged"
-        ? changePosition(savedChanges?.[previousSide])
-        : undefined) ??
-      changePosition(savedChanges?.unstaged) ??
-      changePosition(savedChanges?.staged);
-  }
   const state: FileReadingState = {
     source: { current: position(saved?.source) },
     rendered: { current: position(saved?.rendered) },
-    changes,
+    changes: changePosition(saved?.changes),
     ...(saved?.mode === "source" || saved?.mode === "preview"
       ? { mode: saved.mode }
       : {}),

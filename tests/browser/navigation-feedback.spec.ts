@@ -4,12 +4,9 @@ import { focusRingClipping } from "./support/focus-bounds";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
 function navigationRowBounds(row: Locator) {
-  // Read one layout: opening or closing Hidden can move both scroll containers.
   return row.evaluate((el) => {
     const bounds = el.getBoundingClientRect();
-    const scrollport = el
-      .closest(".nav__hidden-content, .nav__list")!
-      .getBoundingClientRect();
+    const scrollport = el.closest(".nav__list")!.getBoundingClientRect();
     const nav = el.closest(".nav")!;
     const viewport = nav.getBoundingClientRect();
     const style = getComputedStyle(nav);
@@ -219,7 +216,7 @@ for (const viewport of [
       serviceWorkers: "block",
     });
 
-    test("Hidden preserves focus and keeps both lists reachable", async ({
+    test("Hidden preserves focus and keeps both sections reachable", async ({
       page,
     }) => {
       await navigationGroupsFixture(page);

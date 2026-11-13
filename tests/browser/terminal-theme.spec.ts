@@ -2,11 +2,7 @@ import { expect, test } from "@playwright/test";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
 import { resolvedColor } from "./support/colors";
-import {
-  openProjectTerminal,
-  pairAndOpen,
-  showTerminalControls,
-} from "./support/navigation";
+import { openProjectTerminal, pairAndOpen } from "./support/navigation";
 import { terminalTransportFixture } from "./support/terminal-transport";
 
 test("terminal search repaints the current matches without moving the reader or a manual selection", async ({
@@ -55,7 +51,6 @@ test("terminal search repaints the current matches without moving the reader or 
   );
   terminal!.write(lines.join("") + "a.b axb a.bx\r\n");
   await expect(rows).toContainText([/r69:/]);
-  await showTerminalControls(page);
   await page.getByRole("button", { name: "Search terminal output" }).click();
   const search = page.getByRole("textbox", { name: "Search terminal output" });
   const result = page.locator(".terminal-search__count");

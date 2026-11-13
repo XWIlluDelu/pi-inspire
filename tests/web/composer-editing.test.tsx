@@ -7,10 +7,8 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Composer } from "../../src/components/Composer";
-import { ComposerInput } from "../../src/components/ComposerInput";
 import { store } from "../../src/store";
 import {
   attachFile,
@@ -282,52 +280,5 @@ describe("Composer editing and keyboard behavior", () => {
     const input = screen.getByLabelText("Message");
     expect(input).toHaveAttribute("spellcheck", "false");
     expect(input).toHaveAttribute("autocorrect", "off");
-  });
-
-  it("caps editor size against the visual viewport as the keyboard opens", async () => {
-    const viewport = Object.assign(new EventTarget(), { height: 900 });
-    vi.stubGlobal("visualViewport", viewport);
-    vi.stubGlobal("innerHeight", 900);
-    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1200);
-    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(
-      function (this: HTMLElement) {
-        return Number.parseFloat(this.style.height) || 24;
-      },
-    );
-    function VisualViewportComposer() {
-      const [sizeActionSlot, setSizeActionSlot] =
-        useState<HTMLSpanElement | null>(null);
-      return (
-        <main>
-          <div className="composer-dock">
-            <div className="composer">
-              <ComposerInput
-                value={"long wrapped text\n".repeat(60)}
-                onChange={vi.fn()}
-                commands={[]}
-                label="Message"
-                placeholder="Message Pi…"
-                sizeActionSlot={sizeActionSlot}
-              />
-              <div className="composer__toolbar">
-                <span ref={setSizeActionSlot} />
-              </div>
-            </div>
-          </div>
-        </main>
-      );
-    }
-    render(<VisualViewportComposer />);
-    const input = screen.getByRole("textbox") as HTMLTextAreaElement;
-    expect(input.style.height).toBe("360px");
-    fireEvent.click(screen.getByRole("button", { name: "Expand editor" }));
-    expect(input.style.height).toBe("504px");
-    viewport.height = 400;
-    viewport.dispatchEvent(new Event("resize"));
-    await waitFor(() => expect(input.style.height).toBe("224px"));
-    expect(input.clientHeight).toBeLessThan(viewport.height);
-    fireEvent.click(screen.getByRole("button", { name: "Collapse editor" }));
-    expect(input.style.height).toBe("160px");
-    expect(screen.getByRole("button", { name: "Expand editor" })).toBeVisible();
   });
 });

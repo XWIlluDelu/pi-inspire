@@ -52,7 +52,7 @@ test("compaction summaries copy independently and remain searchable after reload
     name: "Context compacted",
     exact: true,
   });
-  const copy = checkpoint.locator(".context-checkpoint__copy");
+  const copy = checkpoint.locator(".card__copy");
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
   await disclosure.click();
   await page.mouse.move(0, 0);

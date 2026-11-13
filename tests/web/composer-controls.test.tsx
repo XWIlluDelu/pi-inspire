@@ -274,15 +274,13 @@ describe("composer meta row", () => {
       await store.sendPrompt("/thinking");
     });
 
-    const listbox = await screen.findByRole("listbox", {
-      name: "Thinking level",
-    });
+    const select = screen.getByRole("combobox", { name: "Thinking level" });
+    expect(select).toHaveFocus();
     expect(
-      screen.getByRole("combobox", { name: "Thinking level" }),
-    ).toHaveFocus();
-    expect(within(listbox).getByRole("option", { name: "High" })).toBeVisible();
+      within(select).getByRole("option", { name: "High" }),
+    ).toBeInTheDocument();
     expect(
-      within(listbox).queryByRole("option", { name: /xhigh|thinking:/i }),
+      within(select).queryByRole("option", { name: /xhigh|thinking:/i }),
     ).toBeNull();
   });
 });

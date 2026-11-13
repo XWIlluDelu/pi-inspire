@@ -1,7 +1,7 @@
 import {
   Bell,
   CheckCheck,
-  ChevronUp,
+  ChevronDown,
   EyeOff,
   Inbox,
   PanelLeft,
@@ -17,7 +17,6 @@ import {
   type Ref,
   useEffect,
   useId,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -194,19 +193,6 @@ export const Nav = memo(function Nav({
     setRetainedNeed(row?.reason ? { id, reason: row.reason } : null);
     onSelectSession(id);
   };
-  useLayoutEffect(() => {
-    if (!hiddenOpen || searching || collapsed) return;
-    const nav = navRef.current;
-    const body = nav?.querySelector(".nav__hidden-content");
-    if (!nav || !body) return;
-    // Reveal the actual scrollport after flex layout and subsequent resizes settle.
-    const observer = new ResizeObserver(() => {
-      body.scrollIntoView({ block: "nearest" });
-    });
-    observer.observe(body);
-    observer.observe(nav);
-    return () => observer.disconnect();
-  }, [hiddenOpen, searching, collapsed, navRef]);
   const searchResults = useMemo(() => {
     if (needsYouMode) return needsYou.map((row) => row.session);
     const folderRows = (groups: typeof sections.groups) =>
@@ -671,102 +657,97 @@ export const Nav = memo(function Nav({
             </span>
           </div>
         ) : null}
-      </div>
-      {!needsYouMode && hiddenCount > 0 ? (
-        <section
-          className="nav__group nav__group--hidden"
-          aria-labelledby="nav-hidden-title"
-        >
-          <h2
-            className="nav__hidden-heading nav__dock-heading"
-            id="nav-hidden-title"
-            aria-label="Hidden"
+        {!needsYouMode && hiddenCount > 0 ? (
+          <section
+            className="nav__group nav__group--hidden"
+            aria-labelledby="nav-hidden-title"
           >
-            <button
-              type="button"
-              className="nav__hidden-toggle nav__dock-toggle"
-              aria-expanded={hiddenExpanded}
-              aria-controls={hiddenContentId}
-              disabled={searching}
-              onClick={toggleHidden}
+            <h2
+              className="nav__hidden-heading"
+              id="nav-hidden-title"
+              aria-label="Hidden"
             >
-              <EyeOff size={16} aria-hidden />
-              <span className="nav__group-name nav__dock-title">Hidden</span>
-              <span className="nav__hidden-count" aria-hidden>
-                {hiddenCount}
-              </span>
-              <ChevronUp
-                size={12}
-                className={`chev-flip ${hiddenExpanded ? "chev-flip--open" : ""}`}
-                aria-hidden
-              />
-            </button>
-            <button
-              type="button"
-              className="nav__row-action nav__row-action--danger nav__hidden-clear"
-              aria-label="Clear Hidden"
-              title={hiddenClearTitle}
-              disabled={hiddenClearDisabled}
-              onClick={() =>
-                setHiddenClearCandidate({ sessionIds: hiddenSessionIds })
-              }
-            >
-              {clearingHidden ? (
-                <PiLoader size={12} aria-hidden />
-              ) : (
-                <Trash2 size={12} aria-hidden />
-              )}
-            </button>
-          </h2>
-          {hiddenExpanded ? (
-            <div className="nav__hidden-content" id={hiddenContentId}>
-              {hidden.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  searchQuery={sessionQuery}
-                  selectedSessionId={selectedSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  showProject
-                  onSelect={onSelectSession}
-                  onDelete={setDeleteCandidate}
+              <button
+                type="button"
+                className="nav__group-toggle"
+                aria-expanded={hiddenExpanded}
+                aria-controls={hiddenContentId}
+                disabled={searching}
+                onClick={toggleHidden}
+              >
+                <EyeOff size={16} aria-hidden />
+                <span className="nav__group-name">Hidden</span>
+                <span className="nav__hidden-count" aria-hidden>
+                  {hiddenCount}
+                </span>
+                <ChevronDown
+                  size={12}
+                  className={`chev-flip ${hiddenExpanded ? "chev-flip--open" : ""}`}
+                  aria-hidden
                 />
-              ))}
-              {hiddenGroups.map((group) => (
-                <ProjectGroup
-                  key={group.cwd}
-                  group={group}
-                  searching={searching}
-                  searchQuery={sessionQuery}
-                  showContext={(nameCounts.get(group.name) ?? 0) > 1}
-                  selectedSessionId={selectedSessionId}
-                  highlightedSessionId={highlightedSessionId}
-                  hidden
-                  onSelectSession={onSelectSession}
-                  onDeleteSession={setDeleteCandidate}
-                  onDeleteGroup={() =>
-                    setHiddenClearCandidate({
-                      sessionIds: group.sessions.map((session) => session.id),
-                      projectCwd: group.cwd,
-                    })
-                  }
-                  deleteGroupDisabledReason={hiddenDeletionBlockReason(
-                    group.sessions,
-                    deletionState,
-                  )}
-                />
-              ))}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
+              </button>
+              <button
+                type="button"
+                className="nav__row-action nav__row-action--danger nav__hidden-clear"
+                aria-label="Clear Hidden"
+                title={hiddenClearTitle}
+                disabled={hiddenClearDisabled}
+                onClick={() =>
+                  setHiddenClearCandidate({ sessionIds: hiddenSessionIds })
+                }
+              >
+                {clearingHidden ? (
+                  <PiLoader size={12} aria-hidden />
+                ) : (
+                  <Trash2 size={12} aria-hidden />
+                )}
+              </button>
+            </h2>
+            {hiddenExpanded ? (
+              <div className="nav__hidden-content" id={hiddenContentId}>
+                {hidden.map((session) => (
+                  <SessionRow
+                    key={session.id}
+                    session={session}
+                    searchQuery={sessionQuery}
+                    selectedSessionId={selectedSessionId}
+                    highlightedSessionId={highlightedSessionId}
+                    showProject
+                    onSelect={onSelectSession}
+                    onDelete={setDeleteCandidate}
+                  />
+                ))}
+                {hiddenGroups.map((group) => (
+                  <ProjectGroup
+                    key={group.cwd}
+                    group={group}
+                    searching={searching}
+                    searchQuery={sessionQuery}
+                    showContext={(nameCounts.get(group.name) ?? 0) > 1}
+                    selectedSessionId={selectedSessionId}
+                    highlightedSessionId={highlightedSessionId}
+                    hidden
+                    onSelectSession={onSelectSession}
+                    onDeleteSession={setDeleteCandidate}
+                    onDeleteGroup={() =>
+                      setHiddenClearCandidate({
+                        sessionIds: group.sessions.map((session) => session.id),
+                        projectCwd: group.cwd,
+                      })
+                    }
+                    deleteGroupDisabledReason={hiddenDeletionBlockReason(
+                      group.sessions,
+                      deletionState,
+                    )}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
       <ScrollRail container={navRef} variant="nav" />
       <ScrollRail container={navRef} scroller=".nav__list" variant="nav" />
-      <ScrollRail
-        container={navRef}
-        scroller=".nav__hidden-content"
-        variant="nav"
-      />
       {deleteCandidate ? (
         <SessionDeleteDialog
           session={deleteCandidate}

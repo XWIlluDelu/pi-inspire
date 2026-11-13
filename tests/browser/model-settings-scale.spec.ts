@@ -116,38 +116,31 @@ test("keeps a large catalog reachable on a narrow screen in the picker and Setti
   await checkHeadings(menu);
 
   await page.getByRole("button", { name: "Manage models" }).click();
-  const gridSearch = page.getByRole("combobox", {
+  const settingsSearch = page.getByRole("combobox", {
     name: "Search available models",
   });
-  await gridSearch.scrollIntoViewIfNeeded();
-  await expect(gridSearch).toBeVisible();
-  const grid = page.getByRole("grid", { name: "Available models" });
-  await expect(grid).toHaveAttribute("aria-rowcount", String(available.length));
-  expect(await grid.getByRole("row").count()).toBeLessThan(16);
-  await gridSearch.focus();
-  await gridSearch.press("End");
-  const lastRow = grid.locator(`[aria-rowindex="${available.length}"]`);
+  await settingsSearch.scrollIntoViewIfNeeded();
+  const settingsList = page.getByRole("listbox", { name: "Available models" });
+  expect(await settingsList.getByRole("option").count()).toBeLessThan(16);
+  await settingsSearch.focus();
+  await settingsSearch.press("End");
+  const lastRow = settingsList.locator(`[aria-posinset="${available.length}"]`);
   await expect(lastRow).toBeInViewport();
-  await expect(gridSearch).toHaveAttribute(
-    "aria-activedescendant",
-    (await lastRow.getAttribute("id"))!,
-  );
-  await gridSearch.press("Tab");
+  const lastModel = available[1]!;
+  await expect(lastRow).toContainText(lastModel.id);
+  await settingsSearch.press("Enter");
+  await expect(lastRow).toHaveAttribute("aria-selected", "true");
   await expect(
-    page.getByRole("button", { name: "Refresh available models" }),
-  ).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(
-    lastRow.getByRole("checkbox", { name: /^Common:/ }),
-  ).toBeFocused();
-  await gridSearch.fill("missing-provider");
-  await expect(grid.getByRole("row")).toHaveCount(0);
-  await gridSearch.fill("calibration");
-  await checkHeadings(grid);
-  expect(await grid.getByRole("row").count()).toBeLessThan(16);
-
+    page
+      .getByRole("group", { name: "Selected model" })
+      .getByText(`${lastModel.provider}/${lastModel.id}`, { exact: true }),
+  ).toBeVisible();
+  await settingsSearch.fill("missing-provider");
+  await expect(settingsList.getByRole("option")).toHaveCount(0);
+  await settingsSearch.fill("calibration");
+  await checkHeadings(settingsList);
   expect(
-    await grid.evaluate((element) => {
+    await settingsList.evaluate((element) => {
       const settings = element.closest(".settings__main")!;
       return settings.scrollWidth <= settings.clientWidth + 1;
     }),

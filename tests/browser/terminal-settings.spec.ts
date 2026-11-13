@@ -101,17 +101,6 @@ test.describe("narrow terminal settings", () => {
     await expect(reset).toBeFocused();
     await reset.press("Tab");
     await expect(close).toBeFocused();
-    const bell = settings.getByRole("combobox", {
-      name: "Terminal bell behavior",
-    });
-    const options = page.getByRole("listbox", {
-      name: "Terminal bell behavior",
-    });
-    await bell.click();
-    await expect(options).toBeVisible();
-    await bell.press("Escape");
-    await expect(options).toHaveCount(0);
-    await expect(bell).toBeFocused();
     await page.setViewportSize({ width: 320, height: 900 });
 
     await settings
@@ -127,15 +116,12 @@ test.describe("narrow terminal settings", () => {
       pasteProtection: false,
     });
     expect(patches).toEqual([]);
-    await bell.click();
     await category("Saved output").press("Enter");
-    await expect(options).toHaveCount(0);
     const retention = settings.getByRole("combobox", {
       name: "Terminal output retention",
     });
-    await retention.click();
     try {
-      await page.getByRole("option", { name: "90 days", exact: true }).click();
+      await retention.selectOption("90");
       await expect.poll(() => patches).toEqual([{ historyRetentionDays: 90 }]);
       await category("Appearance").click();
       await category("Saved output").click();

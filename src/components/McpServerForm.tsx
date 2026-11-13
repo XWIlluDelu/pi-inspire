@@ -14,7 +14,7 @@ import {
 } from "../../shared/mcp";
 import { ConfigurationForm } from "./ConfigurationForm";
 import { DetailSummary } from "./DetailSummary";
-import { Dropdown } from "./Dropdown";
+import { NativeSelect } from "./NativeSelect";
 import { SettingsSwitch } from "./SettingsControls";
 
 const exposureOptions = MCP_EXPOSURES.map((value) => ({
@@ -386,8 +386,8 @@ export function McpServerForm({
             </label>
             <div className="models-form__field">
               <span>Configuration target</span>
-              <Dropdown
-                className="dropdown--field"
+              <NativeSelect
+                className="native-select--field"
                 label="Configuration target"
                 value={scope}
                 disabled={busy}
@@ -413,8 +413,8 @@ export function McpServerForm({
         {!entry && !policyName && (
           <div className="models-form__field models-form__wide">
             <span>Transport</span>
-            <Dropdown
-              className="dropdown--field"
+            <NativeSelect
+              className="native-select--field"
               label="Transport"
               value={transport}
               disabled={busy}
@@ -620,8 +620,8 @@ export function McpServerForm({
           ) : null}
           <div className="models-form__field">
             <span>Tool exposure</span>
-            <Dropdown
-              className="dropdown--field"
+            <NativeSelect
+              className="native-select--field"
               label="Tool exposure"
               autoFocus={policyOnly}
               value={exposure ?? (policyOnly ? "inherit" : "codemode")}
@@ -647,8 +647,8 @@ export function McpServerForm({
               {policyOnly ? "Enabled in this project" : "Enabled in file"}
             </span>
             {policyOnly ? (
-              <Dropdown
-                className="dropdown--field"
+              <NativeSelect
+                className="native-select--field"
                 label="Enabled in this project"
                 value={
                   enabled == null ? "inherit" : enabled ? "enabled" : "disabled"
@@ -713,8 +713,8 @@ export function McpServerForm({
               <div className="models-form__grid">
                 <div className="models-form__field models-form__wide">
                   <span>Client registration</span>
-                  <Dropdown
-                    className="dropdown--field"
+                  <NativeSelect
+                    className="native-select--field"
                     label="Client registration"
                     value={registration}
                     disabled={busy}
@@ -834,8 +834,8 @@ export function McpServerForm({
               </label>
               <div className="models-form__field">
                 <span>Exposure</span>
-                <Dropdown
-                  className="dropdown--field"
+                <NativeSelect
+                  className="native-select--field"
                   label={`Exposure for ${rule.key || "new rule"}`}
                   value={rule.value}
                   options={exposureOptions}

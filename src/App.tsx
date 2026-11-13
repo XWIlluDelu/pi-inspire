@@ -473,6 +473,16 @@ function focusedTerminalLaunchRequested(): boolean {
   );
 }
 
+type Inspection =
+  | {
+      kind: "settings";
+      category: SettingsCategoryId;
+      destination?: ModelSettingsDestination;
+    }
+  | { kind: "palette" }
+  | { kind: "export"; sessionId: string }
+  | { kind: "help"; mode: "hotkeys" | "changelog" };
+
 export function App() {
   const transcriptRef = useRef<TranscriptNavigation>(null);
   const state = useAppState(
@@ -522,28 +532,18 @@ export function App() {
   const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
   const navSearchRef = useRef<HTMLInputElement>(null);
   const narrowViewport = useMediaQuery("(max-width: 900px)");
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [exportSessionId, setExportSessionId] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [commandHelp, setCommandHelp] = useState<
-    "hotkeys" | "changelog" | null
-  >(null);
-  const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
-    setCommandHelp(mode);
+  const [inspection, setInspection] = useState<Inspection | null>(null);
+  const settingsOpen = inspection?.kind === "settings";
+  const closeInspection = useCallback(() => setInspection(null), []);
+  const closeCommandPalette = useCallback(() => {
+    setInspection((current) => (current?.kind === "palette" ? null : current));
   }, []);
-  const closeCommandHelp = useCallback(() => setCommandHelp(null), []);
-  const [settingsCategory, setSettingsCategory] =
-    useState<SettingsCategoryId>("display");
-  const [modelDestination, setModelDestination] =
-    useState<ModelSettingsDestination>();
+  const openCommandHelp = useCallback((mode: "hotkeys" | "changelog") => {
+    setInspection({ kind: "help", mode });
+  }, []);
   const openSettings = useCallback(
     (category: SettingsCategoryId, destination?: ModelSettingsDestination) => {
-      setPaletteOpen(false);
-      setSettingsCategory(category);
-      setModelDestination(destination);
-      setSettingsOpen(true);
+      setInspection({ kind: "settings", category, destination });
     },
     [],
   );
@@ -565,15 +565,13 @@ export function App() {
   );
 
   const openSession = useCallback((id: string) => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
+    setInspection(null);
     setMobileNavOpen(false);
     void store.openSession(id);
   }, []);
 
   const newSession = useCallback(() => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
+    setInspection(null);
     setMobileNavOpen(false);
     const current = store.getState();
     if (current.sessionId && current.cwd) {
@@ -597,7 +595,11 @@ export function App() {
 
   useEffect(() => {
     if (state.sessionId) setWelcomeInheritance(null);
-    setExportSessionId(null);
+    setInspection((current) =>
+      current?.kind === "export" && current.sessionId !== state.sessionId
+        ? null
+        : current,
+    );
   }, [state.sessionId]);
 
   const closeMobileNavigation = useCallback(() => {
@@ -613,14 +615,10 @@ export function App() {
   const closeResources = useCallback(() => {
     store.setResourcesOpen(false);
   }, []);
-  const closeCommandPalette = useCallback(() => setPaletteOpen(false), []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const inspectionLayers = [
     ...(state.resourcesOpen ? ["context"] : []),
     ...(mobileNavOpen ? ["navigation"] : []),
-    ...(settingsOpen ? ["settings"] : []),
-    ...(paletteOpen ? ["palette"] : []),
-    ...(exportSessionId ? ["export"] : []),
+    ...(inspection ? ["inspection"] : []),
     ...(extensionOverlayOpen ? ["extension"] : []),
   ];
   useInspectionHistory(
@@ -629,9 +627,7 @@ export function App() {
       const remaining = inspectionLayers.slice(0, depth);
       if (!remaining.includes("extension"))
         extensionDialogRef.current?.cancel();
-      if (!remaining.includes("export")) setExportSessionId(null);
-      if (!remaining.includes("palette")) setPaletteOpen(false);
-      if (!remaining.includes("settings")) setSettingsOpen(false);
+      if (!remaining.includes("inspection")) setInspection(null);
       if (!remaining.includes("navigation")) setMobileNavOpen(false);
       if (!remaining.includes("context")) store.setResourcesOpen(false);
     },
@@ -639,9 +635,7 @@ export function App() {
     { background: true },
   );
   const openSessionSearch = useCallback(() => {
-    setPaletteOpen(false);
-    setSettingsOpen(false);
-    setCommandHelp(null);
+    setInspection(null);
     if (narrowViewport) {
       store.setResourcesOpen(false);
       setMobileNavOpen(true);
@@ -689,13 +683,12 @@ export function App() {
   // export drafts. Read-only command help can close instead of resuming.
   useEffect(() => {
     if (!extensionOverlayOpen) return;
-    setCommandHelp(null);
+    setInspection((current) => (current?.kind === "help" ? null : current));
   }, [extensionOverlayOpen]);
 
   const showCommandPalette = useCallback(() => {
-    setSettingsOpen(false);
     setMobileNavOpen(false);
-    setPaletteOpen(true);
+    setInspection({ kind: "palette" });
   }, []);
   const openCommandPalette = useCallback(() => {
     if (extensionOverlayOpen || hasActiveModal()) return;
@@ -703,18 +696,18 @@ export function App() {
   }, [extensionOverlayOpen, showCommandPalette]);
   const openExport = useCallback(() => {
     const sessionId = store.getState().sessionId;
-    setPaletteOpen(false);
+    if (!sessionId) return;
+    closeCommandPalette();
     // Let the invoking menu/palette restore focus before taking modal ownership.
     requestAnimationFrame(() => {
       if (store.getState().sessionId === sessionId)
-        setExportSessionId(sessionId);
+        setInspection((current) => current ?? { kind: "export", sessionId });
     });
-  }, []);
-  const closeExport = useCallback(() => setExportSessionId(null), []);
+  }, [closeCommandPalette]);
 
   const toggleSettings = useCallback(() => {
     if (settingsOpen) {
-      setSettingsOpen(false);
+      setInspection(null);
       return;
     }
     if (extensionOverlayOpen || hasActiveModal()) return;
@@ -860,7 +853,7 @@ export function App() {
         if (
           !store.getState().sessionId ||
           target?.closest(
-            ".xterm, .dropdown__menu, .model-picker__menu, [role=listbox], [role=menu]",
+            ".xterm, .choice-panel__body, .model-picker__menu, [role=listbox], [role=menu]",
           ) ||
           (combobox &&
             (!draft || combobox.getAttribute("aria-expanded") !== "false")) ||
@@ -1088,25 +1081,26 @@ export function App() {
           {resourcesContent}
         </>
       ) : null}
-      {settingsOpen ? (
+      {inspection?.kind === "settings" ? (
         <DeferredSettings
           suspended={extensionOverlayOpen}
-          initialCategory={settingsCategory}
-          modelDestination={modelDestination}
+          initialCategory={inspection.category}
+          modelDestination={inspection.destination}
           workspaceOwner={settingsOwner}
-          onClose={closeSettings}
+          onClose={closeInspection}
         />
       ) : null}
-      {exportSessionId && exportSessionId === state.sessionId ? (
+      {inspection?.kind === "export" &&
+      inspection.sessionId === state.sessionId ? (
         <ExportDialog
-          key={exportSessionId}
-          sessionId={exportSessionId}
+          key={inspection.sessionId}
+          sessionId={inspection.sessionId}
           readOnly={Boolean(state.readOnlyReason)}
           active={!extensionOverlayOpen}
-          onClose={closeExport}
+          onClose={closeInspection}
         />
       ) : null}
-      {paletteOpen ? (
+      {inspection?.kind === "palette" ? (
         <CommandPalette
           onExportSession={openExport}
           active={!extensionOverlayOpen}
@@ -1120,11 +1114,11 @@ export function App() {
           onOpenHelp={openCommandHelp}
         />
       ) : null}
-      {commandHelp && !extensionOverlayOpen ? (
+      {inspection?.kind === "help" && !extensionOverlayOpen ? (
         <CommandHelp
-          key={commandHelp}
-          mode={commandHelp}
-          onClose={closeCommandHelp}
+          key={inspection.mode}
+          mode={inspection.mode}
+          onClose={closeInspection}
         />
       ) : null}
       <ExtensionUiDialog ref={extensionDialogRef} />

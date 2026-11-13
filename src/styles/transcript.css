@@ -157,9 +157,8 @@
 
 .transcript-search__scope {
   flex: 0 0 auto;
-}
-
-.transcript-search__scope .dropdown__trigger {
+  background: transparent;
+  border-color: transparent;
   min-height: var(--transcript-search-action-size);
   padding: 2px var(--space-1);
   color: var(--body);
@@ -419,184 +418,36 @@
   padding-top: var(--space-2);
 }
 
-/* Context boundaries are transcript events, not full-width message cards. */
-.context-checkpoint {
-  --checkpoint-indent: 44px;
-  width: calc(100% + var(--disclosure-outdent));
-  margin-inline-start: calc(-1 * var(--disclosure-outdent));
-  min-width: 0;
-  color: var(--muted);
-}
-
-.context-checkpoint__head {
-  position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  /* Align mixed-size text by its baseline, not by the disclosure hit box. */
-  align-items: baseline;
-  gap: 0 6px;
-  /* A hanging disclosure keeps wrapped metadata on the title's reading axis,
-     without reserving an extra indent when both groups fit on one line. */
-  padding-inline-start: var(--checkpoint-indent);
-}
-
-.context-checkpoint__toggle {
-  display: flex;
-  flex: 0 0 auto;
-  margin-inline-start: calc(-1 * var(--checkpoint-indent));
-  max-width: calc(100% + var(--checkpoint-indent));
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: 28px;
-  padding: 0 var(--space-1);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font: 500 var(--text-sm)/var(--leading-ui) var(--font-sans);
-  text-align: left;
-  -webkit-tap-highlight-color: transparent;
-}
-
-@media (hover: hover) {
-  .context-checkpoint__toggle:hover {
-    color: var(--ink);
-  }
-  .context-checkpoint__toggle:hover .context-checkpoint__chevron {
-    color: var(--ink);
-  }
-  .context-checkpoint__toggle:hover ~ .context-checkpoint__details .context-checkpoint__metric {
-    color: var(--body);
-  }
-}
-
-.context-checkpoint__toggle:active,
-.context-checkpoint__toggle:active .context-checkpoint__chevron {
-  color: var(--ink);
-}
-
-.context-checkpoint__toggle::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-control);
-}
-
-.context-checkpoint__toggle:focus-visible {
-  outline: none;
-  color: var(--ink);
-}
-
-.context-checkpoint__toggle:focus-visible::after {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: -2px;
-}
-
-.context-checkpoint__icon,
-.context-checkpoint__chevron {
-  flex: 0 0 auto;
-}
-
-.context-checkpoint__icon {
+/* Context boundaries use the activity disclosure row. */
+.context-checkpoint .card__icon {
   color: var(--activity-event);
 }
-
-.context-checkpoint__chevron {
-  color: var(--faint);
-  transition: transform var(--dur-micro) var(--ease-standard);
+.context-checkpoint .card__header {
+  align-items: baseline;
 }
-
-.context-checkpoint__toggle[aria-expanded="true"] .context-checkpoint__chevron {
-  transform: rotate(90deg);
-}
-
-.context-checkpoint__title {
-  display: flex;
-  align-items: center;
-  /* The title supplies the toggle's baseline; the leading SVG must not. */
+.context-checkpoint .card__label {
   align-self: baseline;
-  min-height: 28px;
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
-
-.context-checkpoint__details {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.context-checkpoint__details:not(:has(.context-checkpoint__metric)) {
-  /* A standalone Copy is a control, not a second text baseline. */
+.context-checkpoint .card__copy {
   align-self: center;
 }
-
 .context-checkpoint__metric {
   min-width: 0;
-  align-self: center;
   color: var(--muted);
   font-size: var(--text-xs);
   line-height: var(--leading-ui);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
-
-.context-checkpoint__copy.icon-button {
-  position: relative;
-  z-index: 1;
-  flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
-  color: var(--faint);
-  opacity: 0;
-  transition: opacity var(--dur-micro) var(--ease-standard);
-}
-
-.context-checkpoint__head:is(:hover, :has(:focus-visible)) .context-checkpoint__copy {
-  opacity: 1;
-}
-
-.context-checkpoint__body {
-  margin: var(--space-1) 0 var(--space-2) var(--checkpoint-indent);
-  color: var(--body);
-  font-size: var(--text-reading-small);
-}
-
-.context-checkpoint__body > p {
+.context-checkpoint .card__body > p {
   margin: 0;
   color: var(--muted);
 }
-
-.context-checkpoint__body .rich-text > :first-child {
+.context-checkpoint .rich-text > :first-child {
   margin-top: 0;
 }
-
-.context-checkpoint__body .rich-text > :last-child {
+.context-checkpoint .rich-text > :last-child {
   margin-bottom: 0;
-}
-
-@media (hover: none) {
-  .context-checkpoint__copy.icon-button {
-    opacity: 0.75;
-  }
-}
-
-@media (pointer: coarse) {
-  .context-checkpoint__toggle,
-  .context-checkpoint__title {
-    min-height: 32px;
-  }
-
-  .context-checkpoint__copy.icon-button {
-    margin-top: 0;
-    width: 32px;
-    height: 32px;
-  }
 }
 
 /* Message actions stay quiet until the turn is pointed or keyboard-focused.

@@ -407,15 +407,13 @@ test.describe("touch activity disclosures", () => {
     const tool = page.locator(".card--tool").first();
     const checkpoint = page.locator(".context-checkpoint");
     for (const surface of [thinking, tool, checkpoint]) {
-      const toggle = surface.locator(
-        ".card__disclosure, .context-checkpoint__toggle",
-      );
-      const copy = surface.locator(".card__copy, .context-checkpoint__copy");
+      const toggle = surface.locator(".card__disclosure");
+      const copy = surface.locator(".card__copy");
       await expect(copy).toHaveCount(0);
       const restingBackground = await toggle.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
       );
-      const row = surface.locator(".card__header, .context-checkpoint__head");
+      const row = surface.locator(".card__header");
       await row.tap({
         position: { x: (await row.boundingBox())!.width - 24, y: 12 },
       });

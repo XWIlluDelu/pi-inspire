@@ -133,8 +133,9 @@ describe("extension context messages", () => {
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 match");
     for (const scope of ["User", "Model"]) {
-      fireEvent.click(screen.getByRole("combobox", { name: "Search scope" }));
-      fireEvent.click(screen.getByRole("option", { name: scope }));
+      fireEvent.change(screen.getByRole("combobox", { name: "Search scope" }), {
+        target: { value: scope.toLowerCase() },
+      });
       expect(
         screen.getByLabelText("Transcript search matches"),
       ).toHaveTextContent("0 matches");

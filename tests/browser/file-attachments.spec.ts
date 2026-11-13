@@ -96,8 +96,9 @@ test("sent file prompts retain readable names, original bytes, and history acros
   const search = page.getByRole("searchbox", {
     name: "Search conversation",
   });
-  await page.getByRole("combobox", { name: "Search scope" }).click();
-  await page.getByRole("option", { name: "User", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Search scope" })
+    .selectOption("user");
   await search.fill(names[0]!);
   await expect(page.getByLabel("Transcript search matches")).toHaveText(
     "1 match",

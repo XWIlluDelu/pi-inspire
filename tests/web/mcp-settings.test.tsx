@@ -249,8 +249,9 @@ it("preserves secret drafts across transport changes and saves only the selected
   fireEvent.change(screen.getByLabelText("Header value for Authorization"), {
     target: { value: "header-secret" },
   });
-  fireEvent.click(screen.getByRole("combobox", { name: "Transport" }));
-  fireEvent.click(screen.getByRole("option", { name: "Stdio" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Transport" }), {
+    target: { value: "stdio" },
+  });
   fireEvent.change(screen.getByLabelText("Program"), {
     target: { value: "mcp-server" },
   });
@@ -267,8 +268,9 @@ it("preserves secret drafts across transport changes and saves only the selected
     },
   );
 
-  fireEvent.click(screen.getByRole("combobox", { name: "Transport" }));
-  fireEvent.click(screen.getByRole("option", { name: "Streamable HTTP" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Transport" }), {
+    target: { value: "http" },
+  });
   expect(screen.getByLabelText("Header value for Authorization")).toHaveValue(
     "header-secret",
   );
@@ -278,8 +280,9 @@ it("preserves secret drafts across transport changes and saves only the selected
     url: "https://example.invalid/mcp",
     headers: { Authorization: "header-secret" },
   });
-  fireEvent.click(screen.getByRole("combobox", { name: "Transport" }));
-  fireEvent.click(screen.getByRole("option", { name: "Stdio" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Transport" }), {
+    target: { value: "stdio" },
+  });
   expect(
     screen.getByLabelText("Environment variable value for API_KEY"),
   ).toHaveValue("env-secret");

@@ -162,10 +162,8 @@ test("composition keys do not navigate transcript matches or dismiss search", as
   await expect(input).not.toBeFocused();
   await page.keyboard.press("Escape");
   const scope = page.getByRole("combobox", { name: "Search scope" });
-  await scope.click();
+  await scope.focus();
   expect(await scope.evaluate(nativeFind)).toBe(true);
-  await expect(scope).toHaveAttribute("aria-expanded", "true");
-  await page.keyboard.press("Escape");
 
   await page.locator(".transcript-wrap").press("Control+f");
   await expect(input).toBeFocused();
@@ -494,8 +492,7 @@ test.describe("touch reading controls", () => {
       .toMatchObject({ text: "Ready", code: true });
     const search = page.getByRole("search", { name: "Search conversation" });
     const scope = search.getByRole("combobox", { name: "Search scope" });
-    await scope.tap();
-    await page.getByRole("option", { name: "User", exact: true }).tap();
+    await scope.selectOption("user");
     await expect(input).toHaveValue("Ready");
     await expect(page.getByLabel("Transcript search matches")).toHaveText(
       "0 matches",

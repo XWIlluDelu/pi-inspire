@@ -42,10 +42,10 @@ it("allows project notification grouping when desktop notifications are unavaila
   expect(
     screen.getByRole("button", { name: "Enable notifications" }),
   ).toBeDisabled();
-  fireEvent.click(
+  fireEvent.change(
     screen.getByRole("combobox", { name: "Notification grouping" }),
+    { target: { value: "project" } },
   );
-  fireEvent.click(screen.getByRole("option", { name: "Project" }));
   expect(change).toHaveBeenCalledWith("project");
 });
 

@@ -54,21 +54,15 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await expect(sessions).not.toBeFocused();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  for (const [name, control] of [
-    [
-      "Open conversation search",
-      page.getByRole("searchbox", { name: "Search conversation" }),
-    ],
-    [
-      "Open prompt navigation",
-      page.getByRole("button", { name: "Close user prompts", exact: true }),
-    ],
-  ] as const) {
-    const launcher = page.getByRole("button", { name, exact: true });
-    await launcher.click();
-    await control.press("Escape");
-    await expect(launcher).toBeFocused();
-  }
+  const searchLauncher = page.getByRole("button", {
+    name: "Open conversation search",
+    exact: true,
+  });
+  await searchLauncher.click();
+  await page
+    .getByRole("searchbox", { name: "Search conversation" })
+    .press("Escape");
+  await expect(searchLauncher).toBeFocused();
   expect(aborts).toBe(0);
   await page
     .getByRole("textbox", { name: "Message", exact: true })
