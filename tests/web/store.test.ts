@@ -3,7 +3,6 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
 import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { AppStore, shallowEqual, store, useAppState } from "../../src/store";
 import {
@@ -60,55 +59,66 @@ describe("websocket lifecycle", () => {
     expect(store.getState().messages.at(-1)?.content).toBe("after restart");
   });
 
-  it.each(["target changed", "wrong authority", "wrong digest"] as const)(
-    "reconnects when an unchanged HTTP-open confirmation no longer attests the selected detail (%s)",
-    async (confirmation) => {
-      const next = activeSnapshot({ sessionId: "s2" });
-      const digest = "b".repeat(64);
-      installStoreRoutes((url) =>
-        url === "/api/sessions/open"
-          ? {
-              body: {
-                ...next,
-                authorityId: TEST_HOST_AUTHORITY,
-                snapshotDigest: digest,
-              },
-            }
-          : undefined,
-      );
-      const { store, socket } = await initStore();
-      await store.openSession("s2");
-      expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
-        type: "detail_interest",
-        sessionId: "s2",
-        revision: 1,
-        authorityId: TEST_HOST_AUTHORITY,
-        snapshotDigest: digest,
-      });
-      socket.emit({
-        type: "message_update",
-        sessionId: confirmation === "target changed" ? "s2" : "s1",
-        message: {
-          role: "assistant",
-          timestamp: 1,
-          content: [{ type: "text", text: "detail in flight" }],
-        },
-      });
-      socket.emit({
-        type: "snapshot",
-        unchanged: true,
-        detailSessionId: "s2",
-        detailRevision: 1,
-        authorityId:
-          confirmation === "wrong authority"
-            ? "22222222-2222-4222-8222-222222222222"
-            : TEST_HOST_AUTHORITY,
-        snapshotDigest:
-          confirmation === "wrong digest" ? "c".repeat(64) : digest,
-      });
-      expect(store.getState().connection).toBe("reconnecting");
-    },
-  );
+  it("ignores an older addressed snapshot when the browser switches sessions", async () => {
+    const next = activeSnapshot({ sessionId: "s2" });
+    installStoreRoutes((url) =>
+      url === "/api/sessions/open" ? { body: next } : undefined,
+    );
+    const { store, socket } = await initStore();
+    await store.openSession("s2");
+    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({
+      type: "detail_interest",
+      sessionId: "s2",
+      revision: 1,
+    });
+    socket.emit({
+      type: "snapshot",
+      detailSessionId: "s1",
+      detailRevision: 0,
+      data: activeSnapshot(),
+    });
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      connection: "open",
+    });
+    socket.emit({
+      type: "snapshot",
+      detailSessionId: "s2",
+      detailRevision: 1,
+      data: next,
+    });
+    expect(store.getState()).toMatchObject({
+      sessionId: "s2",
+      connection: "open",
+    });
+  });
+
+  it("keeps a newer HTTP observation when a joined snapshot was captured earlier", async () => {
+    const current = activeSnapshot({
+      pageMessages: [{ role: "assistant", content: "Already confirmed" }],
+    });
+    installStoreRoutes((url) =>
+      url.startsWith("/api/snapshot")
+        ? { body: { ...current, runtimeSequence: 12 } }
+        : undefined,
+    );
+    const { store } = await initStore();
+    await store.init();
+    const peer = FakeWebSocket.instances.at(-1)!;
+    peer.openWithoutSnapshot();
+    await store.refreshSession();
+    peer.emit({
+      type: "snapshot",
+      detailSessionId: "s1",
+      detailRevision: 0,
+      data: activeSnapshot(),
+      runtimeSequence: 11,
+    });
+    expect(store.getState()).toMatchObject({
+      connection: "open",
+      messages: [{ role: "assistant", content: "Already confirmed" }],
+    });
+  });
 
   it.each(["replacement", "deadline"] as const)(
     "ignores a retired bootstrap response after %s",
@@ -198,127 +208,56 @@ describe("websocket lifecycle", () => {
   it.each(["committed", "pending"])(
     "preserves a newer %s selection during missing-detail recovery",
     async (phase) => {
-      const fallback = deferred<RouteResponse>();
       const opening = deferred<RouteResponse>();
-      const next = { body: activeSnapshot({ sessionId: "s2" }) };
-      const empty = {
-        active: null,
-        runState: "idle" as const,
-        sessionStatuses: {},
-      };
-      let missing = false;
-      let recovering = false;
-      installStoreRoutes((url) => {
-        if (url === "/api/bootstrap?detail=s1" && missing)
-          return {
-            status: 404,
-            body: { error: "gone", code: "SESSION_NOT_FOUND" },
-          };
-        if (url === "/api/bootstrap?detail=") {
-          recovering = true;
-          return fallback.promise;
-        }
-        if (url === "/api/sessions/open") return opening.promise;
-      });
+      installStoreRoutes((url) =>
+        url === "/api/sessions/open" ? opening.promise : undefined,
+      );
       const { store } = await initStore();
-      missing = true;
-      const reconnecting = store.init();
-      await vi.waitFor(() => expect(recovering).toBe(true));
+      await store.init();
+      const socket = FakeWebSocket.instances.at(-1)!;
+      socket.openWithoutSnapshot();
       const selecting = store.openSession("s2");
+      const finish = () =>
+        opening.resolve({ body: activeSnapshot({ sessionId: "s2" }) });
       if (phase === "committed") {
-        opening.resolve(next);
+        finish();
         await selecting;
       }
-      fallback.resolve({ body: bootstrapPayload({ snapshot: empty }) });
-      await reconnecting;
+      socket.emit({
+        type: "snapshot",
+        detailSessionId: "s1",
+        detailRevision: 0,
+        missingDetail: true,
+        data: { active: null, runState: "idle", sessionStatuses: {} },
+      });
       if (phase === "pending") {
         expect(store.getState()).toMatchObject({
           sessionId: null,
           openingSessionId: "s2",
           sessionSelectionPending: true,
         });
-        const socket = FakeWebSocket.instances.at(-1)!;
-        socket.readyState = FakeWebSocket.OPEN;
-        socket.onopen?.({});
-        // Match the real addressed handshake, not a legacy selection push.
-        socket.emit({
-          type: "snapshot",
-          detailSessionId: null,
-          detailRevision: 0,
-          data: empty,
-        });
-        opening.resolve(next);
+        finish();
         await selecting;
       }
       expect(store.getState().sessionId).toBe("s2");
-      expect(
-        store
-          .getState()
-          .notices.some((notice) =>
-            notice.text.includes("previous session no longer exists"),
-          ),
-      ).toBe(false);
+      expect(store.getState().notices).not.toContainEqual(
+        expect.objectContaining({
+          text: expect.stringContaining("previous session no longer exists"),
+        }),
+      );
     },
   );
 
-  it("keeps the selection when an addressed 404 does not establish absence", async () => {
-    let refused = false;
-    const reads: string[] = [];
-    installStoreRoutes((url) => {
-      if (url.startsWith("/api/bootstrap") && refused) {
-        reads.push(url);
-        return { status: 404, body: { error: "Read refused" } };
-      }
-    });
+  it("retains the selected session when the socket read fails", async () => {
+    installStoreRoutes(() => undefined);
     const { store } = await initStore();
-    refused = true;
     await store.init();
-    expect(reads).toEqual(["/api/bootstrap?detail=s1"]);
+    const socket = FakeWebSocket.instances.at(-1)!;
+    socket.openWithoutSnapshot();
+    socket.onerror?.();
     expect(store.getState()).toMatchObject({
       sessionId: "s1",
-      connection: "offline",
-    });
-  });
-
-  it("waits for a slow bootstrap and shares the next deadline with missing-detail fallback", async () => {
-    vi.useFakeTimers();
-    let recovering = false;
-    const initial = deferred<RouteResponse>();
-    const missing = deferred<RouteResponse>();
-    let fallbackSignal: AbortSignal | null | undefined;
-    installStoreRoutes((url, init) => {
-      if (url === "/api/bootstrap") return initial.promise;
-      if (recovering && url === "/api/bootstrap?detail=s1")
-        return missing.promise;
-      if (recovering && url === "/api/bootstrap?detail=") {
-        fallbackSignal = init.signal;
-        return new Promise<never>(() => {});
-      }
-    });
-    const store = new AppStore();
-    const initializing = store.init();
-    await vi.advanceTimersByTimeAsync(35_000);
-    const snapshot = activeSnapshot();
-    initial.resolve({ body: bootstrapPayload({ snapshot }) });
-    await initializing;
-    FakeWebSocket.instances.at(-1)!.open(snapshot);
-    expect(store.getState().connection).toBe("open");
-    recovering = true;
-    const reconnecting = store.init();
-    await vi.advanceTimersByTimeAsync(35_000);
-    missing.resolve({
-      status: 404,
-      body: { error: "Gone", code: "SESSION_NOT_FOUND" },
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fallbackSignal?.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(HTTP_OBSERVATION_TIMEOUT_MS - 35_000);
-    await reconnecting;
-    expect(fallbackSignal?.aborted).toBe(true);
-    expect(store.getState()).toMatchObject({
-      connection: "offline",
-      needsToken: false,
-      sessionId: "s1",
+      connection: "reconnecting",
     });
   });
 

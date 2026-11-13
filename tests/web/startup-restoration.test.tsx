@@ -9,6 +9,7 @@ import {
   bootstrapPayload,
   DEFAULT_PREFS,
   deferred,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   type RouteHandler,
@@ -55,7 +56,10 @@ describe("initial workbench restoration", () => {
           return catalog.promise.then((body) => ({ body }));
       };
       render(<App />);
-      await act(() => current.init());
+      await act(async () => {
+        await current.init();
+        FakeWebSocket.instances.at(-1)!.open();
+      });
       expectRestoring();
       await act(() =>
         catalog.resolve(sessionPage([sessionSummary({ id: "recent" })], 1)),
@@ -90,29 +94,22 @@ describe("initial workbench restoration", () => {
 
   it("waits for the missing saved session fallback, then offers a new session", async () => {
     rememberWorkbenchSession("deleted");
-    const fallback = deferred<ReturnType<typeof bootstrapPayload>>();
-    route = async (url) => {
-      if (!url.startsWith("/api/bootstrap")) return;
-      const detail = new URL(url, "http://localhost").searchParams.get(
-        "detail",
-      );
-      if (detail === "deleted")
-        return {
-          status: 404,
-          body: { error: "Session not found", code: "SESSION_NOT_FOUND" },
-        };
-      expect(detail).toBe("");
-      return { body: await fallback.promise };
-    };
+    route = (url) =>
+      url === "/api/bootstrap" ? { body: bootstrapPayload() } : undefined;
     render(<App />);
-    let startup!: Promise<void>;
-    await act(async () => {
-      startup = current.init();
-    });
+    await act(() => current.init());
     expectRestoring();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    expect(new URL(socket.url).searchParams.get("detail")).toBe("deleted");
+    socket.openWithoutSnapshot();
     await act(async () => {
-      fallback.resolve(bootstrapPayload());
-      await startup;
+      socket.emit({
+        type: "snapshot",
+        detailSessionId: "deleted",
+        detailRevision: 0,
+        missingDetail: true,
+        data: bootstrapPayload().snapshot,
+      });
     });
     expect(
       screen.getByRole("form", { name: "Start a session" }),
@@ -154,6 +151,7 @@ describe("initial workbench restoration", () => {
     await act(async () => {
       boot.resolve(continueBootstrap);
       await startup;
+      FakeWebSocket.instances.at(-1)!.open();
     });
     expectRestoring();
     await act(async () => {

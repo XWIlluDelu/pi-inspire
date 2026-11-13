@@ -55,25 +55,17 @@ neither hide valid `retrying` state nor invent attempt counts.
 
 ## Snapshot synchronization and reconnect
 
-### Authority and unchanged confirmation
+### Authority and initial projection
 
-Bootstrap, HTTP session-open responses and the first WebSocket snapshot carry a process-lifetime
-Host authority and SHA-256 snapshot digest. Validate and apply both authority and snapshot before
-publishing the socket as open. Reconciliation must neither duplicate settled messages nor let a
-late snapshot replace newer selection.
+HTTP bootstrap supplies configuration, a starting session address and the process-lifetime Host
+authority. The addressed WebSocket subscription reads the initial projection once and publishes
+it before releasing queued events. Validate the authority and interest revision before applying the
+snapshot or publishing the socket as open. The runtime captures its event sequence when assembling
+the snapshot. The socket replays only queued runtime events newer than that cut.
 
-After a synchronized socket loss, first attempt bounded WebSocket resume with the last confirmed
-digest. A match yields a digest-only unchanged acknowledgement; otherwise send a full authoritative
-snapshot. Failed resume falls back to bootstrap. A committed HTTP-open snapshot also passes its
-authority-bound digest into changed detail interest. The Host still performs a second authoritative
-read and queues events behind it, using a digest-only confirmation for an identical window.
-The runtime captures its event sequence when assembling the snapshot. The socket replays only
-queued runtime events newer than that cut.
-
-Pending detail confirmation keeps the exact authority/session/revision/digest witness. Previously
-sent detail from another session may invalidate the general reconnect cache, but not this witness.
-Current-target or unscoped runtime changes invalidate it. An unchanged reply must match its scope
-and digest.
+After a socket loss, attempt bounded WebSocket resume with the current address. A failed resume
+falls back to metadata bootstrap; a newer selection replaces the socket's interest and invalidates
+any previous projection still in flight. HTTP open remains an explicit selection operation.
 
 ### Recovery triggers and deadlines
 
@@ -84,14 +76,14 @@ boundary. Heartbeats cannot overtake a joining snapshot. Attempts use bounded de
 - WebSocket establishment: 10 seconds.
 - First authoritative snapshot after open: a separate 45 seconds, allowing Pi's 30-second read budget
   plus transfer time.
-- Initial/addressed bootstrap and changed detail interest: the same 45-second observation budget.
-  Missing-detail fallback stays within its original bootstrap deadline.
+- Metadata bootstrap: 45 seconds. Each changed detail interest gets a separate 45-second
+  observation budget, including the missing-detail fallback.
 
 Heartbeats and stale snapshots do not extend deadlines. Expired sockets cannot apply late frames or
 close callbacks to their replacement.
 
-An addressed reconnect to a confirmed-absent session falls back once to bootstrap without detail,
-explains the absence and keeps Host access. Keep the same owner/deadline and any newer committed
+An addressed subscription to a confirmed-absent session publishes an empty snapshot and explains
+the absence on the same connection. Keep the same owner/deadline and any newer committed
 or pending navigation; do not adopt another browser's selection. Authentication failure, ambiguity,
 projection corruption and unclassified read errors do not establish deletion.
 
@@ -101,7 +93,7 @@ continued change refuses the read. This recovery neither replaces a live owned p
 retries a write. A missing open target refreshes the list while keeping the visible conversation.
 
 Background snapshot failures keep confirmed content and retry with bounded backoff under the same
-API, transport, selection and branch-view owner. A fresh snapshot or valid unchanged acknowledgement
+API, transport, selection and branch-view owner. A fresh snapshot
 retires recovery. Superseded reads cannot publish warnings or restart retries. Commands and prompts
 are never replayed; persistent synchronization loss follows [[workbench]].
 
@@ -118,9 +110,9 @@ Every open/new endpoint finishes fallible projection and runtime-metadata reads 
 selection or identity.
 
 Bootstrap likewise captures its API identity. Only the current request may
-apply state, load launch preferences, create a socket or interpret 401 as pairing failure. A snapshot
-already committed by selection/resync supersedes an older bootstrap snapshot and digest, while Host
-metadata may still refresh. Launch continuation honors the intent captured before bootstrap began.
+publish metadata, load launch preferences, create a socket or interpret 401 as pairing failure.
+An explicit selection committed during bootstrap sets the socket's initial address. Launch
+continuation honors the intent captured before bootstrap began.
 The last-opened hint supplies a starting address only when no browser location is available.
 The read keeps that address through completion even if another request changes the hint.
 

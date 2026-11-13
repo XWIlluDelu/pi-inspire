@@ -23,7 +23,8 @@ describe("browser workbench restoration", () => {
   let authorityId: string;
   let cwd: string;
   let missing: string | null;
-  let bootstrapDetails: Array<string | null>;
+  let bootstrapCount: number;
+  let subscribedDetails: Array<string | null>;
   let resolved: string[];
   let bootstrapWait: Promise<void> | null;
   let bootstrapFailure: boolean;
@@ -33,26 +34,19 @@ describe("browser workbench restoration", () => {
     authorityId = TEST_HOST_AUTHORITY;
     cwd = "/demo";
     missing = null;
-    bootstrapDetails = [];
+    bootstrapCount = 0;
+    subscribedDetails = [];
     resolved = [];
     bootstrapWait = null;
     bootstrapFailure = false;
     installFetch(async (url, init) => {
       if (url.startsWith("/api/bootstrap")) {
-        const query = new URL(url, "http://localhost").searchParams;
-        const detail = query.get("detail");
-        bootstrapDetails.push(detail);
+        bootstrapCount++;
         if (bootstrapWait) await bootstrapWait;
         if (bootstrapFailure)
           return { status: 503, body: { error: "Host unavailable" } };
         return {
-          body: bootstrapPayload({
-            authorityId,
-            snapshot:
-              detail === ""
-                ? { active: null, runState: "idle", sessionStatuses: {} }
-                : activeSnapshot({ sessionId: detail ?? "s1", cwd }),
-          }),
+          body: bootstrapPayload({ authorityId, startupSessionId: "s1" }),
         };
       }
       if (url === "/api/sessions/open")
@@ -94,10 +88,20 @@ describe("browser workbench restoration", () => {
     });
   });
 
+  function join() {
+    const socket = FakeWebSocket.instances.at(-1)!;
+    const id = new URL(socket.url).searchParams.get("detail") || null;
+    subscribedDetails.push(id);
+    socket.open(
+      id ? activeSnapshot({ sessionId: id, cwd }) : bootstrapPayload().snapshot,
+      authorityId,
+    );
+  }
+
   async function reload() {
     const store = new AppStore();
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open(undefined, authorityId);
+    join();
     return store;
   }
 
@@ -118,7 +122,7 @@ describe("browser workbench restoration", () => {
         "ready",
       ),
     );
-    expect(bootstrapDetails).toEqual([null, "s1"]);
+    expect(subscribedDetails).toEqual(["s1", "s1"]);
     expect(second.getState()).toMatchObject({
       resourcesOpen: true,
       contextMode: "files",
@@ -231,10 +235,11 @@ describe("browser workbench restoration", () => {
     const pending = deferred<void>();
     bootstrapWait = pending.promise;
     const reconnect = store.init();
-    await waitFor(() => expect(bootstrapDetails).toHaveLength(2));
+    await waitFor(() => expect(bootstrapCount).toBe(2));
     return async () => {
       pending.resolve();
       await reconnect;
+      join();
       bootstrapWait = null;
     };
   }
@@ -306,6 +311,7 @@ describe("browser workbench restoration", () => {
     store.setContextMode("terminal");
     bootstrapFailure = false;
     await store.init();
+    join();
     expect(store.getState()).toMatchObject({
       contextMode: "terminal",
       resourceTabs: [{ reference: "one.txt" }],

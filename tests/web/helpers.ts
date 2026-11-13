@@ -101,13 +101,24 @@ export function installFetch(handler: RouteHandler) {
       FakeWebSocket.bootstrapSnapshot = bootstrap.snapshot;
       FakeWebSocket.bootstrapUpdateStatus = bootstrap.updateStatus;
     }
-    return new Response(
-      JSON.stringify(inputReceiptFixture(url, init ?? {}, route)),
-      {
-        status: route.status ?? 200,
-        headers: { "Content-Type": "application/json", ...route.headers },
-      },
-    );
+    let body = inputReceiptFixture(url, init ?? {}, route);
+    if (
+      url === "/api/bootstrap" &&
+      body &&
+      typeof body === "object" &&
+      "snapshot" in body
+    ) {
+      const { snapshot, ...metadata } = body;
+      body = {
+        startupSessionId:
+          (snapshot as ActiveSnapshot).active?.sessionId ?? null,
+        ...metadata,
+      };
+    }
+    return new Response(JSON.stringify(body), {
+      status: route.status ?? 200,
+      headers: { "Content-Type": "application/json", ...route.headers },
+    });
   });
   vi.stubGlobal("fetch", fn);
   return fn;
@@ -143,7 +154,6 @@ export function installLocalStorage(): void {
 // --- WebSocket stubbing (never connects unless told to) ---
 
 export const TEST_HOST_AUTHORITY = "11111111-1111-4111-8111-111111111111";
-const TEST_SNAPSHOT_DIGEST = "a".repeat(64);
 
 export class FakeWebSocket {
   static OPEN = 1;
@@ -169,19 +179,21 @@ export class FakeWebSocket {
   close(): void {
     this.readyState = 3;
   }
+  openWithoutSnapshot(): void {
+    this.opened = true;
+    this.readyState = 1;
+    this.onopen?.({});
+  }
   open(
     snapshot = FakeWebSocket.bootstrapSnapshot,
     authorityId = TEST_HOST_AUTHORITY,
   ): void {
     if (this.opened) return;
-    this.opened = true;
-    this.readyState = 1;
-    this.onopen?.({});
+    this.openWithoutSnapshot();
     if (snapshot)
       this.emit({
         type: "snapshot",
         authorityId,
-        snapshotDigest: TEST_SNAPSHOT_DIGEST,
         updateStatus: FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
         data: snapshot,
       });
@@ -194,7 +206,6 @@ export class FakeWebSocket {
       (event as { type?: unknown }).type === "snapshot"
         ? {
             authorityId: TEST_HOST_AUTHORITY,
-            snapshotDigest: TEST_SNAPSHOT_DIGEST,
             updateStatus:
               FakeWebSocket.bootstrapUpdateStatus ?? hostUpdateStatus(),
             ...event,
@@ -313,7 +324,6 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
   return {
     appName: "inspire",
     authorityId: TEST_HOST_AUTHORITY,
-    snapshotDigest: TEST_SNAPSHOT_DIGEST,
     version: "0.1.0",
     piVersion: "0.80.10",
     updateStatus: hostUpdateStatus(),
@@ -332,7 +342,7 @@ export function bootstrapPayload(overrides: Record<string, unknown> = {}) {
         reasoning: true,
       },
     ],
-    snapshot: { active: null, runState: "idle", sessionStatuses: {} },
+    snapshot: { active: null, runState: "idle" as const, sessionStatuses: {} },
     ...overrides,
   };
 }

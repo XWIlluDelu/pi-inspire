@@ -17,7 +17,7 @@ type SnapshotEvent = {
   sessionStatus?: SessionRuntimeStatus;
 };
 
-// Keep HTTP bootstrap/open/recovery and live snapshots consistent. Fixtures own
+// Keep HTTP open/recovery and live snapshots consistent. Fixtures own
 // their domain state; this helper only owns the Host's transport envelopes.
 export async function routeSnapshots(
   page: Page,
@@ -55,10 +55,8 @@ export async function routeSnapshots(
       authority = response.headers()["x-inspire-authority"] ?? authority;
       if (!response.ok()) return route.fulfill({ response });
       const body = await response.json();
-      if (body.snapshot) {
-        options.snapshot?.(body.snapshot);
-        options.bootstrap?.(body);
-      } else if ("active" in body) options.snapshot?.(body);
+      if ("appName" in body) options.bootstrap?.(body);
+      else if ("active" in body) options.snapshot?.(body);
       await route.fulfill({ response, json: body });
     });
   }

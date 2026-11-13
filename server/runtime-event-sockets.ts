@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
@@ -62,7 +61,6 @@ export function createRuntimeEventSockets({
     interest: DetailInterest;
     releaseView?: () => void;
     backlog?: SnapshotBacklog;
-    requestedDigest?: string;
     principal?: NotificationPrincipal;
     unsubscribe?: () => void;
     backgroundStatuses: Map<string, string>;
@@ -477,6 +475,21 @@ export function createRuntimeEventSockets({
       socket.terminate();
     });
     socket.on("close", () => forgetSocket(socket));
+    const readInterest = async ({ sessionId }: DetailInterest) => {
+      try {
+        return {
+          snapshot: await runtime.snapshot(sessionId),
+          missingDetail: false,
+        };
+      } catch (error) {
+        if (
+          sessionId === null ||
+          (error as { code?: string })?.code !== "SESSION_NOT_FOUND"
+        )
+          throw error;
+        return { snapshot: await runtime.snapshot(null), missingDetail: true };
+      }
+    };
     const synchronize = (): void => {
       flushStreamBatch();
       const previous = peer.backlog;
@@ -487,10 +500,10 @@ export function createRuntimeEventSockets({
       peer.backlog = queue;
       const { interest } = peer;
       void Promise.all([
-        runtime.snapshot(interest.sessionId),
+        readInterest(interest),
         updateCoordinator.status(),
       ]).then(
-        ([snapshot, updateStatus]) => {
+        ([{ snapshot, missingDetail }, updateStatus]) => {
           const queued = peer.backlog;
           if (queued !== queue) return;
           // Pending batches exclude this joining socket, which already queued
@@ -498,23 +511,20 @@ export function createRuntimeEventSockets({
           flushStreamBatch();
           peer.backlog = undefined;
           if (socket.readyState !== WebSocket.OPEN) return;
+          if (missingDetail)
+            setDetailInterest(peer, { ...interest, sessionId: null });
           const cut = runtime.eventSnapshotCut(snapshot);
           let message: string;
           try {
-            const encodedSnapshot = JSON.stringify(snapshot);
-            const snapshotDigest = createHash("sha256")
-              .update(encodedSnapshot)
-              .digest("hex");
-            const unchanged = peer.requestedDigest === snapshotDigest;
             message = JSON.stringify({
               type: "snapshot",
               authorityId,
               runtimeSequence: cut,
-              snapshotDigest,
               updateStatus,
               detailSessionId: interest.sessionId,
               detailRevision: interest.revision,
-              ...(unchanged ? { unchanged: true } : { data: snapshot }),
+              ...(missingDetail ? { missingDetail: true } : {}),
+              data: snapshot,
             });
           } catch {
             socket.close(1011, "Session state was not serializable");
@@ -564,11 +574,6 @@ export function createRuntimeEventSockets({
             type: z.literal("detail_interest"),
             sessionId: sessionIdField.nullable(),
             revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-            authorityId: z.string().uuid().optional(),
-            snapshotDigest: z
-              .string()
-              .regex(/^[0-9a-f]{64}$/u)
-              .optional(),
           })
           .strict()
           .parse(JSON.parse(data.toString()));
@@ -578,10 +583,6 @@ export function createRuntimeEventSockets({
         // synchronously, before any asynchronous runtime read can yield.
         flushStreamBatch();
         setDetailInterest(peer, interest);
-        peer.requestedDigest =
-          interest.authorityId === authorityId
-            ? interest.snapshotDigest
-            : undefined;
         synchronize();
       } catch {
         socket.close(1008, "Invalid detail interest");
@@ -614,7 +615,6 @@ export function createRuntimeEventSockets({
         return;
       }
       websocket.handleUpgrade(request, socket, head, (client) => {
-        const requestedDigest = url.searchParams.get("snapshot");
         const interest = { sessionId: detail || null, revision: 0 };
         const peer: Peer = {
           responsive: true,
@@ -622,10 +622,6 @@ export function createRuntimeEventSockets({
           backgroundStatuses: new Map(),
           principal: notificationPrincipal,
           browserBuild,
-          requestedDigest:
-            requestedDigest && /^[0-9a-f]{64}$/u.test(requestedDigest)
-              ? requestedDigest
-              : undefined,
         };
         setDetailInterest(peer, interest);
         startPeer(client, peer);

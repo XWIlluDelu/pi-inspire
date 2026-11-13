@@ -70,7 +70,7 @@ describe("feedback scope", () => {
   });
 
   it.each([false, true])(
-    "a cached snapshot resolves read warnings but keeps projection errors (projectionError=%s)",
+    "a fresh snapshot resolves read warnings but keeps projection errors (projectionError=%s)",
     async (brokenProjection) => {
       const snapshot = activeSnapshot();
       if (brokenProjection)
@@ -88,7 +88,7 @@ describe("feedback scope", () => {
       const { store, socket } = await initStore();
       await store.refreshSession();
       expect(store.getState().error).toBeTruthy();
-      socket.emit({ type: "snapshot", unchanged: true });
+      socket.emit({ type: "snapshot", data: snapshot });
       expect(store.getState().error).toBe(
         brokenProjection ? "Broken projection" : null,
       );

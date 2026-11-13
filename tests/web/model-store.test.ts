@@ -75,6 +75,7 @@ describe("model catalog ownership", () => {
       });
       const store = new AppStore();
       await store.init();
+      FakeWebSocket.instances.at(-1)!.open();
       const before = store.getState();
       const owner = { sessionId: before.sessionId! };
       const older =
@@ -173,6 +174,7 @@ describe("model catalog ownership", () => {
     });
     const store = new AppStore();
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open();
     const request = store.refreshModels();
     await store.deselectSession();
     const cached = store.getState().availableModels;
@@ -311,6 +313,7 @@ describe("native model controls", () => {
     });
     const store = new AppStore();
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open();
     await store.refreshModels();
     await store.cycleThinking();
     expect(levels).toEqual(["xhigh"]);
@@ -328,6 +331,7 @@ describe("native model controls", () => {
     const host = controlHost(),
       store = new AppStore();
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open();
     await Promise.all([
       store.cycleModel(1),
       store.cycleModel(1),
@@ -358,6 +362,7 @@ describe("native model controls", () => {
       store = new AppStore(),
       gate = deferred<void>();
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open();
     host.gateModels(gate.promise);
     const old = store.cycleModel(1),
       queued = store.cycleThinking();

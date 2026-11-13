@@ -2,6 +2,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { expect, it, vi } from "vitest";
+import type { WebSocket } from "ws";
 import { AttachmentStore } from "../../server/attachments";
 import { PiRpcProcess } from "../../server/pi-rpc";
 import { SessionManager } from "../../server/pi-runtime";
@@ -11,13 +12,14 @@ import { AppStore } from "../../src/store";
 import {
   closeHostApiFixture,
   hostApiFixture,
+  observeEventSocket,
   token,
 } from "../server/fixtures/host-api";
 import {
   nativePiWorkspace,
   stubNativePiEnvironment,
 } from "../server/fixtures/native-pi";
-import { installFakeWebSocket } from "../web/helpers";
+import { FakeWebSocket, installFakeWebSocket } from "../web/helpers";
 
 it.each([false, true])(
   "preserves the native cycle scope/default/hook order through AppStore, HTTP and RPC (scoped=%s)",
@@ -94,6 +96,7 @@ it.each([false, true])(
     });
     let host: Awaited<ReturnType<typeof hostApiFixture>> | undefined,
       store: AppStore | undefined;
+    let peer: WebSocket | undefined;
     const realFetch = fetch;
     try {
       await runtime.openSession(manager.getSessionId());
@@ -110,6 +113,18 @@ it.each([false, true])(
       }) satisfies typeof fetch);
       store = new AppStore();
       await store.init();
+      const socket = FakeWebSocket.instances.at(-1)!;
+      const id = manager.getSessionId();
+      expect(new URL(socket.url).searchParams.get("detail")).toBe(id);
+      socket.openWithoutSnapshot();
+      const subscription = observeEventSocket(
+        `${host.baseUrl.replace("http", "ws")}/events?detail=${encodeURIComponent(id)}`,
+      );
+      peer = subscription.socket;
+      peer.on("message", (data) =>
+        socket.onmessage?.({ data: data.toString() }),
+      );
+      await vi.waitFor(() => expect(store!.getState().connection).toBe("open"));
       const before = commands.length;
       await store.cycleModel(1);
       expect(store.getState()).toMatchObject({
@@ -142,6 +157,7 @@ it.each([false, true])(
         await readFile(join(f.root, "model-events"), "utf8"),
       ).not.toContain(":request");
     } finally {
+      peer?.close();
       (
         store as unknown as
           | { connectionController: { stop(): void } }

@@ -226,6 +226,7 @@ describe("Files pane", () => {
       store.toggleWorkspaceDirectory(dir);
     store.setWorkspaceShowHidden(false);
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open(activeSnapshot());
     store.setResourcesOpen(false);
     store.setContextMode("files");
   });
@@ -315,7 +316,10 @@ describe("Files pane", () => {
             });
           });
         } else {
-          await act(() => store.init());
+          await act(async () => {
+            await store.init();
+            FakeWebSocket.instances.at(-1)!.open(activeSnapshot());
+          });
         }
         await waitFor(() =>
           expect(requests("/api/resources/list").length).toBe(listCount + 1),

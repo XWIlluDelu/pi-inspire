@@ -985,10 +985,10 @@ export function createInspireServer(deps: AppDependencies): {
         ? null
         : sessionIdField.parse(value);
 
-  app.get("/api/bootstrap", async (request, response) => {
+  app.get("/api/bootstrap", async (_request, response) => {
     const startedAt = performance.now();
     const preferenceRead = deps.preferences.inspect();
-    const [preferenceState, toolPresentationState, updateStatus, snapshot] =
+    const [preferenceState, toolPresentationState, updateStatus] =
       await Promise.all([
         preferenceRead,
         preferenceRead.then(({ preferences }) =>
@@ -999,15 +999,11 @@ export function createInspireServer(deps: AppDependencies): {
               }),
         ),
         updateCoordinator.status(),
-        deps.runtime.snapshot(requestedDetail(request.query.detail)),
       ]);
-    const encodedSnapshot = JSON.stringify(snapshot);
     const body: BootstrapResponse = {
       appName: "inspire",
       authorityId,
-      snapshotDigest: createHash("sha256")
-        .update(encodedSnapshot)
-        .digest("hex"),
+      startupSessionId: deps.runtime.startupSessionHint,
       version: deps.version,
       piVersion: deps.piVersion,
       updateStatus,
@@ -1023,7 +1019,6 @@ export function createInspireServer(deps: AppDependencies): {
         ? { toolPresentationsWarning: toolPresentationState.warning }
         : {}),
       availableModels: deps.bootstrapModels?.() ?? [],
-      snapshot,
     };
     response.set(
       "Server-Timing",
@@ -1068,10 +1063,7 @@ export function createInspireServer(deps: AppDependencies): {
     const snapshot = await deps.runtime.openSession(id);
     response.json({
       ...snapshot,
-      authorityId,
-      snapshotDigest: createHash("sha256")
-        .update(JSON.stringify(snapshot))
-        .digest("hex"),
+      runtimeSequence: deps.runtime.eventSnapshotCut(snapshot),
     });
   });
   app.post("/api/sessions/deselect", async (_request, response) => {

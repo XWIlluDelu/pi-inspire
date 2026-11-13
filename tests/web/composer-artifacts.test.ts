@@ -33,8 +33,6 @@ describe("Pending input recovery and copying", () => {
     const aborts = vi.fn();
     const selected = activeSnapshot({ sessionId: "s2" });
     installFetch((url, init) => {
-      if (url.startsWith("/api/bootstrap?detail=s2"))
-        return { body: bootstrapPayload({ snapshot: selected }) };
       if (url === "/api/pending/recover") {
         posts(jsonBody(init));
         operationId = String(jsonBody(init).operationId);
@@ -58,7 +56,7 @@ describe("Pending input recovery and copying", () => {
     await store.openSession("s2");
     setSessionDraft("s2", "B draft");
     await store.init();
-    FakeWebSocket.instances.at(-1)!.open();
+    FakeWebSocket.instances.at(-1)!.open(selected);
     await vi.waitFor(() => expect(sessionDraft("s1")).toBe("retained handoff"));
     expect(store.getState().sessionId).toBe("s2");
     mutation.resolve({

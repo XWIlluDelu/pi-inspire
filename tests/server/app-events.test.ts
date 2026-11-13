@@ -414,48 +414,87 @@ describe("WebSocket observation and transport limits", () => {
     }
   });
 
-  it("confirms an unchanged bootstrap before releasing the joining backlog", async () => {
-    const bootstrap = await fixture.localRequest
+  it("reads the initial detail only on subscription and releases the backlog after it", async () => {
+    const read = deferredSignal();
+    const id = "fixture-active";
+    await runtime.openSession(id);
+    const snapshot = runtime.snapshot.bind(runtime);
+    const readSnapshot = vi
+      .spyOn(runtime, "snapshot")
+      .mockImplementation(async (sessionId) => {
+        await read.promise;
+        return snapshot(sessionId);
+      });
+    const { body } = await fixture.localRequest
       .get("/api/bootstrap")
       .expect(200);
-    const read = deferredSignal();
-    const snapshot = runtime.snapshot.bind(runtime);
-    vi.spyOn(runtime, "snapshot").mockImplementation(async () => {
-      await read.promise;
-      return snapshot();
+    expect(body).toMatchObject({
+      authorityId: application.authorityId,
+      startupSessionId: id,
     });
+    expect(body).not.toHaveProperty("snapshot");
+    expect(readSnapshot).not.toHaveBeenCalled();
+
     const { socket, frames } = observeEventSocket(
-      `${baseUrl.replace("http", "ws")}/events?snapshot=${bootstrap.body.snapshotDigest}`,
+      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
     );
     try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("open", resolve);
-        socket.once("error", reject);
-      });
+      await vi.waitFor(() =>
+        expect(readSnapshot).toHaveBeenCalledExactlyOnceWith(id),
+      );
       runtime.emit("event", {
         type: "agent_start",
-        sessionId: "fixture-active",
+        sessionId: id,
         sessionStatus: { runState: "running" },
       });
       expect(frames).toEqual([]);
       read.resolve();
       await vi.waitFor(() => expect(frames).toHaveLength(2));
-      expect(frames[0]).toEqual({
+      expect(frames[0]).toMatchObject({
         type: "snapshot",
         authorityId: application.authorityId,
-        runtimeSequence: 0,
-        snapshotDigest: bootstrap.body.snapshotDigest,
-        updateStatus: bootstrap.body.updateStatus,
-        detailSessionId: null,
+        detailSessionId: id,
         detailRevision: 0,
-        unchanged: true,
+        data: { active: { sessionId: id } },
       });
-      expect(frames[1]).toMatchObject({
-        type: "agent_start",
-        sessionId: "fixture-active",
-      });
+      expect(frames[1]).toMatchObject({ type: "agent_start", sessionId: id });
     } finally {
       read.resolve();
+      socket.close();
+    }
+  });
+
+  it("settles a missing addressed session on the same socket without adopting another view", async () => {
+    await runtime.openSession("fixture-active");
+    const id = "missing";
+    const { socket, frames } = observeEventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
+    );
+    try {
+      await vi.waitFor(() =>
+        expect(frames[0]).toMatchObject({
+          type: "snapshot",
+          detailSessionId: id,
+          detailRevision: 0,
+          missingDetail: true,
+          data: { active: null },
+        }),
+      );
+      socket.send(
+        JSON.stringify({
+          type: "detail_interest",
+          sessionId: "fixture-active",
+          revision: 1,
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(frames[1]).toMatchObject({
+          type: "snapshot",
+          detailRevision: 1,
+          data: { active: { sessionId: "fixture-active" } },
+        }),
+      );
+    } finally {
       socket.close();
     }
   });

@@ -7,6 +7,7 @@ import {
   activeSnapshot,
   bootstrapPayload,
   DEFAULT_PREFS,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -154,6 +155,7 @@ describe("launch behavior", () => {
     });
     const store = new AppStore();
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open();
     await vi.waitFor(() => expect(store.getState().sessionId).toBe(summary.id));
   });
 

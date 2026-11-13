@@ -36,7 +36,6 @@ import type {
   SessionExportResponse,
   SessionHistoryPages,
   SessionListResponse,
-  SessionOpenResponse,
   ThinkingLevel,
   UploadedAttachment,
 } from "../shared/contracts";
@@ -635,11 +634,9 @@ export function createApi() {
         body: JSON.stringify(intent),
         signal: AbortSignal.timeout(10_000),
       }),
-    bootstrap: (signal?: AbortSignal, sessionId?: string | null) =>
-      withTransportMeasure("bootstrap-confirmation", () =>
-        request<BootstrapResponse>(`/api/bootstrap${detailQuery(sessionId)}`, {
-          signal,
-        }),
+    bootstrap: (signal?: AbortSignal) =>
+      withTransportMeasure("bootstrap-metadata", () =>
+        request<BootstrapResponse>("/api/bootstrap", { signal }),
       ),
     update: (refresh = false) =>
       request<InspireUpdateCheckResult>(
@@ -745,7 +742,7 @@ export function createApi() {
         { mutation: false },
       ),
     openSession: (id: string, signal?: AbortSignal) =>
-      post<SessionOpenResponse>("/api/sessions/open", { id }, { signal }),
+      post<ActiveSnapshot>("/api/sessions/open", { id }, { signal }),
     selectBranch: (sessionId: string, leafId: string) =>
       post<ActiveSnapshot>("/api/branches/select", {
         sessionId,
@@ -1189,14 +1186,9 @@ function detailQuery(sessionId: string | null | undefined): string {
     : `?detail=${encodeURIComponent(sessionId ?? "")}`;
 }
 
-export function eventsUrl(
-  ticket: string,
-  snapshotDigest: string | null,
-  sessionId: string | null,
-): string {
+export function eventsUrl(ticket: string, sessionId: string | null): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const query = new URLSearchParams({ ticket, build: browserBuildId() });
-  if (snapshotDigest) query.set("snapshot", snapshotDigest);
   query.set("detail", sessionId ?? "");
   return `${protocol}//${window.location.host}/events?${query}`;
 }

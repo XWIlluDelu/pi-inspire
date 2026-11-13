@@ -72,8 +72,9 @@ it("discovers native global/trusted-project registrations and resolves defaults 
     const bootstrap = await endpoint.get("/api/bootstrap").expect(200);
     expect(bootstrap.body).toMatchObject({
       availableModels: [],
-      snapshot: { runState: "idle" },
+      startupSessionId: null,
     });
+    expect(bootstrap.body).not.toHaveProperty("snapshot");
     expect(readMetadata).not.toHaveBeenCalled();
 
     const [{ body: trusted }, { body: untrusted }] = await Promise.all([

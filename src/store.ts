@@ -359,7 +359,10 @@ export class AppStore {
       this.openingOwner === ticket &&
       this.api === api,
     releaseOpening: (ticket) => this.releaseOpening(ticket),
-    applySnapshot: (snapshot) => this.applySnapshot(snapshot),
+    applySnapshot: (snapshot) => {
+      this.applySnapshot(snapshot);
+      this.connectionController.updateDetailInterest();
+    },
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
     consumeReadyWhileOpening: (sessionId, ticket) => {
       if (this.readyWhileOpening.get(sessionId) !== ticket) return false;
@@ -444,10 +447,10 @@ export class AppStore {
       this.preferences.reconcile(authoritative, owners),
   });
   private hostAuthorityId: string | null = null;
-  private snapshotDigest: string | null = null;
+  private workbenchSelectionResolved = false;
+  private afterInitialSnapshot: (() => void) | null = null;
   private transcriptSequence = -1;
   private visibleEventSequence = -1;
-  /** A bootstrap read cannot replace a snapshot committed while it awaited I/O. */
   private snapshotGeneration = 0;
   private readonly pendingRecovery = new PendingRecoveryController({
     api: () => this.api,
@@ -468,12 +471,14 @@ export class AppStore {
     state: () => ({
       bootstrapped: this.state.bootstrapped,
       authorityId: this.hostAuthorityId,
-      snapshotDigest: this.snapshotDigest,
       sessionId: this.state.sessionId,
     }),
     patch: (patch) => {
       this.set(patch);
       if (patch.connection === "open") {
+        const complete = this.afterInitialSnapshot;
+        this.afterInitialSnapshot = null;
+        complete?.();
         this.composer.resumeUploads();
         this.pendingRecovery.resume();
         void this.notifications.openTarget();
@@ -520,23 +525,27 @@ export class AppStore {
       }
       if (event.type === "snapshot") {
         this.updates.applySnapshot(event.updateStatus);
-        if (event.unchanged !== true) this.runtimeEvents.apply(event);
-        // An authenticated cache acknowledgement reobserves the same state.
-        // It resolves a read warning, but not an existing projection problem.
-        else {
-          this.resyncRecovery.reset();
-          if (this.state.error && !this.state.projectionError)
-            this.dismissError();
+        if (
+          event.missingDetail !== true &&
+          event.detailSessionId === this.state.sessionId &&
+          typeof event.runtimeSequence === "number" &&
+          event.runtimeSequence <
+            Math.max(this.transcriptSequence, this.visibleEventSequence)
+        )
+          return;
+        this.runtimeEvents.apply(event);
+        if (event.missingDetail === true) {
+          this.autoContinued = true;
+          rememberWorkbenchSession(null);
+          if (!this.state.sessionSelectionPending)
+            this.notify(
+              "info",
+              "The previous session no longer exists. Choose another session or start a new one.",
+            );
         }
       } else if (!this.updates.applyEvent(event)) {
         this.runtimeEvents.apply(event);
       }
-    },
-    recordSnapshotDigest: (digest) => {
-      this.snapshotDigest = digest;
-    },
-    invalidateSnapshotDigest: () => {
-      this.snapshotDigest = null;
     },
     onTransportReplaced: () => {
       this.runtimeEvents.invalidateTransport();
@@ -712,6 +721,7 @@ export class AppStore {
     // Stop detaches its owned socket before closing it, so the close handler
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
+    this.afterInitialSnapshot = null;
     this.pendingExports.clear();
     this.set({
       transportGeneration: this.state.transportGeneration + 1,
@@ -734,7 +744,6 @@ export class AppStore {
     this.replaceTransport();
     this.hostAuthorityId = null;
     this.runtimeEvents.resetStatusAcknowledgements();
-    this.snapshotDigest = null;
     this.api = null;
     this.set({
       needsToken: true,
@@ -786,39 +795,17 @@ export class AppStore {
     this.api = api;
     const ownsBootstrap = (): boolean => this.api === api;
     const preferenceOwners = this.preferences.captureBootstrapOwners();
-    const snapshotGeneration = this.snapshotGeneration;
     const autoContinueIntent = this.selectionIntentGeneration;
-    const rememberedSession = this.state.bootstrapped
-      ? null
-      : lastWorkbenchSession();
-    const detailSessionId = this.state.bootstrapped
-      ? this.state.sessionId
-      : rememberedSession?.sessionId;
-    let missingDetail = false;
+    const initial = !this.workbenchSelectionResolved;
+    const rememberedSession = initial ? lastWorkbenchSession() : null;
     try {
-      const boot = await api
-        .bootstrap(bootstrapRequest.signal, detailSessionId)
-        .catch((error: unknown) => {
-          if (
-            !ownsBootstrap() ||
-            !detailSessionId ||
-            !(error instanceof ApiError) ||
-            error.code !== "SESSION_NOT_FOUND"
-          )
-            throw error;
-          // A deleted detail owner is not an offline Host. Reconnect without
-          // detail, never to another browser's globally selected session.
-          missingDetail = true;
-          return api.bootstrap(bootstrapRequest.signal, null);
-        });
+      const boot = await api.bootstrap(bootstrapRequest.signal);
       if (!ownsBootstrap()) return;
       if (
         typeof boot.authorityId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
           boot.authorityId,
-        ) ||
-        typeof boot.snapshotDigest !== "string" ||
-        !/^[0-9a-f]{64}$/u.test(boot.snapshotDigest)
+        )
       )
         throw new ApiError(
           502,
@@ -852,57 +839,48 @@ export class AppStore {
       this.hostAuthorityId = boot.authorityId;
       if (rememberedSession) this.autoContinued = true;
       this.composer.reconcileAuthority(boot.authorityId);
-      if (this.snapshotGeneration === snapshotGeneration) {
-        this.applySnapshot(boot.snapshot);
-        this.snapshotDigest = boot.snapshotDigest;
-        if (missingDetail) {
-          this.autoContinued = true;
-          if (!this.state.sessionSelectionPending)
-            this.notify(
-              "info",
-              "The previous session no longer exists. Choose another session or start a new one.",
-            );
-        }
-      } else {
-        // A selection or resync already committed on this API. Bootstrap still
-        // supplies host metadata, but its digest cannot attest that newer view.
-        this.snapshotDigest = null;
-      }
-      if (
-        this.autoContinued ||
-        preferences.launch !== "continue" ||
-        this.state.sessionId ||
-        this.selectionIntentGeneration !== autoContinueIntent
-      )
-        this.set({ startupPending: false });
-      if (!showsFileComparison(this.state))
-        void this.git.resumeAfterTransportReplacement();
+      const detailSessionId =
+        initial &&
+        !this.workbenchSelectionResolved &&
+        this.selectionIntentGeneration === autoContinueIntent
+          ? rememberedSession
+            ? rememberedSession.sessionId
+            : (boot.startupSessionId ?? null)
+          : this.state.sessionId;
       if (boot.preferencesWarning)
         this.notify("warning", boot.preferencesWarning);
       if (boot.toolPresentationsWarning)
         this.notify("warning", boot.toolPresentationsWarning);
       this.notifications.start();
-      void this.connectionController.connect();
-      void this.loadSessions(this.state.sessionQuery)
-        .then(async () => {
+      const catalog = this.loadSessions(this.state.sessionQuery);
+      this.afterInitialSnapshot = () => {
+        if (!showsFileComparison(this.state))
+          void this.git.resumeAfterTransportReplacement();
+        if (
+          this.autoContinued ||
+          preferences.launch !== "continue" ||
+          this.state.sessionId ||
+          this.selectionIntentGeneration !== autoContinueIntent
+        )
+          this.set({ startupPending: false });
+        void catalog.then(async () => {
           if (!ownsBootstrap()) return;
-          // The remembered launch preference applies once per store lifetime so
-          // reconnects never hijack a deliberate navigation.
-          if (this.autoContinued) return;
-          this.autoContinued = true;
-          if (this.selectionIntentGeneration !== autoContinueIntent) return;
-          if (
-            preferences.launch === "continue" &&
-            !this.state.sessionId &&
-            !this.state.sessionSelectionPending
-          ) {
-            const previous = this.state.sessions[0];
-            if (previous) await this.openSession(previous.id);
+          if (!this.autoContinued) {
+            this.autoContinued = true;
+            if (
+              this.selectionIntentGeneration === autoContinueIntent &&
+              preferences.launch === "continue" &&
+              !this.state.sessionId &&
+              !this.state.sessionSelectionPending
+            ) {
+              const previous = this.state.sessions[0];
+              if (previous) await this.openSession(previous.id);
+            }
           }
-        })
-        .finally(() => {
           if (ownsBootstrap()) this.set({ startupPending: false });
         });
+      };
+      await this.connectionController.connect(detailSessionId);
     } catch (error) {
       if (!ownsBootstrap()) return;
       if (error instanceof BrowserUpgradeRequired) {
@@ -941,26 +919,15 @@ export class AppStore {
 
   // --- Snapshot & event reconciliation ---
 
-  private applySnapshot(
-    snapshot: ActiveSnapshot &
-      Partial<import("../shared/contracts").SnapshotWitness>,
-  ): void {
+  private applySnapshot(snapshot: ActiveSnapshot): void {
     const pendingQueues =
       snapshot.pendingQueues === undefined
         ? emptyPendingQueues()
         : parsePendingQueues(snapshot.pendingQueues);
     if (!pendingQueues) throw new Error("Invalid Pending queue snapshot");
+    this.workbenchSelectionResolved = true;
     this.resyncRecovery.reset();
     this.snapshotGeneration += 1;
-    // Only a snapshot supplied with its matching wire digest can be confirmed
-    // without retransmission. HTTP resyncs and local event reduction invalidate
-    // that witness until the next event-stream snapshot.
-    this.snapshotDigest =
-      snapshot.authorityId === this.hostAuthorityId &&
-      typeof snapshot.snapshotDigest === "string" &&
-      /^[0-9a-f]{64}$/u.test(snapshot.snapshotDigest)
-        ? snapshot.snapshotDigest
-        : null;
     const active = snapshot.active;
     const transition = deriveSnapshotTransition(this.state, active);
     const { nextSessionId, cwd, nextViewId, revisionChanged, messages } =
@@ -1121,7 +1088,6 @@ export class AppStore {
       return;
     this.transcriptSequence = sequence;
     this.snapshotGeneration += 1;
-    this.snapshotDigest = null;
     this.resyncRecovery.reset();
     const transition = deriveSnapshotTransition(this.state, {
       ...live,

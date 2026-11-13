@@ -18,7 +18,7 @@ afterEach(async () => {
   if (fixture) await closeHostApiFixture(fixture);
 });
 
-it("confirms a large unchanged window before new events despite already-sent detail from another session", async () => {
+it("delivers the addressed projection before new events despite already-sent detail from another session", async () => {
   installFakeWebSocket();
   const { application, baseUrl, runtime } = (fixture = await hostApiFixture());
   const forward = forwardHostRequests(application);
@@ -35,7 +35,7 @@ it("confirms a large unchanged window before new events despite already-sent det
   const window = await runtime.snapshot(next);
   const message = {
     role: "user",
-    content: "large window ".repeat(40_000),
+    content: "current detail",
     timestamp: 1,
   };
   window.active!.transcriptPage.messages = [message];
@@ -59,8 +59,7 @@ it("confirms a large unchanged window before new events despite already-sent det
     frames.length = 0;
 
     vi.spyOn(runtime, "openSession").mockResolvedValue(window);
-    const snapshot = vi
-      .spyOn(runtime, "snapshot")
+    vi.spyOn(runtime, "snapshot")
       .mockResolvedValue(window)
       .mockImplementationOnce(async () => {
         readStarted.resolve();
@@ -71,9 +70,6 @@ it("confirms a large unchanged window before new events despite already-sent det
       if (url !== "/api/sessions/open") return;
       const response = await forward(url, init);
       expect(response.status).toBe(200);
-      expect(Buffer.byteLength(JSON.stringify(response.body))).toBeGreaterThan(
-        500_000,
-      );
       return response;
     });
     const { store, socket } = await initStore();
@@ -85,14 +81,7 @@ it("confirms a large unchanged window before new events despite already-sent det
     });
     const messages = store.getState().messages;
     expect(messages).toMatchObject([message]);
-    const send = (patch: Record<string, unknown> = {}) =>
-      hostSocket.send(
-        JSON.stringify({
-          ...interest,
-          authorityId: application.authorityId,
-          ...patch,
-        }),
-      );
+    const send = () => hostSocket.send(JSON.stringify(interest));
     const incoming = () =>
       frames.filter(
         (frame) =>
@@ -111,13 +100,10 @@ it("confirms a large unchanged window before new events despite already-sent det
     await vi.waitFor(() => expect(incoming()).toHaveLength(2));
     const [confirmation, event] = incoming();
     expect(confirmation).toMatchObject({
-      unchanged: true,
       detailRevision: interest.revision,
-      snapshotDigest: interest.snapshotDigest,
+      data: { active: { sessionId: next } },
     });
-    expect(confirmation).not.toHaveProperty("data");
     expect(event?.type).toBe("agent_start");
-    expect(Buffer.byteLength(JSON.stringify(incoming()))).toBeLessThan(2_000);
 
     socket.emit(oldFrame);
     socket.emit({ ...confirmation, authorityId: TEST_HOST_AUTHORITY });
@@ -128,21 +114,6 @@ it("confirms a large unchanged window before new events despite already-sent det
       runState: "running",
     });
     expect(store.getState().messages).toEqual(messages);
-
-    for (const [patch, value] of [
-      [{}, { ...window, runState: "running" }],
-      [{ authorityId: "00000000-0000-4000-8000-000000000000" }, window],
-      [{ snapshotDigest: "0".repeat(64) }, window],
-    ] as const) {
-      const revision = ++interest.revision;
-      snapshot.mockResolvedValueOnce(value);
-      send(patch);
-      await vi.waitFor(() =>
-        expect(
-          frames.find((frame) => frame.detailRevision === revision),
-        ).toHaveProperty("data"),
-      );
-    }
   } finally {
     releaseRead.resolve();
     hostSocket.close();

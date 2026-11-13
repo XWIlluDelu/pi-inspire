@@ -90,7 +90,6 @@ interface ConnectionControllerHost {
   state(): {
     bootstrapped: boolean;
     authorityId: string | null;
-    snapshotDigest: string | null;
     sessionId: string | null;
   };
   patch(patch: {
@@ -98,8 +97,6 @@ interface ConnectionControllerHost {
     connectionProblem?: ManagedConnectionProblem;
   }): void;
   applyEvent(event: WireEvent): void;
-  recordSnapshotDigest(digest: string): void;
-  invalidateSnapshotDigest(): void;
   /** A deliberate replacement invalidates ownership tied to the old stream. */
   onTransportReplaced(): void;
   /** An unexpected close invalidates stream-owned state before retrying. */
@@ -123,38 +120,38 @@ function parseWireEvent(data: unknown): WireEvent | null {
   }
 }
 
-function authoritativeSnapshot(
+function isAuthoritativeSnapshot(
   event: WireEvent,
-  expectedAuthority: string | null,
-  expectedDigest: string | null,
-): { kind: "full" | "unchanged"; digest: string } | null {
+  authorityId: string | null,
+): boolean {
   if (
     event.type !== "snapshot" ||
-    !expectedAuthority ||
-    typeof event.authorityId !== "string" ||
-    event.authorityId !== expectedAuthority ||
-    typeof event.snapshotDigest !== "string" ||
-    !/^[0-9a-f]{64}$/u.test(event.snapshotDigest)
-  ) {
-    return null;
-  }
-  const digest = event.snapshotDigest;
-  if (event.unchanged === true) {
-    return digest === expectedDigest ? { kind: "unchanged", digest } : null;
-  }
-  const data = event.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const snapshot = data as Record<string, unknown>;
-  if (!isRunState(snapshot.runState)) return null;
-  const statuses = snapshot.sessionStatuses;
-  if (
-    !statuses ||
-    typeof statuses !== "object" ||
-    Array.isArray(statuses) ||
-    !Object.values(statuses).every(isSessionRuntimeStatus)
+    !authorityId ||
+    event.authorityId !== authorityId
   )
-    return null;
-  return { kind: "full", digest };
+    return false;
+  const data = event.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const { runState, sessionStatuses, active } = data as Record<string, unknown>;
+  const activeId =
+    active && typeof active === "object"
+      ? (active as { sessionId?: unknown }).sessionId
+      : null;
+  return (
+    isRunState(runState) &&
+    (active === null ||
+      (typeof active === "object" &&
+        active !== null &&
+        !Array.isArray(active))) &&
+    (event.missingDetail === true
+      ? active === null && typeof event.detailSessionId === "string"
+      : event.detailRevision === undefined ||
+        activeId === event.detailSessionId) &&
+    sessionStatuses !== null &&
+    typeof sessionStatuses === "object" &&
+    !Array.isArray(sessionStatuses) &&
+    Object.values(sessionStatuses).every(isSessionRuntimeStatus)
+  );
 }
 
 /**
@@ -167,7 +164,7 @@ export class ConnectionController {
   private socketPhase: "bootstrap" | "resume" | null = null;
   private detailSessionId: string | null = null;
   private detailRevision = 0;
-  private detailWitness: Required<SessionDetailInterest> | null = null;
+  private wantedDetailSessionId: string | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
@@ -190,18 +187,24 @@ export class ConnectionController {
 
   constructor(private readonly host: ConnectionControllerHost) {}
 
-  connect(): Promise<void> {
+  connect(sessionId = this.host.state().sessionId): Promise<void> {
     this.started = true;
     this.reconnectPending = false;
     this.scheduledReconnectKind = null;
+    this.wantedDetailSessionId = sessionId;
     return this.openSocket("bootstrap");
   }
 
   /** Selection commits keep the global stream alive, but fence its detail
    * projection behind a new addressed snapshot. */
-  updateDetailInterest(): void {
+  updateDetailInterest(sessionId = this.host.state().sessionId): void {
+    this.wantedDetailSessionId = sessionId;
+    this.sendDetailInterest();
+  }
+
+  private sendDetailInterest(): void {
     const socket = this.socket;
-    const sessionId = this.host.state().sessionId;
+    const sessionId = this.wantedDetailSessionId;
     if (
       !socket ||
       socket.readyState !== WebSocket.OPEN ||
@@ -217,17 +220,7 @@ export class ConnectionController {
       type: "detail_interest",
       sessionId,
       revision: this.detailRevision,
-      ...(this.host.state().snapshotDigest && this.host.state().authorityId
-        ? {
-            authorityId: this.host.state().authorityId!,
-            snapshotDigest: this.host.state().snapshotDigest!,
-          }
-        : {}),
     };
-    this.detailWitness =
-      interest.authorityId && interest.snapshotDigest
-        ? (interest as Required<SessionDetailInterest>)
-        : null;
     try {
       socket.send(JSON.stringify(interest));
     } catch {
@@ -239,18 +232,6 @@ export class ConnectionController {
       () => this.failSocket(socket),
       FIRST_SNAPSHOT_TIMEOUT_MS,
     );
-  }
-
-  private expectedDigest(event: WireEvent): string | null {
-    const state = this.host.state();
-    const witness = this.detailWitness;
-    return witness &&
-      witness.authorityId === state.authorityId &&
-      witness.sessionId === state.sessionId &&
-      witness.sessionId === event.detailSessionId &&
-      witness.revision === event.detailRevision
-      ? witness.snapshotDigest
-      : state.snapshotDigest;
   }
 
   private async openSocket(phase: "bootstrap" | "resume"): Promise<void> {
@@ -283,11 +264,9 @@ export class ConnectionController {
     this.host.patch({
       connection: state.bootstrapped ? "reconnecting" : "connecting",
     });
-    this.detailSessionId = state.sessionId;
+    this.detailSessionId = this.wantedDetailSessionId;
     this.detailRevision = 0;
-    const socket = new WebSocket(
-      eventsUrl(ticket, state.snapshotDigest ?? null, state.sessionId),
-    );
+    const socket = new WebSocket(eventsUrl(ticket, this.detailSessionId));
     this.socket = socket;
     this.socketPhase = phase;
     socket.onopen = () => {
@@ -297,7 +276,7 @@ export class ConnectionController {
         () => this.failSocket(socket),
         FIRST_SNAPSHOT_TIMEOUT_MS,
       );
-      this.updateDetailInterest();
+      this.sendDetailInterest();
     };
     // TCP/WebSocket negotiation must also be bounded when no open/error/close
     // event arrives. An open socket gets its own snapshot observation budget.
@@ -315,88 +294,53 @@ export class ConnectionController {
         return;
       }
 
-      // An older snapshot may already be in flight when selection changes.
-      // Its queue belongs to the old interest and cannot replace this owner.
-      if (
-        event.type === "snapshot" &&
-        event.detailRevision !== undefined &&
-        (event.detailRevision !== this.detailRevision ||
-          event.detailSessionId !== this.host.state().sessionId)
-      )
-        return;
-      const hostState = this.host.state();
-      if (!this.synchronized) {
-        const snapshot = authoritativeSnapshot(
-          event,
-          hostState.authorityId,
-          hostState.snapshotDigest,
-        );
-        if (!snapshot) {
+      if (event.type === "snapshot") {
+        // A snapshot already in flight for an old interest cannot replace a
+        // selection the browser committed while that read was pending.
+        if (
+          event.detailRevision !== undefined &&
+          (event.detailRevision !== this.detailRevision ||
+            event.detailSessionId !== this.detailSessionId ||
+            this.detailSessionId !== this.wantedDetailSessionId)
+        )
+          return;
+        if (!isAuthoritativeSnapshot(event, this.host.state().authorityId)) {
           this.failSocket(socket, "bootstrap");
           return;
         }
-        try {
-          this.host.applyEvent(event);
-          this.host.recordSnapshotDigest(snapshot.digest);
-          this.detailWitness = null;
-        } catch {
-          this.failSocket(socket, "bootstrap");
-          return;
+        const first = !this.synchronized;
+        if (!this.flushStreamUpdate(socket)) return;
+        if (event.missingDetail === true) {
+          this.detailSessionId = null;
+          this.wantedDetailSessionId = null;
         }
-        if (this.socket !== socket) return;
+        if (!this.applySocketEvent(socket, event) || this.socket !== socket)
+          return;
         this.synchronized = true;
         this.lastFrameAt = Date.now();
-        this.reconnectDelay = 1_000;
-        this.scheduledReconnectKind = null;
         this.clearSnapshotTimer();
         this.armWatchdog(socket);
-        this.host.patch({ connection: "open", connectionProblem: null });
-        recordTransportMeasure("websocket-handshake", handshakeStartedAt, {
-          phase,
-          snapshot: snapshot.kind,
-          compression: socket.extensions.includes("permessage-deflate"),
-          characters: String(frame.data).length,
-        });
-        this.beginStreamMetrics();
+        if (first) {
+          this.reconnectDelay = 1_000;
+          this.scheduledReconnectKind = null;
+          this.host.patch({ connection: "open", connectionProblem: null });
+          recordTransportMeasure("websocket-handshake", handshakeStartedAt, {
+            phase,
+            compression: socket.extensions.includes("permessage-deflate"),
+            characters: String(frame.data).length,
+          });
+          this.beginStreamMetrics();
+        }
         return;
       }
-
+      if (!this.synchronized) {
+        this.failSocket(socket, "bootstrap");
+        return;
+      }
       this.lastFrameAt = Date.now();
       this.armWatchdog(socket);
       this.recordStreamFrame(event, String(frame.data).length);
       if (event.type === "heartbeat") return;
-      if (event.type === "snapshot") {
-        if (!this.flushStreamUpdate(socket)) return;
-        const snapshot = authoritativeSnapshot(
-          event,
-          hostState.authorityId,
-          this.expectedDigest(event),
-        );
-        if (!snapshot) {
-          this.failSocket(socket, "bootstrap");
-          return;
-        }
-        if (!this.applySocketEvent(socket, event)) return;
-        this.host.recordSnapshotDigest(snapshot.digest);
-        this.detailWitness = null;
-        this.clearSnapshotTimer();
-        return;
-      }
-      // Host-wide update status and external activity observations travel on
-      // this stream but are not part of the runtime snapshot digest.
-      if (
-        event.type !== "update_status" &&
-        event.type !== "external_session_activity" &&
-        event.type !== "task_notification" &&
-        event.type !== "task_alert_settings"
-      ) {
-        if (
-          typeof event.sessionId !== "string" ||
-          event.sessionId === this.detailSessionId
-        )
-          this.detailWitness = null;
-        this.host.invalidateSnapshotDigest();
-      }
       const streamUpdate = streamMessageUpdate(event);
       if (streamUpdate) {
         this.queueStreamUpdate(socket, streamUpdate);
@@ -415,9 +359,7 @@ export class ConnectionController {
         });
         return;
       }
-      const canResume =
-        this.synchronized ||
-        (phase === "bootstrap" && Boolean(this.host.state().snapshotDigest));
+      const canResume = this.synchronized || phase === "bootstrap";
       this.socket = null;
       this.socketPhase = null;
       this.synchronized = false;
@@ -490,8 +432,7 @@ export class ConnectionController {
     const canResume =
       (this.socket !== null && this.synchronized) ||
       this.scheduledReconnectKind === "resume" ||
-      (this.socketPhase === "bootstrap" &&
-        Boolean(this.host.state().snapshotDigest));
+      this.socketPhase === "bootstrap";
     this.clearReconnectTimer();
     this.clearStreamTimers();
     const socket = this.socket;
@@ -611,9 +552,7 @@ export class ConnectionController {
     const canResume =
       recovery === "resume" ||
       (recovery !== "bootstrap" &&
-        (this.synchronized ||
-          (this.socketPhase === "bootstrap" &&
-            Boolean(this.host.state().snapshotDigest))));
+        (this.synchronized || this.socketPhase === "bootstrap"));
     this.socket = null;
     this.socketPhase = null;
     this.synchronized = false;
@@ -711,7 +650,6 @@ export class ConnectionController {
   }
 
   private clearStreamTimers(): void {
-    this.detailWitness = null;
     this.flushStreamMetrics();
     this.clearSnapshotTimer();
     if (this.watchdogTimer) clearTimeout(this.watchdogTimer);

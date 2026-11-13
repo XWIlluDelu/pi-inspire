@@ -21,7 +21,6 @@ import { workbenchFixture } from "../../fixtures/workbench.js";
 type DetailFrame = Record<string, unknown> & {
   type: string;
   data?: ActiveSnapshot;
-  snapshotDigest?: string;
   sessionStatus?: SessionRuntimeStatus;
 };
 

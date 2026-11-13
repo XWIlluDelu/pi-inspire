@@ -144,7 +144,8 @@ the models Pi can load. Invalid model configuration and persistent metadata-quer
 local errors. Fresh trust decisions remain part of Pi startup.
 
 Discovery registers extension providers through Pi's service factory before building one in-memory
-session for commands and defaults. Validation uses the same services without creating a session.
+session for commands and defaults. Validation uses a disposable in-memory session to register
+providers without waiting for credential availability.
 The short-lived SDK process writes no session file, emits no session-start event and makes no
 agent/model request.
 Refresh replaces an older preview without replacing explicit or inherited choices. Directory/catalog,

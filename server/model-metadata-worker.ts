@@ -9,9 +9,12 @@ import {
   modelSwitchThinkingLevel,
 } from "./model-catalog.js";
 import {
+  createAgentSession,
   createAgentSessionServices,
+  DefaultResourceLoader,
   getAgentDir,
   ModelRuntime,
+  SessionManager,
 } from "./pi-runtime.js";
 
 // A short-lived SDK process, not an RPC worker: no bindExtensions, session_start,
@@ -24,16 +27,39 @@ async function discover(cwd: string, validationPath?: string) {
     authPath: join(agentDir, "auth.json"),
     refreshOnCreate: false,
   });
-  const services = await createAgentSessionServices({
+  const resources = {
     cwd,
     agentDir,
-    modelRuntime: runtime,
     settingsManager: settings,
+    noThemes: true,
+    noContextFiles: true,
+  };
+  if (validationPath) {
+    // The service factory waits for credential availability, which is not
+    // part of a configuration edit. Register through Pi's in-memory session
+    // without binding or waiting for an authentication probe.
+    const loader = new DefaultResourceLoader(resources);
+    await loader.reload();
+    const { session } = await createAgentSession({
+      ...resources,
+      modelRuntime: runtime,
+      resourceLoader: loader,
+      sessionManager: SessionManager.inMemory(cwd),
+      noTools: "all",
+    });
+    try {
+      if (runtime.getError())
+        throw new Error("Pi model configuration could not load");
+      return null;
+    } finally {
+      session.dispose();
+    }
+  }
+  const services = await createAgentSessionServices({
+    ...resources,
+    modelRuntime: runtime,
     resourceLoaderOptions: { noThemes: true, noContextFiles: true },
   });
-  if (runtime.getError())
-    throw new Error("Pi model configuration could not load");
-  if (validationPath) return null;
 
   const refresh = await runtime.refresh({
     signal: AbortSignal.timeout(12_000),

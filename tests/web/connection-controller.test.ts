@@ -44,11 +44,9 @@ class ImmediateCloseSocket {
 }
 
 const authorityId = "11111111-1111-4111-8111-111111111111";
-const snapshotDigest = "a".repeat(64);
 const snapshot = {
   type: "snapshot",
   authorityId,
-  snapshotDigest,
   data: { active: null, runState: "idle", sessionStatuses: {} },
 };
 const controllers: ConnectionController[] = [];
@@ -58,13 +56,10 @@ function harness() {
     state: vi.fn(() => ({
       bootstrapped: true,
       authorityId,
-      snapshotDigest,
       sessionId: null as string | null,
     })),
     patch: vi.fn(),
     applyEvent: vi.fn(),
-    recordSnapshotDigest: vi.fn(),
-    invalidateSnapshotDigest: vi.fn(),
     onTransportReplaced: vi.fn(),
     onTransportClosed: vi.fn(),
     reconnect: vi.fn(),
@@ -137,7 +132,7 @@ describe("ConnectionController", () => {
     if (original) admission.mockImplementation(original);
   });
 
-  it("keeps current interest and digest through selection changes and resume", async () => {
+  it("keeps current interest through selection changes and resume", async () => {
     vi.useFakeTimers();
     const { controller, host } = harness();
     const state = { ...host.state(), sessionId: "a" as string | null };
@@ -153,12 +148,15 @@ describe("ConnectionController", () => {
       type: "detail_interest",
       sessionId: "b",
       revision: 1,
-      authorityId,
-      snapshotDigest,
     });
     socket.emit({ ...snapshot, detailSessionId: "a", detailRevision: 0 });
     expect(host.applyEvent).not.toHaveBeenCalled();
-    const confirmed = { ...snapshot, detailSessionId: "b", detailRevision: 1 };
+    const confirmed = {
+      ...snapshot,
+      detailSessionId: "b",
+      detailRevision: 1,
+      data: { ...snapshot.data, active: { sessionId: "b" } },
+    };
     socket.emit(confirmed);
     expect(host.applyEvent).toHaveBeenCalledWith(confirmed);
     state.sessionId = null;
@@ -167,13 +165,10 @@ describe("ConnectionController", () => {
       type: "detail_interest",
       sessionId: null,
       revision: 2,
-      authorityId,
-      snapshotDigest,
     });
     socket.emit({ ...snapshot, detailSessionId: null, detailRevision: 2 });
     expect(socket.closeCount).toBe(0);
 
-    host.invalidateSnapshotDigest.mockClear();
     host.applyEvent.mockClear();
 
     for (const event of [
@@ -188,35 +183,23 @@ describe("ConnectionController", () => {
       socket.emit(event);
       expect(host.applyEvent).toHaveBeenLastCalledWith(event);
     }
-    expect(host.invalidateSnapshotDigest).not.toHaveBeenCalled();
 
     socket.close();
     await vi.advanceTimersByTimeAsync(1_000);
     const resumed = ImmediateCloseSocket.instances[1]!;
     const query = new URL(resumed.url).searchParams;
     expect(query.get("detail")).toBe("");
-    expect(query.get("snapshot")).toBe(snapshotDigest);
+    expect(query.has("snapshot")).toBe(false);
     expect(host.reconnect).not.toHaveBeenCalled();
     resumed.open();
-    const unchanged = {
-      type: "snapshot",
-      authorityId,
-      snapshotDigest,
-      unchanged: true,
-    };
-    host.recordSnapshotDigest.mockClear();
     host.patch.mockClear();
-    resumed.emit(unchanged);
-    expect(host.applyEvent).toHaveBeenLastCalledWith(unchanged);
-    expect(host.recordSnapshotDigest).toHaveBeenCalledExactlyOnceWith(
-      snapshotDigest,
-    );
+    resumed.emit(snapshot);
+    expect(host.applyEvent).toHaveBeenLastCalledWith(snapshot);
     expect(host.patch).toHaveBeenLastCalledWith({
       connection: "open",
       connectionProblem: null,
     });
     resumed.emit({ type: "agent_start", sessionId: "a" });
-    expect(host.invalidateSnapshotDigest).toHaveBeenCalledOnce();
   });
 
   it("retires a socket error, tries one resume and falls back to bootstrap", async () => {
@@ -289,13 +272,17 @@ describe("ConnectionController", () => {
       connection: "open",
       connectionProblem: null,
     });
-    expect(host.applyEvent).toHaveBeenCalledBefore(host.recordSnapshotDigest);
     expect(socket.closeCount).toBe(0);
 
     state.sessionId = "b";
     controller.updateDetailInterest();
     await vi.advanceTimersByTimeAsync(30_000);
-    socket.emit({ ...snapshot, detailSessionId: "b", detailRevision: 1 });
+    socket.emit({
+      ...snapshot,
+      detailSessionId: "b",
+      detailRevision: 1,
+      data: { ...snapshot.data, active: { sessionId: "b" } },
+    });
     expect(socket.closeCount).toBe(0);
     state.sessionId = "c";
     controller.updateDetailInterest();
@@ -326,9 +313,6 @@ describe("ConnectionController", () => {
     expect(host.onTransportClosed).toHaveBeenCalledOnce();
     expect(host.reconnect).not.toHaveBeenCalled();
     expect(ImmediateCloseSocket.instances).toHaveLength(2);
-    expect(ImmediateCloseSocket.instances[1]?.url).toContain(
-      `snapshot=${snapshotDigest}`,
-    );
     const resumed = ImmediateCloseSocket.instances[1]!;
     resumed.open();
     resumed.emit(snapshot);
@@ -425,23 +409,20 @@ describe("ConnectionController", () => {
   });
 
   it.each([
-    ["authority", { type: "snapshot", snapshotDigest, data: snapshot.data }],
-    ["digest", { type: "snapshot", authorityId, data: snapshot.data }],
-  ])(
-    "rejects a first snapshot without its %s witness",
-    async (_field, event) => {
-      vi.useFakeTimers();
-      const { controller, host } = harness();
-      await controller.connect();
-      const socket = ImmediateCloseSocket.instances[0]!;
+    ["authority", { type: "snapshot", data: snapshot.data }],
+    ["projection", { type: "snapshot", authorityId }],
+  ])("rejects a first snapshot without its %s", async (_field, event) => {
+    vi.useFakeTimers();
+    const { controller, host } = harness();
+    await controller.connect();
+    const socket = ImmediateCloseSocket.instances[0]!;
 
-      socket.emit(event);
+    socket.emit(event);
 
-      expect(socket.closeCount).toBe(1);
-      expect(host.onTransportClosed).toHaveBeenCalledOnce();
-      expect(host.applyEvent).not.toHaveBeenCalled();
-    },
-  );
+    expect(socket.closeCount).toBe(1);
+    expect(host.onTransportClosed).toHaveBeenCalledOnce();
+    expect(host.applyEvent).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["malformed JSON", "{broken", "resume"],

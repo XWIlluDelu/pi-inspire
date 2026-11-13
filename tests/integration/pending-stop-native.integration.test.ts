@@ -58,8 +58,7 @@ it("shares concurrent Stop requests and reclaims both lost handoffs while stoppi
     socket.emit({
       type: "snapshot",
       authorityId: bootstrap.authorityId,
-      snapshotDigest: bootstrap.snapshotDigest,
-      data: bootstrap.snapshot,
+      data: await f.runtime.snapshot(f.sessionId),
     });
     listener = (event) => socket.emit(event);
     f.runtime.on("event", listener);

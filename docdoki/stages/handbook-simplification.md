@@ -71,15 +71,18 @@ attachment-retention and PDF experiments are outside the main plan.
   asset cache, retired palette/menu identifiers and redundant literal checks were removed.
 - Tool, Thinking, custom-message and checkpoint presentation use one generation. Live and
   History load the same deferred Markdown reader.
-- Model discovery resolves extension registrations before constructing its one in-memory preview;
-  validation constructs no session.
-- Counted source is 237,777 lines, 14,164 below the handbook baseline and 381 above the previous
-  pass. The build cleanup removes code, while the native queue path, receipt boundary and
-  regression coverage add code. The handbook's full deletion estimate has not been realized.
+- Model discovery resolves extension registrations before constructing its one in-memory preview.
+  Validation keeps native provider registration independent of credential availability.
+- HTTP bootstrap provides configuration, authority and an address. The addressed subscription
+  supplies the only initial transcript projection, then releases events after its sequence cut.
+  The snapshot digest and unchanged acknowledgement were removed. A missing addressed session
+  settles to an empty view on the same socket, while other read failures retain the current view.
+- Counted source is 237,647 lines, 14,294 below the handbook baseline and 251 above the previous
+  pass. The handbook's full deletion estimate has not been realized.
 
 ## Remaining architecture and test replacement
 
-- Use a single initial transcript acquisition and remove the bootstrap digest round trip.
+- Complete the shared typed HTTP boundary beyond current operations and native history.
 - Extend the operation record to terminal and lifecycle executors and persist current typed
   intents. Finish the shared draft editor and native action/settings registry.
 - Complete shared dock and activity presentation, typed native configuration transactions,

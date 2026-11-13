@@ -49,7 +49,7 @@ test("New inherits the selected Router and hands off a multiline draft", async (
     },
     bootstrap(body) {
       body.availableModels = models;
-      body.snapshot.active = null;
+      body.startupSessionId = null;
     },
   });
   await page.route("**/api/models**", (route) =>

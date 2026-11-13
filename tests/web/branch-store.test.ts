@@ -18,6 +18,7 @@ async function setup(route: RouteHandler) {
   installStoreRoutes(route);
   const store = new AppStore();
   await store.init();
+  FakeWebSocket.instances.at(-1)!.open();
   return store;
 }
 

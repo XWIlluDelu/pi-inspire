@@ -12,6 +12,7 @@ import { store as appStore } from "../../src/store";
 import {
   activeSnapshot,
   deferred,
+  FakeWebSocket,
   installFakeWebSocket,
   installFetch,
   jsonBody,
@@ -77,7 +78,10 @@ describe("Git inspection ownership and freshness", () => {
         };
       return baseRoutes(url, init);
     });
-    await act(async () => appStore.init());
+    await act(async () => {
+      await appStore.init();
+      FakeWebSocket.instances.at(-1)!.open();
+    });
     const noop = () => {};
     render(
       createElement(AppTopbar, {
@@ -153,6 +157,7 @@ describe("Git inspection ownership and freshness", () => {
 
     transport = "replacement";
     await store.init();
+    FakeWebSocket.instances.at(-1)!.open();
     await vi.waitFor(() =>
       expect(store.getState()).toMatchObject({
         gitStatus: { head: { name: "replacement" } },

@@ -208,8 +208,6 @@ export interface SessionDetailInterest {
   type: "detail_interest";
   sessionId: string | null;
   revision: number;
-  authorityId?: string;
-  snapshotDigest?: string;
 }
 
 export function isSessionRuntimeStatus(
@@ -1247,22 +1245,14 @@ export type LiveTranscript = Pick<
   | "activeAssistantMessageKey"
 >;
 
-export interface SnapshotWitness {
-  authorityId: string;
-  snapshotDigest: string;
-}
-
-export type SessionOpenResponse = ActiveSnapshot & SnapshotWitness;
-
 export interface BootstrapResponse {
   /** Stable wire identifier; visual branding lives in the client. */
   appName: "inspire";
   /** Ephemeral identity of this Host process. Mutations bind to it so a retry
    * can never cross an unnoticed Host restart. */
   authorityId: string;
-  /** Digest of the included snapshot. A joining event stream may confirm this
-   * exact projection instead of transferring it a second time. */
-  snapshotDigest: string;
+  /** Host default for a browser with no workbench selection of its own. */
+  startupSessionId: string | null;
   version: string;
   piVersion: string;
   /** Host-owned update observations and notice acknowledgement shared by every
@@ -1278,8 +1268,6 @@ export interface BootstrapResponse {
   toolPresentationsWarning?: string;
   /** Already-known choices; addressed model queries discover missing inventory. */
   availableModels: ModelOption[];
-  /** Failed discovery does not prevent opening retained transcripts. */
-  snapshot: ActiveSnapshot;
 }
 
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000;
