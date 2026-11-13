@@ -27,7 +27,7 @@ interface ResourceControllerState extends FileInspectionState {
   transcriptIncarnation: string | null;
   transcriptRevision: number;
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches" | "terminal";
+  contextMode: "files" | "changes" | "terminal";
   resourceStanding: Record<string, ResourceProbeResult>;
 }
 

@@ -12,7 +12,7 @@ import {
   initializeRuntimeFixture,
   schedulingRuntime,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 describe("worker-confirmed retry observation", () => {
@@ -24,7 +24,7 @@ describe("worker-confirmed retry observation", () => {
     const { runtime } = f;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     await runtime.setAutoRetry("a", false);
     expect(
       (await runtime.snapshot("a")).active?.runtimeSettings?.autoRetryEnabled,
@@ -59,7 +59,7 @@ describe("worker-confirmed retry observation", () => {
     };
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     expect((await emit("auto_retry_start", retry)).errorMessage).toBe(
       detail.message,
     );

@@ -43,7 +43,6 @@ beforeEach(() => {
     refreshLoadedSessions: vi.fn(async () => {}),
     hasVisibleGitSurface: () => false,
     refreshGitStatus: vi.fn(async () => {}),
-    markProjectionStale: vi.fn(),
     selectionGeneration: () => 0,
     invalidateResync: vi.fn(),
     resync: vi.fn(async () => {}),
@@ -57,6 +56,35 @@ function row() {
 }
 
 describe("session activity presentation", () => {
+  it("acknowledges only the viewed outcome and shows the next result in that session", () => {
+    const completed = {
+      runState: "idle",
+      indicator: "completed",
+      attentionId: 17,
+    } as const;
+    expect(
+      events.projectSessionStatuses({ external: completed }, "other").external
+        ?.indicator,
+    ).toBe("completed");
+    expect(
+      events.projectSessionStatuses({ external: completed }, "external")
+        .external?.indicator,
+    ).toBeUndefined();
+    expect(
+      events.projectSessionStatuses({ external: completed }, "other").external
+        ?.indicator,
+    ).toBeUndefined();
+    events.apply({
+      type: "session_status",
+      sessionId: "external",
+      sessionStatus: { ...completed, attentionId: 18 },
+    });
+    expect(state.sessionStatuses.external).toMatchObject({
+      indicator: "completed",
+      attentionId: 18,
+    });
+  });
+
   it("clears unseen outcomes on selection but still announces when input is needed", () => {
     const view = render(row());
     for (const [runState, indicator, label] of [

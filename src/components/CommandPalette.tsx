@@ -294,10 +294,7 @@ export const CommandPalette = memo(function CommandPalette({
           title: "Open History",
           aliases: ["/tree", "history", "branches", "branch navigation"],
           default: true,
-          run: () => {
-            store.setResourcesOpen(true);
-            store.setContextMode("branches");
-          },
+          run: store.openHistory,
         },
         {
           id: "terminal",

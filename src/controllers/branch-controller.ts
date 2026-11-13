@@ -3,8 +3,6 @@ import type {
   BranchForkResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
-  BranchTreeQuery,
-  BranchTreeResponse,
   ProjectionConflict,
   ProjectionHealth,
   SessionReadOnlyReason,
@@ -19,10 +17,7 @@ export interface BranchControllerState {
   transcriptDurableLeafId: string | null;
   transcriptEffectiveLeafId: string | null;
   transcriptNavigationLeased: boolean;
-  branchTree: BranchTreeResponse | null;
-  branchTreeLoading: boolean;
-  branchTreeStale?: boolean;
-  connection?: string;
+  branchRevision: number | null;
   branchTreeError: string | null;
   branchActionId: string | null;
   projectionHealth: ProjectionHealth;
@@ -59,21 +54,7 @@ export function branchCopiesBlocked(state: BranchControllerState): boolean {
   return branchCopyBlockReason(state) !== null;
 }
 
-export function branchActionsBlocked(state: BranchControllerState): boolean {
-  return Boolean(
-    state.readOnlyReason ||
-      branchCopiesBlocked(state) ||
-      state.branchTreeLoading ||
-      state.branchTreeStale ||
-      state.branchTreeError ||
-      state.branchTree?.health.status === "error",
-  );
-}
-
 export interface BranchControllerPatch {
-  branchTree?: BranchTreeResponse | null;
-  branchTreeLoading?: boolean;
-  branchTreeStale?: boolean;
   branchTreeError?: string | null;
   branchActionId?: string | null;
 }
@@ -104,129 +85,21 @@ interface BranchControllerHost {
   notify(kind: "warning", text: string): void;
 }
 
-/**
- * Owns branch-tree loading and branch-command request lifecycles. Its host
- * remains the sole snapshot and selection authority: a controller can ask it
- * to apply an already-verified navigation/fork response, but never publishes
- * a parallel session state.
- */
+/** Fences native branch actions and saved-entry reads to their original view. */
 export class BranchController {
-  private treeRequest = 0;
   private actionRequest = 0;
-  private recovery = new RecoveryBackoff();
   private inspectionRequests = new Set<AbortController>();
 
   constructor(private readonly host: BranchControllerHost) {}
 
-  /** Retire the previous owner while keeping the last tree visible until refreshed. */
-  invalidate({ preserveError = false } = {}): void {
-    this.invalidateRequests();
+  invalidate({ preserveError = false, preserveAction = false } = {}): void {
+    for (const request of this.inspectionRequests) request.abort();
+    this.inspectionRequests.clear();
+    if (!preserveAction) this.actionRequest += 1;
     this.host.patch({
-      branchTreeLoading: false,
-      branchActionId: null,
-      branchTreeStale: Boolean(this.host.state().branchTree),
+      ...(!preserveAction ? { branchActionId: null } : {}),
       ...(!preserveError ? { branchTreeError: null } : {}),
     });
-  }
-
-  markProjectionStale(): void {
-    if (this.host.state().branchTree) {
-      this.host.patch({ branchTreeStale: true, branchTreeError: null });
-    }
-  }
-
-  /** Fresh snapshots and reconnects renew stale read state without another gesture. */
-  reconcile(): void {
-    const state = this.host.state();
-    if (
-      state.branchTreeStale &&
-      !state.branchActionId &&
-      (state.connection === undefined || state.connection === "open")
-    )
-      void this.loadTree(true);
-  }
-
-  async loadTree(background = false): Promise<void> {
-    const api = this.host.api();
-    const state = this.host.state();
-    const sessionId = state.sessionId;
-    if (!api || !sessionId || state.branchTreeLoading) return;
-    if (background) this.recovery.cancel();
-    else this.recovery.reset();
-    const request = ++this.treeRequest;
-    const ticket = this.viewTicket(state);
-    const ownsRequest = (): boolean =>
-      request === this.treeRequest && this.host.api() === api;
-    const owns = (): boolean => ownsRequest() && this.ownsView(ticket);
-    const persistentFailure =
-      "History could not be refreshed. Use Refresh to try again.";
-    const recover = (): boolean => {
-      const scheduled = this.recovery.schedule(() => {
-        if (ownsRequest() && this.host.state().sessionId === sessionId)
-          this.reconcile();
-      });
-      if (!scheduled) this.host.patch({ branchTreeError: persistentFailure });
-      return scheduled;
-    };
-    this.host.patch({ branchTreeLoading: true, branchTreeError: null });
-    try {
-      const tree = await api.branchTree(sessionId);
-      if (!owns()) return;
-      if (
-        tree.sessionId !== ticket.sessionId ||
-        tree.effectiveLeafId !== ticket.effectiveLeafId
-      ) {
-        this.host.patch({ branchTreeStale: true });
-        recover();
-        return;
-      }
-      this.recovery.reset();
-      this.host.patch({
-        branchTree: tree,
-        branchTreeStale: false,
-        branchTreeError: null,
-      });
-    } catch (error) {
-      // A current transport rejection is authoritative even when the user
-      // navigated while the request was pending. A replaced transport is not.
-      if (error instanceof ApiError && error.status === 401) {
-        if (this.host.api() === api) this.host.handleAuthFailure();
-        return;
-      }
-      if (!owns()) return;
-      this.host.patch({ branchTreeStale: true });
-      if (isTransientFailure(error) && recover()) return;
-      this.host.patch({
-        branchTreeError: background
-          ? persistentFailure
-          : error instanceof Error
-            ? error.message
-            : "History could not be loaded",
-      });
-    } finally {
-      // An ordinary append can advance the leaf without invalidating the
-      // request's view. Retire its loading marker even when its data is stale.
-      if (ownsRequest()) {
-        this.host.patch({
-          branchTreeLoading: false,
-          ...(!this.ownsView(ticket) ? { branchTreeStale: true } : {}),
-        });
-        if (!this.ownsView(ticket)) recover();
-      }
-    }
-  }
-
-  /** Outlines bind the current position; immutable entry/image reads bind only
-   * the selected view. The pane cancels replaced searches and previews. */
-  async readTree(
-    query: BranchTreeQuery,
-    signal?: AbortSignal,
-  ): Promise<BranchTreeResponse | null> {
-    return this.read(
-      (api, sessionId, signal) => api.branchTree(sessionId, query, signal),
-      "position",
-      { signal },
-    );
   }
 
   async readEntry(
@@ -361,12 +234,18 @@ export class BranchController {
       BranchNavigateRequest,
       "summarize" | "customInstructions"
     > = {},
+    revision = this.host.state().branchRevision,
   ): Promise<boolean> {
     const api = this.host.api();
     const state = this.host.state();
     const sessionId = state.sessionId;
-    const tree = state.branchTree;
-    if (!api || !sessionId || !tree || branchActionsBlocked(state))
+    if (
+      !api ||
+      !sessionId ||
+      revision === null ||
+      state.readOnlyReason ||
+      branchCopiesBlocked(state)
+    )
       return false;
     const draftRevision = this.host.draftRevision();
     return this.runAction(
@@ -376,31 +255,20 @@ export class BranchController {
       () =>
         api.navigateBranch({
           sessionId,
-          revision: tree.revision,
+          revision,
           targetId,
           mode,
           ...options,
         }),
-      async (response) => {
+      (response) => {
         if (response.cancelled) {
           this.host.notify("warning", "Conversation change cancelled");
           return false;
         }
         this.host.applyNavigation(response, draftRevision);
-        await this.loadTree();
       },
       "Branch navigation failed",
-    );
-  }
-
-  /** Preparation belongs to the original gesture, not a later visit to the
-   * same session. Reuse the read boundary for selection/view/transport fencing. */
-  private async refreshForNavigation(): Promise<boolean> {
-    return (
-      (await this.read(async () => {
-        await this.loadTree();
-        return true;
-      }, "position")) === true
+      "navigation",
     );
   }
 
@@ -500,7 +368,7 @@ export class BranchController {
     perform: () => Promise<T>,
     commit: (response: T) => boolean | void | Promise<boolean | void>,
     fallbackError: string,
-    ownership: "position" | "view" = "position",
+    ownership: "position" | "view" | "navigation" = "position",
     discard?: (response: T) => Promise<void>,
     onFailure?: (message: string) => void,
   ): Promise<boolean> {
@@ -509,12 +377,33 @@ export class BranchController {
       actionRequest === this.actionRequest && this.host.api() === api;
     // Independent copies capture their prefix at admission. Source progress may
     // continue while publishing; only a replaced view/selection invalidates opening it.
-    const owns = (): boolean =>
-      ownsRequest() && this.ownsView(ticket, ownership);
+    const owns = (response?: T): boolean => {
+      if (!ownsRequest()) return false;
+      if (ownership !== "navigation") return this.ownsView(ticket, ownership);
+      const state = this.host.state();
+      if (
+        state.sessionId !== ticket.sessionId ||
+        this.host.selectionRequest() !== ticket.selectionRequest
+      )
+        return false;
+      if (
+        state.transcriptViewId === ticket.viewId &&
+        state.transcriptEffectiveLeafId === ticket.effectiveLeafId
+      )
+        return true;
+      // The socket can publish this navigation before its HTTP response.
+      const active = (response as BranchNavigateResponse | undefined)?.snapshot
+        ?.active;
+      return Boolean(
+        active &&
+          active.transcriptPage.viewId === state.transcriptViewId &&
+          active.effectiveLeafId === state.transcriptEffectiveLeafId,
+      );
+    };
     this.host.patch({ branchActionId: actionId, branchTreeError: null });
     try {
       const response = await perform();
-      if (!owns()) {
+      if (!owns(response)) {
         await discard?.(response);
         return false;
       }
@@ -531,49 +420,16 @@ export class BranchController {
       return false;
     } finally {
       if (ownsRequest() && this.host.state().branchActionId === actionId) {
-        this.host.patch({
-          branchActionId: null,
-          ...(!this.ownsView(ticket, ownership)
-            ? { branchTreeStale: true }
-            : {}),
-        });
-        this.reconcile();
+        this.host.patch({ branchActionId: null });
       }
     }
   }
 
-  async returnToLatest(): Promise<boolean> {
+  returnToLatest(): Promise<boolean> {
     const state = this.host.state();
-    const durableLeafId = state.transcriptDurableLeafId;
-    const effectiveLeafId = state.transcriptEffectiveLeafId;
-    if (!state.sessionId || !durableLeafId || !hasEarlierContinuation(state)) {
-      return false;
-    }
-    if (!(await this.refreshForNavigation())) return false;
-    const current = this.host.state();
-    if (!hasEarlierContinuation(current)) return false;
-    const tree = current.branchTree;
-    if (
-      current.transcriptDurableLeafId !== durableLeafId ||
-      !tree ||
-      tree.durableLeafId !== durableLeafId ||
-      tree.effectiveLeafId !== effectiveLeafId
-    ) {
-      this.host.patch({
-        branchTreeError:
-          "The saved position changed. Refresh before restoring it.",
-      });
-      return false;
-    }
-    return this.navigate(durableLeafId, "switch");
-  }
-
-  private invalidateRequests(): void {
-    this.recovery.reset();
-    for (const request of this.inspectionRequests) request.abort();
-    this.inspectionRequests.clear();
-    this.treeRequest += 1;
-    this.actionRequest += 1;
+    if (!state.transcriptDurableLeafId || !hasEarlierContinuation(state))
+      return Promise.resolve(false);
+    return this.navigate(state.transcriptDurableLeafId, "switch");
   }
 
   private viewTicket(state: BranchControllerState): BranchViewTicket {

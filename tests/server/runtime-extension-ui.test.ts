@@ -14,7 +14,7 @@ import {
   record,
   schedulingRuntime,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -28,7 +28,7 @@ describe("extension displays and dialog ownership", () => {
     runtime.on("event", (event: Record<string, unknown>) => events.push(event));
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const emit = (method: string, fields: Record<string, unknown>) =>
       f.worker.emit("event", {
         type: "extension_ui_request",
@@ -149,9 +149,9 @@ describe("extension displays and dialog ownership", () => {
     });
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime, "a");
+    await startWorker(runtime, "a");
     await runtime.openSession("b");
-    await waitForReady(runtime, "b");
+    await startWorker(runtime, "b");
     const worker = workers[0]!;
     const other = workers[1]!;
     const question = (id: string) =>
@@ -215,7 +215,7 @@ describe("extension displays and dialog ownership", () => {
       const { runtime } = f;
       trackRuntime(runtime);
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const { worker } = f;
       worker.emit("event", {
         type: "extension_ui_request",
@@ -262,7 +262,7 @@ describe("extension displays and dialog ownership", () => {
     const { runtime } = f;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     f.worker.emit("event", {
       type: "extension_ui_request",
       id: "unknown-write",

@@ -29,7 +29,6 @@ interface RuntimeEventHost {
   refreshLoadedSessions(): Promise<void>;
   hasVisibleGitSurface(): boolean;
   refreshGitStatus(): Promise<void>;
-  markProjectionStale(): void;
   selectionGeneration(): number;
   invalidateResync(): void;
   resync(
@@ -46,6 +45,7 @@ export class RuntimeEventController {
   private settledKeys = new Set<string>();
   private readonly observedRuns = new Set<string>();
   private readonly titleAttention = new Set<string>();
+  private readonly acknowledgedStatus = new Map<string, number>();
   private resyncTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingResync: {
     sessionId: string | null;
@@ -84,6 +84,45 @@ export class RuntimeEventController {
       this.clearAttentionFor(this.host.state().sessionId);
   }
 
+  projectSessionStatuses(
+    statuses: Record<string, SessionRuntimeStatus>,
+    viewedSessionId: string | null,
+  ): Record<string, SessionRuntimeStatus> {
+    if (viewedSessionId)
+      this.viewStatus(viewedSessionId, statuses[viewedSessionId]);
+    return Object.fromEntries(
+      Object.entries(statuses).map(([id, status]) => [
+        id,
+        this.displayStatus(id, status),
+      ]),
+    );
+  }
+
+  private viewStatus(id: string, status?: SessionRuntimeStatus): void {
+    if (status?.attentionId === undefined) return;
+    this.acknowledgedStatus.delete(id);
+    this.acknowledgedStatus.set(id, status.attentionId);
+    if (this.acknowledgedStatus.size > 512) {
+      const oldest = this.acknowledgedStatus.keys().next().value;
+      if (oldest !== undefined) this.acknowledgedStatus.delete(oldest);
+    }
+  }
+
+  private displayStatus(
+    id: string,
+    status: SessionRuntimeStatus,
+  ): SessionRuntimeStatus {
+    if (
+      status.attentionId === undefined ||
+      this.acknowledgedStatus.get(id) !== status.attentionId
+    )
+      return status;
+    const { indicator, ...acknowledged } = status;
+    return indicator === "completed" || indicator === "failed"
+      ? acknowledged
+      : status;
+  }
+
   /** Track live runs only for the selected conversation's completion UI.
    * Task notification identity and standalone compaction belong to the Host.
    * Snapshots retire observations but never manufacture a completed run. */
@@ -120,6 +159,10 @@ export class RuntimeEventController {
   invalidateTransport(): void {
     this.observedRuns.clear();
     this.cancelScheduledResync();
+  }
+
+  resetStatusAcknowledgements(): void {
+    this.acknowledgedStatus.clear();
   }
 
   private cancelScheduledResync(): void {
@@ -169,6 +212,7 @@ export class RuntimeEventController {
     for (const sessionId of sessionIds) {
       this.observedRuns.delete(sessionId);
       this.titleAttention.delete(sessionId);
+      this.acknowledgedStatus.delete(sessionId);
     }
     this.publishTitleAttention();
   }
@@ -341,7 +385,6 @@ export class RuntimeEventController {
             ? { error: null, errorSeverity: "error" }
             : {}),
       });
-      this.host.markProjectionStale();
       const revision =
         typeof event.revision === "number" ? event.revision : undefined;
       this.scheduleResync(
@@ -369,9 +412,8 @@ export class RuntimeEventController {
       return;
     }
 
-    // An unopened session is shown from its read-only Pi-file preview while
-    // extensions initialize off the critical path. Replace that preview with
-    // the worker's live state as soon as its own runtime becomes ready.
+    // Refresh the selected view when a requested worker, attachment, or
+    // background model discovery publishes new capabilities.
     if (
       event.type === "runtime_ready" ||
       event.type === "model_metadata_changed"
@@ -405,12 +447,15 @@ export class RuntimeEventController {
     status: unknown,
   ): Record<string, SessionRuntimeStatus> | null {
     if (!sessionId || !isSessionRuntimeStatus(status)) return null;
-    const next = status;
+    if (sessionId === this.host.state().sessionId)
+      this.viewStatus(sessionId, status);
+    const next = this.displayStatus(sessionId, status);
     const existing = this.host.state().sessionStatuses[sessionId];
     if (
       existing &&
       existing.runState === next.runState &&
       existing.indicator === next.indicator &&
+      existing.attentionId === next.attentionId &&
       existing.needsInput === next.needsInput &&
       existing.external === next.external
     )

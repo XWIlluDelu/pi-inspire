@@ -172,6 +172,7 @@ async function fixture(
   });
   async function open() {
     await runtime.openSession(SESSION_ID);
+    await runtime.setSteeringMode(SESSION_ID, "one-at-a-time");
     await vi.waitFor(() => expect(ready).toBe(true), { timeout: 10_000 });
   }
   async function navigate(
@@ -182,7 +183,7 @@ async function fixture(
   ) {
     return runtime.navigateBranch({
       sessionId: SESSION_ID,
-      revision: (await runtime.branchTree(SESSION_ID)).revision,
+      revision: (await runtime.snapshot(SESSION_ID)).active!.branchRevision!,
       targetId,
       mode,
       summarize,
@@ -399,22 +400,18 @@ export default function (pi) {
       targetId: "u2",
     });
     expect(forked.snapshot.active?.sessionName).toBe("Named source");
-    const destinationTree = await runtime.branchTree(forked.sessionId);
+    const destinationTree = (await runtime.snapshot(forked.sessionId)).active!;
     await runtime.navigateBranch({
       sessionId: forked.sessionId,
-      revision: destinationTree.revision,
+      revision: destinationTree.branchRevision!,
       targetId: "a1",
       mode: "switch",
     });
     await Promise.all(responses);
-    expect(runtime.activeSessionId).toBe(forked.sessionId);
+    expect(runtime.startupSessionHint).toBe(forked.sessionId);
     expect(workers).toHaveLength(2);
     expect(sourcePid).not.toBeNull();
     expect(workers[0]?.pid).toBe(sourcePid);
-    expect(workers[1]?.pid).not.toBe(sourcePid);
-    expect(await runtime.branchTree(SESSION_ID)).toMatchObject({
-      sessionId: SESSION_ID,
-    });
     expect(dialogs.filter((event) => event.method === "confirm")).toHaveLength(
       3,
     );
@@ -482,7 +479,7 @@ export default function (pi) {
       events.push(event as Record<string, unknown>),
     );
     await open();
-    const staleTree = await runtime.branchTree(SESSION_ID);
+    const staleTree = (await runtime.snapshot(SESSION_ID)).active!;
     expect((await navigate("a1", "switch")).snapshot.active).toMatchObject({
       effectiveLeafId: "a1",
       navigationLeased: true,
@@ -490,7 +487,7 @@ export default function (pi) {
     await expect(
       runtime.navigateBranch({
         sessionId: SESSION_ID,
-        revision: staleTree.revision,
+        revision: staleTree.branchRevision!,
         targetId: "a2",
         mode: "switch",
       }),
@@ -504,17 +501,21 @@ export default function (pi) {
     await vi.waitFor(async () =>
       expect((await runtime.snapshot()).runState).toBe("running"),
     );
-    const tree = await runtime.branchTree(SESSION_ID);
-    const activePrompt = tree.nodes.find(
-      (node) =>
-        node.role === "user" && node.snippet.includes("active question"),
-    );
-    expect(activePrompt).toMatchObject({ active: true, canFork: true });
+    const sourceView = (await runtime.snapshot(SESSION_ID)).active!;
+    const viewId = sourceView.transcriptPage.viewId;
+    const activePrompt = sourceView.transcriptPage.messages.find(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        "role" in message &&
+        message.role === "user" &&
+        JSON.stringify(message).includes("active question"),
+    ) as { __inspireEntryId: string } | undefined;
+    expect(activePrompt?.__inspireEntryId).toEqual(expect.any(String));
     const forked = await runtime.forkBranch({
       sessionId: SESSION_ID,
-      viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
-        .viewId,
-      targetId: activePrompt!.id,
+      viewId,
+      targetId: activePrompt!.__inspireEntryId,
     });
     expect(forked.editorText).toBe("active question");
     const destinationText = await readFile(
@@ -532,10 +533,9 @@ export default function (pi) {
       totalCount: 0,
       revision: 0,
     });
-    await vi.waitFor(() => expect(workers).toHaveLength(2));
+    expect(workers).toHaveLength(1);
     expect(sourcePid).not.toBeNull();
     expect(workers[0]?.pid).toBe(sourcePid);
-    expect(workers[1]?.pid).not.toBe(sourcePid);
     expect(destinationText).not.toContain("active question");
     expect(destinationText).not.toContain(REPLY);
     expect(
@@ -665,7 +665,14 @@ export default function (pi) {
       },
     );
     await open();
-    expect((await runtime.branchTree(SESSION_ID)).skipSummaryPrompt).toBe(true);
+    const initialView = (await runtime.snapshot(SESSION_ID)).active!
+      .transcriptPage.viewId;
+    expect(
+      await runtime.sessionHistory(SESSION_ID, initialView, {
+        kind: "entry",
+        targetId: "u1",
+      }),
+    ).toMatchObject({ skipSummaryPrompt: true });
     const sourcePid = workers[0]!.pid;
     const beforeNavigation = await readFile(sourcePath, "utf8");
     const beforeCount = jsonl(beforeNavigation).length;
@@ -673,12 +680,12 @@ export default function (pi) {
     expect(root.editorText).toBe("question one");
     expect(root.snapshot.active?.effectiveLeafId).toBeNull();
     expect(root.snapshot.active?.transcriptPage.messages).toEqual([]);
-    const emptyTree = await runtime.branchTree(SESSION_ID);
+    const emptyTree = (await runtime.snapshot(SESSION_ID)).active!;
     const emptyClone = await runtime.cloneBranch({
       sessionId: SESSION_ID,
       viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
         .viewId,
-      targetId: emptyTree.effectiveLeafId,
+      targetId: emptyTree.effectiveLeafId ?? null,
     });
     expect(emptyClone.editorText).toBe("");
     expect(emptyClone.snapshot.active?.transcriptPage.messages).toEqual([]);
@@ -719,12 +726,12 @@ export default function (pi) {
     });
     expect(carried.snapshot.active?.effectiveLeafId).toBe(appended[1].id);
 
-    const tree = await runtime.branchTree(SESSION_ID);
+    const tree = (await runtime.snapshot(SESSION_ID)).active!;
     const cloned = await runtime.cloneBranch({
       sessionId: SESSION_ID,
       viewId: (await runtime.snapshot(SESSION_ID)).active!.transcriptPage
         .viewId,
-      targetId: tree.effectiveLeafId,
+      targetId: tree.effectiveLeafId ?? null,
     });
     expect(cloned.editorText).toBe("");
     const clonedEntries = jsonl(

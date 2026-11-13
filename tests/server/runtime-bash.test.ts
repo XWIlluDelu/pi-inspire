@@ -14,7 +14,7 @@ import {
   disposeRuntimeFixture,
   initializeRuntimeFixture,
   schedulingRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 function fixture() {
@@ -72,7 +72,7 @@ describe("RuntimeController shell acceptance", () => {
       let execution: Promise<unknown> | undefined;
       try {
         await runtime.openSession("a");
-        await waitForReady(runtime);
+        await startWorker(runtime);
         const reconcile = vi.spyOn(
           runtime as unknown as { reconcileSlot(): Promise<unknown> },
           "reconcileSlot",
@@ -139,7 +139,7 @@ describe("RuntimeController shell acceptance", () => {
     const { runtime } = f;
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const reconcile = vi.spyOn(
         runtime as unknown as { reconcileSlot(): Promise<unknown> },
         "reconcileSlot",

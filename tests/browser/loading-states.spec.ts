@@ -140,21 +140,6 @@ test("Context and History preserve focus after a deferred import fails and reloa
     await expect(
       pane.getByRole("tab", { name: "Files", exact: true }),
     ).toBeFocused();
-    const releaseTree = await holdRequests(page, "**/api/branches/tree?*");
-    try {
-      await pane.getByRole("tab", { name: "History", exact: true }).click();
-      await expect(
-        pane.getByRole("status").filter({ hasText: "Loading history" }),
-      ).toBeVisible();
-      releaseTree();
-      await expect(
-        pane.getByRole("region", { name: "Conversation history" }),
-      ).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(pane).toBeHidden();
-    } finally {
-      releaseTree();
-    }
   } finally {
     release();
   }

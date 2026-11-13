@@ -8,14 +8,14 @@ covers:
   - server/extensions/inspire-branch-bridge.ts
   - shared/{branch-node-actions,branch-bridge-protocol}.ts
   - src/controllers/branch-controller.ts
-  - src/components/{BranchTree,EarlierBranchBanner,AppTopbar,SearchMatchText}.tsx
+  - src/components/{NativeTurnReader,EarlierBranchBanner,AppTopbar}.tsx
   - server/attachments.ts
   - shared/contracts.ts
   - src/store.ts
   - src/controllers/composer-controller.ts
   - tests/server/{runtime-branching,session-tree,branch-bridge-extension,session-export.integration}.test.ts
   - tests/server/{runtime-branch-bridge,pi-branch-bridge.integration}.test.ts
-  - tests/web/{branch-controller,branch-tree,branch-store}.test.ts*
+  - tests/web/{branch-controller,branch-store}.test.ts*
   - tests/browser/history.spec.ts
   - src/styles/{history,transcript}.css
 ---
@@ -31,26 +31,19 @@ admission; [[session-transport]] owns browser continuity and observation lifetim
 
 ## History inspection
 
-### Tree, search and content
+### Native pages, routes and search
 
-Read bounded projections of Pi entry identities while keeping older and alternate points reachable
-and searchable. Route pages keep their containing user prompt when tool/event detail crosses a page
-boundary, without skipping activity. Read-only inspection never creates a navigation lease.
-
-Query, expanded nodes, selected preview, explicit route and outline/detail positions survive tool
-switches and F5 as browser-tab-local metadata scoped by session and workspace. Tree and entry content are read again under current
-authority; saved navigation never includes content, loading flags or continuation authorization.
+History is the conversation's single native-turn reader. The title menu, command palette and
+`/tree` open the same destination. Earlier and Later load bounded pages on one pinned branch.
+Other routes shows the native siblings at a branch point; opening one reads its latest retained
+leaf without moving Pi. Current conversation returns to the live branch's saved history. Search
+matches the complete case-insensitive phrase anywhere on the selected saved branch, including
+entries outside the mounted page. Native entry ID, saved branch and reading offset survive
+reopening in the same browser tab. No message content or permission is stored with that location.
 
 Ordinary user-input snippets use the shared user-content projection: readable file names replace
 transport trailers, image-dimension notes are omitted, and image cues remain. Search snippets and
 detailed reads expose retained source so path matching, Copy and editing remain possible.
-History search matches the whole trimmed query as a case-insensitive literal phrase; Files instead
-uses whitespace-separated terms. Match emphasis preserves text and accessible role labels. Activity
-disclosures keep complete accessible names and expanded state, without counts or ordinals inferred
-from a bounded page. Keep route marks/current-route metadata aligned with their entry. Empty results
-use shared pane states without repeating the query in the state title. On coarse pointers, History's
-selectable rows, disclosures and standalone preview actions are at least 44px high at every viewport
-width. Narrow detail padding remains a separate width-based layout choice.
 
 Read complete retained entries in bounded chunks. Ordinary assistant/tool content stays rich;
 native shell records show command, output, status and context inclusion as Shell activity rather
@@ -67,7 +60,7 @@ History text uses the same authorized file-preview actions as Transcript.
 
 ### Copy, images and read recovery
 
-Each selected entry has one constant Copy action in its detail header, including Shell's own header.
+Each entry has a Copy action beside its preview.
 Read all bounded text chunks and structured images without expanding or scrolling the preview.
 Copy the retained record, not a separate full-output file or loaded excerpt. Image formats, ordering,
 plain-text alternatives and clipboard failures follow [[design-system]].
@@ -82,11 +75,9 @@ Entry/image reads survive ordinary same-view appends. Navigation and source/work
 retire them; same-file mutations still require a fresh revision. Retiring a read also retires its
 progress, without letting an old completion clear newer progress.
 
-Route/search pages, selected entries and images retry transient failures with bounded backoff inside
-the original read promise. New queries, entries, session/view/selection or transport owners cancel
-recovery. Persistent/definitive failures keep local Retry, selected entries, loaded pages and the
-Back anchor. Errors wrap paths inside their content area without obscuring the preview header.
-Recovery never repeats navigation, Fork, Clone or clipboard copying.
+Each replacement page, route list or body belongs to one cancellable read. Failures leave the last
+confirmed page visible and offer Retry. Entry and image reads use bounded backoff for transient
+failures. Recovery never repeats navigation, Fork, Clone or clipboard copying.
 
 ## Same-file navigation
 
@@ -182,7 +173,8 @@ Appends and partial trailing writes beyond the admitted prefix stay outside the 
 
 Before publication, open the private projection, reserve the generated id/final path, and recheck
 the source view. Publish the complete JSONL atomically without replacement, reopen under that reservation, and attach a processless
-destination before normal configured warmup. Concurrent open/create/delete shares the reservation;
+destination. Viewing the copy stays processless until a worker-backed action. Concurrent
+open/create/delete shares the reservation;
 catalog-driven opens wait for it. Destination attachment is independent of Host selection.
 
 The response always identifies the destination. Change automatic Host selection only if the source
@@ -192,21 +184,12 @@ the committed destination rather than inviting blind retry.
 
 ## Browser action ownership
 
-Tree/action responses require the original API, transport generation, selection generation/intent
-and transcript view. Revisiting a session cannot revive pending Fork, Clone or Return to latest.
-Preparatory navigation reads retain the original gesture's owner. Tree reads and same-session
-navigation also bind the effective leaf; independent copies bind the admitted source prefix, so
-ordinary source appends cannot prevent the published destination from opening.
+History reads and branch actions belong to the initiating browser visit and view. Navigation uses
+the revision from the entry the user inspected; the Host rejects stale versions. If the socket
+already published that exact result, the HTTP response can still offer the returned draft. It
+cannot replace a newer draft or a different visit. Independent copies bind the admitted source
+prefix, so ordinary source appends do not prevent the published destination from opening.
 
-Bootstrap or selection replacement retires pending tree/actions and their actionable presentation.
-Successful view-changing actions clear their old markers. If an ordinary append changes the effective
-leaf but not the view, a still-current discarded response retires only its own marker and schedules
-read-only History revalidation; it cannot clear a newer request's marker.
-
-Connection loss or projection change marks retained History stale. Fresh snapshots and healthy
-reconnects renew it automatically; transient failures retry with bounded backoff while preserving
-rows. Position-changing actions require a current validated tree. Only persistent/definitive read
-failures expose local error/Refresh controls. Recovery never replays navigation or copy gestures.
 Current-branch Clone failures use the visible notification stack even when History is closed;
 node-specific actions keep their local error/retry surface.
 
@@ -240,7 +223,7 @@ all acquired handles close. [[composer]] owns the dialog and typed receipts.
 
 When a worker holds a navigation lease away from the latest saved point, show a compact notice above
 the transcript explaining that new messages continue from earlier history. **Restore saved position**
-refreshes the runtime-owned branch projection and restores where the next message will continue. If
+uses the confirmed snapshot revision to restore where the next message will continue. If
 the saved point is a user or custom message, restoring it retires the idle owned worker and the next
 local action opens Pi at the exact saved point. Other branch ends that Pi can only edit are still
 available through **Edit from here** in History.

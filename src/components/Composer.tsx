@@ -192,6 +192,7 @@ export const Composer = memo(function Composer() {
       commonModels: source.commonModels,
       commands: source.commands,
       thinkingLevel: source.thinkingLevel,
+      thinkingLevelPending: source.thinkingLevelPending,
       desktopSendKey: source.prefs.desktopSendKey,
       recentModelIds: source.prefs.recentModelIds,
       nativeCommandUiRequest: source.nativeCommandUiRequest,
@@ -538,9 +539,18 @@ export const Composer = memo(function Composer() {
             }
             direction="up"
             value={state.thinkingLevel}
-            display={thinkingSupported ? undefined : "Unavailable"}
+            display={
+              state.thinkingLevelPending
+                ? "Saving…"
+                : thinkingSupported
+                  ? undefined
+                  : "Unavailable"
+            }
             disabled={
-              Boolean(state.readOnlyReason) || !modelControls || sessionOpening
+              state.thinkingLevelPending ||
+              Boolean(state.readOnlyReason) ||
+              !modelControls ||
+              sessionOpening
             }
             openRequest={
               state.nativeCommandUiRequest?.sessionId === state.sessionId &&

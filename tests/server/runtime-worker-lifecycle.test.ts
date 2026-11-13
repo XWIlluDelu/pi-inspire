@@ -25,14 +25,14 @@ import {
   TEST_CWD,
   trackedAttachmentStore,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
 afterEach(disposeRuntimeFixture);
 
 describe("worker startup and retirement", () => {
-  it("warms only the current selection and starts a superseded preview on demand", async () => {
+  it("opens two previews without Pi and starts only the session receiving input", async () => {
     const entered = deferredSignal();
     const resume = deferredSignal();
     const { runtime, workers } = schedulingRuntime({
@@ -49,7 +49,6 @@ describe("worker startup and retirement", () => {
     try {
       await entered.promise;
       await runtime.openSession("b");
-      await waitForReady(runtime, "b");
       resume.resolve();
 
       expect((await opening).active).toMatchObject({
@@ -57,7 +56,7 @@ describe("worker startup and retirement", () => {
         transcriptPage: { messages: [{ content: "preview:a" }] },
       });
       expect((await runtime.snapshot()).active?.sessionId).toBe("b");
-      expect(workers.map((worker) => worker.sessionId)).toEqual(["b"]);
+      expect(workers).toHaveLength(0);
 
       const release = runtime.retainSessionView("a");
       try {
@@ -67,8 +66,8 @@ describe("worker startup and retirement", () => {
           expectedViewId: snapshot.active?.transcriptPage.viewId,
           message: "Continue in this view",
         });
-        expect(workers.map((worker) => worker.sessionId)).toEqual(["b", "a"]);
-        expect(runtime.activeSessionId).toBe("b");
+        expect(workers.map((worker) => worker.sessionId)).toEqual(["a"]);
+        expect(runtime.startupSessionHint).toBe("b");
       } finally {
         release();
       }
@@ -94,7 +93,7 @@ describe("worker startup and retirement", () => {
     expect(opened.active?.transcriptPage.messages).toMatchObject([
       { role: "user", content: "preview:a", timestamp: 1 },
     ]);
-    await waitForReady(runtime, "a");
+    await startWorker(runtime, "a");
     expect(workers[0]?.starts).toBe(1);
     expect(workers[0]?.stops).toBe(0);
     await expect(
@@ -122,9 +121,10 @@ describe("worker startup and retirement", () => {
           openSessionProjection: preview,
         },
       );
+      if (kind === "existing") await runtime.openSession("a");
       const opening =
         kind === "existing"
-          ? runtime.openSession("a")
+          ? startWorker(runtime)
           : runtime.newSession(TEST_CWD);
       const outcome = opening.catch((error: unknown) => error);
       try {
@@ -133,7 +133,7 @@ describe("worker startup and retirement", () => {
         gate.resolve();
         await closing;
         const result = await outcome;
-        if (kind === "new") expect(result).toBeInstanceOf(Error);
+        expect(result).toBeInstanceOf(Error);
         expect(worker!.starts).toBe(0);
         expect(worker!.stops).toBe(1);
       } finally {
@@ -228,7 +228,7 @@ describe("worker startup and retirement", () => {
     );
     expect(openProjection).not.toHaveBeenCalled();
     expect(worker.stops).toBe(1);
-    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
   });
 
   it.each([
@@ -256,7 +256,7 @@ describe("worker startup and retirement", () => {
       });
       try {
         await runtime.openSession("0");
-        await waitForReady(runtime, "0");
+        await startWorker(runtime, "0");
         const old = workers[0]!;
         const stopping = vi.spyOn(old, "stop").mockImplementation(() => stop);
         let reloading: Promise<unknown> | undefined;
@@ -267,7 +267,7 @@ describe("worker startup and retirement", () => {
         } else if (retirement === "idle eviction") {
           for (const id of ids.slice(1)) {
             await runtime.openSession(id);
-            await waitForReady(runtime, id);
+            await startWorker(runtime, id);
           }
         } else {
           reloading = runtime
@@ -346,7 +346,8 @@ describe("worker startup and retirement", () => {
     });
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await vi.waitFor(() => expect(workers).toHaveLength(1));
+    await startWorker(runtime);
+    expect(workers).toHaveLength(1);
 
     await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
       "Pi created a duplicate session path",
@@ -383,7 +384,7 @@ describe("worker startup and retirement", () => {
     );
 
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     f.worker.emit("event", {
       type: "extension_ui_request",
       id: "question-1",
@@ -414,7 +415,11 @@ describe("worker startup and retirement", () => {
     expect(recovered.pendingExtensionUiRequests).toEqual([]);
     expect(recovered.extensionDisplays).toEqual([]);
     expect(recovered.extensionStatuses).toEqual({});
-    expect(recovered.sessionStatuses.a).toEqual({ runState: "failed" });
+    expect(recovered.sessionStatuses.a).toMatchObject({
+      runState: "failed",
+      indicator: "failed",
+      attentionId: expect.any(Number),
+    });
     expect(emitted.at(-1)).toMatchObject({
       type: "runtime_error",
       extensionDisplays: [],
@@ -463,9 +468,8 @@ describe("worker startup and retirement", () => {
     });
     let worker!: PiRpcProcess;
     const guard = vi.fn(async () => {
-      // The first inspection precedes process creation. The second runs after
-      // attaching the unstarted worker and validating its projection baseline.
-      if (guard.mock.calls.length === 2) {
+      // Pause once the explicit operation has prepared a worker, before it starts.
+      if (worker) {
         inspected.resolve();
         await releaseInspection.promise;
       }
@@ -486,6 +490,7 @@ describe("worker startup and retirement", () => {
     });
     try {
       await runtime.openSession("a");
+      const starting = startWorker(runtime).catch((error: unknown) => error);
       await inspected.promise;
       const stop = vi.spyOn(worker, "stop");
       expect(createTransport.mock.calls.length).toBe(0);
@@ -493,8 +498,9 @@ describe("worker startup and retirement", () => {
       expect(stop).toHaveBeenCalledOnce();
       releaseInspection.resolve();
       await closing;
+      expect(await starting).toBeInstanceOf(Error);
       expect(createTransport.mock.calls.length).toBe(0);
-      expect(runtime.activeSessionId).toBeNull();
+      expect(runtime.startupSessionHint).toBeNull();
     } finally {
       releaseInspection.resolve();
       await runtime.close();
@@ -547,7 +553,7 @@ describe("worker startup and retirement", () => {
         await rejection;
         await closing;
         expect(runtime.ownWorkerTags()).toEqual(new Set());
-        expect(runtime.activeSessionId).toBeNull();
+        expect(runtime.startupSessionHint).toBeNull();
         expect(worker.stops).toBe(1);
       } finally {
         gate.resolve();
@@ -607,7 +613,7 @@ describe("worker startup and retirement", () => {
         expect(await opening).toMatchObject({
           active: { sessionId: "new-id" },
         });
-        await waitForReady(runtime, "new-id");
+        await startWorker(runtime, "new-id");
         expect(workers).toHaveLength(2);
       } else {
         const unconfirmed = new Error("Worker exit unconfirmed");
@@ -656,7 +662,7 @@ describe("worker startup and retirement", () => {
     await expect(runtime.newSession(TEST_CWD)).rejects.toThrow(
       "startup failed",
     );
-    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
     expect(runtime.ownWorkerTags()).toEqual(new Set());
     expect(workers[0]?.stops).toBe(1);
 

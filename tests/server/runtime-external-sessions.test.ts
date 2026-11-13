@@ -30,7 +30,7 @@ import {
   trackedAttachmentStore,
   trackRuntime,
   upload,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 const directProjections: Awaited<ReturnType<typeof preview>>[] = [];
@@ -373,7 +373,7 @@ describe("continue an externally owned Pi", () => {
     try {
       const { active } = await runtime.snapshot("a");
       expect(active?.readOnlyReason).toBe("external-active");
-      expect(runtime.activeSessionId).toBeNull();
+      expect(runtime.startupSessionHint).toBeNull();
       await expect(
         runtime.prompt({ sessionId: "a", message: "First input" }),
       ).rejects.toMatchObject({ code: "EXTERNAL_PI_WRITER_ACTIVE" });
@@ -404,7 +404,8 @@ describe("continue an externally owned Pi", () => {
     trackRuntime(runtime);
     const preview = await runtime.openSession("a");
     expect(preview.active?.effectiveLeafId).toBe("saved-current");
-    await waitForReady(runtime);
+    expect(create).not.toHaveBeenCalled();
+    await startWorker(runtime);
     expect(create).toHaveBeenCalledOnce();
     const snapshot = await runtime.snapshot("a");
     expect(snapshot.active?.readOnlyReason).toBeUndefined();
@@ -505,26 +506,20 @@ describe("continue an externally owned Pi", () => {
       .setExternalSessionPresence(async () => live)
       .setExternalSessionConnector(async () => null);
     trackRuntime(runtime);
-    // Both warm a worker; only "b" receives input.
     await runtime.openSession("a");
-    await waitForReady(runtime, "a");
     await runtime.openSession("b");
-    await waitForReady(runtime, "b");
+    expect(workers).toHaveLength(0);
     await runtime.prompt({ sessionId: "b", message: "working here" });
     live = [null];
-    await runtime.openSession("a");
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot("a")).active?.readOnlyReason).toBe(
-        "external-active",
-      ),
+    expect((await runtime.openSession("a")).active?.readOnlyReason).toBe(
+      "external-active",
     );
-    expect(workers[0]!.stops).toBe(1);
-    await runtime.openSession("b");
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(
-      (await runtime.snapshot("b")).active?.readOnlyReason,
+      (await runtime.openSession("b")).active?.readOnlyReason,
     ).toBeUndefined();
-    expect(workers[1]!.stops).toBe(0);
+    expect(workers.map((worker) => [worker.sessionId, worker.stops])).toEqual([
+      ["b", 0],
+    ]);
   });
 
   it("observes short native run outcomes without replaying the initial report or claiming idle means success", async () => {
@@ -641,7 +636,7 @@ describe("continue an externally owned Pi", () => {
       expect(nativePrompt.mock.calls.map(([message]) => message)).toEqual([
         "For A only",
       ]);
-      await waitForReady(runtime, "b");
+      await startWorker(runtime, "b");
       expect(workers.map((worker) => worker.sessionId)).toEqual(["b"]);
 
       await vi.waitFor(async () =>
@@ -657,7 +652,7 @@ describe("continue an externally owned Pi", () => {
         ),
       );
       expect(f.native.abort).toHaveBeenCalledExactlyOnceWith("u1");
-      expect(runtime.activeSessionId).toBe("b");
+      expect(runtime.startupSessionHint).toBe("b");
     } finally {
       deliver.resolve();
       await runtime.close();
@@ -747,11 +742,7 @@ describe("continue an externally owned Pi", () => {
       expect((await runtime.snapshot("a")).active?.effectiveLeafId).toBe(
         "other-branch",
       );
-      expect(workers).toHaveLength(1);
-      expect(workers[0]!.commands).not.toContainEqual({
-        type: "prompt",
-        message: "For old branch",
-      });
+      expect(workers).toHaveLength(0);
     } finally {
       finish.resolve();
       release();
@@ -858,16 +849,20 @@ describe("continue an externally owned Pi", () => {
         await proceed.promise;
         return nativeState({ activity: "working" });
       });
-      await runtime.openSession("a");
+      const observing = vi.advanceTimersByTimeAsync(750);
       await entered.promise;
       retired = true;
       f.setState({ ended: "exited" });
+      await expect(
+        runtime.prompt({
+          sessionId: "a",
+          message: "Do not send to retired Pi",
+        }),
+      ).rejects.toThrow(/connection has ended/);
+      proceed.resolve();
+      await observing;
       await vi.advanceTimersByTimeAsync(750);
       expect(worker).not.toHaveBeenCalled();
-
-      proceed.resolve();
-      await waitForReady(runtime, "a");
-      expect(worker).toHaveBeenCalledOnce();
       const snapshot = await runtime.snapshot("a");
       expect(snapshot.active?.readOnlyReason).toBeUndefined();
       expect(snapshot.sessionStatuses.a?.external).not.toBe(true);

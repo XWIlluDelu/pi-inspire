@@ -43,12 +43,12 @@ or cannot be resolved. The snapshot reports `readOnlyReason: workspace-unavailab
 worker nor project model discovery starts. Worker-backed mutations and independent Fork/Clone reject
 at admission. The history source must still be valid: missing or corrupt JSONL keeps its own error.
 
-For an available project, the independent worker warms outside the selection critical path.
-`runtime_ready` replaces the preview with authoritative RPC state only for the still-selected
-session and after startup attestation. Reopening a workspace-unavailable session rechecks its
-recorded directory. If restored, retain its resolved physical root, renew the resource view, and use
-ordinary startup admission. Do not create the directory, substitute the Host cwd, or rewrite the
-session header to make history executable.
+For an available project, ordinary open and reconnect read saved history and observe existing
+ownership. They do not launch a Pi. Sending a prompt or invoking a worker-backed operation admits
+the writer on demand. `runtime_ready` publishes authoritative RPC state after startup attestation.
+Reopening a workspace-unavailable session rechecks its recorded directory. If restored, retain its
+resolved physical root and renew the resource view. Do not create the directory, substitute the Host
+cwd, or rewrite the session header to make history executable.
 
 Each selected or active session has an independent runtime; switching conversations leaves
 background work running. Worker events belong to the slot's current Pi process, and retiring the
@@ -165,7 +165,7 @@ selects the then-current default again.
 The title menu's branch choice and History's **Switch to this branch** (offered for branch ends
 while read-only) use one selection. A live Pi running the chosen branch keeps or makes the view
 read-only, stopping Inspire's idle worker; otherwise the view becomes editable there, navigating the
-worker or starting it at that leaf. An attached Pi is released when another branch is chosen.
+worker if already running, or retaining that leaf for the first worker-backed action. An attached Pi is released when another branch is chosen.
 
 ### Live instances
 
@@ -177,9 +177,8 @@ view when its leaf is at or beyond the viewed position on that branch. An older 
 triggers a live check because the record can lag an append. If the check confirms that Pi is
 still at the older node, Inspire can start its own worker for the viewed branch.
 
-- No corresponding instance: the view is editable and Inspire's own worker starts directly. A
-  worker started for a non-default view first navigates to it, so displayed conversation and model
-  context agree.
+- No corresponding instance: the view is editable. When an action first needs a writer, a worker
+  started for a non-default view navigates to it before executing that action.
 - Opening a session or reconnecting a browser view attaches automatically when exactly one Pi
   could own the branch, its control endpoint is available, and live state confirms it is idle.
   Otherwise the view is read-only (`external-active`) with progress and **Take over**.
@@ -191,7 +190,6 @@ Inspire's own workers load attach-control with a tag bound to the worker launche
 excludes those records from external admission. Sessions worked on in Inspire keep their viewed
 position across idle reclamation and navigation. Starting a replacement worker checks live
 ownership again, including after an attachment ends or the browser restores an addressed view.
-A session only warmed by viewing can return to read-only on re-entry if a live Pi now runs its branch.
 An addressed browser reconnect restores the view and checks for an external Pi without selecting
 the session for other browsers or starting a worker.
 

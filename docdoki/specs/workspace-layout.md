@@ -97,7 +97,7 @@ trigger. Drawers up to 384px and desktop touch panes with up to 342px of content
 tab strip on its own row, keeping the selected tab, overflow and tool targets complete. Fine-pointer
 desktop panes keep one row and tighten the tool widths at their minimum pane size.
 
-Files/Changes/History use the same content-connected selected-tab background, top corners and fine
+Files and Changes use the same content-connected selected-tab background, top corners and fine
 boundary as file/terminal tabs, with no additional accent underline. The Terminal shortcut remains
 an action that creates a terminal. Inactive file hover surfaces share the 4px top corners.
 Fine-pointer desktop headers stay 32px high through loading, empty and opened-tab states, so
@@ -106,11 +106,8 @@ existing size. Floating tools use 2px gaps within groups and 6px between action 
 separator lines; terminal search/selection overlays share the tools' 8px/12px corner insets.
 Desktop HTML previews use the context perimeter instead of a second complete inner frame.
 
-Files and History search fields start 8px below contextual chrome with 12px horizontal insets. One
-shared search-control rule owns their 34px desktop / 40px narrow height, surface, border, inner
-padding and hover/focus states. Both keep `--text-sm` (12.5px) input and placeholder text and 13px
-leading icons at every width; focus does not enlarge the text. Each owner keeps its own available
-width, and Files keeps its adjacent hidden-files control.
+The Files search field starts 8px below contextual chrome with 12px horizontal insets. It uses the
+shared search control and keeps its adjacent hidden-files control.
 
 Files uses one 4px search-to-heading gap and 24px section headings, keeping the 12px break between
 Recent and workspace and the existing item heights. Changes section headings use the same 24px tier
@@ -119,13 +116,6 @@ desktop / 40px narrow height, aligning Changes with Recent without an empty plac
 surfaces use a 4px outer inset plus their own content padding; both lists reserve the same stable
 native-scrollbar gutter. In a compact Changes pane, renamed and copied paths put the destination
 above the quieter origin and allow both to wrap so their directories stay distinguishable.
-History's first turn has no duplicate top padding, even when Earlier
-conversation or route navigation precedes it. Fine-pointer desktop History turns and prompts use
-4px vertical padding; Activity keeps its full target, and multiline/current markers keep their
-hierarchy. Earlier conversation is a compact secondary navigation control aligned to the 12px text
-origin, with a 44px narrow/touch target. Hierarchical indentation, subsequent turn spacing and the
-terminal's floating-search layout remain distinct.
-
 Transcript and the complete Composer dock share the reading stage's height budget. A reading area
 is preserved while the draft and Pi's aboveEditor/belowEditor widgets yield through their own
 scrolling. Input text keeps its normal size; toolbars and Send/Stop keep their full targets. The
@@ -215,14 +205,13 @@ completion behavior are unchanged.
 
 - Workspace file browsing lives in the contextual Files pane; the session navigation column does
   not duplicate its tree. The right tool header shares the navigation/titlebar rail background,
-  with one weak 1px hairline separating it from the content below. The file tree, History and
-  file-preview canvas share the main reading-stage background. Selected file/terminal tabs use that
+  with one weak 1px hairline separating it from the content below. The file tree and file-preview canvas share the main reading-stage background. Selected file/terminal tabs use that
   content surface with weak top/left/right edges, small top-only corners and an open bottom seam;
   desktop top corners join the frame squarely. Search fields, floating actions, authored documents
   and the terminal keep their own content-surface roles.
 
 - Open files and project terminals have tabs on the leading side of the contextual header. Files,
-  Changes and History are fixed icon tabs on its trailing side, with hover titles and accessible
+  and Changes are fixed icon tabs on its trailing side, with hover titles and accessible
   names; the Terminal icon creates and activates a default terminal instead of selecting a nested
   terminal page. File, terminal and tool tabs share one content region. Files shows its complete
   search/Recent/Workspace browser; selecting a file opens or selects its sibling tab, with no
@@ -269,22 +258,8 @@ completion behavior are unchanged.
   dismissing its content or leaving empty Back stops. Retired foreground markers cannot block a new
   drawer.
 
-  History is a conversation outline for inspecting and deliberately continuing Pi history, not a
-  graph editor, duplicate Transcript, or raw audit log. User prompts lead its compact default view;
-  reply/event detail and alternate routes are disclosed where relevant. Other starts also exposes
-  branch points in a hidden metadata-only prefix, keeping first-input alternatives reachable.
-  Selecting a point previews its complete content inside History without changing Pi's active
-  context or the Composer. Returning to the outline preserves search, loaded history, scroll and
-  focus. Opening an alternate route reveals its chosen/latest point, not its shared oldest
-  ancestor; returning to Current conversation only restores the active conversation's outline.
-  Exact node actions distinguish editing/continuing in this session from creating an independent
-  Fork or Clone, without an action toolbar on every outline row. Search reaches complete retained
-  history across branches, and older points stay reachable through progressive loading; bounded
-  responses never limit accessible history. The center Transcript remains the active conversation
-  surface.
-
-  On a narrow screen, a successful context-changing action closes the modal contextual drawer to
-  reveal the resulting conversation/draft; read-only preview and Back keep it open.
+  Turn history belongs to the conversation stage, as described in [[session-branches]].
+  Reading a branch does not change the Composer or occupy the contextual pane.
 
   Terminal presents the current project's ordered shell tabs without splits. After first access it
   stays mounted across file/tool tab switches, keeping its output and unfinished input; hidden
@@ -293,8 +268,8 @@ completion behavior are unchanged.
   viewport. The region stays in the three-column layout while that layout can preserve a usable
   conversation; below that floor it becomes a modal drawer with its own close control.
 
-  The contextual header owns Refresh for the current mode, including History. Files, Changes, and
-  History disable it without a selected session; History also disables it during a branch action.
+  The contextual header owns Refresh for the current mode. Files and Changes disable it without
+  a selected session.
   Only a user-initiated refresh drives its busy icon and disabled state. Background observations
   update content quietly; their loading, stale-result and error states stay with the content.
   Manual feedback belongs to its session/transport/view and cannot overwrite a newer action.

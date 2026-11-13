@@ -217,6 +217,7 @@ export const SettingsContent = memo(function SettingsContent({
       version: source.version,
       sessionId: source.sessionId,
       runtimeSettings: source.runtimeSettings,
+      pendingRuntimeSettings: source.pendingRuntimeSettings,
     }),
     shallowEqual,
   );
@@ -640,6 +641,11 @@ export const SettingsContent = memo(function SettingsContent({
               <SettingField
                 label="Steering delivery"
                 description="Delivery while Pi is responding."
+                status={
+                  state.pendingRuntimeSettings.steeringMode
+                    ? "Saving…"
+                    : undefined
+                }
               >
                 <Dropdown
                   label="Steering delivery"
@@ -652,6 +658,7 @@ export const SettingsContent = memo(function SettingsContent({
                   }
                   options={MESSAGE_DELIVERY_MODES}
                   disabled={
+                    state.pendingRuntimeSettings.steeringMode === true ||
                     !state.sessionId ||
                     state.runtimeSettings?.steeringMode === null ||
                     state.runtimeSettings === null
@@ -666,6 +673,11 @@ export const SettingsContent = memo(function SettingsContent({
               <SettingField
                 label="Follow-up delivery"
                 description="Delivery after Pi responds."
+                status={
+                  state.pendingRuntimeSettings.followUpMode
+                    ? "Saving…"
+                    : undefined
+                }
               >
                 <Dropdown
                   label="Follow-up delivery"
@@ -678,6 +690,7 @@ export const SettingsContent = memo(function SettingsContent({
                   }
                   options={MESSAGE_DELIVERY_MODES}
                   disabled={
+                    state.pendingRuntimeSettings.followUpMode === true ||
                     !state.sessionId ||
                     state.runtimeSettings?.followUpMode === null ||
                     state.runtimeSettings === null
@@ -693,10 +706,12 @@ export const SettingsContent = memo(function SettingsContent({
                 label="Automatic context compaction"
                 description="Summarize older messages when approaching the context limit."
                 status={
-                  !state.sessionId ||
-                  state.runtimeSettings?.autoCompactionEnabled == null
-                    ? "Unavailable"
-                    : undefined
+                  state.pendingRuntimeSettings.autoCompactionEnabled
+                    ? "Saving…"
+                    : !state.sessionId ||
+                        state.runtimeSettings?.autoCompactionEnabled == null
+                      ? "Unavailable"
+                      : undefined
                 }
               >
                 <SettingsSwitch
@@ -705,6 +720,8 @@ export const SettingsContent = memo(function SettingsContent({
                     state.runtimeSettings?.autoCompactionEnabled === true
                   }
                   disabled={
+                    state.pendingRuntimeSettings.autoCompactionEnabled ===
+                      true ||
                     !state.sessionId ||
                     state.runtimeSettings?.autoCompactionEnabled == null
                   }
@@ -716,16 +733,19 @@ export const SettingsContent = memo(function SettingsContent({
                 label="Automatic retry"
                 description="Retry temporary provider errors."
                 status={
-                  !state.sessionId ||
-                  state.runtimeSettings?.autoRetryEnabled == null
-                    ? "Unavailable"
-                    : undefined
+                  state.pendingRuntimeSettings.autoRetryEnabled
+                    ? "Saving…"
+                    : !state.sessionId ||
+                        state.runtimeSettings?.autoRetryEnabled == null
+                      ? "Unavailable"
+                      : undefined
                 }
               >
                 <SettingsSwitch
                   label="Automatic retry"
                   checked={state.runtimeSettings?.autoRetryEnabled === true}
                   disabled={
+                    state.pendingRuntimeSettings.autoRetryEnabled === true ||
                     !state.sessionId ||
                     state.runtimeSettings?.autoRetryEnabled == null
                   }

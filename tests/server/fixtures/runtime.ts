@@ -359,6 +359,10 @@ export async function waitForReady(
   await vi.waitFor(() => expect(slots.get(sessionId)?.ready).toBe(true));
 }
 
+/** Request a real worker via a native setting, without adding a conversation turn. */
+export const startWorker = (runtime: RuntimeController, id = "a") =>
+  runtime.setSteeringMode(id, "one-at-a-time");
+
 export async function preview(
   session: SessionRecord,
   entries: readonly object[] = [

@@ -14,7 +14,7 @@ Loading-marker ownership is distinct from result freshness. A request may still 
 needs clearing after its payload becomes stale; a retired request must not clear a newer marker.
 Apply the same ownership check to success, failure and `finally`, not just the successful payload.
 
-Session-addressed resource reads, forks and preview warming use the target slot rather than the
+Session-addressed resource reads, forks and saved-history observations use the target slot rather than the
 Host's global selection. Capture automatic-selection intent before queued work begins; capturing it
 after reconciliation can overwrite a choice made while the request waited.
 

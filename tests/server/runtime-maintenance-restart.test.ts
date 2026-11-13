@@ -14,7 +14,7 @@ import {
   preview,
   schedulingRuntime,
   TEST_CWD,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -63,6 +63,7 @@ describe("maintenance restart admission", () => {
       const rejected = { phase: "rejected", busyReason: "in-flight-operation" };
       try {
         await runtime.openSession("a");
+        void startWorker(runtime).catch(() => undefined);
         await stopStarted.promise;
         const intent = {
           hostId: (await controller.status()).hostId,
@@ -199,7 +200,7 @@ describe("maintenance restart admission", () => {
   it("allows explicit interruption of active Pi work while another restart lease stays exclusive", async () => {
     const { runtime, workers } = schedulingRuntime();
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const worker = workers[0]!;
     worker.emit("event", {
       type: "queue_update",
@@ -229,7 +230,7 @@ describe("maintenance restart admission", () => {
   it("interrupts a genuinely pending manual compaction rather than waiting for its RPC", async () => {
     const { runtime, workers } = schedulingRuntime();
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const worker = workers[0]!;
     const { promise: compactStarted, resolve: started } = deferredSignal();
     let cancelCompact!: (error: Error) => void;

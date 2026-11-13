@@ -16,7 +16,7 @@ import {
   schedulingRuntime,
   trackedAttachmentStore,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -51,7 +51,7 @@ describe("worker and projection retention", () => {
       ).resolves.toMatchObject({
         messages: [expect.objectContaining({ content: "persisted:b" })],
       });
-      expect(runtime.activeSessionId).toBeNull();
+      expect(runtime.startupSessionHint).toBeNull();
       expect(spawn).not.toHaveBeenCalled();
       const restart = runtime.reserveMaintenanceRestart();
       expect(restart.kind).toBe("ready");
@@ -105,9 +105,10 @@ describe("worker and projection retention", () => {
     const released = deferredSignal();
     let responding: Promise<void> | undefined;
     const releaseView = runtime.retainSessionView("viewed");
+    const releaseCurrent = runtime.retainSessionView("current");
     const open = async (id: string) => {
       await runtime.openSession(id);
-      await waitForReady(runtime, id);
+      await startWorker(runtime, id);
     };
     const worker = (id: string) =>
       workers.find((item) => item.sessionId === id)!;
@@ -131,7 +132,11 @@ describe("worker and projection retention", () => {
       });
       await open("viewed");
       for (const id of ids.slice(4, -1)) await open(id);
-      await vi.waitFor(() => expect(liveWorkers()).toEqual(ids.slice(0, -1)));
+      await vi.waitFor(() =>
+        expect(liveWorkers()).toEqual(
+          ids.filter((id) => id !== "idle" && id !== "current"),
+        ),
+      );
       expect((await runtime.snapshot()).sessionStatuses.queued).toMatchObject({
         runState: "queued",
         indicator: "running",
@@ -193,7 +198,7 @@ describe("worker and projection retention", () => {
       expect((await runtime.snapshot("queued")).active?.sessionId).toBe(
         "queued",
       );
-      expect(runtime.activeSessionId).toBe("current");
+      expect(runtime.startupSessionHint).toBe("current");
       expect(liveWorkers()).not.toContain("queued");
 
       await open("queued");
@@ -206,6 +211,7 @@ describe("worker and projection retention", () => {
       released.resolve();
       await responding?.catch(() => undefined);
       releaseView();
+      releaseCurrent();
       await runtime.close();
     }
   });
@@ -232,7 +238,7 @@ describe("worker and projection retention", () => {
       let projectionsClosed = 0;
       for (const [index, id] of ids.entries()) {
         await runtime.openSession(id);
-        await vi.waitFor(() => expect(slots.get(id)?.ready).toBe(true));
+        await startWorker(runtime, id);
         const projection = slots.get(id)!.projection!;
         const close = projection.close.bind(projection);
         projection.close = async () => {
@@ -255,6 +261,7 @@ describe("worker and projection retention", () => {
       ).toBe(true);
 
       await runtime.openSession(ids[0]!);
+      await startWorker(runtime, ids[0]!);
       await vi.waitFor(() =>
         expect(
           workers.filter((worker) => worker.sessionId === ids[0]),
@@ -286,7 +293,7 @@ describe("worker and projection retention", () => {
       .slots;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await vi.waitFor(() => expect(slots.get("a")?.ready).toBe(true));
+    await startWorker(runtime);
     workers[0]!.emit("exit", new Error("conflicted exit"));
     const a = slots.get("a")!;
     a.conflict = {
@@ -344,7 +351,8 @@ describe("worker and projection retention", () => {
       .slots;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await vi.waitFor(() => expect(worker?.starts).toBe(1));
+    await startWorker(runtime);
+    expect(worker?.starts).toBe(1);
     const slot = slots.get("a")!;
     slot.conflict = {
       kind: "external-change",

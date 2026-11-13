@@ -1,5 +1,4 @@
 import {
-  type BranchTreeResponse,
   defaultPreferences,
   type GitStatusResponse,
   type InspirePreferences,
@@ -89,7 +88,8 @@ export interface NativeCommandUiRequest {
     | "sessions"
     | "new"
     | "hotkeys"
-    | "changelog";
+    | "changelog"
+    | "history";
   query?: string;
   modelSettingsFocus?: "credentials" | "common";
   modelSettingsOwner?: ModelSettingsOwner;
@@ -163,11 +163,13 @@ export interface AppState
   sessionFile: string | null;
   sessionStats: unknown;
   runtimeSettings: PiRuntimeSettings | null;
+  pendingRuntimeSettings: Partial<Record<keyof PiRuntimeSettings, true>>;
   readOnlyReason: SessionReadOnlyReason | null;
   cwd: string | null;
   model: ModelOption | null;
   modelDiscovery: "loading" | "unavailable" | null;
   thinkingLevel: string;
+  thinkingLevelPending: boolean;
   availableModels: ModelOption[];
   commonModels: import("../shared/model-settings").CommonModelOption[];
   commands: PiCommand[];
@@ -244,12 +246,10 @@ export interface AppState
   pendingAction: "clear" | "recover" | null;
   /** Files/resources pane visibility (Ctrl+.). */
   resourcesOpen: boolean;
-  contextMode: "files" | "changes" | "branches" | "terminal";
+  contextMode: "files" | "changes" | "terminal";
   /** The compact nav disclosure is store-owned so drawer remounts and
    * responsive transitions retain it. */
-  branchTree: BranchTreeResponse | null;
-  branchTreeLoading: boolean;
-  branchTreeStale: boolean;
+  branchRevision: number | null;
   branchTreeError: string | null;
   branchActionId: string | null;
   gitStatus: GitStatusResponse | null;
@@ -303,11 +303,13 @@ export function createInitialAppState(): AppState {
     sessionFile: null,
     sessionStats: null,
     runtimeSettings: null,
+    pendingRuntimeSettings: {},
     readOnlyReason: null,
     cwd: null,
     model: null,
     modelDiscovery: null,
     thinkingLevel: "medium",
+    thinkingLevelPending: false,
     availableModels: [],
     commonModels: [],
     commands: [],
@@ -358,9 +360,7 @@ export function createInitialAppState(): AppState {
     resourcesOpen: false,
     contextMode: "files",
     ...emptyResourceInspectionState(),
-    branchTree: null,
-    branchTreeLoading: false,
-    branchTreeStale: false,
+    branchRevision: null,
     branchTreeError: null,
     branchActionId: null,
     gitStatus: null,

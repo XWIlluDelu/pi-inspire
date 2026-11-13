@@ -121,7 +121,27 @@ test("@cross-browser history reads one page, retries it, and stays still as Live
     .click();
   await expect(history.getByText("Earlier saved prompt")).toBeVisible();
   expect(hits).toBe(4);
-  await history.getByRole("button", { name: "Live", exact: true }).click();
+  transport.send({
+    type: "queue_update",
+    sessionId: "fixture-history",
+    pendingQueues: {
+      revision: 1,
+      totalCount: 1,
+      steering: [],
+      followUp: [
+        {
+          id: "pending-one",
+          textPreview: "Queued input",
+          textLength: 12,
+          textTruncated: false,
+        },
+      ],
+    },
+  });
+  await page.getByRole("button", { name: "Jump to 1 pending item" }).click();
+  await expect(
+    page.getByRole("region", { name: "Pending input", exact: true }),
+  ).toBeFocused();
   await expect(history).toHaveCount(0);
   await expect(
     page.getByRole("log").getByText("New live output"),

@@ -99,11 +99,11 @@ test("unavailable-project history keeps its reading surface at desktop and phone
   await palette.getByLabel("Filter commands").fill("history");
   await palette.getByRole("option", { name: /Open History/ }).click();
   await expect(
-    page.getByRole("searchbox", { name: "Find in history" }),
+    page.getByRole("textbox", { name: "Search this branch" }),
   ).toBeVisible();
-  await expect(page.locator(".history-outline")).toContainText(
-    "Show me a formula-rich example",
-  );
+  await expect(
+    page.getByRole("region", { name: "Turn history" }),
+  ).toContainText("Show me a formula-rich example");
 
   const usagePalette = await openCommandPalette(page);
   await usagePalette.getByLabel("Filter commands").fill("/session");
@@ -115,12 +115,6 @@ test("unavailable-project history keeps its reading surface at desktop and phone
 
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
-    if (width === 390) {
-      const context = page.getByRole("dialog", { name: "Context panel" });
-      await expect(context).toBeVisible();
-      await context.getByRole("button", { name: "Close context pane" }).click();
-      await expect(context).toHaveCount(0);
-    }
     await expect(note).toBeVisible();
     await expect(
       page.getByRole("textbox", { name: "Message", exact: true }),

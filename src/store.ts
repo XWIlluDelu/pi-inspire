@@ -4,7 +4,6 @@ import {
   type ActiveSnapshot,
   type ActivityFoldVisibilityPreference,
   type BranchNavigateRequest,
-  type BranchTreeQuery,
   type CompletionAttentionPreference,
   type ComposerHistoryEntry,
   type ContentTextSizePreference,
@@ -24,6 +23,7 @@ import {
   type PendingRecovery,
   type PiMessageDeliveryMode,
   type PiRuntimeSettings,
+  type SessionHistoryQuery,
   type ProjectDisplayPreference,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
@@ -264,7 +264,11 @@ export class AppStore {
     applyNavigation: (response, draftRevision) => {
       const sessionId = this.state.sessionId!;
       const ownsDraft = sessionDraftRevision(sessionId) === draftRevision;
-      this.applySnapshot(response.snapshot);
+      if (
+        response.snapshot.active?.transcriptPage.viewId !==
+        this.state.transcriptViewId
+      )
+        this.applySnapshot(response.snapshot);
       if (response.editorText === undefined) return;
       if (!ownsDraft) {
         this.notify(
@@ -331,7 +335,11 @@ export class AppStore {
     api: () => this.api,
     beginOpening: (sessionId) => {
       this.branches.invalidate();
-      this.set({ sessionActionError: null });
+      this.set({
+        sessionActionError: null,
+        pendingRuntimeSettings: {},
+        thinkingLevelPending: false,
+      });
       this.selectionIntentGeneration += 1;
       const ticket = ++this.selectionRequest;
       this.claimOpening(ticket, sessionId);
@@ -379,7 +387,6 @@ export class AppStore {
     refreshLoadedSessions: () => this.catalog.refreshLoaded(),
     hasVisibleGitSurface: () => this.git.hasVisibleSurface(),
     refreshGitStatus: () => this.git.refreshStatus(),
-    markProjectionStale: () => this.branches.markProjectionStale(),
     selectionGeneration: () => this.selectionGeneration,
     invalidateResync: () => {
       this.resyncRequest += 1;
@@ -458,7 +465,6 @@ export class AppStore {
     patch: (patch) => {
       this.set(patch);
       if (patch.connection === "open") {
-        this.branches.reconcile();
         this.composer.resumeUploads();
         this.pendingRecovery.resume();
         void this.notifications.openTarget();
@@ -499,7 +505,6 @@ export class AppStore {
         // It resolves a read warning, but not an existing projection problem.
         else {
           this.resyncRecovery.reset();
-          this.branches.reconcile();
           if (this.state.error && !this.state.projectionError)
             this.dismissError();
         }
@@ -548,10 +553,10 @@ export class AppStore {
   private pausedSessionReads: ReadonlySet<string> | null = null;
   private pendingActionRequest = 0;
   private thinkingLevelRequest = 0;
-  private runtimeSettingRequest = 0;
-  private readonly runtimeSettingOwners: Partial<
-    Record<keyof PiRuntimeSettings, number>
-  > = {};
+  private readonly runtimeSettingOwners = new Map<
+    keyof PiRuntimeSettings,
+    symbol
+  >();
   private readyWhileOpening = new Map<string, number>();
   private bootstrapRequest: AbortController | null = null;
   subscribe = (listener: () => void): (() => void) => {
@@ -704,6 +709,7 @@ export class AppStore {
   private handleAuthFailure(): void {
     this.replaceTransport();
     this.hostAuthorityId = null;
+    this.runtimeEvents.resetStatusAcknowledgements();
     this.snapshotDigest = null;
     this.api = null;
     this.set({
@@ -738,7 +744,6 @@ export class AppStore {
           : {}),
       });
     }
-    this.branches.reconcile();
   }
 
   async init(): Promise<void> {
@@ -818,6 +823,8 @@ export class AppStore {
         needsToken: false,
         connectionProblem: null,
       });
+      if (this.hostAuthorityId !== boot.authorityId)
+        this.runtimeEvents.resetStatusAcknowledgements();
       this.hostAuthorityId = boot.authorityId;
       if (rememberedSession) this.autoContinued = true;
       this.composer.reconcileAuthority(boot.authorityId);
@@ -957,7 +964,10 @@ export class AppStore {
     if (projectionOwnerChanged) {
       this.selectionGeneration += 1;
       if (sessionChanged) this.pendingActionRequest += 1;
-      this.branches.invalidate({ preserveError: true });
+      this.branches.invalidate({
+        preserveError: true,
+        preserveAction: !sessionChanged,
+      });
       // Retire old content authority even when the same session survives.
       // The lifecycle patch separately retains named-file selection intent
       // so compaction/rewrite can reauthorize it instead of returning to Browse.
@@ -985,7 +995,10 @@ export class AppStore {
       (!projectionConflict && projectionHealth.status === "pending")
         ? "warning"
         : "error";
-    const sessionStatuses = snapshot.sessionStatuses;
+    const sessionStatuses = this.runtimeEvents.projectSessionStatuses(
+      snapshot.sessionStatuses,
+      nextSessionId,
+    );
     const extensionStatuses =
       parseExtensionStatuses(snapshot.extensionStatuses) ?? {};
     this.runtimeEvents.reconcileObservedRuns(sessionStatuses);
@@ -1010,6 +1023,10 @@ export class AppStore {
       sessionFile: active?.sessionFile ?? null,
       sessionStats: active?.stats ?? null,
       runtimeSettings: active?.runtimeSettings ?? null,
+      branchRevision: active?.branchRevision ?? null,
+      ...(sessionChanged || nextViewId !== this.state.transcriptViewId
+        ? { pendingRuntimeSettings: {}, thinkingLevelPending: false }
+        : {}),
       readOnlyReason: active?.readOnlyReason ?? null,
       cwd,
       model: (active?.model as AppState["model"]) ?? null,
@@ -1052,8 +1069,6 @@ export class AppStore {
           ? active.activeAssistantMessageKey
           : null,
       runState: active?.projectionConflict ? "conflict" : snapshot.runState,
-      // Wholesale replace: the host clears completion attention for the
-      // session that was just viewed, so stale client state must not linger.
       sessionStatuses,
       sessionActionError: null,
       // Settled activity is rebuilt from the selected worker. Background
@@ -1102,7 +1117,6 @@ export class AppStore {
       !showsFileComparison(this.state)
     )
       void this.git.refreshStatus();
-    this.branches.reconcile();
   }
 
   private visibleSessionIsExternal(): boolean {
@@ -1204,63 +1218,41 @@ export class AppStore {
     }
   }
 
-  readNativeHistory = async (
-    sessionId: string,
-    viewId: string,
-    query: Extract<
-      import("../shared/contracts").SessionHistoryQuery,
-      { kind: "page" }
+  readNativeHistory = async <
+    Q extends Extract<
+      SessionHistoryQuery,
+      { kind: "page" | "search" | "routes" }
     >,
-    signal: AbortSignal,
-  ) => {
-    const api = this.api;
-    const generation = this.selectionGeneration;
-    if (
-      !api ||
-      this.state.sessionId !== sessionId ||
-      this.state.transcriptViewId !== viewId
-    )
-      return null;
-    const page = await api.sessionHistory(sessionId, viewId, query, signal);
-    return this.api === api &&
-      this.selectionGeneration === generation &&
-      this.state.sessionId === sessionId &&
-      this.state.transcriptViewId === viewId &&
-      page.sessionId === sessionId &&
-      page.viewId === viewId &&
-      !signal.aborted
-      ? page
-      : null;
-  };
-
-  searchNativeHistory = async (
+  >(
     sessionId: string,
     viewId: string,
-    text: string,
-    leafId: string | undefined,
+    query: Q,
     signal: AbortSignal,
   ) => {
     const api = this.api;
     const generation = this.selectionGeneration;
-    if (
-      !api ||
-      this.state.sessionId !== sessionId ||
-      this.state.transcriptViewId !== viewId
-    )
-      return null;
-    const result = await api.sessionHistory(
-      sessionId,
-      viewId,
-      { kind: "search", text, leafId },
-      signal,
-    );
-    return this.api === api &&
+    const owns = () =>
+      this.api === api &&
       this.selectionGeneration === generation &&
       this.state.sessionId === sessionId &&
       this.state.transcriptViewId === viewId &&
-      !signal.aborted
-      ? result
-      : null;
+      !signal.aborted;
+    if (!api || !owns()) return null;
+    try {
+      const result = await api.sessionHistory(sessionId, viewId, query, signal);
+      return owns() ? result : null;
+    } catch (error) {
+      if (
+        this.api === api &&
+        error instanceof ApiError &&
+        error.status === 401
+      ) {
+        this.handleAuthFailure();
+        return null;
+      }
+      if (!owns()) return null;
+      throw error;
+    }
   };
 
   loadComposerHistory = (
@@ -1447,6 +1439,11 @@ export class AppStore {
       },
     });
   }
+
+  openHistory = (): void => {
+    const { sessionId } = this.state;
+    if (sessionId) this.requestNativeCommandUi(sessionId, "history");
+  };
 
   consumeNativeCommandUiRequest = (id: number): void => {
     if (this.state.nativeCommandUiRequest?.id === id)
@@ -1946,8 +1943,7 @@ export class AppStore {
       return ACCEPTED_NATIVE_COMMAND;
     }
     if (command.name === "tree" || command.name === "fork") {
-      this.set({ resourcesOpen: true, contextMode: "branches" });
-      void this.loadBranchTree();
+      this.openHistory();
       if (command.name === "fork")
         this.notify(
           "info",
@@ -2631,10 +2627,9 @@ export class AppStore {
     const api = this.api;
     const ownsTransport = (): boolean => this.api === api;
     if (!api || !sessionId) return { status: "stale" };
-    const previous = this.state.thinkingLevel;
     const snapshotGeneration = this.snapshotGeneration;
     const request = ++this.thinkingLevelRequest;
-    this.set({ thinkingLevel: level });
+    this.set({ thinkingLevelPending: true });
     try {
       const selection = await api.setThinkingLevel(sessionId, level);
       if (!ownsTransport() || request !== this.thinkingLevelRequest)
@@ -2670,14 +2665,11 @@ export class AppStore {
       if (error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
       if (request !== this.thinkingLevelRequest) return { status: "stale" };
-      // A failed request cannot undo a newer click. Reconcile in case the
-      // immediate predecessor was itself only an optimistic request.
+      // Refresh authoritative state after a failed observation.
       if (
         this.state.sessionId === sessionId &&
         this.selectionGeneration === selectionGeneration
       ) {
-        if (this.snapshotGeneration === snapshotGeneration)
-          this.set({ thinkingLevel: previous });
         void this.resync();
       }
       return {
@@ -2687,84 +2679,68 @@ export class AppStore {
             ? error.message
             : "Failed to set thinking level",
       };
+    } finally {
+      if (
+        ownsTransport() &&
+        request === this.thinkingLevelRequest &&
+        this.state.sessionId === sessionId &&
+        this.selectionGeneration === selectionGeneration
+      )
+        this.set({ thinkingLevelPending: false });
     }
   };
 
-  setAutoCompaction = async (enabled: boolean): Promise<boolean> =>
-    this.setPiRuntimeSetting(
-      { autoCompactionEnabled: enabled },
-      (api, sessionId) => api.setAutoCompaction(sessionId, enabled),
+  setAutoCompaction = (enabled: boolean): Promise<boolean> =>
+    this.setPiRuntimeSetting("autoCompactionEnabled", (api, sessionId) =>
+      api.setAutoCompaction(sessionId, enabled),
     );
 
-  setAutoRetry = async (enabled: boolean): Promise<boolean> =>
-    this.setPiRuntimeSetting({ autoRetryEnabled: enabled }, (api, sessionId) =>
+  setAutoRetry = (enabled: boolean): Promise<boolean> =>
+    this.setPiRuntimeSetting("autoRetryEnabled", (api, sessionId) =>
       api.setAutoRetry(sessionId, enabled),
     );
 
-  setSteeringMode = async (mode: PiMessageDeliveryMode): Promise<boolean> =>
-    this.setPiRuntimeSetting({ steeringMode: mode }, (api, sessionId) =>
+  setSteeringMode = (mode: PiMessageDeliveryMode): Promise<boolean> =>
+    this.setPiRuntimeSetting("steeringMode", (api, sessionId) =>
       api.setSteeringMode(sessionId, mode),
     );
 
-  setFollowUpMode = async (mode: PiMessageDeliveryMode): Promise<boolean> =>
-    this.setPiRuntimeSetting({ followUpMode: mode }, (api, sessionId) =>
+  setFollowUpMode = (mode: PiMessageDeliveryMode): Promise<boolean> =>
+    this.setPiRuntimeSetting("followUpMode", (api, sessionId) =>
       api.setFollowUpMode(sessionId, mode),
     );
 
   private async setPiRuntimeSetting(
-    patch: Partial<PiRuntimeSettings>,
+    key: keyof PiRuntimeSettings,
     apply: (api: Api, sessionId: string) => Promise<unknown>,
   ): Promise<boolean> {
-    const sessionId = this.state.sessionId;
+    const { sessionId, transcriptViewId } = this.state;
     const api = this.api;
     if (!api || !sessionId) return false;
-    const previous = this.state.runtimeSettings;
-    const selectionGeneration = this.selectionGeneration;
-    const request = ++this.runtimeSettingRequest;
-    const keys = Object.keys(patch) as Array<keyof PiRuntimeSettings>;
-    for (const key of keys) this.runtimeSettingOwners[key] = request;
-    const ownsSelection = () =>
+    const selection = this.selectionRequest;
+    const owner = Symbol();
+    this.runtimeSettingOwners.set(key, owner);
+    const owns = () =>
+      this.api === api &&
+      this.selectionRequest === selection &&
       this.state.sessionId === sessionId &&
-      this.selectionGeneration === selectionGeneration;
+      this.state.transcriptViewId === transcriptViewId &&
+      this.runtimeSettingOwners.get(key) === owner;
     this.set({
-      runtimeSettings: {
-        autoCompactionEnabled: null,
-        autoRetryEnabled: null,
-        steeringMode: null,
-        followUpMode: null,
-        ...previous,
-        ...patch,
+      pendingRuntimeSettings: {
+        ...this.state.pendingRuntimeSettings,
+        [key]: true,
       },
     });
     try {
       await apply(api, sessionId);
-      if (this.api !== api) return false;
-      if (
-        ownsSelection() &&
-        keys.some((key) => this.runtimeSettingOwners[key] === request)
-      )
-        await this.resync(sessionId, selectionGeneration);
-      return true;
+      if (owns()) await this.resync();
+      return this.api === api;
     } catch (error) {
-      if (this.api !== api) return false;
-      if (error instanceof ApiError && error.status === 401) {
+      if (this.api === api && error instanceof ApiError && error.status === 401)
         this.handleAuthFailure();
-        return false;
-      }
-      const ownedKeys = keys.filter(
-        (key) => this.runtimeSettingOwners[key] === request,
-      );
-      if (ownsSelection() && ownedKeys.length > 0) {
-        if (this.state.runtimeSettings) {
-          const rolledBack = { ...this.state.runtimeSettings };
-          for (const key of ownedKeys)
-            (rolledBack as Record<string, unknown>)[key] =
-              previous?.[key] ?? null;
-          this.set({ runtimeSettings: rolledBack });
-        }
-        // The predecessor may itself have been optimistic. Only the owning
-        // request can roll back; Pi's current state settles the final value.
-        void this.resync(sessionId, selectionGeneration);
+      if (owns()) {
+        void this.resync();
         this.notify(
           "warning",
           error instanceof Error
@@ -2773,6 +2749,14 @@ export class AppStore {
         );
       }
       return false;
+    } finally {
+      if (owns()) {
+        const pending = { ...this.state.pendingRuntimeSettings };
+        delete pending[key];
+        this.set({ pendingRuntimeSettings: pending });
+      }
+      if (this.runtimeSettingOwners.get(key) === owner)
+        this.runtimeSettingOwners.delete(key);
     }
   }
 
@@ -3516,18 +3500,11 @@ export class AppStore {
     this.set({ resourcesOpen: true, contextMode: "files" });
   };
 
-  setContextMode = (
-    contextMode: "files" | "changes" | "branches" | "terminal",
-  ): void => {
+  setContextMode = (contextMode: "files" | "changes" | "terminal"): void => {
     this.set({ contextMode });
     if (contextMode === "changes") void this.git.refreshStatus();
-    if (contextMode === "branches") void this.loadBranchTree();
   };
 
-  loadBranchTree = (): Promise<void> => this.branches.loadTree();
-
-  readBranchTree = (query: BranchTreeQuery, signal?: AbortSignal) =>
-    this.branches.readTree(query, signal);
   readBranchEntry = (targetId: string, offset = 0, signal?: AbortSignal) =>
     this.branches.readEntry(targetId, offset, signal);
   branchCopyContent = (
@@ -3546,7 +3523,9 @@ export class AppStore {
       BranchNavigateRequest,
       "summarize" | "customInstructions"
     > = {},
-  ): Promise<boolean> => this.branches.navigate(targetId, mode, options);
+    revision?: number,
+  ): Promise<boolean> =>
+    this.branches.navigate(targetId, mode, options, revision);
 
   forkFromEntry = (targetId: string): Promise<boolean> =>
     this.branches.forkFromEntry(targetId);

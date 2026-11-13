@@ -2,16 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   BranchForkResponse,
   BranchNavigateResponse,
-  BranchTreeResponse,
 } from "../../shared/contracts";
 import { type Api, ApiError } from "../../src/api";
 import {
   BranchController,
   type BranchControllerPatch,
   type BranchControllerState,
-  branchActionsBlocked,
 } from "../../src/controllers/branch-controller";
-import { deferred, branchTree as tree } from "./helpers";
+import { activeSnapshot, deferred } from "./helpers";
 
 function createHarness(initial: Partial<BranchControllerState> = {}) {
   let state: BranchControllerState = {
@@ -20,8 +18,7 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     transcriptDurableLeafId: "a1",
     transcriptEffectiveLeafId: "a1",
     transcriptNavigationLeased: false,
-    branchTree: tree(),
-    branchTreeLoading: false,
+    branchRevision: 1,
     branchTreeError: null,
     branchActionId: null,
     projectionHealth: { status: "ok" },
@@ -30,14 +27,12 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   };
   let selectionGeneration = 1;
   let selectionRequest = 1;
-  const branchTree = vi.fn();
   const navigateBranch = vi.fn();
   const forkBranch = vi.fn();
   const cloneBranch = vi.fn();
   const sessionHistory = vi.fn();
   const branchImage = vi.fn();
   let api = {
-    branchTree,
     navigateBranch,
     forkBranch,
     cloneBranch,
@@ -80,7 +75,6 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
       api = { ...api };
       controller.invalidate();
     },
-    branchTree,
     navigateBranch,
     forkBranch,
     cloneBranch,
@@ -96,25 +90,6 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
 
 describe("BranchController", () => {
   afterEach(() => vi.useRealTimers());
-
-  it("renews stale History after reconnecting without a manual refresh or replayed action", async () => {
-    const harness = createHarness({ connection: "reconnecting" });
-    harness.branchTree.mockResolvedValue({ ...tree(), effectiveLeafId: "a1" });
-    harness.controller.invalidate();
-    expect(harness.state()).toMatchObject({
-      branchTreeStale: true,
-      branchTreeError: null,
-    });
-    expect(branchActionsBlocked(harness.state())).toBe(true);
-    harness.controller.reconcile();
-    expect(harness.branchTree).not.toHaveBeenCalled();
-    harness.patch({ connection: "open" });
-    harness.controller.reconcile();
-    await vi.waitFor(() => expect(harness.state().branchTreeStale).toBe(false));
-    expect(branchActionsBlocked(harness.state())).toBe(false);
-    expect(harness.branchTree).toHaveBeenCalledOnce();
-    expect(harness.navigateBranch).not.toHaveBeenCalled();
-  });
 
   it.each([
     { branchActionId: "another-action" },
@@ -242,41 +217,41 @@ describe("BranchController", () => {
     expect(harness.state().branchActionId).toBeNull();
   });
 
-  it.each(["clone", "latest"] as const)(
-    "does not revive a pending %s gesture after returning to the same session",
-    async (action) => {
-      const currentTree = { ...tree(), effectiveLeafId: "u1" };
-      const harness = createHarness({
-        transcriptEffectiveLeafId: "u1",
-        transcriptNavigationLeased: true,
-        branchTree: currentTree,
-      });
-      const oldTree = deferred<BranchTreeResponse>();
-      harness.branchTree.mockResolvedValue(currentTree);
-      if (action === "latest")
-        harness.branchTree.mockReturnValueOnce(oldTree.promise);
-      const copyResponse = deferred<BranchForkResponse>();
-      harness.cloneBranch.mockReturnValue(copyResponse.promise);
-      harness.navigateBranch.mockResolvedValue({} as BranchNavigateResponse);
-      const pending =
-        action === "clone"
-          ? harness.controller.clone()
-          : harness.controller.returnToLatest();
+  it("applies the returned editor text when the socket publishes this same navigation first", async () => {
+    const harness = createHarness();
+    const pending = deferred<BranchNavigateResponse>();
+    harness.navigateBranch.mockReturnValue(pending.promise);
+    const navigation = harness.controller.navigate("a1", "edit");
+    harness.controller.invalidate({ preserveAction: true });
+    harness.patch({
+      transcriptViewId: "navigated",
+      transcriptEffectiveLeafId: "u1",
+    });
+    const response = {
+      snapshot: activeSnapshot({
+        transcriptPage: { viewId: "navigated" },
+        effectiveLeafId: "u1",
+      }),
+      editorText: "returned draft",
+    };
+    pending.resolve(response);
+    expect(await navigation).toBe(true);
+    expect(harness.applyNavigation).toHaveBeenCalledWith(response, 0);
+    expect(harness.state().branchActionId).toBeNull();
+  });
 
-      // A -> B -> A leaves the same file/leaf visible, but owns a new visit.
-      harness.invalidateSelection();
-      harness.patch({ sessionId: "s2" });
-      harness.invalidateSelection();
-      harness.patch({ sessionId: "s1" });
-      await harness.controller.loadTree();
-      oldTree.resolve(currentTree);
-      copyResponse.resolve({} as BranchForkResponse);
-      expect(await pending).toBe(false);
-      expect(harness.cloneBranch).toHaveBeenCalledTimes(
-        action === "clone" ? 1 : 0,
-      );
-      expect(harness.navigateBranch).not.toHaveBeenCalled();
-      expect(harness.applyFork).not.toHaveBeenCalled();
-    },
-  );
+  it("does not apply a successful Clone after returning to the same session", async () => {
+    const harness = createHarness();
+    const response = deferred<BranchForkResponse>();
+    harness.cloneBranch.mockReturnValue(response.promise);
+    const cloning = harness.controller.clone();
+    harness.invalidateSelection();
+    harness.patch({ sessionId: "s2" });
+    harness.invalidateSelection();
+    harness.patch({ sessionId: "s1" });
+    response.resolve({} as BranchForkResponse);
+    expect(await cloning).toBe(false);
+    expect(harness.cloneBranch).toHaveBeenCalledOnce();
+    expect(harness.applyFork).not.toHaveBeenCalled();
+  });
 });

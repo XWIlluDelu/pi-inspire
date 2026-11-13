@@ -46,6 +46,7 @@ const EMPTY_TOOL_ACTIVITY: Record<string, ActivityTool> = {};
 export interface TranscriptNavigation {
   jumpToPending: () => void;
   openSearch: () => void;
+  openHistory: () => void;
 }
 
 export const Transcript = memo(function Transcript({
@@ -237,23 +238,35 @@ export const Transcript = memo(function Transcript({
     };
   }, [closeMobileTranscriptTool, mobileTranscriptTool]);
 
+  const jumpToPending = () => {
+    const pending = pendingRef.current;
+    const scroller = viewport.scrollRef.current;
+    if (!pending || !scroller) return;
+
+    search.clearCurrentMatch();
+    viewport.releaseLatestFollow();
+    const topPadding =
+      Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
+    scroller.scrollTop +=
+      pending.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top -
+      topPadding;
+    viewport.restoreGeometricFollow();
+    pending.focus({ preventScroll: true });
+  };
+
   useImperativeHandle(ref, () => ({
     openSearch,
+    openHistory: () => {
+      if (sessionId && viewId) setHistoryOwner(historyKey);
+    },
     jumpToPending() {
-      const pending = pendingRef.current;
-      const scroller = viewport.scrollRef.current;
-      if (!pending || !scroller) return;
-
-      search.clearCurrentMatch();
-      viewport.releaseLatestFollow();
-      const topPadding =
-        Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0;
-      scroller.scrollTop +=
-        pending.getBoundingClientRect().top -
-        scroller.getBoundingClientRect().top -
-        topPadding;
-      viewport.restoreGeometricFollow();
-      pending.focus({ preventScroll: true });
+      if (readingHistory) {
+        setHistoryOwner(null);
+        requestAnimationFrame(jumpToPending);
+      } else {
+        jumpToPending();
+      }
     },
   }));
 

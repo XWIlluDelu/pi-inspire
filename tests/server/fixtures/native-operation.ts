@@ -16,9 +16,9 @@ import { ResourceStore } from "../../../server/resources.js";
 import { RuntimeController } from "../../../server/runtime.js";
 import type { SessionRecord } from "../../../server/session-catalog.js";
 import type {
+  ActiveSnapshot,
   BranchNavigateRequest,
   BranchNavigateResponse,
-  BranchTreeResponse,
   HostNativeCommandRequest,
   HostNativeCommandResponse,
   PendingOperationIdentity,
@@ -56,7 +56,7 @@ interface Observation {
   receipt?: PromptDeliveryResponse;
 }
 interface BrowserClient {
-  branchTree(sessionId: string): Promise<BranchTreeResponse>;
+  snapshot(sessionId: string): Promise<ActiveSnapshot>;
   navigateBranch(
     request: BranchNavigateRequest,
   ): Promise<BranchNavigateResponse>;
@@ -332,6 +332,7 @@ export async function fixture(
     abort: (id: string, identity = operation()) => client.abort(id, identity),
   };
   await runtime.openSession(sessionId);
+  await runtime.setSteeringMode(sessionId, "one-at-a-time");
   await vi.waitFor(
     async () => {
       const snapshot = await runtime.snapshot();

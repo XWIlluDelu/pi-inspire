@@ -5,22 +5,16 @@ import { shallowEqual, store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
 
 export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
-  const {
-    earlierContinuation,
-    durableLeafId,
-    treeLoading,
-    actionId,
-    treeError,
-  } = useAppState(
-    (state) => ({
-      earlierContinuation: hasEarlierContinuation(state),
-      durableLeafId: state.transcriptDurableLeafId,
-      treeLoading: state.branchTreeLoading,
-      actionId: state.branchActionId,
-      treeError: state.branchTreeError,
-    }),
-    shallowEqual,
-  );
+  const { earlierContinuation, durableLeafId, actionId, treeError } =
+    useAppState(
+      (state) => ({
+        earlierContinuation: hasEarlierContinuation(state),
+        durableLeafId: state.transcriptDurableLeafId,
+        actionId: state.branchActionId,
+        treeError: state.branchTreeError,
+      }),
+      shallowEqual,
+    );
   const [dismissed, setDismissed] = useState(false);
   const visible = earlierContinuation && !dismissed;
   const bannerRef = useRef<HTMLElement>(null);
@@ -48,7 +42,7 @@ export const EarlierBranchBanner = memo(function EarlierBranchBanner() {
   }, [visible]);
   if (!visible) return null;
 
-  const busy = treeLoading || actionId !== null;
+  const busy = actionId !== null;
   const returning = actionId === `switch:${durableLeafId}`;
   return (
     <section

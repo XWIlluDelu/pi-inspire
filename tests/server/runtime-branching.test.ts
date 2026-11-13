@@ -307,10 +307,7 @@ async function setup({
       ),
     );
   } else {
-    await vi.waitFor(() => expect(worker).toBeDefined());
-    await vi.waitFor(async () =>
-      expect((await runtime.snapshot()).active?.commands).toBeDefined(),
-    );
+    await runtime.setSteeringMode(SESSION_ID, "one-at-a-time");
   }
   return {
     runtime,
@@ -411,10 +408,10 @@ describe("stock RPC branch bridge", () => {
     await vi.waitFor(async () =>
       expect((await runtime.snapshot()).runState).toBe("aborted"),
     );
-    const tree = await runtime.branchTree(SESSION_ID);
+    const tree = (await runtime.snapshot(SESSION_ID)).active!;
     const edited = await runtime.navigateBranch({
       sessionId: SESSION_ID,
-      revision: tree.revision,
+      revision: tree.branchRevision!,
       targetId: "u2",
       mode: "edit",
     });
@@ -475,12 +472,12 @@ describe("stock RPC branch bridge", () => {
       );
       let navigation: Promise<unknown> | undefined;
       try {
-        const tree = await runtime.branchTree(SESSION_ID);
+        const tree = (await runtime.snapshot(SESSION_ID)).active!;
         const source = await readFile(path, "utf8");
         navigation = runtime
           .navigateBranch({
             sessionId: SESSION_ID,
-            revision: tree.revision,
+            revision: tree.branchRevision!,
             targetId: "a1",
             mode: "switch",
           })
@@ -547,12 +544,12 @@ describe("stock RPC branch bridge", () => {
       message: expect.stringContaining("Use Edit from here"),
     });
     expect(workers[0]!.leafId).toBe("saved");
-    const tree = await runtime.branchTree(SESSION_ID);
+    const tree = (await runtime.snapshot(SESSION_ID)).active!;
     const edited = await runtime.navigateBranch({
       sessionId: SESSION_ID,
       targetId: "unfinished",
       mode: "edit",
-      revision: tree.revision,
+      revision: tree.branchRevision!,
     });
     expect(edited.editorText).toBe("Unanswered side branch");
     expect(edited.snapshot.active?.effectiveLeafId).toBe("a1");
@@ -572,11 +569,11 @@ describe("stock RPC branch bridge", () => {
         branchBridgeTimeoutMs: mode === "missing" ? 25 : undefined,
       });
       worker.resultMode = mode;
-      const tree = await runtime.branchTree(SESSION_ID);
+      const tree = (await runtime.snapshot(SESSION_ID)).active!;
       await expect(
         runtime.navigateBranch({
           sessionId: SESSION_ID,
-          revision: tree.revision,
+          revision: tree.branchRevision!,
           targetId: "a1",
           mode: "switch",
         }),
@@ -612,11 +609,11 @@ describe("stock RPC branch bridge", () => {
       const release = runtime.retainSessionView(SESSION_ID);
       try {
         const original = await readFile(path, "utf8");
-        const tree = await runtime.branchTree(SESSION_ID);
+        const tree = (await runtime.snapshot(SESSION_ID)).active!;
         await expect(
           runtime.navigateBranch({
             sessionId: SESSION_ID,
-            revision: tree.revision,
+            revision: tree.branchRevision!,
             targetId: "u2",
             mode: "edit",
           }),
@@ -664,14 +661,13 @@ describe("stock RPC branch bridge", () => {
           expect(copied.editorAttachments).toHaveLength(1);
           expect(output).not.toContain(image.data);
         }
-        expect((await runtime.branchTree(SESSION_ID)).revision).toBeGreaterThan(
-          tree.revision,
-        );
+        expect(
+          (await runtime.snapshot(SESSION_ID)).active!.branchRevision!,
+        ).toBeGreaterThan(tree.branchRevision!);
         expect(
           (await runtime.snapshot(SESSION_ID)).active?.readOnlyReason,
         ).toBe("external-active");
-        await vi.waitFor(() => expect(workers).toHaveLength(1));
-        expect(workers[0]!.sessionId).toBe(copied.sessionId);
+        expect(workers).toHaveLength(0);
       } finally {
         release();
         await runtime.close();
@@ -722,7 +718,7 @@ describe("stock RPC branch bridge", () => {
     await expect(
       runtime.navigateBranch({
         sessionId: SESSION_ID,
-        revision: (await runtime.branchTree(SESSION_ID)).revision,
+        revision: (await runtime.snapshot(SESSION_ID)).active!.branchRevision!,
         targetId: "a1",
         mode: "switch",
       }),
@@ -736,7 +732,7 @@ describe("stock RPC branch bridge", () => {
       editorText: "second question",
       snapshot: { active: { durableLeafId: "a1" } },
     });
-    expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
+    expect(runtime.startupSessionHint).toBe(OTHER_SESSION_ID);
     expect(await runtime.snapshot(SESSION_ID)).toMatchObject(busySource);
     expect(await readFile(path, "utf8")).toBe(sourceBefore);
     expect(worker.stops).toBe(0);
@@ -746,7 +742,7 @@ describe("stock RPC branch bridge", () => {
     const stageFork = vi.fn(stageSessionFork);
     const fixture = await setup({ stageFork });
     const { runtime, worker } = fixture;
-    const tree = await runtime.branchTree(SESSION_ID);
+    const tree = (await runtime.snapshot(SESSION_ID)).active!;
     await openOtherSession(fixture);
     const request = {
       sessionId: SESSION_ID,
@@ -765,12 +761,12 @@ describe("stock RPC branch bridge", () => {
     ).rejects.toThrow("Fork requires a retained user message");
     await runtime.navigateBranch({
       sessionId: SESSION_ID,
-      revision: tree.revision,
+      revision: tree.branchRevision!,
       targetId: "a1",
       mode: "switch",
     });
     await expect(runtime.forkBranch(request)).rejects.toThrow(/branch changed/);
-    expect(runtime.activeSessionId).toBe(OTHER_SESSION_ID);
+    expect(runtime.startupSessionHint).toBe(OTHER_SESSION_ID);
     const source = await addressedBranch(runtime);
     const gate = deferredSignal();
     worker.autoRetryGate = gate.promise;
@@ -794,7 +790,7 @@ describe("stock RPC branch bridge", () => {
       expect(
         await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
       ).toContain("first answer");
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
+      expect(runtime.startupSessionHint).toBe(SESSION_ID);
       expect((await runtime.snapshot(SESSION_ID)).active?.effectiveLeafId).toBe(
         retainedLeaf,
       );
@@ -835,12 +831,12 @@ describe("stock RPC branch bridge", () => {
       ]);
       expect(forked.sessionId).toBe(destination);
       expect(openedDestination.active?.sessionId).toBe(destination);
-      expect(runtime.activeSessionId).toBe(SESSION_ID);
-      await vi.waitFor(() =>
-        expect(
-          workers.filter((candidate) => candidate.sessionId === destination),
-        ).toHaveLength(1),
-      );
+      expect(runtime.startupSessionHint).toBe(SESSION_ID);
+      const destinationWorkers = () =>
+        workers.filter((candidate) => candidate.sessionId === destination);
+      expect(destinationWorkers()).toHaveLength(0);
+      await runtime.setSteeringMode(destination, "one-at-a-time");
+      expect(destinationWorkers()).toHaveLength(1);
     } finally {
       release?.();
       await runtime.close();
@@ -883,10 +879,7 @@ describe("stock RPC branch bridge", () => {
       await readFile(forked.snapshot.active!.sessionFile!, "utf8"),
     ).not.toContain('"id":"u2"');
     expect(worker.stops).toBe(0);
-    await vi.waitFor(() => expect(workers).toHaveLength(2));
-    expect(
-      workers[1]!.commands.some((command) => command.type === "prompt"),
-    ).toBe(false);
+    expect(workers).toHaveLength(1);
 
     // Removing one copy leaves the original persisted input and its duplicates intact.
     await attachments.remove(restored[1]!.id);
@@ -1006,12 +999,17 @@ describe("stock RPC branch bridge", () => {
           entry("alt-a", "alt", "assistant", "alternative answer", 6),
         ),
       );
-      const tree = await runtime.branchTree(SESSION_ID, { parentId: "a1" });
-      expect(tree.effectiveLeafId).toBe("a2");
-      expect(tree.nodes.map((node) => node.routeLeafId)).toEqual([
-        "a2",
-        "alt-a",
-      ]);
+      const active = (await runtime.snapshot(SESSION_ID)).active!;
+      expect(active.effectiveLeafId).toBe("a2");
+      const routes = await runtime.sessionHistory(
+        SESSION_ID,
+        active.transcriptPage.viewId,
+        {
+          kind: "routes",
+          parentId: "a1",
+        },
+      );
+      expect(routes.nodes.map((node) => node.leafId)).toEqual(["a2", "alt-a"]);
 
       // No Pi runs the other branch: it opens editable here.
       const editable = await runtime.selectBranch(SESSION_ID, "alt-a");
@@ -1040,10 +1038,10 @@ describe("stock RPC branch bridge", () => {
     async ({ target, foreignParent }) => {
       const { runtime, worker, path } = await setup();
       if (target === "a1") {
-        const tree = await runtime.branchTree(SESSION_ID);
+        const tree = (await runtime.snapshot(SESSION_ID)).active!;
         await runtime.navigateBranch({
           sessionId: SESSION_ID,
-          revision: tree.revision,
+          revision: tree.branchRevision!,
           targetId: target,
           mode: "switch",
         });
@@ -1053,7 +1051,7 @@ describe("stock RPC branch bridge", () => {
           path,
           jsonl(entry(id, foreignParent, "assistant", id, 60)),
         );
-        const tree = await runtime.branchTree(SESSION_ID);
+        const tree = (await runtime.snapshot(SESSION_ID)).active!;
         expect(tree.durableLeafId).toBe(id);
         expect(tree.effectiveLeafId).toBe(target);
         expect(worker.leafId).toBe(target);

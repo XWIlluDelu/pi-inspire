@@ -5,7 +5,7 @@ import {
   disposeRuntimeFixture,
   initializeRuntimeFixture,
   schedulingRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -27,7 +27,7 @@ describe("RuntimeController compaction lifecycle", () => {
     });
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const { worker } = f;
       let rejectCompact!: (error: Error) => void;
       worker.responseOverrides.set("compact", () => {

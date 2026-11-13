@@ -1,9 +1,13 @@
 import { isBusyRunState } from "../shared/contracts.js";
 import { type RuntimeSlot, workerOnSeparateBranch } from "./runtime-slot.js";
 
-/** Keep a small warm cache, but never stop selected, busy, in-use, or
+/** Keep a small warm cache, but never stop observed, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
 export const MAX_IDLE_WORKERS = 3;
+// An HTTP open can finish just before its browser subscribes, and addressed
+// HTTP actions also use the slot between observations. Keep a bounded warm
+// projection cache independently of the last-opened hint.
+const MAX_IDLE_PROJECTIONS = MAX_IDLE_WORKERS + 1;
 
 /**
  * RuntimeController owns the slot registry and every persistence mutation.
@@ -12,11 +16,9 @@ export const MAX_IDLE_WORKERS = 3;
  */
 interface RuntimeWorkerPoolHost {
   isClosing(): boolean;
-  selectedSessionId(): string | null;
   isObserved(sessionId: string): boolean;
   isExternal(slot: RuntimeSlot): boolean;
   slots(): Iterable<RuntimeSlot>;
-  isOpening(sessionId: string): boolean;
   isLoading(sessionId: string): boolean;
   hasSelectionReservation(sessionId: string): boolean;
   hasForkReservation(sessionId: string, sessionPath: string | null): boolean;
@@ -95,11 +97,9 @@ export class RuntimeWorkerPool {
 
   private unclaimed(slot: RuntimeSlot): boolean {
     return (
-      slot.id !== this.host.selectedSessionId() &&
       !this.host.isObserved(slot.id) &&
       slot.activeOperations === 0 &&
       slot.projection?.health.status !== "pending" &&
-      !this.host.isOpening(slot.id) &&
       !this.host.isLoading(slot.id) &&
       !this.host.hasSelectionReservation(slot.id) &&
       !this.host.hasForkReservation(slot.id, slot.sessionPath)
@@ -118,9 +118,29 @@ export class RuntimeWorkerPool {
 
   private async reclaimDormantProjections(): Promise<void> {
     const closing: Promise<void>[] = [];
-    for (const slot of this.host.slots()) {
+    const slots = [...this.host.slots()];
+    const mostRecentlyUsed = slots.reduce<RuntimeSlot | undefined>(
+      (latest, slot) =>
+        !latest || slot.lastUsed > latest.lastUsed ? slot : latest,
+      undefined,
+    );
+    const warm = slots
+      .filter((slot) => slot.projection && this.isRetirableDormantSlot(slot))
+      .sort((left, right) => right.lastUsed - left.lastUsed);
+    let retained = 0;
+    for (const slot of warm) {
+      if (!slot.projection || !this.isRetirableDormantSlot(slot)) continue;
+      const settledFailure = slot.conflict || slot.runState === "failed";
+      if (
+        slot.opened &&
+        (settledFailure
+          ? slot === mostRecentlyUsed
+          : retained < MAX_IDLE_PROJECTIONS)
+      ) {
+        retained += 1;
+        continue;
+      }
       const projection = slot.projection;
-      if (!projection || !this.isRetirableDormantSlot(slot)) continue;
       slot.projection = null;
       slot.preview = null;
       closing.push(
@@ -151,7 +171,8 @@ export class RuntimeWorkerPool {
     // Reclamation closes and clears a projection before its slot can prune.
     await this.reclaimDormantProjections();
     for (const slot of this.host.slots()) {
-      if (this.canPruneDormant(slot)) this.host.removeSlot(slot);
+      if (!slot.projection && this.canPruneDormant(slot))
+        this.host.removeSlot(slot);
     }
   }
 

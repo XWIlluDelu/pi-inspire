@@ -283,7 +283,7 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
   }
 });
 
-test("@cross-browser Files and History searches retain compact type and usable controls across widths", async ({
+test("@cross-browser Files search retains compact type and usable controls across widths", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -303,7 +303,6 @@ test("@cross-browser Files and History searches retain compact type and usable c
     await page.setViewportSize({ width, height: 900 });
     for (const [tab, name, query, clearLabel] of [
       ["Files", "Search workspace files", "README", "Clear workspace search"],
-      ["History", "Find in history", "calibration", "Clear history search"],
     ]) {
       await page.getByRole("tab", { name: tab, exact: true }).click();
       const input = page.getByRole("searchbox", { name, exact: true });

@@ -2,7 +2,6 @@ import {
   FileText,
   Folder,
   GitCompareArrows,
-  History,
   RefreshCw,
   SquareTerminal,
   X,
@@ -34,8 +33,6 @@ import { sessionDraft, setSessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { queueTerminalAction } from "../terminal-actions";
 import { hasActiveModal, recoverModalFocus } from "../use-modal-focus";
-import { readHistoryReading, workbenchSessionKey } from "../workbench-session";
-import { BranchTree } from "./BranchTree";
 import { ChangesPane } from "./ChangesPane";
 import { ContextTabStrip } from "./ContextTabStrip";
 import { selectContextPaneView } from "./context-pane-view";
@@ -77,10 +74,6 @@ export const ContextPane = memo(function ContextPane({
   const browseScrollTop = useMemo(
     () => ({ current: 0 }),
     [state.sessionId, state.cwd, transportGeneration],
-  );
-  const historyReading = useMemo(
-    () => readHistoryReading(workbenchSessionKey(state.sessionId, state.cwd)),
-    [state.sessionId, state.cwd],
   );
   const [terminalVisited, setTerminalVisited] = useState(false);
   const [terminalTabsHost, setTerminalTabsHost] =
@@ -346,10 +339,8 @@ export const ContextPane = memo(function ContextPane({
             ? store.refreshFileTab()
             : Promise.resolve(),
         ]);
-      } else if (state.contextMode === "changes") {
-        await store.refreshGitStatus();
       } else {
-        await store.loadBranchTree();
+        await store.refreshGitStatus();
       }
     } finally {
       setManualRefresh((current) => (current === request ? null : current));
@@ -455,19 +446,9 @@ export const ContextPane = memo(function ContextPane({
             <div className="ctx__terminal-tabs" ref={setTerminalTabsHost} />
           </ContextTabStrip>
           <div className="ctx__modes">
-            {(["files", "changes", "branches"] as const).map((mode) => {
-              const label =
-                mode === "files"
-                  ? "Files"
-                  : mode === "changes"
-                    ? "Changes"
-                    : "History";
-              const Icon =
-                mode === "files"
-                  ? Folder
-                  : mode === "changes"
-                    ? GitCompareArrows
-                    : History;
+            {(["files", "changes"] as const).map((mode) => {
+              const label = mode === "files" ? "Files" : "Changes";
+              const Icon = mode === "files" ? Folder : GitCompareArrows;
               const selected =
                 state.contextMode === mode && (mode !== "files" || !activeFile);
               const changesCount =
@@ -525,9 +506,7 @@ export const ContextPane = memo(function ContextPane({
             aria-busy={refreshing}
             disabled={
               refreshing ||
-              (state.contextMode !== "terminal" && !state.sessionId) ||
-              (state.contextMode === "branches" &&
-                state.branchActionId !== null)
+              (state.contextMode !== "terminal" && !state.sessionId)
             }
           >
             {refreshing ? (
@@ -574,19 +553,6 @@ export const ContextPane = memo(function ContextPane({
           aria-label="Changes"
         >
           <ChangesPane state={state} browseScrollTop={changesScrollTop} />
-        </div>
-      ) : state.contextMode === "branches" ? (
-        <div
-          className="res__body res__body--branches"
-          id="context-branches-content"
-          role="tabpanel"
-          aria-label="History"
-        >
-          <BranchTree
-            key={workbenchSessionKey(state.sessionId, state.cwd)}
-            readingState={historyReading}
-            onContextChange={isModal ? onClose : undefined}
-          />
         </div>
       ) : null}
       {terminalVisited || state.contextMode === "terminal" ? (

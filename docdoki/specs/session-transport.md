@@ -28,7 +28,7 @@ writebacks. This is the transport part of [[session-continuity]], not a second c
 
 Each authenticated event connection owns one explicit session-detail interest, or none. Changing
 interest fences detail behind a fresh addressed snapshot and subscription revision, including during
-initial handshakes and reconnects. Another browser's Host selection cannot retarget the connection.
+initial handshakes and reconnects. Another browser opening a session cannot retarget the connection.
 Other sessions send changed compact status/lifecycle outcomes and an attention indicator for
 extension interaction, not message, tool, queue or dialog bodies. Filter those bodies before
 encoding; keep bounded joining backlogs and event-batch order for interested clients.
@@ -39,14 +39,15 @@ the Host limit; reconnecting obtains a fresh authoritative snapshot instead of r
 deltas.
 
 A detail subscription retains its view before reading the initial snapshot. Observed views/workers
-are exempt from idle reclamation regardless of Host selection. Browsers retain independently;
+are exempt from idle reclamation. Browsers retain independently;
 switching interest, disconnecting or closing the Host releases only that subscription. Retention
-neither changes shared selection nor eagerly starts an ordinary worker; external read-only recovery
+does not eagerly start an ordinary worker; external read-only recovery
 follows [[session-persistence]]. It does not prevent explicit deletion. Host-restart recovery must
 restore history and input without a page refresh, and without repeatedly reclaiming/rebuilding the
 visible conversation when dependent reads fail.
 
-Foreground and navigation state use the Host's explicit `sessionStatus`. Infer transitions from
+Foreground and navigation state use the Host's explicit `sessionStatus`. The browser acknowledges
+the outcome ID it has viewed without clearing another browser's indication. Infer transitions from
 event names only for unannotated events; failed messages and settlement must not briefly appear
 running/idle while awaiting a correcting snapshot. Bounded Host-owned retry details accompany
 addressed snapshots and live events and retire outside retry phases. Missing/malformed details
@@ -120,7 +121,8 @@ Bootstrap likewise captures its API identity. Only the current request may
 apply state, load launch preferences, create a socket or interpret 401 as pairing failure. A snapshot
 already committed by selection/resync supersedes an older bootstrap snapshot and digest, while Host
 metadata may still refresh. Launch continuation honors the intent captured before bootstrap began.
-If Host selection changes during a snapshot read, retry against the new owner before sending it.
+The last-opened hint supplies a starting address only when no browser location is available.
+The read keeps that address through completion even if another request changes the hint.
 
 HTTP resync success and failure share these fences, including same-session view replacement and
 A → B → A navigation. A current-API 401 remains transport-wide; a replaced API's error is stale.
@@ -209,7 +211,7 @@ Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refus
 
 ## Transcript views
 
-`GET /api/history` serves bounded native pages, full branch text search, composer recall and entry
+`GET /api/history` serves bounded native pages, full branch text search, sibling routes, composer recall and entry
 detail, with an explicit `sessionId` and `viewId`. Page cursors bind a fixed native leaf and an
 earlier/later entry boundary. Search can find entries outside the current page, including before
 compaction. Entry detail exposes bounded body sections and image metadata; image bytes use the

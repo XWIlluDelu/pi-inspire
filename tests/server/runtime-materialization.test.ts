@@ -147,7 +147,7 @@ describe("new-session materialization", () => {
       for (let index = 0; index < MAX_IDLE_WORKERS + 2; index += 1)
         await runtime.newSession(directory);
       await vi.waitFor(() =>
-        expect(workers.filter((worker) => worker.stops > 0)).toHaveLength(1),
+        expect(workers.filter((worker) => worker.stops > 0)).toHaveLength(2),
       );
       expect(workers.at(-1)?.stops).toBe(0);
     } finally {

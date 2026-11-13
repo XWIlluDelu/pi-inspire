@@ -35,7 +35,7 @@ session, across all branches, before moving its file. Running, queued and input-
 not disable deletion. The existing confirmation authorizes stopping that work; no second takeover
 or Stop action is required. Instances using other sessions remain running.
 
-The Host reserves the targets against new local operations, awaits any owned-worker warmup, and
+The Host reserves the targets against new local operations, accounts for admitted worker startup, and
 ends Pi before draining commands that may be waiting on it. It then suspends projection reads in
 the deletion lane. Selection, creation and fork operations must finish before admission. Local
 reservation never prevents an independent Pi from opening a session.

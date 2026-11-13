@@ -265,9 +265,11 @@ function RenameSessionDialog({
 const SessionIdent = memo(function SessionIdent({
   show,
   onExport,
+  onOpenHistory,
 }: {
   show: boolean;
   onExport: () => void;
+  onOpenHistory: () => void;
 }) {
   const {
     sessionId,
@@ -354,8 +356,7 @@ const SessionIdent = memo(function SessionIdent({
             }}
             onSwitchBranch={() => {
               closeMenu();
-              store.setResourcesOpen(true);
-              store.setContextMode("branches");
+              onOpenHistory();
             }}
             onClone={() => {
               const trigger = document.activeElement;
@@ -430,6 +431,7 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation,
   onOpenCommandPalette,
   onExportSession,
+  onOpenHistory = store.openHistory,
   onToggleSettings,
   onToggleResources,
 }: {
@@ -440,6 +442,7 @@ export const AppTopbar = memo(function AppTopbar({
   onToggleNavigation: () => void;
   onOpenCommandPalette: () => void;
   onExportSession: () => void;
+  onOpenHistory?: () => void;
   onToggleSettings: () => void;
   onToggleResources: () => void;
 }) {
@@ -485,6 +488,7 @@ export const AppTopbar = memo(function AppTopbar({
         key={state.sessionId}
         show={Boolean(state.sessionId)}
         onExport={onExportSession}
+        onOpenHistory={onOpenHistory}
       />
       <div className="topbar__status" aria-live="polite">
         <StateChip

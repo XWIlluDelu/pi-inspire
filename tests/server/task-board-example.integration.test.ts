@@ -84,10 +84,10 @@ it("runs native task commands and restores each branch's own task state", async 
   expect((await data()).tasks[0]!.notes).toBe("Keep these task notes");
 
   const showBranch = async (targetId: string) => {
-    const tree = await f.runtime.branchTree(f.id);
+    const tree = (await f.runtime.snapshot(f.id)).active!;
     await f.runtime.navigateBranch({
       sessionId: f.id,
-      revision: tree.revision,
+      revision: tree.branchRevision!,
       targetId,
       mode: "edit",
       summarize: false,

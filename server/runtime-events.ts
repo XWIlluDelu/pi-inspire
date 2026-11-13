@@ -76,7 +76,6 @@ const PI_STARTUP_RESPONSE_UI_ERROR =
 
 interface RuntimeEventControllerHost {
   updateBash(slot: RuntimeSlot, event: Record<string, unknown>): boolean;
-  selectedSessionId(): string | null;
   finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void;
   checkpoint(
     slot: RuntimeSlot,
@@ -697,8 +696,7 @@ export class RuntimeEventController {
               : "idle";
         slot.compactionReturnState = null;
         slot.activeAssistantCorrelation = null;
-        slot.attention =
-          this.host.selectedSessionId() === slot.id ? null : outcome;
+        slot.attention = outcome;
         if (slot.activeTask === "agent") this.host.finishTask(slot, outcome);
         // Native display captions can outlive consumption and settlement.
         // Keep worker-bound row evidence until Pi removes them or the worker retires.

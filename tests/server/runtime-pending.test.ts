@@ -21,6 +21,7 @@ import {
   trackedAttachmentStore,
   trackRuntime,
   upload,
+  startWorker,
   waitForReady,
 } from "./fixtures/runtime.js";
 
@@ -61,7 +62,7 @@ async function queuedImageFixture() {
     },
   });
   await runtime.openSession("a");
-  await waitForReady(runtime);
+  await startWorker(runtime);
   workers[0]!.emit("event", { type: "agent_start" });
   return {
     runtime,
@@ -121,7 +122,7 @@ describe("RuntimeController Pending input and recovery", () => {
       const f = schedulingRuntime({ attachments });
       trackRuntime(f.runtime);
       await f.runtime.openSession("a");
-      await waitForReady(f.runtime);
+      await startWorker(f.runtime);
       const image = await attachments.add(upload("original.png", "image/png"));
       f.worker.emit("event", { type: "compaction_start", reason: "auto" });
       f.worker.responseOverrides.set("get_state", () => ({
@@ -183,7 +184,7 @@ describe("RuntimeController Pending input and recovery", () => {
     const { runtime, store } = f;
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const { worker } = f;
       worker.responseOverrides.set("compact", () => gate.promise);
       const compacting = runtime.nativeCommand({
@@ -325,7 +326,7 @@ describe("RuntimeController Pending input and recovery", () => {
     const { runtime } = f;
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const { worker } = f;
       await runtime.snapshot();
       worker.responseOverrides.set("get_state", () => ({
@@ -407,7 +408,7 @@ describe("RuntimeController Pending input and recovery", () => {
     const { runtime } = f;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const longText = `${"x".repeat(70_000)}END\n\n${ATTACHMENT_CONTEXT_HEADING}\n- "/demo/report.csv"`;
     const steering = [
       longText,
@@ -494,7 +495,7 @@ describe("RuntimeController Pending input and recovery", () => {
     let sending: Promise<unknown> | undefined;
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const { worker } = f;
       worker.responseOverrides.set("prompt", () => hook.promise);
       sending = runtime
@@ -726,7 +727,7 @@ describe("RuntimeController Pending input and recovery", () => {
       const { runtime, workers } = schedulingRuntime();
       const clearGate = deferredSignal();
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const worker = workers[0]!;
       const recovery = {
         steering: ["recover steer"],
@@ -805,7 +806,7 @@ describe("RuntimeController Pending input and recovery", () => {
       const { runtime } = f;
       trackRuntime(runtime);
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       f.worker.emit("event", { type: "agent_start" });
       const observed: Array<Record<string, unknown>> = [];
       runtime.on("event", (event) => observed.push(event));

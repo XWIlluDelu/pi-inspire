@@ -345,6 +345,12 @@ const historyQuerySchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({
     ...historyAddress,
+    kind: z.literal("routes"),
+    parentId: z.string().max(200),
+    before: z.string().min(1).max(200).optional(),
+  }),
+  z.strictObject({
+    ...historyAddress,
     kind: z.literal("composer"),
     start: z.coerce
       .number()
@@ -361,15 +367,6 @@ const historyQuerySchema = z.discriminatedUnion("kind", [
     format: z.literal("message").optional(),
   }),
 ]);
-const branchTreeSchema = z
-  .object({
-    sessionId: sessionIdField,
-    before: z.string().min(1).max(200).optional(),
-    query: z.string().max(2000).optional(),
-    leafId: z.string().min(1).max(200).optional(),
-    parentId: z.string().max(200).optional(),
-  })
-  .strict();
 const branchImageSchema = z.strictObject({
   ...historyAddress,
   targetId: z.string().min(1).max(200),
@@ -1826,10 +1823,6 @@ export function createInspireServer(deps: AppDependencies): {
   app.get("/api/transcript/assistant-text", async (request, response) => {
     const { sessionId, viewId } = assistantTextSchema.parse(request.query);
     response.json(await deps.runtime.lastAssistantText(sessionId, viewId));
-  });
-  app.get("/api/branches/tree", async (request, response) => {
-    const { sessionId, ...query } = branchTreeSchema.parse(request.query);
-    response.json(await deps.runtime.branchTree(sessionId, query));
   });
   app.get("/api/branches/image", async (request, response) => {
     const { index, ...address } = branchImageSchema.parse(request.query);

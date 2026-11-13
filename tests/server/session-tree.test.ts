@@ -1,12 +1,11 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
-  BRANCH_TREE_MAX_BYTES,
-  BRANCH_TREE_MAX_NODES,
   branchEntryContent,
   branchEntryText,
   branchNode,
-  projectSessionTree,
+  indexSessionEntries,
+  sessionRoutes,
 } from "../../server/session-tree.js";
 
 const message = (
@@ -23,97 +22,55 @@ const message = (
     message: { role, content, timestamp: id.length },
   }) as SessionEntry;
 
-describe("bounded session branch tree", () => {
-  it("projects the current route and alternative branch endpoints", () => {
+describe("saved history entries and branch routes", () => {
+  it("pages direct routes, preserves labels, and marks the route containing the live leaf", () => {
+    const fork = message("root", null, "user", "Start");
     const entries = [
-      message("u1", null, "user", "root question"),
-      message("a1", "u1", "assistant", "first answer"),
-      message("u2", "a1", "user", "abandoned prompt"),
-      message("a2", "u2", "assistant", "abandoned answer"),
-      message("branch", "a1", "assistant", "selected sibling"),
+      fork,
+      ...Array.from({ length: 104 }, (_, index) =>
+        message(`child-${index}`, fork.id, "assistant", `Answer ${index}`),
+      ),
       {
         type: "label",
-        id: "label",
-        parentId: "branch",
-        targetId: "branch",
+        id: "bookmark",
+        parentId: "child-103",
+        targetId: "child-103",
         label: "Chosen path",
-        timestamp: "2026-08-01T00:01:00.000Z",
+        timestamp: "2026-08-01",
       } as SessionEntry,
     ];
-    const tree = projectSessionTree(entries, "branch");
-    expect(tree.activePath).toEqual(["u1", "a1", "branch"]);
-    expect(tree.nodes.map((node) => node.id)).toEqual(["u1", "a1", "branch"]);
-    expect(tree.nodes.find((node) => node.id === "u1")).toMatchObject({
-      canEdit: true,
-      canFork: true,
-    });
-    const alternatives = projectSessionTree(entries, "branch", {
-      parentId: "a1",
-    });
-    expect(alternatives.nodes.map((node) => node.id)).toEqual(["u2", "branch"]);
-    expect(alternatives.nodes.find((node) => node.id === "u2")).toMatchObject({
-      active: false,
-      canEdit: true,
-      canFork: true,
-      routeLeafId: "a2",
-    });
-    expect(tree.nodes.find((node) => node.id === "branch")).toMatchObject({
-      active: true,
-      leaf: true,
+    const byId = indexSessionEntries(entries);
+    const latest = sessionRoutes(entries, byId, "bookmark", fork.id);
+    expect(latest.nodes).toHaveLength(100);
+    expect(latest.nodes.at(-1)).toEqual({
+      id: "child-103",
       label: "Chosen path",
+      leafId: "bookmark",
+      current: true,
     });
-  });
-
-  it("pages a long turn within projection limits and searches complete retained text", () => {
-    const entries: SessionEntry[] = [];
-    let parent: string | null = null;
-    for (let index = 0; index < 1200; index++) {
-      const id = `point-${index}`;
-      entries.push(
-        message(
-          id,
-          parent,
-          index === 0 ? "user" : "assistant",
-          index === 1
-            ? `${"Long response. ".repeat(6000)}needle beyond the preview · 完整内容`
-            : `Conversation point ${index} ${"x".repeat(400)}`,
-        ),
-      );
-      parent = id;
-    }
-    entries.push(
-      message("alternate", "point-4", "user", "Abandoned alternate input"),
+    const older = sessionRoutes(
+      entries,
+      byId,
+      "bookmark",
+      fork.id,
+      latest.nextBefore!,
     );
-    let page = projectSessionTree(entries, parent);
-    expect(page.truncated).toBe(true);
-    expect(page.nodes.length).toBeLessThanOrEqual(BRANCH_TREE_MAX_NODES);
+    expect(older.nodes.map((node) => node.id)).toEqual([
+      "child-0",
+      "child-1",
+      "child-2",
+      "child-3",
+    ]);
+    expect(older.nextBefore).toBeNull();
     expect(
-      Buffer.byteLength(
-        JSON.stringify({ nodes: page.nodes, activePath: page.activePath }),
-      ),
-    ).toBeLessThanOrEqual(BRANCH_TREE_MAX_BYTES);
-    expect(page.nodes.at(-1)).toMatchObject({ id: parent, leaf: true });
-    expect(page.leadingPrompt).toMatchObject({
-      id: "point-0",
-      role: "user",
-      canFork: true,
+      sessionRoutes(entries, byId, "bookmark", null).nodes[0],
+    ).toMatchObject({
+      id: "root",
+      current: true,
     });
-    const ids = page.nodes.map((node) => node.id);
-    while (page.nextBefore) {
-      page = projectSessionTree(entries, parent, { before: page.nextBefore });
-      ids.unshift(...page.nodes.map((node) => node.id));
-    }
-    expect(ids).toEqual(entries.slice(0, 1200).map((entry) => entry.id));
-    const searched = projectSessionTree(entries, parent, {
-      query: "needle beyond",
-    });
-    expect(searched.nodes.map((node) => node.id)).toEqual(["point-1"]);
-    expect(searched.nodes[0]?.snippet).toContain("needle beyond");
-    expect(branchEntryText(entries[1]!)).toContain("完整内容");
-    expect(
-      projectSessionTree(entries, parent, { query: "Abandoned alternate" })
-        .nodes[0],
-    ).toMatchObject({ id: "alternate", canFork: true, active: false });
+    expect(() =>
+      sessionRoutes(entries, byId, "bookmark", fork.id, "missing"),
+    ).toThrow(/routes changed/);
   });
 
   it("keeps native system checkpoint bodies out of search/preview and uses ordinary keyed redaction", () => {
@@ -154,11 +111,6 @@ describe("bounded session branch tree", () => {
     expect(branchEntryText(system)).toBe("");
     expect(branchEntryContent(system)).toBeUndefined();
     expect(branchEntryText(checkpoint)).toBe("Retained summary");
-    expect(
-      projectSessionTree([system, toolCall, checkpoint], "checkpoint", {
-        query: "private",
-      }).nodes,
-    ).toEqual([]);
     expect(branchEntryText(toolCall)).toContain("complete output");
     expect(branchEntryText(toolCall)).toContain("[redacted]");
     expect(branchEntryText(toolCall)).not.toContain("secret value");
@@ -183,7 +135,7 @@ describe("bounded session branch tree", () => {
           timestamp: 1,
         },
       };
-      const node = projectSessionTree([shell], "shell").nodes[0];
+      const node = branchNode(shell, false, true);
       expect(node).toMatchObject({
         role: "shell",
         canEdit: false,
@@ -196,10 +148,6 @@ describe("bounded session branch tree", () => {
       expect(branchEntryText(shell)).toContain(
         excludeFromContext ? "Excluded from context" : "Included in context",
       );
-      for (const query of ["shell-marker", "native-result-marker"])
-        expect(
-          projectSessionTree([shell], "shell", { query }).nodes[0],
-        ).toMatchObject({ id: "shell", role: "shell" });
     },
   );
 
@@ -235,48 +183,6 @@ describe("bounded session branch tree", () => {
     expect(preview.length).toBeLessThanOrEqual(240);
   });
 
-  it("reuses a snapshot's structure without retaining labels or ancestry across revisions", () => {
-    const first = [message("root", null, "user", "Root")];
-    expect(projectSessionTree(first, "root").rootCount).toBe(1);
-    const next = [
-      ...first,
-      message("child", "root", "assistant", "Child"),
-      {
-        type: "label",
-        id: "label",
-        parentId: "child",
-        targetId: "root",
-        label: "Bookmark",
-        timestamp: "2026-10-05",
-      } as SessionEntry,
-      message("alternate", null, "user", "Alternate"),
-    ];
-    expect(projectSessionTree(next, "child").nodes[0]).toMatchObject({
-      label: "Bookmark",
-      childCount: 1,
-      routeLeafId: "label",
-    });
-    expect(projectSessionTree(next, "alternate").nodes).toMatchObject([
-      { id: "alternate", active: true, leaf: true },
-    ]);
-    expect(projectSessionTree(first, "root").nodes[0]).toMatchObject({
-      label: "Root",
-      childCount: 0,
-      routeLeafId: "root",
-    });
-    const cleared = [
-      ...next,
-      {
-        type: "label",
-        id: "clear",
-        parentId: "alternate",
-        targetId: "root",
-        timestamp: "2026-10-05",
-      } as SessionEntry,
-    ];
-    expect(projectSessionTree(cleared, "child").nodes[0]?.label).toBe("Root");
-  });
-
   it("fences complete shell output containing many backtick runs without argument expansion", () => {
     const output = "`x".repeat(150_000);
     const entry: SessionEntry = {
@@ -309,7 +215,7 @@ describe("bounded session branch tree", () => {
       [message("safe", oversized, "assistant", "bad")],
     ]) {
       try {
-        projectSessionTree(entries, entries[0]!.id);
+        indexSessionEntries(entries);
         throw new Error("expected identity rejection");
       } catch (error) {
         expect(error).toMatchObject({ status: 422 });

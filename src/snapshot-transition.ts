@@ -161,9 +161,6 @@ export function snapshotLifecyclePatch(
         windowTitle: null,
         contextMode: "files",
         ...sessionOwnerPatch,
-        branchTree: null,
-        branchTreeLoading: false,
-        branchTreeStale: false,
         branchTreeError: null,
         branchActionId: null,
         ...emptyResourceInspectionState(),
@@ -176,10 +173,7 @@ export function snapshotLifecyclePatch(
     case "view-changed":
       return {
         pendingRetryError: null,
-        branchTreeLoading: false,
-        branchTreeStale: Boolean(previous.branchTree),
         branchTreeError: null,
-        branchActionId: null,
         ...renewedResourceInspection(previous, transition),
       };
     case "projection-replaced":

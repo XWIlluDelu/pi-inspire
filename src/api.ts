@@ -7,8 +7,6 @@ import type {
   BranchImageRequest,
   BranchNavigateRequest,
   BranchNavigateResponse,
-  BranchTreeQuery,
-  BranchTreeResponse,
   GitDiffResponse,
   GitStatusResponse,
   HiddenClearResponse,
@@ -635,15 +633,6 @@ export function createApi() {
     ) =>
       request<{ text: string | null }>(
         `/api/transcript/assistant-text?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
-        { signal },
-      ),
-    branchTree: (
-      sessionId: string,
-      query: BranchTreeQuery = {},
-      signal?: AbortSignal,
-    ) =>
-      request<BranchTreeResponse>(
-        `/api/branches/tree?${new URLSearchParams({ sessionId, ...query }).toString()}`,
         { signal },
       ),
     branchImage: (

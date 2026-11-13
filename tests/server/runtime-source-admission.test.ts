@@ -30,7 +30,7 @@ import {
   record,
   trackedAttachmentStore,
   trackRuntime,
-  waitForReady,
+  startWorker,
   workspaceDirectories,
 } from "./fixtures/runtime.js";
 
@@ -84,11 +84,11 @@ describe("runtime source admission", () => {
         });
       }
       expect(list).toHaveBeenCalledTimes(2);
-      expect(runtime.activeSessionId).toBeNull();
+      expect(runtime.startupSessionHint).toBeNull();
       expect(createProcess).not.toHaveBeenCalled();
       if (change === "moved" || change === "replaced") {
         await runtime.openSession("a");
-        await waitForReady(runtime);
+        await startWorker(runtime);
         expect(list).toHaveBeenCalledTimes(2);
         expect(createProcess).toHaveBeenCalledOnce();
       }
@@ -114,10 +114,10 @@ describe("runtime source admission", () => {
     });
     expect(refresh).toHaveBeenCalledExactlyOnceWith(true);
     expect(createProcess).not.toHaveBeenCalled();
-    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
   });
 
-  it("reads retained history for unavailable workspaces and starts Pi only after an explicit reopen of the restored folder", async () => {
+  it("reads retained history for unavailable workspaces and starts Pi only on an action after reopening the restored folder", async () => {
     const session = await persistedRecord(
       "a",
       join(fixtureWorkspace, "unavailable"),
@@ -150,13 +150,13 @@ describe("runtime source admission", () => {
         messages: [{ role: "user", content: "persisted:a" }],
       },
     });
-    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
 
     await writeFile(session.cwd, "not a directory");
     const opened = await runtime.openSession("a");
     expect(opened.active?.readOnlyReason).toBe("workspace-unavailable");
     const viewId = opened.active!.transcriptPage.viewId;
-    const tree = await runtime.branchTree("a");
+    const tree = (await runtime.snapshot("a")).active!;
     expect(
       await runtime.sessionHistory("a", viewId, {
         kind: "entry",
@@ -176,7 +176,7 @@ describe("runtime source admission", () => {
         runtime.cloneBranch({
           sessionId: "a",
           viewId,
-          targetId: tree.effectiveLeafId,
+          targetId: tree.effectiveLeafId ?? null,
         }),
       () => runtime.nativeCommand({ sessionId: "a", command: "reload" }),
       () => runtime.refreshModels("a"),
@@ -196,7 +196,8 @@ describe("runtime source admission", () => {
     expect(restored.active?.readOnlyReason).toBeUndefined();
     expect(restored.active?.cwd).toBe(await realpath(session.cwd));
     expect(restored.active?.transcriptPage.viewId).not.toBe(viewId);
-    await waitForReady(runtime);
+    expect(createProcess).not.toHaveBeenCalled();
+    await startWorker(runtime);
     expect(createProcess).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ cwd: await realpath(session.cwd) }),
     );
@@ -219,7 +220,7 @@ describe("runtime source admission", () => {
     );
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const reconcile = vi
       .spyOn(projection, "reconcile")
       .mockRejectedValueOnce(new Error("pre-write reconciliation failed"));
@@ -265,7 +266,8 @@ describe("runtime source admission", () => {
       trackRuntime(runtime);
       const initial = await runtime.openSession("a");
       const physical = await realpath(alias);
-      await vi.waitFor(() => expect(worker?.starts).toBe(1));
+      await startWorker(runtime);
+      expect(worker?.starts).toBe(1);
       expect(physical).toBe(physicalOne);
       expect(worker?.options.cwd).toBe(physicalOne);
       expect(initial.active?.cwd).toBe(physicalOne);

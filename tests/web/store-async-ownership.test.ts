@@ -4,7 +4,6 @@ import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
 import {
   activeSnapshot,
   bootstrapPayload,
-  branchTree,
   deferred,
   FakeWebSocket,
   installFakeWebSocket,
@@ -32,10 +31,8 @@ describe("completion-driven Pi operation observation", () => {
     const fetch = installStoreRoutes((url) => {
       if (url === exportPath) return exporting.promise;
       if (url === navigatePath) return navigation.promise;
-      if (url.startsWith("/api/branches/tree")) return { body: branchTree() };
     });
     const { store, socket } = await initStore();
-    await store.loadBranchTree();
     await store.sendPrompt("/export");
     const navigating = store.navigateBranch("u1", "edit");
     for (let i = 0; i < 10; i++) {

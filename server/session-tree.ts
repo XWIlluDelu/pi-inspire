@@ -3,7 +3,7 @@ import { isBranchEditTarget } from "../shared/branch-node-actions.js";
 import type {
   BranchNodeRole,
   BranchTreeNode,
-  BranchTreeQuery,
+  SessionHistoryPages,
 } from "../shared/contracts.js";
 import { fencedMarkdown } from "../shared/markdown-fence.js";
 import { userMessagePreviewText } from "../shared/user-message.js";
@@ -17,8 +17,6 @@ const completeSafeValue = (value: unknown) =>
     arrayItems: Infinity,
   });
 
-export const BRANCH_TREE_MAX_NODES = 100;
-export const BRANCH_TREE_MAX_BYTES = 512 * 1024;
 export const BRANCH_CONTENT_PAGE_CHARS = 32_000;
 const BRANCH_SNIPPET_CHARS = 240;
 
@@ -245,158 +243,86 @@ export function branchNode(
   };
 }
 
-function ancestorPath(
-  byId: ReadonlyMap<string, SessionEntry>,
-  leafId: string | null,
-): string[] {
-  const path: string[] = [];
-  const seen = new Set<string>();
-  let id = leafId;
-  while (id) {
-    if (seen.has(id)) throw new Error("Session tree contains a parent cycle");
-    seen.add(id);
-    const entry = byId.get(id);
-    if (!entry) throw requestError("History point no longer exists", 409);
-    path.push(id);
-    id = entry.parentId;
-  }
-  return path.reverse();
-}
-
-/** SessionProjection replaces its immutable entry array on every committed
- * revision. Keep only structure, not full text, with that snapshot's lifetime. */
+/** Only structure is cached with the immutable saved entry array. */
 const treeIndexes = new WeakMap<
   readonly SessionEntry[],
-  ReturnType<typeof indexSessionTree>
+  ReturnType<typeof indexRoutes>
 >();
 
-function indexSessionTree(entries: readonly SessionEntry[]) {
-  const depth = new Map<string, number>();
+function indexRoutes(entries: readonly SessionEntry[]) {
+  const children = new Map<string | null, SessionEntry[]>();
   const labels = new Map<string, string>();
-  const children = new Map<string | null, number>();
-  const descendant = new Map<string, string>();
+  const latestLeaf = new Map<string, string>();
   for (const entry of entries) {
-    depth.set(
-      entry.id,
-      entry.parentId === null ? 0 : depth.get(entry.parentId)! + 1,
-    );
-    children.set(entry.parentId, (children.get(entry.parentId) ?? 0) + 1);
+    const siblings = children.get(entry.parentId);
+    if (siblings) siblings.push(entry);
+    else children.set(entry.parentId, [entry]);
     if (entry.type === "label") {
       if (entry.label) labels.set(entry.targetId, entry.label.slice(0, 120));
       else labels.delete(entry.targetId);
     }
   }
-  for (let index = entries.length - 1; index >= 0; index--) {
-    const entry = entries[index]!;
-    const leaf = descendant.get(entry.id) ?? entry.id;
-    descendant.set(entry.id, leaf);
-    if (entry.parentId !== null && !descendant.has(entry.parentId))
-      descendant.set(entry.parentId, leaf);
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    const leaf = latestLeaf.get(entry.id) ?? entry.id;
+    latestLeaf.set(entry.id, leaf);
+    if (entry.parentId !== null && !latestLeaf.has(entry.parentId))
+      latestLeaf.set(entry.parentId, leaf);
   }
-  return { depth, labels, children, descendant };
+  return { children, labels, latestLeaf };
 }
 
-/** One bounded page. The complete projection remains action/search authority;
- * page cursors address entries, never an arbitrary truncated array index. */
-export function projectSessionTree(
-  entries: readonly SessionEntry[],
-  effectiveLeafId: string | null,
-  query: BranchTreeQuery = {},
-  byId: ReadonlyMap<string, SessionEntry> = indexSessionEntries(entries),
-) {
+function routesIndex(entries: readonly SessionEntry[]) {
   let index = treeIndexes.get(entries);
   if (!index) {
-    index = indexSessionTree(entries);
+    index = indexRoutes(entries);
     treeIndexes.set(entries, index);
   }
-  const { depth, labels, children, descendant } = index;
-  const active = new Set(ancestorPath(byId, effectiveLeafId));
-  const routeLeafId = query.leafId ?? effectiveLeafId;
-  const path =
-    routeLeafId === effectiveLeafId
-      ? active
-      : new Set(ancestorPath(byId, routeLeafId));
-  const search = query.query?.trim().toLocaleLowerCase();
-  const routeParent = query.parentId === "" ? null : query.parentId;
-  const candidates = entries.filter((entry) =>
-    search
-      ? !(
-          entry.type === "message" &&
-          (entry.message as { role: string }).role === "system"
-        ) &&
-        `${labels.get(entry.id) ?? ""}\n${branchEntryText(entry)}`
-          .toLocaleLowerCase()
-          .includes(search)
-      : routeParent !== undefined
-        ? entry.parentId === routeParent
-        : path.has(entry.id),
-  );
-  let end = candidates.length;
-  if (query.before) {
-    const index = candidates.findIndex((entry) => entry.id === query.before);
-    if (index < 0)
-      throw requestError("History page changed; refresh History", 409);
-    end = index;
-  }
-  const nodeFor = (entry: SessionEntry, preview?: string): BranchTreeNode => ({
-    ...branchNode(
-      entry,
-      active.has(entry.id),
-      entry.id === effectiveLeafId,
-      preview,
-    ),
-    depth: depth.get(entry.id)!,
-    childCount: children.get(entry.id) ?? 0,
-    routeLeafId: descendant.get(entry.id)!,
-    ...(labels.has(entry.id) ? { label: labels.get(entry.id)! } : {}),
-  });
-  const nodes: BranchTreeNode[] = [];
-  let start = end;
-  let bytes = 4096;
-  while (start > 0 && nodes.length < BRANCH_TREE_MAX_NODES) {
-    const entry = candidates[start - 1]!;
-    const text = search
-      ? entryPreviewText(entry).replace(/\s+/g, " ")
-      : undefined;
-    const node = nodeFor(entry, text?.trim());
-    if (text !== undefined && search) {
-      const match = text.toLocaleLowerCase().indexOf(search);
-      if (match >= 0) {
-        const from = Math.max(0, match - 80);
-        node.snippet = `${from ? "…" : ""}${text.slice(from, from + BRANCH_SNIPPET_CHARS)}${from + BRANCH_SNIPPET_CHARS < text.length ? "…" : ""}`;
-      }
+  return index;
+}
+
+export function sessionChildCount(
+  entries: readonly SessionEntry[],
+  id: string | null,
+) {
+  return routesIndex(entries).children.get(id)?.length ?? 0;
+}
+
+export function sessionRoutes(
+  entries: readonly SessionEntry[],
+  byId: ReadonlyMap<string, SessionEntry>,
+  effectiveLeafId: string | null,
+  parentId: string | null,
+  before?: string,
+): SessionHistoryPages["routes"] {
+  if (parentId !== null && !byId.has(parentId))
+    throw requestError("That branch point no longer exists", 409);
+  const { children, labels, latestLeaf } = routesIndex(entries);
+  const siblings = children.get(parentId) ?? [];
+  const end = before
+    ? siblings.findIndex((entry) => entry.id === before)
+    : siblings.length;
+  if (end < 0)
+    throw requestError("History routes changed; refresh History", 409);
+  let current: string | undefined;
+  for (let id = effectiveLeafId; id !== null; ) {
+    const entry = byId.get(id);
+    if (!entry) break;
+    if (entry.parentId === parentId) {
+      current = entry.id;
+      break;
     }
-    const size = Buffer.byteLength(JSON.stringify(node)) + 1;
-    if (bytes + size > BRANCH_TREE_MAX_BYTES) break;
-    bytes += size;
-    nodes.unshift(node);
-    start--;
+    id = entry.parentId;
   }
-  let leadingPrompt: BranchTreeNode | undefined;
-  if (
-    !search &&
-    routeParent === undefined &&
-    nodes[0] &&
-    nodes[0].role !== "user"
-  ) {
-    let parentId = nodes[0].parentId;
-    while (parentId) {
-      const entry = byId.get(parentId)!;
-      if (entry.type === "message" && entry.message.role === "user") {
-        leadingPrompt = nodeFor(entry);
-        break;
-      }
-      parentId = entry.parentId;
-    }
-  }
+  const start = Math.max(0, end - 100);
   return {
-    nodes,
-    ...(leadingPrompt ? { leadingPrompt } : {}),
-    activePath: nodes.filter((node) => node.active).map((node) => node.id),
-    truncated: start > 0,
-    nextBefore: start > 0 ? nodes[0]!.id : null,
-    routeLeafId,
-    rootCount: children.get(null) ?? 0,
+    nodes: siblings.slice(start, end).map((entry) => ({
+      id: entry.id,
+      label: labels.get(entry.id) ?? branchNode(entry, false, false).label,
+      leafId: latestLeaf.get(entry.id)!,
+      current: entry.id === current,
+    })),
+    nextBefore: start > 0 ? siblings[start]!.id : null,
   };
 }
 

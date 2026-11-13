@@ -727,7 +727,9 @@ export function App() {
     }
     if (request.action === "model" || request.action === "thinking") return;
     if (extensionOverlayOpen) return;
-    if (request.action === "models") {
+    if (request.action === "history") {
+      transcriptRef.current?.openHistory();
+    } else if (request.action === "models") {
       openSettings("models", {
         query: request.query,
         focus: request.modelSettingsFocus,

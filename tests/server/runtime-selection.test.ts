@@ -12,7 +12,7 @@ import {
   record,
   schedulingRuntime,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -25,15 +25,15 @@ describe("session selection and addressed reads", () => {
     });
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime, "a");
+    await startWorker(runtime, "a");
     await runtime.openSession("b");
-    await waitForReady(runtime, "b");
+    await startWorker(runtime, "b");
     await runtime.prompt({
       sessionId: "a",
       message: "background instruction",
     });
     await runtime.rename("a", "renamed A");
-    expect(runtime.activeSessionId).toBe("b");
+    expect(runtime.startupSessionHint).toBe("b");
     expect(workers.map((worker) => worker.options.cwd)).toEqual([
       fixtureCwd("/project/one"),
       fixtureCwd("/project/two"),
@@ -60,6 +60,7 @@ describe("session selection and addressed reads", () => {
       sessions: [record("a", "/project"), record("b", "/project")],
     });
     await runtime.openSession("a");
+    await startWorker(runtime);
     const slots = (
       runtime as unknown as { slots: Map<string, { ready: boolean }> }
     ).slots;
@@ -79,22 +80,22 @@ describe("session selection and addressed reads", () => {
     await expect(runtime.openSession("a")).rejects.toThrow(
       /snapshot failed before selection/,
     );
-    expect(runtime.activeSessionId).toBe("b");
+    expect(runtime.startupSessionHint).toBe("b");
     await runtime.close();
   });
 
   it.each([undefined, "a"])(
-    "keeps snapshot interest %s independent of concurrent Host selection",
+    "pins snapshot interest %s before another browser opens a different session",
     async (interest) => {
       const { runtime, workers } = schedulingRuntime({
         sessions: [record("a", "/project"), record("b", "/project")],
       });
       const restored = await runtime.snapshot("a");
       expect(restored.active?.sessionId).toBe("a");
-      expect(runtime.activeSessionId).toBeNull();
+      expect(runtime.startupSessionHint).toBeNull();
       expect(workers).toHaveLength(0);
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
 
       const { promise: gate, resolve: releaseSnapshot } = deferredSignal();
       const { promise: started, resolve: snapshotStarted } = deferredSignal();
@@ -116,14 +117,14 @@ describe("session selection and addressed reads", () => {
       releaseSnapshot();
 
       const snapshot = await snapshotting;
-      expect(snapshot.active?.sessionId).toBe(interest ?? "b");
+      expect(snapshot.active?.sessionId).toBe("a");
       const globalOnly = await runtime.snapshot(null);
       expect(globalOnly.active).toBeNull();
       expect(Object.keys(globalOnly.sessionStatuses).sort()).toEqual([
         "a",
         "b",
       ]);
-      expect(runtime.activeSessionId).toBe("b");
+      expect(runtime.startupSessionHint).toBe("b");
       await runtime.close();
     },
   );
@@ -134,7 +135,7 @@ describe("session selection and addressed reads", () => {
     });
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     await runtime.openSession("b");
     const events: Array<Record<string, unknown>> = [];
     const workerStatuses: RuntimeWorkerStatus[] = [];
@@ -173,7 +174,7 @@ describe("session selection and addressed reads", () => {
       runState: "idle",
       needsInput: false,
     });
-    expect(runtime.activeSessionId).toBe("b");
+    expect(runtime.startupSessionHint).toBe("b");
   });
 
   it("single-flights concurrent opens of the same session", async () => {
@@ -192,15 +193,12 @@ describe("session selection and addressed reads", () => {
     await vi.waitFor(() => expect(previewCalls).toBe(1));
     releasePreview();
     await Promise.all([first, second]);
-    await waitForReady(runtime);
-    expect(workers).toHaveLength(1);
-    expect(workers[0]!.starts).toBe(1);
+    expect(workers).toHaveLength(0);
 
     await runtime.close();
-    expect(workers[0]!.stops).toBe(1);
   });
 
-  it("derives background conflict indicators after selection changes", async () => {
+  it("publishes conflict status independently of the startup hint", async () => {
     const { runtime } = schedulingRuntime({
       sessions: [record("a", "/tmp"), record("b", "/tmp")],
     });
@@ -227,6 +225,7 @@ describe("session selection and addressed reads", () => {
     a.attention = null;
     expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
       runState: "conflict",
+      indicator: "attention",
     });
 
     const selectedB = await runtime.openSession("b");
@@ -246,7 +245,7 @@ describe("session selection and addressed reads", () => {
     });
   });
 
-  it("publishes running and unseen completion state, then acknowledges it when viewed", async () => {
+  it("publishes outcomes independently of which session another browser opens", async () => {
     const events: Array<Record<string, unknown>> = [];
     const { runtime, workers } = schedulingRuntime({
       sessions: [record("a", "/project"), record("b", "/project")],
@@ -256,8 +255,9 @@ describe("session selection and addressed reads", () => {
     );
 
     await runtime.openSession("a");
+    await startWorker(runtime);
     await runtime.openSession("b");
-    await waitForReady(runtime, "b");
+    await startWorker(runtime, "b");
     workers[0]!.emit("event", { type: "agent_start" });
     expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
       runState: "running",
@@ -266,9 +266,10 @@ describe("session selection and addressed reads", () => {
 
     workers[0]!.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () => {
-      expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
+      expect((await runtime.snapshot(null)).sessionStatuses.a).toMatchObject({
         runState: "idle",
         indicator: "completed",
+        attentionId: expect.any(Number),
       });
     });
     expect(
@@ -279,10 +280,9 @@ describe("session selection and addressed reads", () => {
       sessionStatus: { indicator: "completed" },
     });
 
+    const completed = (await runtime.snapshot(null)).sessionStatuses.a;
     await runtime.openSession("a");
-    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
-      runState: "idle",
-    });
+    expect((await runtime.snapshot(null)).sessionStatuses.a).toEqual(completed);
 
     workers[1]!.emit("event", { type: "agent_start" });
     workers[1]!.emit("event", {
@@ -291,26 +291,16 @@ describe("session selection and addressed reads", () => {
     });
     workers[1]!.emit("event", { type: "agent_settled" });
     await vi.waitFor(async () => {
-      expect((await runtime.snapshot()).sessionStatuses.b).toEqual({
+      expect((await runtime.snapshot(null)).sessionStatuses.b).toMatchObject({
         runState: "failed",
         indicator: "failed",
+        attentionId: expect.any(Number),
       });
     });
 
-    workers[0]!.emit("event", { type: "agent_start" });
-    workers[0]!.emit("event", {
-      type: "message_end",
-      message: { role: "assistant", stopReason: "length" },
-    });
-    workers[0]!.emit("event", { type: "agent_settled" });
-    expect((await runtime.snapshot()).sessionStatuses.a).toEqual({
-      runState: "failed",
-    });
-
+    const failed = (await runtime.snapshot(null)).sessionStatuses.b;
     await runtime.openSession("b");
-    expect((await runtime.snapshot()).sessionStatuses.b).toEqual({
-      runState: "failed",
-    });
+    expect((await runtime.snapshot(null)).sessionStatuses.b).toEqual(failed);
     await runtime.close();
   });
 });

@@ -604,9 +604,10 @@ describe("thinking level control", () => {
     const { store } = await initStore();
 
     const older = store.setThinkingLevel("xhigh");
-    expect(store.getState().thinkingLevel).toBe("xhigh");
+    expect(store.getState().thinkingLevel).toBe("medium");
+    expect(store.getState().thinkingLevelPending).toBe(true);
     const newer = store.setThinkingLevel("low");
-    expect(store.getState().thinkingLevel).toBe("low");
+    expect(store.getState().thinkingLevel).toBe("medium");
     low.resolve({
       body: { model: store.getState().model, thinkingLevel: "low" },
     });

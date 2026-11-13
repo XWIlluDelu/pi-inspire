@@ -31,7 +31,6 @@ function setup(incremental = true) {
   const forwardedEvents: Record<string, unknown>[] = [];
   const events = new RuntimeEventController({
     updateBash: () => false,
-    selectedSessionId: () => slot.id,
     finishTask: () => {},
     checkpoint: () => false,
     refreshCheckpoint: () => undefined,

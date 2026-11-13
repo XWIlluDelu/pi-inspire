@@ -14,7 +14,7 @@ import {
 interface RuntimeSessionDeletionHost {
   assertNotClosing(): void;
   withMaintenance<T>(operation: () => Promise<T>): Promise<T>;
-  clearSelection(sessionId: string): void;
+  clearStartupHint(sessionId: string): void;
   selectionReserved(sessionId: string): boolean;
   loading(sessionId: string, path?: string): Array<Promise<RuntimeSlot>>;
   changing(sessionId: string, path?: string): boolean;
@@ -133,7 +133,7 @@ export class RuntimeSessionDeletionController {
         slot.preview = null;
         this.host.removeSlot(sessionId, slot);
       }
-      this.host.clearSelection(sessionId);
+      this.host.clearStartupHint(sessionId);
       // Suspension already drained reconciliation and closed the watcher.
       // Closing now releases only the committed session's retained projection.
       await projection?.close();

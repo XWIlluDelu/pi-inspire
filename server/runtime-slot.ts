@@ -55,7 +55,6 @@ export function runtimeHistory(
   | "incarnation"
   | "entry"
   | "viewMessages"
-  | "branchTree"
   | "branchImage"
   | "latestPage"
   | "historyPage"
@@ -174,6 +173,7 @@ export interface RuntimeSlot {
   retry: RetryInfo | null;
   summarizationRetry: RetryInfo | null;
   attention: CompletionAttention | null;
+  attentionId?: number;
   pendingExtensionDialogs: Map<string, PendingExtensionDialog>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;
@@ -192,6 +192,8 @@ export interface RuntimeSlot {
   availableModels: unknown[] | null;
   commands: unknown[] | null;
   lastUsed: number;
+  /** Eligible for the bounded preview cache after an explicit HTTP open. */
+  opened: boolean;
   activeOperations: number;
   workerView: WorkerView | null;
   overlay: unknown[];
@@ -275,6 +277,7 @@ export function createRuntimeSlot(seed: RuntimeSlotSeed): RuntimeSlot {
     availableModels: null,
     commands: null,
     lastUsed: 0,
+    opened: false,
     activeOperations: 0,
     workerView: null,
     overlay: [],

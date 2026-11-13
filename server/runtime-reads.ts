@@ -16,14 +16,13 @@ type RuntimeHistory = NonNullable<ReturnType<typeof runtimeHistory>>;
 
 interface RuntimeReadControllerHost {
   assertAvailable(): void;
-  selectedSlot(): RuntimeSlot | null;
-  selectedSessionId(): string | null;
   sessionStatuses(): Record<string, SessionRuntimeStatus>;
   requireSlot(sessionId: string): RuntimeSlot;
   useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
   snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   promptFileName(path: string): string | null;
+  skipSummaryPrompt(slot: RuntimeSlot): boolean;
   throwIfConflicted(slot: RuntimeSlot): void;
 }
 
@@ -37,31 +36,15 @@ function requireProjection(slot: RuntimeSlot) {
 export class RuntimeReadController {
   constructor(private readonly host: RuntimeReadControllerHost) {}
 
-  async snapshot(sessionId?: string | null): Promise<ActiveSnapshot> {
+  async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
     this.host.assertAvailable();
-    // Addressed reads never follow the Host's last-selected session: separate
-    // browsers can observe separate workers, including across reconnects.
-    if (sessionId !== undefined) {
-      if (sessionId === null)
-        return {
+    return sessionId === null
+      ? {
           active: null,
           runState: "idle",
           sessionStatuses: this.host.sessionStatuses(),
-        };
-      return this.host.snapshotSlot(this.host.requireSlot(sessionId));
-    }
-    while (true) {
-      const slot = this.host.selectedSlot();
-      if (!slot)
-        return {
-          active: null,
-          runState: "idle",
-          sessionStatuses: this.host.sessionStatuses(),
-        };
-      const snapshot = await this.host.snapshotSlot(slot);
-      // Runtime reads above may overlap a newer open/new selection.
-      if (this.host.selectedSessionId() === slot.id) return snapshot;
-    }
+        }
+      : this.host.snapshotSlot(this.host.requireSlot(sessionId));
   }
 
   private projectionRead<T>(
@@ -101,7 +84,11 @@ export class RuntimeReadController {
         const saved = slot.projection!;
         let history = projection;
         let leaf = effectiveLeafId;
-        if (query.kind === "page" || query.kind === "search") {
+        if (
+          query.kind === "page" ||
+          query.kind === "search" ||
+          query.kind === "routes"
+        ) {
           history = saved;
           // Do not switch to the file's most recent physical leaf if another
           // Pi wrote a branch, or if the native leaf has not reached disk yet.
@@ -120,7 +107,11 @@ export class RuntimeReadController {
           (path) => this.host.promptFileName(path),
         );
         return query.kind === "entry"
-          ? { ...page, revision: slot.branchRevision }
+          ? {
+              ...page,
+              revision: slot.branchRevision,
+              skipSummaryPrompt: this.host.skipSummaryPrompt(slot),
+            }
           : page;
       },
     );

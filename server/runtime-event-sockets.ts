@@ -271,6 +271,9 @@ export function createRuntimeEventSockets({
           ...(sourceStatus.indicator
             ? { indicator: sourceStatus.indicator }
             : {}),
+          ...(sourceStatus.attentionId !== undefined
+            ? { attentionId: sourceStatus.attentionId }
+            : {}),
           ...(sourceStatus.needsInput !== undefined
             ? { needsInput: sourceStatus.needsInput }
             : {}),

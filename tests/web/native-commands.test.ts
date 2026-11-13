@@ -275,6 +275,10 @@ describe("Pi native command dispatch", () => {
         );
         const { store } = await initStore();
         const olderWrite = store.setAutoRetry(true);
+        expect(store.getState().runtimeSettings?.autoRetryEnabled).toBe(false);
+        expect(store.getState().pendingRuntimeSettings.autoRetryEnabled).toBe(
+          true,
+        );
         const latestWrite = store.setAutoRetry(accepted);
         if (accepted) {
           settings.autoRetryEnabled = true;

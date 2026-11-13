@@ -55,7 +55,7 @@ describe("writer startup attestation", () => {
           : { type: "get_entries", since: parentId },
       );
       expect(workers[0]!.stops).toBe(0);
-      expect((await runtime.branchTree("session-a")).durableLeafId).toBe(
+      expect((await runtime.snapshot("session-a")).active!.durableLeafId).toBe(
         entry.id,
       );
     },
@@ -69,12 +69,11 @@ describe("writer startup attestation", () => {
       const finishReconcile = deferredSignal();
       const retirement = deferredSignal();
       const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-      const { runtime, workers } = await setup([], (worker) => {
+      const { runtime, workers, startup } = await setup([], (worker) => {
         worker.onStart = () => start.promise;
       });
       const internals = runtime as unknown as {
         slots: Map<string, RuntimeSlot>;
-        opening: Map<string, Promise<RuntimeSlot>>;
       };
       const slot = internals.slots.get("session-a")!;
       const projection = slot.projection!;
@@ -91,7 +90,7 @@ describe("writer startup attestation", () => {
         .mockImplementation(() => retirement.promise);
       const events: Array<{ type: string }> = [];
       runtime.on("event", (event) => events.push(event));
-      const starting = internals.opening.get("session-a")!;
+      const starting = startup!;
       const outcome = starting.then(
         () => null,
         (error: unknown) => error,

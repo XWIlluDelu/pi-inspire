@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { NativeTurnPage } from "../../shared/contracts";
+import {
+  type BranchEntryResponse,
+  type SessionHistoryPages,
+  isBusyRunState,
+  type NativeTurnPage,
+} from "../../shared/contracts";
 import { stripTerminalSequences } from "../ansi";
 import {
   asMessage,
@@ -8,11 +13,16 @@ import {
   userMessageDisplayContent,
   userMessageFileName,
 } from "../events";
-import { copyLoader, writeCopyContent } from "../content-copy";
+import { copyLoader } from "../content-copy";
 import { HistoryImage } from "./HistoryImage";
-import { store } from "../store";
+import { resourceReferenceFromEventTarget } from "../resources";
+import { sessionDraft } from "../session-drafts";
+import { shallowEqual, store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
 import { RichText } from "./RichText";
+import { HistoryShellPreview } from "./HistoryShellPreview";
+import { CopyAction } from "./CopyAction";
+import { branchCopiesBlocked } from "../controllers/branch-controller";
 
 type Location = {
   entryId: string;
@@ -62,28 +72,52 @@ export function NativeTurnReader({
   onLive: () => void;
 }) {
   const key = `inspire:history-location-v1:${sessionId}`;
+  const state = useAppState(
+    (state) => ({
+      copiesBlocked: branchCopiesBlocked(state),
+      acting: state.branchActionId !== null,
+      actionError: state.branchTreeError,
+      attached: state.readOnlyReason === "external-active",
+      busy: Boolean(
+        state.readOnlyReason ||
+          state.projectionHealth.status !== "ok" ||
+          isBusyRunState(state.runState) ||
+          state.bashRunning ||
+          state.queue.totalCount ||
+          state.extensionUiRequests.length,
+      ),
+    }),
+    shallowEqual,
+  );
   const [page, setPage] = useState<NativeTurnPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [results, setResults] =
-    useState<Awaited<ReturnType<typeof store.searchNativeHistory>>>(null);
+  const [results, setResults] = useState<SessionHistoryPages["search"] | null>(
+    null,
+  );
   const [body, setBody] = useState<{
     entryId: string;
     offset: number;
-    text: string;
-    images: NonNullable<
-      import("../../shared/contracts").BranchEntryResponse["images"]
-    >;
-    next: number | null;
+    result: BranchEntryResponse;
   } | null>(null);
+  const [routes, setRoutes] = useState<{
+    parentId: string;
+    page: SessionHistoryPages["routes"];
+  } | null>(null);
+  const [summary, setSummary] = useState(false);
+  const [instructions, setInstructions] = useState("");
   const pending = useRef<AbortController | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const initial = useRef(restoreLocation(key));
   const wanted = useRef<Location | null>(null);
   const retry = useRef<(() => void) | null>(null);
 
-  async function read(cursor?: string, location?: Location) {
+  async function read(
+    cursor?: string,
+    location?: Location,
+    routeLeaf?: string,
+  ) {
     pending.current?.abort();
     const request = new AbortController();
     pending.current = request;
@@ -91,6 +125,7 @@ export function NativeTurnReader({
     setError("");
     setResults(null);
     setBody(null);
+    setRoutes(null);
     try {
       const next = await store.readNativeHistory(
         sessionId,
@@ -100,6 +135,7 @@ export function NativeTurnReader({
           cursor,
           entryId: location?.entryId,
           leafId:
+            routeLeaf ??
             location?.leafId ??
             (cursor ? (page?.leafId ?? undefined) : undefined),
         },
@@ -112,7 +148,7 @@ export function NativeTurnReader({
         void readBody(location.entryId, location.bodyOffset, next.leafId);
     } catch (reason) {
       if (request.signal.aborted) return;
-      retry.current = () => void read(cursor, location);
+      retry.current = () => void read(cursor, location, routeLeaf);
       setError(
         reason instanceof Error
           ? reason.message
@@ -174,11 +210,10 @@ export function NativeTurnReader({
     setLoading(true);
     setBody(null);
     try {
-      const result = await store.searchNativeHistory(
+      const result = await store.readNativeHistory(
         sessionId,
         viewId,
-        text,
-        page?.leafId ?? undefined,
+        { kind: "search", text, leafId: page?.leafId ?? undefined },
         request.signal,
       );
       if (!request.signal.aborted) setResults(result);
@@ -207,13 +242,7 @@ export function NativeTurnReader({
         request.signal,
       );
       if (result && !request.signal.aborted) {
-        setBody({
-          entryId,
-          offset,
-          text: result.text,
-          images: result.images ?? [],
-          next: result.nextOffset,
-        });
+        setBody({ entryId, offset, result });
         saveLocation(key, {
           entryId,
           offset: 0,
@@ -233,6 +262,95 @@ export function NativeTurnReader({
     } finally {
       if (!request.signal.aborted) setLoading(false);
     }
+  }
+
+  async function readRoutes(parentId: string, before?: string) {
+    pending.current?.abort();
+    const request = new AbortController();
+    pending.current = request;
+    setError("");
+    setLoading(true);
+    try {
+      const page = await store.readNativeHistory(
+        sessionId,
+        viewId,
+        { kind: "routes", parentId, before },
+        request.signal,
+      );
+      if (page && !request.signal.aborted) setRoutes({ parentId, page });
+    } catch (reason) {
+      if (request.signal.aborted) return;
+      retry.current = () => void readRoutes(parentId, before);
+      setError(
+        reason instanceof Error ? reason.message : "Routes could not be loaded",
+      );
+    } finally {
+      if (!request.signal.aborted) setLoading(false);
+    }
+  }
+
+  async function act(
+    entry: BranchEntryResponse,
+    action: "navigate" | "watch" | "fork" | "clone",
+  ) {
+    if (state.acting) return;
+    const { node } = entry;
+    if (
+      action === "navigate" &&
+      node.canEdit &&
+      sessionDraft(sessionId) &&
+      !window.confirm(
+        "Replace your current draft with this message and continue from before it?",
+      )
+    )
+      return;
+    const ok =
+      action === "watch"
+        ? await store.selectBranch(sessionId, node.id)
+        : action === "fork"
+          ? await store.forkBranch(node.id)
+          : action === "clone"
+            ? await store.cloneBranch(node.id)
+            : await store.navigateBranch(
+                node.id,
+                node.canEdit ? "edit" : "switch",
+                {
+                  summarize: summary && !entry.skipSummaryPrompt,
+                  ...(summary && instructions.trim()
+                    ? { customInstructions: instructions.trim() }
+                    : {}),
+                },
+                entry.revision,
+              );
+    if (ok) onLive();
+  }
+
+  function routeButtons(parentId: string) {
+    if (routes?.parentId !== parentId) return null;
+    return (
+      <div role="group" aria-label="Routes from this point">
+        {routes.page.nodes.map((node) => (
+          <button
+            key={node.id}
+            type="button"
+            disabled={loading}
+            onClick={() => void read(undefined, undefined, node.leafId)}
+          >
+            {node.label}
+            {node.current ? " · Current route" : ""}
+          </button>
+        ))}
+        {routes.page.nextBefore && (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void readRoutes(parentId, routes.page.nextBefore!)}
+          >
+            More routes
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -263,6 +381,18 @@ export function NativeTurnReader({
             of {page.totalTurns}
           </span>
         )}
+        <button type="button" disabled={loading} onClick={() => void read()}>
+          Current conversation
+        </button>
+        {Boolean(page?.rootCount && (page.rootCount > 1 || !page.leafId)) && (
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void readRoutes("")}
+          >
+            Other starts
+          </button>
+        )}
         <form
           role="search"
           onSubmit={(event) => {
@@ -289,6 +419,7 @@ export function NativeTurnReader({
           </button>
         </p>
       )}
+      {state.actionError && <p role="alert">{state.actionError}</p>}
       {loading && (
         <span role="status">
           <PiLoader size={13} /> Loading history…
@@ -299,7 +430,15 @@ export function NativeTurnReader({
         ref={scroll}
         tabIndex={-1}
         onScroll={remember}
+        onClick={(event) => {
+          const reference = resourceReferenceFromEventTarget(event.target);
+          if (reference) {
+            event.preventDefault();
+            void store.openResource(reference);
+          }
+        }}
       >
+        {routeButtons("")}
         {results ? (
           results.matches.length ? (
             <ul>
@@ -324,10 +463,11 @@ export function NativeTurnReader({
             <p>No matches in this branch.</p>
           )
         ) : (
-          page?.messages.map(asMessage).map((message) => {
+          page?.messages.map(asMessage).map((message, index, messages) => {
             const id = message.__inspireEntryId;
             if (!id) return null;
-            const expanded = body?.entryId === id ? body : null;
+            const firstRow = messages[index - 1]?.__inspireEntryId !== id;
+            const expanded = firstRow && body?.entryId === id ? body : null;
             return (
               <article data-history-entry={id} key={messageKey(message) ?? id}>
                 <div className="native-history__entry">
@@ -354,34 +494,70 @@ export function NativeTurnReader({
                   >
                     {expanded ? "Close entry" : "Read full entry"}
                   </button>
-                  <button
-                    type="button"
+                  <CopyAction
+                    key={expanded ? "expanded" : "preview"}
+                    label="history entry"
+                    className="native-history__copy"
                     disabled={loading}
-                    onClick={() => {
-                      const request = new AbortController();
-                      pending.current?.abort();
-                      pending.current = request;
-                      void writeCopyContent(
-                        copyLoader(
-                          (signal) => store.branchCopyContent(id, signal),
-                          null,
-                        ),
-                        () => !request.signal.aborted,
-                        request.signal,
-                      ).catch((reason) => {
-                        if (!request.signal.aborted) setError(String(reason));
-                      });
-                    }}
-                  >
-                    Copy entry
-                  </button>
+                    getContent={copyLoader(
+                      (signal) => store.branchCopyContent(id, signal),
+                      expanded
+                        ? {
+                            image: Boolean(expanded.result.images?.length),
+                            text:
+                              Boolean(expanded.result.totalChars) ||
+                              !expanded.result.images?.length,
+                          }
+                        : null,
+                    )}
+                  />
                 </div>
+                {firstRow &&
+                  page.branchPoints
+                    ?.filter((point) => point.entryId === id)
+                    .map((point) => (
+                      <div key={point.id}>
+                        <button
+                          type="button"
+                          disabled={loading}
+                          aria-expanded={routes?.parentId === point.id}
+                          onClick={() =>
+                            routes?.parentId === point.id
+                              ? setRoutes(null)
+                              : void readRoutes(point.id)
+                          }
+                        >
+                          Other routes ({point.count})
+                        </button>
+                        {routeButtons(point.id)}
+                      </div>
+                    ))}
                 <NativeHistoryMessage message={message} />
                 {expanded && (
                   <div>
-                    <pre>{expanded.text}</pre>
+                    {expanded.result.node.role === "shell" &&
+                    expanded.offset === 0 ? (
+                      <HistoryShellPreview
+                        text={expanded.result.text}
+                        complete={expanded.result.nextOffset === null}
+                      />
+                    ) : (
+                      <div className="native-history__body">
+                        {expanded.result.totalChars <= 32_000 &&
+                        expanded.result.node.role !== "tool" ? (
+                          <RichText
+                            text={expanded.result.text}
+                            variant={
+                              message.role === "user" ? "user" : "assistant"
+                            }
+                          />
+                        ) : (
+                          <pre>{expanded.result.text}</pre>
+                        )}
+                      </div>
+                    )}
                     {expanded.offset === 0 &&
-                      expanded.images.map((image) => (
+                      expanded.result.images?.map((image) => (
                         <HistoryImage
                           key={image.index}
                           targetId={id}
@@ -399,13 +575,97 @@ export function NativeTurnReader({
                     </button>
                     <button
                       type="button"
-                      disabled={loading || expanded.next === null}
+                      disabled={loading || expanded.result.nextOffset === null}
                       onClick={() =>
-                        void readBody(id, expanded.next ?? undefined)
+                        void readBody(
+                          id,
+                          expanded.result.nextOffset ?? undefined,
+                        )
                       }
                     >
                       Next section
                     </button>
+                    <div
+                      className="native-history__entry"
+                      role="group"
+                      aria-label="Branch actions"
+                    >
+                      {!expanded.result.skipSummaryPrompt &&
+                        !state.busy &&
+                        !expanded.result.node.leaf && (
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={summary}
+                              onChange={(event) =>
+                                setSummary(event.target.checked)
+                              }
+                            />{" "}
+                            Carry branch summary
+                          </label>
+                        )}
+                      {summary &&
+                        !expanded.result.skipSummaryPrompt &&
+                        !state.busy &&
+                        !expanded.result.node.leaf && (
+                          <input
+                            aria-label="Summary instructions"
+                            value={instructions}
+                            maxLength={2000}
+                            onChange={(event) =>
+                              setInstructions(event.target.value)
+                            }
+                          />
+                        )}
+                      <button
+                        type="button"
+                        disabled={
+                          state.busy ||
+                          state.acting ||
+                          expanded.result.node.leaf
+                        }
+                        onClick={() => void act(expanded.result, "navigate")}
+                      >
+                        {expanded.result.node.canEdit
+                          ? "Edit in this session"
+                          : "Continue here"}
+                      </button>
+                      {state.attached &&
+                        !expanded.result.node.leaf &&
+                        expanded.result.node.childCount === 0 && (
+                          <button
+                            type="button"
+                            disabled={state.copiesBlocked}
+                            onClick={() => void act(expanded.result, "watch")}
+                          >
+                            Switch to this branch
+                          </button>
+                        )}
+                      {expanded.result.node.canFork && (
+                        <button
+                          type="button"
+                          disabled={state.copiesBlocked}
+                          onClick={() => void act(expanded.result, "fork")}
+                        >
+                          Fork to new session
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={state.copiesBlocked}
+                        onClick={() => void act(expanded.result, "clone")}
+                      >
+                        Clone through here
+                      </button>
+                      {state.acting && summary && (
+                        <button
+                          type="button"
+                          onClick={() => void store.abort()}
+                        >
+                          Stop summary
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
               </article>

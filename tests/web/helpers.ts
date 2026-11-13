@@ -2,7 +2,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import { vi } from "vitest";
 import {
   type ActiveSnapshot,
-  type BranchTreeResponse,
+  type BranchTreeNode,
   defaultPreferences,
   type HostUpdateStatus,
   type SessionSummary,
@@ -153,48 +153,20 @@ export function installFakeWebSocket(): void {
 
 export const DEFAULT_PREFS = defaultPreferences;
 
-export function branchTree(): BranchTreeResponse {
-  return {
-    sessionId: "s1",
-    revision: 1,
-    incarnation: "tree-1",
-    durableLeafId: "a1",
-    effectiveLeafId: null,
-    activePath: ["u1", "a1"],
-    truncated: false,
-    health: { status: "ok" },
-    nodes: [
-      {
-        id: "u1",
-        parentId: null,
-        depth: 0,
-        type: "message",
-        role: "user",
-        label: "user",
-        snippet: "user",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: false,
-        canEdit: false,
-        canFork: true,
-      },
-      {
-        id: "a1",
-        parentId: "u1",
-        depth: 1,
-        type: "message",
-        role: "assistant",
-        label: "assistant",
-        snippet: "answer",
-        timestamp: "2026-08-01",
-        active: true,
-        leaf: true,
-        canEdit: false,
-        canFork: false,
-      },
-    ],
-  };
-}
+export const savedInputNode: BranchTreeNode = {
+  id: "u1",
+  parentId: null,
+  depth: 0,
+  type: "message",
+  role: "user",
+  label: "user",
+  snippet: "user",
+  timestamp: "2026-08-01",
+  active: true,
+  leaf: false,
+  canEdit: true,
+  canFork: true,
+};
 
 type ActiveSnapshotValue = NonNullable<ActiveSnapshot["active"]>;
 type ActiveSnapshotOverrides = Omit<
@@ -211,6 +183,7 @@ export function activeSnapshot(
   const { pageMessages = [], transcriptPage, ...activeOverrides } = overrides;
   const sessionId = activeOverrides.sessionId ?? "s1";
   const active: ActiveSnapshotValue = {
+    branchRevision: 1,
     sessionId,
     sessionName: "Test session",
     cwd: "/proj",

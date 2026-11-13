@@ -183,6 +183,7 @@ export async function nativeSessionWorkbench(
       body: JSON.stringify({ id }),
     });
     expect(selected.status).toBe(200);
+    await runtime.setSteeringMode(id, "one-at-a-time");
     await vi.waitFor(() => expect(workers[0]?.available).toBe(true), {
       timeout: 10_000,
     });

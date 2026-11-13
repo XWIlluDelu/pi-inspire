@@ -13,7 +13,7 @@ import {
   initializeRuntimeFixture,
   schedulingRuntime,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -43,7 +43,7 @@ describe("native commands and worker-local catalogs", () => {
     const prompt = (message: string) =>
       runtime.prompt({ sessionId: "a", message });
     await runtime.openSession("a");
-    await waitForReady(runtime, "a");
+    await startWorker(runtime, "a");
 
     await expect(prompt("/model custom")).rejects.toThrow(
       "native command surface",
@@ -182,7 +182,7 @@ describe("native commands and worker-local catalogs", () => {
     const { promise, resolve: release } = deferredSignal();
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const before = await runtime.snapshot();
       f.worker.responseOverrides.set(
         "prompt",

@@ -17,8 +17,6 @@ import { assistantOutcome } from "../shared/assistant-outcome.js";
 import { interruptAssistantToolCalls } from "../shared/assistant-stream.js";
 import {
   type BranchEntryResponse,
-  type BranchTreeQuery,
-  type BranchTreeResponse,
   type ComposerHistoryPage,
   type ModelOption,
   type NativeTurnPage,
@@ -62,7 +60,6 @@ import {
 } from "./session-model-selection.js";
 import {
   BRANCH_CONTENT_PAGE_CHARS,
-  BRANCH_TREE_MAX_BYTES,
   boundedEditableText,
   boundedUserText,
   branchEntryContent,
@@ -70,7 +67,8 @@ import {
   branchMessageSource,
   branchNode,
   indexSessionEntries,
-  projectSessionTree,
+  sessionChildCount,
+  sessionRoutes,
 } from "./session-tree.js";
 
 export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
@@ -202,10 +200,6 @@ export interface SessionProjectionView {
     cwd?: string,
     fileNameForPath?: ComposerHistoryFileNameResolver,
   ): SessionHistoryPages[Q["kind"]];
-  branchTree(
-    effectiveLeafId?: string | null,
-    query?: BranchTreeQuery,
-  ): BranchTreeResponse;
   branchImage(id: string, index: number): { data: Buffer; mimeType: string };
   editableText(id: string, maxChars: number): string;
   entry(id: string): ProjectionEntryTarget | null;
@@ -614,6 +608,7 @@ class TranscriptPageBuilder<Page> {
 
   constructor(
     private readonly shell: (boundary: number, messages: unknown[]) => Page,
+    private readonly reservedBytes = 0,
   ) {}
 
   get length(): number {
@@ -630,7 +625,7 @@ class TranscriptPageBuilder<Page> {
       Number(this.messages.length > 0);
     if (
       bytes + Buffer.byteLength(JSON.stringify(this.shell(boundary, []))) >
-      TRANSCRIPT_PAGE_MAX_BYTES
+      TRANSCRIPT_PAGE_MAX_BYTES - this.reservedBytes
     )
       return false;
     this.messages.push(item.value);
@@ -938,7 +933,10 @@ class SessionEntryIndex extends EventEmitter {
     return {
       sessionId: this.sessionId,
       revision: this.revision,
-      node: branchNode(entry, false, id === effectiveLeafId),
+      node: {
+        ...branchNode(entry, false, id === effectiveLeafId),
+        childCount: sessionChildCount(this.currentEntries, id),
+      },
       text: text.slice(offset, end),
       totalChars: text.length,
       nextOffset: end < text.length ? end : null,
@@ -956,50 +954,6 @@ class SessionEntryIndex extends EventEmitter {
       data: Buffer.from(block.data, "base64"),
       mimeType: block.mimeType,
     };
-  }
-
-  protected historyHealth(): ProjectionHealth {
-    return { status: "ok" };
-  }
-
-  branchTree(
-    effectiveLeafId: string | null = this.currentLeafId,
-    query: BranchTreeQuery = {},
-  ): BranchTreeResponse {
-    if (
-      effectiveLeafId !== null &&
-      !this.currentEntriesById.has(effectiveLeafId)
-    ) {
-      throw requestError("Effective branch leaf does not exist", 409);
-    }
-    const tree = projectSessionTree(
-      this.currentEntries,
-      effectiveLeafId,
-      query,
-      this.currentEntriesById,
-    );
-    const response: BranchTreeResponse = {
-      sessionId: this.sessionId,
-      revision: this.revision,
-      incarnation: this.incarnation,
-      durableLeafId: this.currentLeafId,
-      effectiveLeafId,
-      activePath: tree.activePath,
-      nodes: tree.nodes,
-      ...(tree.leadingPrompt ? { leadingPrompt: tree.leadingPrompt } : {}),
-      truncated: tree.truncated,
-      nextBefore: tree.nextBefore,
-      routeLeafId: tree.routeLeafId,
-      rootCount: tree.rootCount,
-      health: this.historyHealth(),
-    };
-    if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {
-      throw requestError(
-        "Session tree response exceeds its serialized limit",
-        422,
-      );
-    }
-    return response;
   }
 
   viewMessages(
@@ -1144,6 +1098,14 @@ class SessionEntryIndex extends EventEmitter {
       case "search":
         return this.findHistory(query.text, query.leafId ?? effectiveLeafId);
 
+      case "routes":
+        return sessionRoutes(
+          this.currentEntries,
+          this.currentEntriesById,
+          effectiveLeafId,
+          query.parentId || null,
+          query.before,
+        );
       case "entry":
         return this.branchEntry(
           query.targetId,
@@ -1251,8 +1213,11 @@ class SessionEntryIndex extends EventEmitter {
     const pivot = cursor?.before ?? anchor ?? messages.length;
     const index = (i: number) => (reverse ? i - 1 : i);
     const advance = reverse ? -1 : 1;
-    const builder = new TranscriptPageBuilder((end, rows) =>
-      reverse ? shell(end, pivot, rows) : shell(pivot, end, rows),
+    const branchPointBudget = 32 * 1024;
+    const builder = new TranscriptPageBuilder(
+      (end, rows) =>
+        reverse ? shell(end, pivot, rows) : shell(pivot, end, rows),
+      branchPointBudget,
     );
     let edge = pivot;
     while (
@@ -1271,7 +1236,34 @@ class SessionEntryIndex extends EventEmitter {
       if (!builder.add(edge + advance, item)) break;
       edge += advance;
     }
-    return builder.page(edge, reverse);
+    const page = builder.page(edge, reverse);
+    const points = new Map<
+      string,
+      { id: string; entryId: string; count: number }
+    >();
+    let routeBytes = 64;
+    for (const row of page.messages) {
+      const entryId = jsonRecord(row)?.__inspireEntryId;
+      if (typeof entryId !== "string") continue;
+      for (let id: string | null = entryId; id !== null; ) {
+        if (id !== entryId && entries.has(id)) break;
+        const count = sessionChildCount(this.currentEntries, id);
+        if (count > 1 && !points.has(id)) {
+          const point = { id, entryId, count };
+          const bytes = Buffer.byteLength(JSON.stringify(point)) + 1;
+          if (routeBytes + bytes <= branchPointBudget) {
+            routeBytes += bytes;
+            points.set(id, point);
+          }
+        }
+        id = this.currentEntriesById.get(id)?.parentId ?? null;
+      }
+    }
+    return {
+      ...page,
+      branchPoints: [...points.values()],
+      rootCount: sessionChildCount(this.currentEntries, null),
+    };
   }
 
   private findHistory(text: string, leafId: string | null) {
@@ -1513,9 +1505,6 @@ export class SessionProjection
 
   get fingerprint(): string {
     return this.currentFingerprint;
-  }
-  protected override historyHealth(): ProjectionHealth {
-    return this.health;
   }
 
   get health(): ProjectionHealth {

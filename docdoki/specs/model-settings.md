@@ -33,6 +33,10 @@ without discarding usable choices. Provider lists also keep loaded content durin
 refresh. New-session preparation is expressed through the model/start controls, without narrating
 directory checks and model resolution. Blocking errors and required choices keep local guidance.
 
+The session displays Pi's confirmed thinking level and runtime delivery settings. A pending write
+has separate progress; a failed or retired request cannot restore an earlier value over a newer
+confirmation.
+
 ## Interface
 
 Models settings separates three tasks:

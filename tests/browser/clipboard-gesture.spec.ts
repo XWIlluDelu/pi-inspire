@@ -38,12 +38,21 @@ async function openHistoryDetail(page: Page) {
   await openSavedCopy(page);
   const history = await openHistoryPane(page);
   await history
-    .getByRole("searchbox", { name: "Find in history" })
+    .getByRole("textbox", { name: "Search this branch" })
     .fill("User source");
+  await history.getByRole("button", { name: "Search", exact: true }).click();
   await history
-    .getByRole("button", { name: /Your input.*User source/ })
+    .getByRole("button", { name: /^Turn 1:/ })
+    .first()
     .click();
-  return history;
+  await history
+    .locator("article")
+    .first()
+    .getByRole("button", { name: "Read full entry" })
+    .click();
+  return history.getByRole("article").filter({
+    has: page.getByRole("button", { name: "Close entry", exact: true }),
+  });
 }
 
 test("copies complete saved messages and images from bounded conversation previews", async ({
@@ -153,7 +162,7 @@ test("starts History Copy at the gesture and delivers complete text and saved PN
   const reading = Promise.withResolvers<void>();
   const delivery = Promise.withResolvers<void>();
   const history = await openHistoryDetail(page);
-  const more = history.getByRole("button", { name: "Read more content" });
+  const more = history.getByRole("button", { name: "Next section" });
   await expect(more).toBeVisible();
   await observeWrites(page);
   await page.route(
@@ -195,7 +204,7 @@ test("leaving a pending History copy retires it while /copy keeps the replacemen
 }, async ({ page, browserName }) => {
   const history = await openHistoryDetail(page);
   await expect(
-    history.getByRole("button", { name: "Read more content" }),
+    history.getByRole("button", { name: "Next section" }),
   ).toBeVisible();
   await observeWrites(page);
 
@@ -229,7 +238,7 @@ test("leaving a pending History copy retires it while /copy keeps the replacemen
         new URL(request.url()).searchParams.get("kind") === "entry",
     });
     await history
-      .getByRole("button", { name: "Back to history", exact: true })
+      .getByRole("button", { name: "Close entry", exact: true })
       .click();
     await retired;
 

@@ -60,6 +60,8 @@ it("attests native startup writes, keeps the worker usable, and admits an idle r
     }
   `);
   await f.runtime.openSession(f.id);
+  expect(f.workers).toHaveLength(0);
+  await f.runtime.setSteeringMode(f.id, "one-at-a-time");
   await vi.waitFor(
     () =>
       expect(f.event).toHaveBeenCalledWith(
@@ -116,7 +118,7 @@ it("refuses a new session with a startup dialog and retires the provisional work
     code: "PI_STARTUP_RESPONSE_UI_UNSUPPORTED",
     status: 503,
   });
-  expect(runtime.activeSessionId).toBeNull();
+  expect(runtime.startupSessionHint).toBeNull();
   expect(runtime.ownWorkerTags()).toEqual(new Set());
   expect(workers[0]?.pid).toBeNull();
   await commitIdleRestart(runtime);
@@ -139,6 +141,9 @@ it.each([
   async ({ source, error }) => {
     const f = await fixture(source);
     await f.runtime.openSession(f.id);
+    await expect(
+      f.runtime.setSteeringMode(f.id, "one-at-a-time"),
+    ).rejects.toThrow(error);
     await vi.waitFor(
       () =>
         expect(f.event).toHaveBeenCalledWith(

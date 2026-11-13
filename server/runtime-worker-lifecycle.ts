@@ -61,7 +61,6 @@ function captureStartupProjection(
 }
 
 interface RuntimeWorkerLifecycleHost {
-  selectedSessionId(): string | null;
   finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void;
   promptFileName(path: string): string | null;
   assertNotClosing(): void;
@@ -165,8 +164,7 @@ export class RuntimeWorkerLifecycle {
       slot.runState = "conflict";
     } else {
       slot.runState = "failed";
-      slot.attention =
-        this.host.selectedSessionId() === slot.id ? null : "failed";
+      slot.attention = "failed";
     }
     void this.releaseWorkerView(slot, "stopped");
     this.host.refreshPendingQueues(slot);
@@ -213,7 +211,6 @@ export class RuntimeWorkerLifecycle {
       workerId: slot.bridge?.workerId,
       childPid: rpc.pid,
       runState: slot.runState,
-      selected: this.host.selectedSessionId() === slot.id,
       conflictKind: slot.conflict?.kind,
       incidentId: slot.conflict?.incidentId,
     });
@@ -407,8 +404,7 @@ export class RuntimeWorkerLifecycle {
           this.host.logRuntimeError(slot.id, failure, "worker_start_failed");
           slot.runState = slot.conflict ? "conflict" : "failed";
           if (!slot.conflict) {
-            slot.attention =
-              this.host.selectedSessionId() === slot.id ? null : "failed";
+            slot.attention = "failed";
           }
           this.host.emitSlotEvent(slot, {
             type: "runtime_error",

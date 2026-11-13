@@ -26,17 +26,6 @@ export interface FileReadingState {
   save?: () => void;
 }
 
-export interface HistoryReadingState {
-  restored: boolean;
-  query: string;
-  expanded: string[];
-  selectedEntryId: string | null;
-  routeLeafId: string | null;
-  outline: { top: number; left: number };
-  detail: { top: number; left: number };
-  save?: () => void;
-}
-
 type SavedWorkbench = Pick<
   AppState,
   | "resourcesOpen"
@@ -151,7 +140,7 @@ export function readWorkbench(key: string | null): SavedWorkbench | null {
   const selected = resourceTabs.find(
     (tab) => tab.reference === saved.selectedResourceReference,
   );
-  const contextMode = ["files", "changes", "branches", "terminal"].includes(
+  const contextMode = ["files", "changes", "terminal"].includes(
     String(saved.contextMode),
   )
     ? (saved.contextMode as AppState["contextMode"])
@@ -246,38 +235,6 @@ function position(value: unknown): { top: number; left: number } | null {
     offset.left >= 0
     ? { top: offset.top, left: offset.left }
     : null;
-}
-
-export function readHistoryReading(key: string | null): HistoryReadingState {
-  const storageKey = key ? `${key}:history` : null;
-  const saved = storageKey ? jsonRecord(read(storageKey)) : null;
-  const outline = position(saved?.outline);
-  const state: HistoryReadingState = {
-    restored: outline !== null,
-    query: typeof saved?.query === "string" ? saved.query : "",
-    expanded: Array.isArray(saved?.expanded)
-      ? [...new Set(saved.expanded.filter(path))]
-      : [],
-    selectedEntryId: path(saved?.selectedEntryId)
-      ? saved.selectedEntryId
-      : null,
-    routeLeafId: path(saved?.routeLeafId) ? saved.routeLeafId : null,
-    outline: outline ?? { top: 0, left: 0 },
-    detail: position(saved?.detail) ?? { top: 0, left: 0 },
-    save: () => {
-      state.restored = true;
-      if (storageKey)
-        write(storageKey, {
-          query: state.query,
-          expanded: state.expanded,
-          selectedEntryId: state.selectedEntryId,
-          routeLeafId: state.routeLeafId,
-          outline: state.outline,
-          detail: state.detail,
-        });
-    },
-  };
-  return state;
 }
 
 export function readFileReading(

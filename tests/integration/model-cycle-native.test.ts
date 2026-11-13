@@ -97,6 +97,7 @@ it.each([false, true])(
     const realFetch = fetch;
     try {
       await runtime.openSession(manager.getSessionId());
+      await runtime.setSteeringMode(manager.getSessionId(), "one-at-a-time");
       host = await hostApiFixture({ runtime });
       installFakeWebSocket();
       vi.stubGlobal("fetch", (async (input, init) => {

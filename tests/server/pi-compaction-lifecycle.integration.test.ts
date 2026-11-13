@@ -15,10 +15,10 @@ async function compactThenReturnToEarlierPoint(
   f: Awaited<ReturnType<typeof fixture>>,
 ) {
   await f.api.nativeCommand({ sessionId: f.sessionId, command: "compact" });
-  const tree = await f.api.branchTree(f.sessionId);
+  const tree = (await f.api.snapshot(f.sessionId)).active!;
   await f.api.navigateBranch({
     sessionId: f.sessionId,
-    revision: tree.revision,
+    revision: tree.branchRevision!,
     targetId: "00000008",
     mode: "switch",
     summarize: false,

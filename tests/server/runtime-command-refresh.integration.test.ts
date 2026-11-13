@@ -136,6 +136,7 @@ it("refreshes commands and extension UI on native reload without replacing eithe
   try {
     for (const record of records) {
       await runtime.openSession(record.id);
+      await runtime.setSteeringMode(record.id, "one-at-a-time");
       await vi.waitFor(
         async () => expect(await names(record.id)).toContain("reload-fixture"),
         { timeout: 15_000 },

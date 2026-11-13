@@ -21,7 +21,7 @@ import {
   schedulingRuntime,
   trackedAttachmentStore,
   trackRuntime,
-  waitForReady,
+  startWorker,
 } from "./fixtures/runtime.js";
 
 beforeEach(initializeRuntimeFixture);
@@ -128,7 +128,7 @@ describe("runtime session deletion", () => {
 
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     await expect(
       runtime.clearHiddenSessions(["a", "b", "c"], ["a"], [HIDDEN_FOLDER_CWD]),
     ).resolves.toEqual({
@@ -258,15 +258,15 @@ describe("runtime session deletion", () => {
     });
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     await expect(runtime.deleteSession("a")).rejects.toThrow(
       "Trash unavailable",
     );
     expect(workers[0]!.stops).toBe(1);
-    expect(runtime.activeSessionId).toBe("a");
+    expect(runtime.startupSessionHint).toBe("a");
     expect((await runtime.snapshot()).active?.sessionId).toBe("a");
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     expect(workers).toHaveLength(2);
   });
 
@@ -292,7 +292,7 @@ describe("runtime session deletion", () => {
       });
       try {
         await runtime.openSession("a");
-        await waitForReady(runtime);
+        await startWorker(runtime);
         const deleting = runtime.deleteSession("a");
         await started;
         const opening = runtime.openSession("b");
@@ -301,7 +301,7 @@ describe("runtime session deletion", () => {
         await deleting;
         releasePreview();
         await opening;
-        expect(runtime.activeSessionId).toBe("b");
+        expect(runtime.startupSessionHint).toBe("b");
         expect((await runtime.snapshot()).active?.sessionId).toBe("b");
       } finally {
         releaseDelete();
@@ -340,7 +340,7 @@ describe("runtime session deletion", () => {
       );
       trackRuntime(runtime);
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const worker = workers.get("a")!;
       if (activity === "running") worker.emit("event", { type: "agent_start" });
       if (activity === "queued") {
@@ -352,7 +352,7 @@ describe("runtime session deletion", () => {
         expect((await runtime.snapshot()).pendingQueues?.totalCount).toBe(1);
       }
       await runtime.openSession("b");
-      await waitForReady(runtime, "b");
+      await startWorker(runtime, "b");
 
       const outcome = { sessionId: "a", disposition: "trashed" };
       if (method === "clear")
@@ -379,7 +379,7 @@ describe("runtime session deletion", () => {
     });
     try {
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const worker = workers[0]!;
       const request = worker.request.bind(worker);
       vi.spyOn(worker, "request").mockImplementation(

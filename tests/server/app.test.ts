@@ -333,13 +333,15 @@ describe("Host HTTP workflows", () => {
       outcome: "completed",
     });
     expect(native).toHaveBeenCalledExactlyOnceWith(command);
-    expect(runtime.activeSessionId).toBe("fixture-history");
+    expect(runtime.startupSessionHint).toBe("fixture-history");
   });
 
   it("applies native settings to the addressed session after authentication and validation", async () => {
     const sessionId = "fixture-active";
     await runtime.openSession(sessionId);
     await runtime.openSession("fixture-history");
+    await runtime.setSteeringMode(sessionId, "one-at-a-time");
+    await runtime.setSteeringMode("fixture-history", "one-at-a-time");
     const targetSettings = async () =>
       (await runtime.snapshot(sessionId)).active?.runtimeSettings;
     const selectedSettings = async () =>
@@ -374,7 +376,7 @@ describe("Host HTTP workflows", () => {
         [stateKey]: value,
       });
       expect(await selectedSettings()).toEqual(selectedBefore);
-      expect(runtime.activeSessionId).toBe("fixture-history");
+      expect(runtime.startupSessionHint).toBe("fixture-history");
     }
   });
 
@@ -462,16 +464,22 @@ describe("Host HTTP workflows", () => {
       text: "Tightened the window normalization.",
     });
 
-    const tree = await local
-      .get("/api/branches/tree")
-      .query({ sessionId })
+    const page = await local
+      .get("/api/history")
+      .query({ sessionId, viewId, kind: "page" })
       .expect(200);
-    expect(tree.body.sessionId).toBe(sessionId);
-    const target = tree.body.nodes.find(
-      (node: { role?: string }) => node.role === "user",
-    );
+    const target = page.body.messages.find(
+      (message: { role?: string }) => message.role === "user",
+    )?.__inspireEntryId;
+    const routes = { sessionId, viewId, kind: "routes", parentId: "" };
+    await guest.get("/api/history").query(routes).expect(401);
+    await local
+      .get("/api/history")
+      .query({ ...routes, viewId: "old-branch" })
+      .expect(409);
+    await local.get("/api/history").query(routes).expect(200);
     expect(target).toBeDefined();
-    const entry = { sessionId, viewId, kind: "entry", targetId: target.id };
+    const entry = { sessionId, viewId, kind: "entry", targetId: target };
     await guest.get("/api/history").query(entry).expect(401);
     const read = await local.get("/api/history").query(entry).expect(200);
     expect(read.body.text).toBe(firstPrompt);
@@ -494,7 +502,7 @@ describe("Host HTTP workflows", () => {
     const saved = await fixture.catalog.get(result.body.sessionId);
     expect(saved?.cwd).toBe(active!.cwd);
     expect(result.body.editorText).toBe("");
-    expect(runtime.activeSessionId).toBe("fixture-history");
+    expect(runtime.startupSessionHint).toBe("fixture-history");
   });
 
   it("rejects untrusted branch mutation fields and serves authenticated image bytes privately", async () => {
@@ -736,10 +744,10 @@ describe("Host HTTP workflows", () => {
       .post("/api/sessions/open")
       .send({ id: "fixture-history" })
       .expect(200);
-    expect(runtime.activeSessionId).toBe("fixture-history");
+    expect(runtime.startupSessionHint).toBe("fixture-history");
     const deselected = await local.post("/api/sessions/deselect").expect(200);
     expect(deselected.body).toMatchObject({ active: null, runState: "idle" });
-    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
     await local
       .patch("/api/preferences")
       .send({

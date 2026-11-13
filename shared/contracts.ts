@@ -192,6 +192,8 @@ export function projectionConflictSeverity(
 export interface SessionRuntimeStatus {
   runState: RunState;
   indicator?: SessionIndicator;
+  /** Host-local identity of the current completion/failure mark. */
+  attentionId?: number;
   /** Pi is waiting for input in an owned worker or connected native terminal. */
   needsInput?: boolean;
   /** Connected to an independently owned native Pi, not an Inspire worker. */
@@ -216,6 +218,8 @@ export function isSessionRuntimeStatus(
   return (
     isRunState(status.runState) &&
     (status.indicator === undefined || isSessionIndicator(status.indicator)) &&
+    (status.attentionId === undefined ||
+      Number.isSafeInteger(status.attentionId)) &&
     (status.needsInput === undefined ||
       typeof status.needsInput === "boolean") &&
     (status.external === undefined || typeof status.external === "boolean")
@@ -979,6 +983,9 @@ export interface NativeTurnPage {
   messages: unknown[];
   earlier: string | null;
   later: string | null;
+  /** Native route points within this page, including intervening metadata. */
+  branchPoints?: { id: string; entryId: string; count: number }[];
+  rootCount?: number;
 }
 
 export interface HistoryMatch {
@@ -990,12 +997,17 @@ export interface HistoryMatch {
 export type SessionHistoryQuery =
   | { kind: "page"; cursor?: string; entryId?: string; leafId?: string }
   | { kind: "search"; text: string; leafId?: string }
+  | { kind: "routes"; parentId: string; before?: string }
   | { kind: "composer"; start?: number }
   | { kind: "entry"; targetId: string; offset?: number; format?: "message" };
 
 export interface SessionHistoryPages {
   page: NativeTurnPage;
   search: { matches: HistoryMatch[]; more: boolean };
+  routes: {
+    nodes: { id: string; label: string; leafId: string; current: boolean }[];
+    nextBefore: string | null;
+  };
   composer: ComposerHistoryPage;
   entry: BranchEntryResponse;
 }
@@ -1060,17 +1072,6 @@ export interface BranchTreeNode {
   canFork: boolean;
   /** Complete native child count, independent of this page. */
   childCount?: number;
-  /** Latest retained descendant for read-only route inspection. */
-  routeLeafId?: string;
-}
-
-export interface BranchTreeQuery {
-  before?: string;
-  query?: string;
-  /** Read another ancestor path without moving Pi's active leaf. */
-  leafId?: string;
-  /** List routes at this actual branch point; empty string means roots. */
-  parentId?: string;
 }
 
 export interface BranchImageRequest {
@@ -1083,28 +1084,11 @@ export interface BranchEntryResponse {
   sessionId: string;
   revision: number;
   node: BranchTreeNode;
+  skipSummaryPrompt?: boolean;
   text: string;
   nextOffset: number | null;
   totalChars: number;
   images?: Array<{ index: number; mimeType: string }>;
-}
-
-export interface BranchTreeResponse {
-  sessionId: string;
-  revision: number;
-  incarnation: string;
-  durableLeafId: string | null;
-  effectiveLeafId: string | null;
-  activePath: string[];
-  nodes: BranchTreeNode[];
-  /** The containing input when this route page begins inside a long turn. */
-  leadingPrompt?: BranchTreeNode;
-  truncated: boolean;
-  nextBefore?: string | null;
-  routeLeafId?: string | null;
-  rootCount?: number;
-  skipSummaryPrompt?: boolean;
-  health: ProjectionHealth;
 }
 
 export interface BranchNavigateRequest {
@@ -1220,6 +1204,7 @@ export interface ActiveSnapshot {
     durableLeafId?: string | null;
     effectiveLeafId?: string | null;
     navigationLeased?: boolean;
+    branchRevision?: number;
     stats?: unknown;
     /** Settings that affect the live Pi session rather than INSΠRE chrome. */
     runtimeSettings?: PiRuntimeSettings;

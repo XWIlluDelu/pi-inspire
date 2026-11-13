@@ -116,29 +116,26 @@ describe("native shell input", () => {
     expect((await readFile(String(truncated.fullOutputPath))).length).toBe(
       80000,
     );
-    const tree = await f.runtime.branchTree(f.sessionId);
-    const shellNodes = tree.nodes.filter((node) => node.role === "shell");
-    expect(shellNodes).toHaveLength(3);
-    expect(shellNodes.every((node) => !node.canEdit && !node.canFork)).toBe(
-      true,
-    );
     for (const [query, command, context] of [
       ["EXTENSION_BASH_RESULT", "!!fixture-hook", "Excluded from context"],
       ["EXTENSION_CUSTOM_OPERATIONS", "!fixture-ops", "Included in context"],
     ]) {
-      const matches = await f.runtime.branchTree(f.sessionId, { query });
-      const node = matches.nodes.find(
-        (candidate) => candidate.role === "shell",
-      )!;
-      const detail = await f.runtime.sessionHistory(
-        f.sessionId,
-        snapshot.active!.transcriptPage.viewId,
-        {
-          kind: "entry",
-          targetId: node.id,
-          offset: 0,
-        },
-      );
+      const view = snapshot.active!.transcriptPage.viewId;
+      if (!query || !command || !context)
+        throw new Error("Missing shell fixture");
+      const matches = await f.runtime.sessionHistory(f.sessionId, view, {
+        kind: "search",
+        text: query,
+      });
+      const detail = await f.runtime.sessionHistory(f.sessionId, view, {
+        kind: "entry",
+        targetId: matches.matches[0]!.entryId,
+      });
+      expect(detail.node).toMatchObject({
+        role: "shell",
+        canEdit: false,
+        canFork: false,
+      });
       expect(detail.text).toContain(command);
       expect(detail.text).toContain(context);
       expect(detail.text).not.toContain('"role"');

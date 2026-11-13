@@ -256,11 +256,11 @@ describe("SessionProjection framing and last-good state", () => {
         { index: 2, mimeType: "image/webp" },
       ],
     });
-    expect(projection.branchTree("mixed-input").nodes[0]?.snippet).toBe(
-      `${caption} report.csv [Image: image/png] [Image: image/webp]`,
-    );
     expect(
-      projection.branchTree("mixed-input", { query: reference }).nodes[0]
+      projection.historyPage({ kind: "routes", parentId: "" }).nodes[0]?.label,
+    ).toBe(`${caption} report.csv [Image: image/png] [Image: image/webp]`);
+    expect(
+      projection.historyPage({ kind: "search", text: reference }).matches[0]
         ?.snippet,
     ).toContain(reference);
     expect(projection.userText("mixed-input", text.length)).toBe(text);

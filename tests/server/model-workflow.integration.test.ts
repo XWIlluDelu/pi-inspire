@@ -107,10 +107,10 @@ it("keeps native virtual selection/effort across replies, real navigation, copie
       contextUsage: { tokens: 2010, contextWindow: 64_000 },
     });
 
-    const tree = await runtime.branchTree(id);
+    const tree = (await runtime.snapshot(id)).active!;
     const navigated = await runtime.navigateBranch({
       sessionId: id,
-      revision: tree.revision,
+      revision: tree.branchRevision!,
       targetId: firstReply.id,
       mode: "switch",
     });

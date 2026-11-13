@@ -530,7 +530,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       },
       { timeout: 10_000 },
     );
-    expect(runtime.activeSessionId).toBeNull();
+    expect(runtime.startupSessionHint).toBeNull();
     await runtime.rename(id, "Renamed from Inspire");
     await vi.waitFor(
       async () =>

@@ -29,7 +29,7 @@ import {
   trackedAttachmentStore,
   trackRuntime,
   upload,
-  waitForReady,
+  startWorker,
   workspaceDirectories,
 } from "./fixtures/runtime.js";
 
@@ -60,21 +60,14 @@ describe("prompt admission and artifact ownership", () => {
       expect(opened.active?.transcriptPage.messages).toMatchObject([
         { role: "user", content: "preview:a", timestamp: 1 },
       ]);
-      await vi.waitFor(() => expect(f.workers[0]?.starts).toBe(1));
-      const { worker } = f;
+      expect(f.workers).toHaveLength(0);
       const prompting = runtime.prompt({
         sessionId: "a",
         message: "use the selected file",
         projectFiles: ["selected.txt"],
       });
-      const slots = (
-        runtime as unknown as {
-          slots: Map<string, { mutationQueue: { pending: number } }>;
-        }
-      ).slots;
-      await vi.waitFor(() =>
-        expect(slots.get("a")?.mutationQueue.pending).toBe(2),
-      );
+      await vi.waitFor(() => expect(f.workers[0]?.starts).toBe(1));
+      const { worker } = f;
 
       const delivered = () =>
         worker.commands.filter(({ type }) => type === "prompt");
@@ -194,7 +187,7 @@ describe("prompt admission and artifact ownership", () => {
     const f = schedulingRuntime({ attachments: store });
     const { runtime } = f;
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     f.worker.failPrompts = true;
 
     const doc = await store.add(upload("notes.txt", "text/plain"));
@@ -280,7 +273,7 @@ describe("prompt admission and artifact ownership", () => {
         attachments: store,
       });
       await runtime.openSession("a");
-      await waitForReady(runtime);
+      await startWorker(runtime);
       const internal = runtime as unknown as {
         slots: Map<string, RuntimeSlot>;
         reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
@@ -424,7 +417,7 @@ describe("prompt admission and artifact ownership", () => {
     const { runtime } = f;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const { worker } = f;
     const { slots } = runtime as unknown as {
       slots: Map<string, RuntimeSlot>;
@@ -555,7 +548,7 @@ describe("prompt admission and artifact ownership", () => {
     const { runtime } = f;
     trackRuntime(runtime);
     await runtime.openSession("a");
-    await waitForReady(runtime);
+    await startWorker(runtime);
     const history = await runtime.sessionHistory(
       "a",
       (await runtime.snapshot("a")).active!.transcriptPage.viewId,
