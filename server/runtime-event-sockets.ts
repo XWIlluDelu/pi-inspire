@@ -52,41 +52,31 @@ export function createRuntimeEventSockets({
       threshold: 1_024,
     },
   });
-  const sockets = new Set<WebSocket>();
-  const notificationPrincipals = new WeakMap<
-    WebSocket,
-    NotificationPrincipal
-  >();
-  const notificationSubscriptions = new WeakMap<WebSocket, () => void>();
-  /** Sockets still waiting for their snapshot; live events queue here so the
-   * first frame a client processes is always the authoritative snapshot,
-   * with the queued events flushed after it in arrival order. */
-  const joining = new Map<WebSocket, { messages: string[]; bytes: number }>();
-  const responsiveSockets = new Map<WebSocket, boolean>();
-  const requestedSnapshotDigests = new WeakMap<WebSocket, string | null>();
-  const detailInterests = new WeakMap<
-    WebSocket,
-    { sessionId: string | null; revision: number }
-  >();
-  const retainedViews = new WeakMap<WebSocket, () => void>();
-  const setDetailInterest = (
-    socket: WebSocket,
-    interest: { sessionId: string | null; revision: number },
-  ): void => {
-    // Acquire before releasing so a new subscription to the same session never
-    // briefly makes its live projection eligible for reclamation.
-    const release = interest.sessionId
+  type DetailInterest = { sessionId: string | null; revision: number };
+  type SnapshotBacklog = { messages: string[]; bytes: number };
+  type Peer = {
+    responsive: boolean;
+    interest: DetailInterest;
+    releaseView?: () => void;
+    backlog?: SnapshotBacklog;
+    requestedDigest?: string;
+    principal?: NotificationPrincipal;
+    unsubscribe?: () => void;
+    backgroundStatuses: Map<string, string>;
+  };
+  const peers = new Map<WebSocket, Peer>();
+  const setDetailInterest = (peer: Peer, interest: DetailInterest) => {
+    // Retain the new view before releasing the previous subscription.
+    const release = peer.releaseView;
+    peer.releaseView = interest.sessionId
       ? runtime.retainSessionView(interest.sessionId)
       : undefined;
-    const previous = retainedViews.get(socket);
-    if (release) retainedViews.set(socket, release);
-    else retainedViews.delete(socket);
-    detailInterests.set(socket, interest);
-    previous?.();
+    peer.interest = interest;
+    peer.backgroundStatuses.clear();
+    release?.();
   };
-  const backgroundStatuses = new WeakMap<WebSocket, Map<string, string>>();
-  const wantsDetail = (socket: WebSocket, sessionId: string): boolean =>
-    detailInterests.get(socket)?.sessionId === sessionId;
+  const wantsDetail = (peer: Peer, sessionId: string) =>
+    peer.interest.sessionId === sessionId;
   interface EventDestinations {
     joining: boolean;
     established: boolean;
@@ -101,18 +91,16 @@ export function createRuntimeEventSockets({
   let pendingStreamBatch: PendingStreamBatch | null = null;
   let streamBatchTimer: ReturnType<typeof setTimeout> | null = null;
   const forgetSocket = (socket: WebSocket): void => {
-    sockets.delete(socket);
-    notificationSubscriptions.get(socket)?.();
-    notificationSubscriptions.delete(socket);
-    joining.delete(socket);
-    responsiveSockets.delete(socket);
-    detailInterests.delete(socket);
-    const release = retainedViews.get(socket);
-    retainedViews.delete(socket);
-    release?.();
+    const peer = peers.get(socket);
+    if (!peer) return;
+    peers.delete(socket);
+    peer.backlog = undefined;
+    peer.unsubscribe?.();
+    peer.releaseView?.();
   };
   const closeLaggingSocket = (socket: WebSocket, reason: string) => {
-    joining.delete(socket);
+    const peer = peers.get(socket);
+    if (peer) peer.backlog = undefined;
     if (socket.readyState !== WebSocket.OPEN) return;
     try {
       socket.close(1013, reason);
@@ -141,51 +129,55 @@ export function createRuntimeEventSockets({
   };
   const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
   const heartbeatInterval = setInterval(() => {
-    for (const socket of sockets) {
+    for (const [socket, peer] of peers) {
       if (socket.readyState !== WebSocket.OPEN) continue;
-      if (!responsiveSockets.get(socket)) {
-        joining.delete(socket);
+      if (!peer.responsive) {
+        peer.backlog = undefined;
         socket.terminate();
         continue;
       }
-      responsiveSockets.set(socket, false);
+      peer.responsive = false;
       try {
         socket.ping();
       } catch {
-        joining.delete(socket);
+        peer.backlog = undefined;
         socket.terminate();
         continue;
       }
       // Never overtake the authoritative first snapshot. Once joined, this
       // application frame also gives browser clients an observable watchdog.
-      if (!joining.has(socket)) sendBounded(socket, heartbeatMessage);
+      if (!peer.backlog) sendBounded(socket, heartbeatMessage);
     }
   }, heartbeatIntervalMs);
   heartbeatInterval.unref();
+
+  const queueOrSend = (
+    socket: WebSocket,
+    peer: Peer,
+    message: string,
+    bytes: number,
+  ) => {
+    const queue = peer.backlog;
+    if (!queue) {
+      sendBounded(socket, message);
+    } else if (queue.bytes + bytes > MAX_JOINING_EVENT_BYTES) {
+      closeLaggingSocket(socket, "Snapshot backlog exceeded");
+    } else {
+      queue.messages.push(message);
+      queue.bytes += bytes;
+    }
+  };
 
   const broadcastEncoded = (
     message: string,
     messageBytes: number,
     destinations: EventDestinations,
   ): void => {
-    for (const socket of sockets) {
-      if (
-        destinations.sessionId &&
-        !wantsDetail(socket, destinations.sessionId)
-      )
+    for (const [socket, peer] of peers) {
+      if (destinations.sessionId && !wantsDetail(peer, destinations.sessionId))
         continue;
-      const queue = joining.get(socket);
-      if (queue) {
-        if (!destinations.joining) continue;
-        if (queue.bytes + messageBytes > MAX_JOINING_EVENT_BYTES) {
-          closeLaggingSocket(socket, "Snapshot backlog exceeded");
-        } else {
-          queue.messages.push(message);
-          queue.bytes += messageBytes;
-        }
-      } else if (destinations.established) {
-        sendBounded(socket, message);
-      }
+      if (peer.backlog ? destinations.joining : destinations.established)
+        queueOrSend(socket, peer, message, messageBytes);
     }
   };
   const serializeRuntimeEvent = (
@@ -203,13 +195,10 @@ export function createRuntimeEventSockets({
     reason: string,
     destinations: EventDestinations,
   ): void => {
-    for (const socket of sockets) {
-      if (
-        destinations.sessionId &&
-        !wantsDetail(socket, destinations.sessionId)
-      )
+    for (const [socket, peer] of peers) {
+      if (destinations.sessionId && !wantsDetail(peer, destinations.sessionId))
         continue;
-      const isJoining = joining.has(socket);
+      const isJoining = peer.backlog !== undefined;
       if (
         (isJoining && destinations.joining) ||
         (!isJoining && destinations.established)
@@ -321,27 +310,17 @@ export function createRuntimeEventSockets({
     const statusKey = isSessionRuntimeStatus(record.sessionStatus)
       ? JSON.stringify(record.sessionStatus)
       : undefined;
-    for (const socket of sockets) {
-      if (wantsDetail(socket, sessionId)) continue;
-      const statuses =
-        backgroundStatuses.get(socket) ?? new Map<string, string>();
-      backgroundStatuses.set(socket, statuses);
+    const bytes = Buffer.byteLength(compact);
+    for (const [socket, peer] of peers) {
+      if (wantsDetail(peer, sessionId)) continue;
+      const statuses = peer.backgroundStatuses;
       if (
         !lifecycle &&
         (statusKey === undefined || statuses.get(sessionId) === statusKey)
       )
         continue;
       if (statusKey !== undefined) statuses.set(sessionId, statusKey);
-      const queue = joining.get(socket);
-      if (queue) {
-        const bytes = Buffer.byteLength(compact);
-        if (queue.bytes + bytes > MAX_JOINING_EVENT_BYTES)
-          closeLaggingSocket(socket, "Snapshot backlog exceeded");
-        else {
-          queue.messages.push(compact);
-          queue.bytes += bytes;
-        }
-      } else sendBounded(socket, compact);
+      queueOrSend(socket, peer, compact, bytes);
     }
   };
   const publishRuntimeEvent = (event: unknown): void => {
@@ -355,7 +334,7 @@ export function createRuntimeEventSockets({
     if (sessionId && record) {
       publishBackgroundStatus(record, sessionId);
       // Do not even serialize a session body nobody subscribed to.
-      if (![...sockets].some((socket) => wantsDetail(socket, sessionId)))
+      if (![...peers.values()].some((peer) => wantsDetail(peer, sessionId)))
         return;
     }
     const streamDelta =
@@ -389,15 +368,15 @@ export function createRuntimeEventSockets({
       return;
     }
 
-    if (sockets.size === 0) return;
+    if (peers.size === 0) return;
 
     // Joining sockets need complete, overlap-safe replacements. Avoid the
     // cumulative-message stringify entirely when every socket is established;
     // otherwise that hidden O(response length × fragments) cost survives even
     // after wire deltas have removed the redundant network bytes.
     if (
-      [...joining.keys()].some((socket) =>
-        wantsDetail(socket, String(sessionId)),
+      [...peers.values()].some(
+        (peer) => peer.backlog && wantsDetail(peer, String(sessionId)),
       )
     ) {
       const complete = serializeRuntimeEvent(event);
@@ -424,11 +403,11 @@ export function createRuntimeEventSockets({
         });
       }
     }
-    const hasEstablishedSocket = [...sockets].some(
-      (socket) =>
-        !joining.has(socket) &&
+    const hasEstablishedSocket = [...peers].some(
+      ([socket, peer]) =>
+        !peer.backlog &&
         socket.readyState === WebSocket.OPEN &&
-        wantsDetail(socket, String(sessionId)),
+        wantsDetail(peer, String(sessionId)),
     );
     if (!hasEstablishedSocket) return;
 
@@ -471,13 +450,13 @@ export function createRuntimeEventSockets({
   );
   runtime.on("event", publishRuntimeEvent);
 
-  websocket.on("connection", (socket) => {
-    // A stream batch belongs only to the sockets that were established when
-    // its first delta arrived. Flush before admitting a new snapshot reader.
+  function startPeer(socket: WebSocket, peer: Peer): void {
+    // Flush to the old audience before admitting a new snapshot reader.
     flushStreamBatch();
-    sockets.add(socket);
-    responsiveSockets.set(socket, true);
-    socket.on("pong", () => responsiveSockets.set(socket, true));
+    peers.set(socket, peer);
+    socket.on("pong", () => {
+      peer.responsive = true;
+    });
     socket.on("error", () => {
       forgetSocket(socket);
       socket.terminate();
@@ -485,44 +464,39 @@ export function createRuntimeEventSockets({
     socket.on("close", () => forgetSocket(socket));
     const synchronize = (): void => {
       flushStreamBatch();
-      const previous = joining.get(socket);
+      const previous = peer.backlog;
       const queue = {
         messages: previous?.messages ?? [],
         bytes: previous?.bytes ?? 0,
       };
-      joining.set(socket, queue);
-      const interest = detailInterests.get(socket);
+      peer.backlog = queue;
+      const { interest } = peer;
       void Promise.all([
-        runtime.snapshot(interest?.sessionId),
+        runtime.snapshot(interest.sessionId),
         updateCoordinator.status(),
       ]).then(
         ([snapshot, updateStatus]) => {
-          const queued = joining.get(socket);
+          const queued = peer.backlog;
           if (queued !== queue) return;
           // Pending batches exclude this joining socket, which already queued
           // their complete projections. Flush before it becomes established.
           flushStreamBatch();
-          joining.delete(socket);
-          if (!queued || socket.readyState !== WebSocket.OPEN) return;
+          peer.backlog = undefined;
+          if (socket.readyState !== WebSocket.OPEN) return;
           let message: string;
           try {
             const encodedSnapshot = JSON.stringify(snapshot);
             const snapshotDigest = createHash("sha256")
               .update(encodedSnapshot)
               .digest("hex");
-            const unchanged =
-              requestedSnapshotDigests.get(socket) === snapshotDigest;
+            const unchanged = peer.requestedDigest === snapshotDigest;
             message = JSON.stringify({
               type: "snapshot",
               authorityId,
               snapshotDigest,
               updateStatus,
-              ...(interest
-                ? {
-                    detailSessionId: interest.sessionId,
-                    detailRevision: interest.revision,
-                  }
-                : {}),
+              detailSessionId: interest.sessionId,
+              detailRevision: interest.revision,
               ...(unchanged ? { unchanged: true } : { data: snapshot }),
             });
           } catch {
@@ -530,19 +504,11 @@ export function createRuntimeEventSockets({
             return;
           }
           if (!sendBounded(socket, message)) return;
-          const principal = notificationPrincipals.get(socket);
-          if (
-            principal &&
-            taskNotifications &&
-            !notificationSubscriptions.has(socket)
-          ) {
-            notificationSubscriptions.set(
-              socket,
-              taskNotifications.attach(principal, (event) =>
-                sendBounded(socket, JSON.stringify(event)),
-              ),
+          if (peer.principal && taskNotifications && !peer.unsubscribe)
+            peer.unsubscribe = taskNotifications.attach(
+              peer.principal,
+              (event) => sendBounded(socket, JSON.stringify(event)),
             );
-          }
           for (const message of queued.messages) {
             // A superseded read may have queued detail for the previous owner.
             // Retain its global lifecycle evidence, never replay its body.
@@ -550,15 +516,15 @@ export function createRuntimeEventSockets({
             const id =
               typeof record.sessionId === "string" ? record.sessionId : null;
             const projected =
-              id && !wantsDetail(socket, id)
+              id && !wantsDetail(peer, id)
                 ? compactStatus(record, id)
                 : message;
             if (projected && !sendBounded(socket, projected)) break;
           }
         },
         () => {
-          if (joining.get(socket) !== queue) return;
-          joining.delete(socket);
+          if (peer.backlog !== queue) return;
+          peer.backlog = undefined;
           socket.close(1011, "Unable to load session state");
         },
       );
@@ -583,26 +549,23 @@ export function createRuntimeEventSockets({
           })
           .strict()
           .parse(JSON.parse(data.toString()));
-        if (interest.revision <= (detailInterests.get(socket)?.revision ?? 0))
+        if (interest.revision <= peer.interest.revision)
           throw new Error("Stale interest");
         // Flush under the OLD audience, then begin the NEW snapshot queue
         // synchronously, before any asynchronous runtime read can yield.
         flushStreamBatch();
-        setDetailInterest(socket, interest);
-        backgroundStatuses.delete(socket);
-        requestedSnapshotDigests.set(
-          socket,
+        setDetailInterest(peer, interest);
+        peer.requestedDigest =
           interest.authorityId === authorityId
-            ? (interest.snapshotDigest ?? null)
-            : null,
-        );
+            ? interest.snapshotDigest
+            : undefined;
         synchronize();
       } catch {
         socket.close(1008, "Invalid detail interest");
       }
     });
     synchronize();
-  });
+  }
 
   return {
     upgrade(
@@ -622,17 +585,20 @@ export function createRuntimeEventSockets({
         return;
       }
       websocket.handleUpgrade(request, socket, head, (client) => {
-        if (notificationPrincipal)
-          notificationPrincipals.set(client, notificationPrincipal);
-        setDetailInterest(client, { sessionId: detail || null, revision: 0 });
         const requestedDigest = url.searchParams.get("snapshot");
-        requestedSnapshotDigests.set(
-          client,
-          requestedDigest && /^[0-9a-f]{64}$/u.test(requestedDigest)
-            ? requestedDigest
-            : null,
-        );
-        websocket.emit("connection", client, request);
+        const interest = { sessionId: detail || null, revision: 0 };
+        const peer: Peer = {
+          responsive: true,
+          interest,
+          backgroundStatuses: new Map(),
+          principal: notificationPrincipal,
+          requestedDigest:
+            requestedDigest && /^[0-9a-f]{64}$/u.test(requestedDigest)
+              ? requestedDigest
+              : undefined,
+        };
+        setDetailInterest(peer, interest);
+        startPeer(client, peer);
       });
     },
     close(): void {
@@ -642,7 +608,7 @@ export function createRuntimeEventSockets({
       pendingStreamBatch = null;
       runtime.off("event", publishRuntimeEvent);
       unsubscribeUpdateStatus();
-      for (const socket of sockets) {
+      for (const socket of peers.keys()) {
         forgetSocket(socket);
         socket.close(1001, "Server shutting down");
       }
