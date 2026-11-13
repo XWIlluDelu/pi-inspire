@@ -9,6 +9,7 @@ export interface InstanceState {
   token: string;
   startedAt: string;
   processStartTime: string;
+  /** Compatibility marker for the signed instance control protocol. */
   durableWorkerRelease: true;
   systemdInvocationId?: string;
 }
@@ -42,11 +43,10 @@ export function removeInstanceState(
   owner: InstanceState,
 ): Promise<void>;
 export function consumeStopRequest(path: string): Promise<boolean>;
-export function requestInstanceShutdown(path:string,state:InstanceState,timeoutMs?:number,scope?:"host-only"):Promise<string>;
-export function completeInstanceShutdown(path:string,state:InstanceState,clean:boolean,requestNonce?:string):Promise<void>;
-export function refuseInstanceShutdown(path:string,state:InstanceState,requestNonce:string):Promise<void>;
+export function requestInstanceShutdown(path:string,state:InstanceState,timeoutMs?:number):Promise<void>;
+export function completeInstanceShutdown(path:string,state:InstanceState,clean:boolean):Promise<void>;
 export function instanceShutdownRequested(path:string,state:InstanceState):Promise<boolean>;
-export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:(request:{nonce:string;scope?:"host-only"})=>Promise<void | false>):()=>void;
+export function watchInstanceShutdown(path:string,state:InstanceState,onShutdown:()=>Promise<void>):()=>void;
 export function inspectInstance(
   path: string,
   expected: ExpectedInstance,
@@ -57,7 +57,6 @@ export function stopManagedInstance(
   expected: ExpectedInstance,
   options?: {
     timeoutMs?: number;
-    scopedOwner?: InstanceState;
   },
 ): Promise<StopResult>;
 export function portAvailable(host: string, port: number): Promise<boolean>;

@@ -5,7 +5,7 @@
 - **Restart all** closes current-user Pi sessions before restarting Inspire and project terminals.
   Herdr Pi are included when enhancement is active and preserved otherwise.
 - `inspire restart --all` uses the same scope. The previous terminal-service-only scope is now
-  `inspire restart --terminals`; `restart` and `restart --host-only` keep their existing behavior.
+  `inspire restart --terminals`.
 
 ## 0.7.0 — 2026-11-09
 
@@ -48,8 +48,6 @@ Changes since [v0.6.5](https://github.com/XWIlluDelu/pi-inspire/tree/v0.6.5).
 - Host settings offer **Restart Host**, which reloads taken-over Pi and keeps project terminals
   open, and **Restart all**, which also restarts the installed Linux terminal service and closes
   its project terminals. The browser tracks a submitted restart across reconnects.
-- `inspire restart --host-only` keeps every Pi process and its running work. Inspire rediscovers
-  its former workers with **Take over**, including their pending browser questions.
 - Inspire finds Pi installed through supported version and package managers and preserves native
   OAuth model defaults and MCP project trust. The provider chooser keeps its initial focus and
   position in the settings panel.

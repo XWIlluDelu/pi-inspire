@@ -23,7 +23,7 @@ connect remotely to the same Host.
 - **Native Pi controls:** model/thinking selection, saved defaults/common models, provider configuration/login, direct shell input, compaction, and HTML/JSONL export.
 - **Inspectable activity:** live tool output, native and customizable tool cards, and independent Thinking/tool detail settings. Adaptive mode shows current work and compacts completed activity.
 - **Files and Changes:** browse the workspace, inspect Git diffs, and preview images, Markdown, notebooks, HTML, PDF, source, audio, and video beside the conversation.
-- **Persistent terminals:** project-scoped shell tabs survive browser disconnects and Host-only restarts.
+- **Persistent terminals:** project-scoped shell tabs survive browser disconnects and ordinary Inspire restarts.
 - **Desktop and narrow layouts:** resizable panes, a command palette, keyboard shortcuts, and Wisteria, Hydrangea, Lycoris, Chimonanthus, Jade, Amber and Carbon & Silicon palettes, each in light and dark.
 
 <table>

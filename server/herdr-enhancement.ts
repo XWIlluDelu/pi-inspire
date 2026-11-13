@@ -52,7 +52,6 @@ export class HerdrEnhancement {
   private recoveryIssue: string | undefined;
   private scopeCheck: Promise<void> | null = null;
   private closed = false;
-  private readonly transports = new Set<HerdrRpcTransport>();
   private readonly diagnostics: DiagnosticLogger;
 
   constructor(private readonly options: HerdrEnhancementOptions) {
@@ -192,7 +191,6 @@ export class HerdrEnhancement {
           label: "Inspire Pi",
           assertScopesAvailable: () => this.checkWorkerScopes(),
         });
-        this.transports.add(transport);
         return transport;
       },
     });
@@ -202,7 +200,6 @@ export class HerdrEnhancement {
     this.projections.set(rpc, projection);
     const dispose = () => {
       this.projections.delete(rpc);
-      if (transport) this.transports.delete(transport);
       rpc.off("exit", dispose);
       rpc.off("stopped", dispose);
       void projection.dispose();
@@ -214,27 +211,6 @@ export class HerdrEnhancement {
 
   get enhancedWorkersEnabled(): boolean {
     return this.options.enabled;
-  }
-
-  get needsOwnershipRelease(): boolean {
-    return this.transports.size > 0;
-  }
-
-  async prepareOwnershipRelease(): Promise<void> {
-    const transports = [...this.transports];
-    const leases = transports.map((worker) => worker.leaseForRelease());
-    const { promise: pending, resolve: finish } = Promise.withResolvers<void>();
-    for (const transport of transports) transport.holdForRelease(pending);
-    let released = false;
-    try {
-      await this.options.registry.release(leases, () => {
-        for (const transport of transports) transport.leaseForRelease();
-      });
-      released = true;
-    } finally {
-      for (const transport of transports) transport.finishRelease(released);
-      finish();
-    }
   }
 
   updateWorkerStatus(rpc: PiRpcProcess, status: RuntimeWorkerStatus): void {

@@ -27,35 +27,6 @@ describe("maintenance restart admission", () => {
     return schedulingRuntime({ sessions: [] }).runtime;
   }
 
-  it.each(["committed", "released"])(
-    "retains busy workers only for a committed Host-only restart (%s)",
-    async (phase) => {
-      const detach = vi.fn(async () => {});
-      const { runtime, workers } = schedulingRuntime({
-        configure: (worker) => Object.assign(worker, { detach }),
-      });
-      await runtime.openSession("a");
-      await waitForReady(runtime);
-      workers[0]!.emit("event", { type: "agent_start" });
-      // Running work does not block a restart that preserves it.
-      expect(runtime.reserveMaintenanceRestart(false, true, false).kind).toBe(
-        "busy",
-      );
-      const lease = runtime.reserveMaintenanceRestart(false, false, true);
-      if (lease.kind !== "ready") throw new Error("Expected a Host-only lease");
-      expect(runtime.commitMaintenanceRestart(lease.leaseId).kind).toBe(
-        "committed",
-      );
-      if (phase === "released")
-        expect(runtime.releaseMaintenanceRestart(lease.leaseId).kind).toBe(
-          "released",
-        );
-      await runtime.close();
-      expect(detach).toHaveBeenCalledTimes(phase === "committed" ? 1 : 0);
-      expect(workers[0]!.stops).toBe(phase === "released" ? 1 : 0);
-    },
-  );
-
   it.each(["completed", "unconfirmed"] as const)(
     "fences a failed startup until its worker retirement is %s",
     async (retirement) => {

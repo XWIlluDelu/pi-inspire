@@ -153,9 +153,7 @@ Limits of attaching to another Pi:
 - Input queued in that Pi is not listed in Inspire's Pending; Pi has no public queue interface.
 - Stop interrupts agent work. Run Pi slash commands and start or stop terminal shell commands
   from the attached Pi's own interface.
-- A terminal Pi's native dialogs are answered there. Inspire-owned RPC workers preserved by
-  `inspire restart --host-only` recover their pending questions in the browser after **Take over**.
-  Select, confirm, input and editor answers continue through the original worker's RPC channel.
+- Answer a terminal Pi's native dialogs in its terminal.
 - A prompt receipt requires evidence that Pi started processing that input. If Pi queues or
   handles input without observable admission, or if the receipt is lost, Inspire retains the draft
   and checks the original receipt on retry. Stop requests agent interruption and reports an
@@ -167,14 +165,12 @@ leaf, activity, model, process identity, endpoint and token) to `pi-attach-contr
 `$XDG_RUNTIME_DIR` (else `~/.cache`), `~/Library/Caches` on macOS or `%LOCALAPPDATA%` on Windows.
 The endpoint is a private local socket (a named pipe on Windows). A client sends one JSON line,
 `{"token": …, "op": …}`, and reads one reply. Operations are `state`, `prompt`, `abort`,
-`rename`, `models`, `set_model`, `set_thinking`, `shutdown` and
-`ui_response` (for a retained RPC UI channel). Requests can include `sessionFile` and
+`rename`, `models`, `set_model`, `set_thinking` and `shutdown`. Requests can include `sessionFile` and
 `expectedLeafId`; input and Stop reject a changed session or a live position outside the expected
 branch. Session deletion uses `shutdown` across all discovered branches, then waits for exit.
 `PI_ATTACH_CONTROL=0` disables the extension for one process. `PI_ATTACH_CONTROL_TAG` adds a
-client label to the record: Inspire loads attach-control into its own workers with their worker
-tag, ignores those records while it owns the workers, and finds them again like any other Pi after
-`inspire restart --host-only`.
+client label to the record. Inspire uses worker tags to distinguish its own workers from other Pi
+processes.
 
 ## Try the native UI example
 

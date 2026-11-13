@@ -223,7 +223,6 @@ export type AttachControlOperation =
     }
   | { op: "abort" }
   | { op: "shutdown" }
-  | { op: "ui_response"; response: Record<string, unknown> }
   | { op: "rename"; name: string }
   | { op: "models" }
   | { op: "set_model"; provider: string; modelId: string }
@@ -244,8 +243,6 @@ export interface AttachControlState {
   activity: AttachControlActivity;
   taskRuns: TaskRuns;
   modelSelection: ModelSelection;
-  /** Pending standard RPC dialogs, when the launcher retains their channel. */
-  uiRequests?: Record<string, unknown>[];
 }
 
 export type AttachControlResponse =
@@ -464,37 +461,6 @@ export default function attachControl(pi: ExtensionAPI) {
     !ownerParent || ownerParent === String(process.ppid)
       ? process.env.PI_ATTACH_CONTROL_TAG
       : undefined;
-  // Optional launcher-side relay for a Pi started in native RPC mode. TUI
-  // instances keep their ordinary terminal dialogs.
-  const rpcUi = (() => {
-    try {
-      const value = JSON.parse(process.env.PI_ATTACH_CONTROL_RPC_UI ?? "null");
-      // Child tools may launch their own Pi with inherited environment. Only
-      // the launcher's direct child can expose this RPC question channel.
-      return value &&
-        value.parentPid === process.ppid &&
-        typeof value.endpoint === "string" &&
-        typeof value.token === "string"
-        ? (value as { endpoint: string; token: string })
-        : null;
-    } catch {
-      return null;
-    }
-  })();
-  const relayUi = async (operation: AttachControlOperation) => {
-    if (!rpcUi)
-      throw new AttachControlError(
-        "UNSUPPORTED",
-        "This Pi has no retained RPC UI channel.",
-      );
-    const result = await requestAttachControl<
-      | { ok: true; requests?: Record<string, unknown>[] }
-      | { ok: false; error: string; code: string }
-    >(rpcUi.endpoint, { ...operation, token: rpcUi.token });
-    if (!result.ok) throw new AttachControlError(result.code, result.error);
-    return result.requests ?? [];
-  };
-
   const selection = (ctx: ExtensionContext): ModelSelection => ({
     model: ctx.model ? modelOption(ctx.model) : null,
     thinkingLevel: pi.getThinkingLevel(),
@@ -624,14 +590,8 @@ export default function attachControl(pi: ExtensionAPI) {
     };
     assertBranch();
     let models: ModelOption[] | undefined;
-    let uiRequests: Record<string, unknown>[] | undefined;
     switch (request.op) {
       case "state":
-        if (rpcUi) uiRequests = await relayUi({ op: "state" });
-        break;
-      case "ui_response":
-        await relayUi(request);
-        uiRequests = await relayUi({ op: "state" });
         break;
       case "prompt": {
         const epoch = promptEpoch;
@@ -817,10 +777,7 @@ export default function attachControl(pi: ExtensionAPI) {
     void publish();
     return {
       ok: true,
-      state: {
-        ...currentState(context),
-        ...(uiRequests ? { uiRequests } : {}),
-      },
+      state: currentState(context),
       ...(models ? { models } : {}),
       ...(request.op === "prompt" || request.op === "abort"
         ? { witnessed: true as const }

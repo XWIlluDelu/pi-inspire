@@ -70,7 +70,7 @@ export class HostRestartClient {
           !UUID.test(value.hostId) ||
           typeof value.operationId !== "string" ||
           !UUID.test(value.operationId) ||
-          !["host", "host-only", "all", "all-pi"].includes(value.scope) ||
+          !["host", "all", "all-pi"].includes(value.scope) ||
           (value.scope === "all-pi" && value.interruptWork !== true) ||
           ("interruptWork" in value && value.interruptWork !== true) ||
           ("skipAttachedStop" in value && value.skipAttachedStop !== true)

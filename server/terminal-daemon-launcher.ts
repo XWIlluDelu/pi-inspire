@@ -122,7 +122,7 @@ function terminalConnectionFailure(
       : "The terminal service is unavailable; no endpoint accepted the connection. ") +
       "Existing terminal processes were left running. " +
       `Run ${prefix} terminal status and inspect the owning service before deciding whether replacement is needed. ` +
-      "Replacing that daemon ends its live terminals; a Host-only restart does not replace it.\n" +
+      "Replacing that daemon ends its live terminals; an ordinary Inspire restart keeps it running.\n" +
       `Connection check: ${detail}`,
   );
 }

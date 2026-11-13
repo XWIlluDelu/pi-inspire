@@ -203,7 +203,7 @@ async function readControl(path, state, kind, allowExpired = false) {
       if (
         typeof value.nonce !== "string" ||
         !shutdownNonce.test(value.nonce) ||
-        (value.scope !== undefined && value.scope !== "host-only") ||
+        value.scope !== undefined ||
         !Number.isSafeInteger(value.expiresAt) ||
         (!allowExpired &&
           (value.expiresAt < Date.now() ||
@@ -216,24 +216,14 @@ async function readControl(path, state, kind, allowExpired = false) {
         target: value.target,
         nonce: value.nonce,
         expiresAt: value.expiresAt,
-        ...(value.scope === undefined ? {} : { scope: value.scope }),
       };
     } else {
-      if (
-        typeof value.clean !== "boolean" ||
-        (value.requestNonce !== undefined &&
-          (typeof value.requestNonce !== "string" ||
-            !shutdownNonce.test(value.requestNonce)))
-      )
-        return null;
+      if (typeof value.clean !== "boolean") return null;
       payload = {
         version: 1,
         kind,
         target: value.target,
         clean: value.clean,
-        ...(value.requestNonce === undefined
-          ? {}
-          : { requestNonce: value.requestNonce }),
       };
     }
     if (
@@ -252,45 +242,28 @@ async function readControl(path, state, kind, allowExpired = false) {
   }
 }
 
-export async function requestInstanceShutdown(path, state, timeoutMs = 15_000, scope) {
-  if (scope !== undefined && scope !== "host-only")
-    throw new Error("The Host does not support this shutdown scope.");
-  const nonce = randomUUID();
+export async function requestInstanceShutdown(path, state, timeoutMs = 15_000) {
   await writeControl(path + ".shutdown-request", state, {
     version: 1,
     kind: "request",
     target: shutdownTarget(state),
-    nonce,
+    nonce: randomUUID(),
     expiresAt: Date.now() + Math.min(timeoutMs, 60_000),
-    ...(scope === undefined ? {} : { scope }),
   });
-  return nonce;
 }
 
-function writeShutdownResult(path, state, clean, requestNonce) {
-  return writeControl(path + ".shutdown-result", state, {
+/** Publish the result after cleanup and before the Host exits. */
+export async function completeInstanceShutdown(path, state, clean) {
+  await writeControl(path + ".shutdown-result", state, {
     version: 1,
     kind: "result",
     target: shutdownTarget(state),
     clean,
-    ...(requestNonce === undefined ? {} : { requestNonce }),
   });
-}
-
-/** Called only after application/worker cleanup, before state removal and exit.
- * A signed failure must not authorize a replacement even if the Host exits. */
-export async function completeInstanceShutdown(path, state, clean, requestNonce) {
-  await writeShutdownResult(path, state, clean, requestNonce);
   // This incarnation still owns the launcher lease; no successor can have
   // published a request yet. Leave unknown/foreign files alone.
   if (await readControl(path + ".shutdown-request", state, "request", true))
     await rm(path + ".shutdown-request", { force: true }).catch(() => {});
-}
-
-/** The same Host remains live and may receive a fresh request. Leave the
- * request mailbox untouched so a concurrent writer cannot lose its request. */
-export function refuseInstanceShutdown(path, state, requestNonce) {
-  return writeShutdownResult(path, state, false, requestNonce);
 }
 
 export async function instanceShutdownRequested(path, state) {
@@ -302,19 +275,15 @@ export async function instanceShutdownRequested(path, state) {
 export function watchInstanceShutdown(path, state, onShutdown) {
   let closed = false;
   let pending = false;
-  let lastRequestNonce;
   const poll = async () => {
     if (closed || pending) return;
     pending = true;
     try {
       const request = await readControl(path + ".shutdown-request", state, "request");
-      if (request && request.nonce !== lastRequestNonce) {
-        if (closed) return;
-        lastRequestNonce = request.nonce;
-        if ((await onShutdown(request)) !== false) {
-          closed = true;
-          clearInterval(timer);
-        }
+      if (request && !closed) {
+        closed = true;
+        clearInterval(timer);
+        await onShutdown();
       }
     } finally {
       pending = false;
@@ -506,7 +475,7 @@ export async function inspectInstance(path, expected, options = {}) {
     : { kind: "stale" };
 }
 
-async function waitForProcessExit(path, state, timeoutMs, requestNonce) {
+async function waitForProcessExit(path, state, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let nextIdentityCheck = 0;
   while (Date.now() < deadline) {
@@ -529,11 +498,6 @@ async function waitForProcessExit(path, state, timeoutMs, requestNonce) {
         // wait for the PID or its exact process-birth identity to disappear.
       }
     }
-    if (requestNonce) {
-      const result = await readControl(path + ".shutdown-result", state, "result");
-      if (result?.requestNonce === requestNonce && !result.clean)
-        return "failed";
-    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return "timeout";
@@ -544,14 +508,6 @@ export async function stopManagedInstance(path, expected, options = {}) {
   if (!state) return { kind: "absent" };
   if (!(await expectedState(state, expected))) return { kind: "stale" };
 
-  const scoped = options.scopedOwner;
-  if (
-    scoped &&
-    (instanceIdentity(state) !== instanceIdentity(scoped) ||
-      state.token !== scoped.token)
-  )
-    return { kind: "unavailable" };
-
   if (!(await instanceProcessMayBeLive(state))) {
     await removeInstanceState(path, state);
     return { kind: "stale" };
@@ -559,23 +515,11 @@ export async function stopManagedInstance(path, expected, options = {}) {
   if (!supportsInstanceControl(state)) return { kind: "unavailable" };
 
   const timeoutMs = options.timeoutMs ?? 15_000;
-  const requestNonce = await requestInstanceShutdown(
-    path,
-    state,
-    timeoutMs,
-    scoped ? "host-only" : undefined,
-  );
-  const exit = await waitForProcessExit(
-    path,
-    state,
-    timeoutMs,
-    scoped ? requestNonce : undefined,
-  );
-  if (exit === "failed") return { kind: "cleanup-failed", state };
+  await requestInstanceShutdown(path, state, timeoutMs);
+  const exit = await waitForProcessExit(path, state, timeoutMs);
   if (exit === "timeout") return { kind: "timeout", state };
   const result = await readControl(path + ".shutdown-result", state, "result");
-  if (!result || (scoped && result.requestNonce !== requestNonce))
-    return { kind: "unavailable" };
+  if (!result) return { kind: "unavailable" };
   return { kind: result.clean ? "stopped" : "cleanup-failed", state };
 }
 

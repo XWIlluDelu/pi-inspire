@@ -29,9 +29,7 @@ Inspire and the installed project-terminal service.
   mode selection, launcher ordering/failure and systemd controls; 36 portable cases for launcher
   handoff, process cleanup and caller ancestry. Native cleanup tests enumerate only disposable
   fixtures. Three Chromium restart cases cover confirmation/mode and ordinary busy-restart recovery.
-- Typecheck, Knip, frontend build and compiled release build passed. The production Host was
-  activated with `restart --host-only`; the two checked pre-existing workspace Pi processes remain
-  running. Signed local control confirms the new effective-mode response; service inspection confirms
-  restart availability.
+- Typecheck, Knip, frontend build and compiled release build passed. Signed local control confirms
+  the new effective-mode response. Service inspection confirms restart availability.
 - Live global shutdown has not been invoked: it would end the implementation session and other
   user sessions. Destructive behavior is covered with injected adapters and owned disposable Pi.

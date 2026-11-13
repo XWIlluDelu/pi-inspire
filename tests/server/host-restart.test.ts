@@ -13,10 +13,7 @@ import type {
   MaintenanceRestartTransition,
 } from "../../server/runtime.js";
 
-function fixture(
-  overrides: Partial<HostRestartBackend> = {},
-  canPreserveWorkers?: () => boolean,
-) {
+function fixture(overrides: Partial<HostRestartBackend> = {}) {
   const runtime = {
     reserveMaintenanceRestart: vi.fn<
       (interruptWork?: boolean) => MaintenanceRestartDecision
@@ -41,11 +38,7 @@ function fixture(
     ),
     ...overrides,
   };
-  const controller = new HostRestartController(
-    runtime,
-    backend,
-    canPreserveWorkers,
-  );
+  const controller = new HostRestartController(runtime, backend);
   return { controller, runtime, backend };
 }
 async function intent(controller: HostRestartController) {
@@ -57,11 +50,10 @@ async function intent(controller: HostRestartController) {
 }
 
 describe("manual Host restart ownership", () => {
-  it.each(["host", "all", "host-only"] as const)(
+  it.each(["host", "all"] as const)(
     "%s restart sends no command to taken-over Pi before submission",
     async (scope) => {
       const f = fixture();
-      const preserveWork = scope === "host-only";
       f.controller.start({
         hostId: (await f.controller.status()).hostId,
         operationId: randomUUID(),
@@ -74,13 +66,10 @@ describe("manual Host restart ownership", () => {
       );
       expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
         false,
-        !preserveWork,
-        preserveWork,
+        true,
       );
       expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
-      expect(f.runtime.checkAttachedRestartWork).toHaveBeenCalledTimes(
-        preserveWork ? 0 : 1,
-      );
+      expect(f.runtime.checkAttachedRestartWork).toHaveBeenCalledOnce();
       expect(f.backend.request).toHaveBeenCalledWith(
         scope,
         expect.any(Function),
@@ -106,7 +95,6 @@ describe("manual Host restart ownership", () => {
     expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
       true,
       true,
-      false,
     );
     expect(f.runtime.stopAttachedPiWork).not.toHaveBeenCalled();
     expect(f.runtime.checkAttachedRestartWork).not.toHaveBeenCalled();
@@ -136,21 +124,6 @@ describe("manual Host restart ownership", () => {
     expect(f.backend.request).toHaveBeenCalledOnce();
     expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");
     expect(f.runtime.releaseMaintenanceRestart).not.toHaveBeenCalled();
-  });
-
-  it("refuses browser preservation when enhanced Pi must release ownership before shutdown", async () => {
-    const f = fixture({}, () => false);
-    f.controller.start({ ...(await intent(f.controller)), scope: "host-only" });
-    await vi.waitFor(async () =>
-      expect((await f.controller.status()).operation).toMatchObject({
-        phase: "rejected",
-        error: expect.stringContaining("inspire restart --host-only"),
-      }),
-    );
-    expect(f.runtime.commitMaintenanceRestart).not.toHaveBeenCalled();
-    expect(f.runtime.releaseMaintenanceRestart).toHaveBeenCalledExactlyOnceWith(
-      "lease",
-    );
   });
 
   it("refuses ordinary busy restart, then explicitly authorizes interruption after fresh preparation", async () => {
@@ -185,7 +158,6 @@ describe("manual Host restart ownership", () => {
     expect(f.runtime.reserveMaintenanceRestart).toHaveBeenCalledWith(
       true,
       true,
-      false,
     );
     expect(f.runtime.stopAttachedPiWork).toHaveBeenCalledOnce();
     expect(f.runtime.commitMaintenanceRestart).toHaveBeenCalledWith("lease");

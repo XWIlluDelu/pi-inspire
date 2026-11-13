@@ -367,24 +367,6 @@ async function inspectHostInvocation(options) {
   return result.code === 0 ? properties(result.stdout) : null;
 }
 
-/** The Host writes its shutdown receipt before its launcher exits. Wait for
- * systemd to finish that invocation so `start` cannot no-op on the old unit. */
-export async function waitForHostServiceExit(invocationId, options = {}) {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const value = await inspectHostInvocation(options);
-    if (!value?.ActiveState) return false;
-    if (
-      value.InvocationID !== invocationId ||
-      value.ActiveState === "inactive" ||
-      value.ActiveState === "failed"
-    )
-      return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return false;
-}
-
 export async function requestBrowserRestart(root, all, commit, options = {}) {
   const service = await inspectBrowserRestart(root, options);
   if (service.kind !== "managed") return { issued: false, code: 1 };

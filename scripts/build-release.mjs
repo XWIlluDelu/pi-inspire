@@ -22,8 +22,6 @@ for (const supportModule of [
   "instance-control.mjs",
   "launcher-restart.mjs",
   "npm-command.mjs",
-  "pi-worker-keeper.mjs",
-  "pi-rpc-ui-relay.mjs",
   "platform-paths.mjs",
   "platform-environment.mjs",
   "process-tree.mjs",

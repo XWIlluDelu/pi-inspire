@@ -337,15 +337,10 @@ describe("authenticated local Host shutdown", () => {
       expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
     },
   );
-  it("authenticates a private Host-only request and completes it once", async () => {
+  it("authenticates a private shutdown request and completes it once", async () => {
     const f = await shutdownFixture();
     const path = f.path + ".shutdown-request";
-    const nonce = await requestInstanceShutdown(
-      f.path,
-      f.state,
-      15_000,
-      "host-only",
-    );
+    await requestInstanceShutdown(f.path, f.state);
     const original = await readFile(path, "utf8");
     expect(Buffer.byteLength(original)).toBeLessThan(2048);
     expect(original).not.toContain(f.state.token);
@@ -353,22 +348,17 @@ describe("authenticated local Host shutdown", () => {
     if (process.platform !== "win32")
       expect((await stat(path)).mode & 0o777).toBe(0o600);
 
-    const { scope, ...unscoped } = JSON.parse(original);
-    expect(scope).toBe("host-only");
-    await writeFile(path, JSON.stringify(unscoped));
+    const request = JSON.parse(original);
+    await writeFile(path, JSON.stringify({ ...request, scope: "host-only" }));
     expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
     await writeFile(path, original);
     expect(await instanceShutdownRequested(f.path, f.state)).toBe(true);
 
     const shutdown = vi.fn(async () => {
-      await completeInstanceShutdown(f.path, f.state, true, nonce);
+      await completeInstanceShutdown(f.path, f.state, true);
     });
     controls.push(watchInstanceShutdown(f.path, f.state, shutdown));
-    await vi.waitFor(() =>
-      expect(shutdown).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ nonce, scope: "host-only" }),
-      ),
-    );
+    await vi.waitFor(() => expect(shutdown).toHaveBeenCalledOnce());
     await shutdown.mock.results[0]!.value;
     expect(await instanceShutdownRequested(f.path, f.state)).toBe(false);
     expect(await readFile(f.path + ".shutdown-result", "utf8")).not.toContain(

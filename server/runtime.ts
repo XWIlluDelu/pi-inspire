@@ -187,8 +187,6 @@ const BRANCH_EXTENSION_PATH = fileURLToPath(
     import.meta.url,
   ),
 );
-/** Workers report themselves through attach-control too, so a worker kept
- * across a Host-only restart is found again like any other live Pi. */
 const ATTACH_CONTROL_PATH = fileURLToPath(
   new URL(
     fileURLToPath(import.meta.url).endsWith(".ts")
@@ -420,8 +418,6 @@ export class RuntimeController extends EventEmitter {
         },
         followLeaf: (slot, leafId) => this.followAttachedLeaf(slot, leafId),
         renewView: (slot) => this.renewView(slot),
-        syncUi: (slot, requests, owner) =>
-          this.extensionUi.synchronize(slot, requests, owner),
         assertUsable: (slot) => {
           if (this.deletions.isDeleting(slot.id))
             throw requestError("That session is being deleted", 409);
@@ -470,7 +466,6 @@ export class RuntimeController extends EventEmitter {
     phase: "preparing" | "committed";
     interruptWork: boolean;
     includeAttached: boolean;
-    preserveWork: boolean;
   } | null = null;
   private maintenanceRestartTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
@@ -569,7 +564,6 @@ export class RuntimeController extends EventEmitter {
         this.extensionResponseSlot(slot, operation),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
       throwIfConflicted: (slot) => this.throwIfConflicted(slot),
-      externalOwner: (slot) => this.externalSessions?.connection(slot),
       failUnknown: (slot, error) => this.failUnknownRpcOutcome(slot, error),
       emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
       scheduleIdleWorkerEviction: () => this.scheduleIdleWorkerEviction(),
@@ -725,17 +719,13 @@ export class RuntimeController extends EventEmitter {
   reserveMaintenanceRestart(
     interruptWork = false,
     includeAttached = false,
-    preserveWork = false,
   ): MaintenanceRestartDecision {
     this.assertNotClosing();
     this.expireMaintenanceRestart();
     if (this.maintenanceRestart !== null)
       return { kind: "busy", reason: "restart-pending" };
     if (!interruptWork) {
-      const reason = this.maintenanceWorkConflict(
-        includeAttached,
-        preserveWork,
-      );
+      const reason = this.maintenanceWorkConflict(includeAttached);
       if (reason) return { kind: "busy", reason };
     }
 
@@ -747,7 +737,6 @@ export class RuntimeController extends EventEmitter {
       phase: "preparing",
       interruptWork,
       includeAttached,
-      preserveWork,
     };
     this.maintenanceRestartTimer = setTimeout(
       () => this.expireMaintenanceRestart(),
@@ -835,10 +824,7 @@ export class RuntimeController extends EventEmitter {
     if (lease.phase !== "preparing")
       return { kind: "skipped", reason: "lease-already-committed" };
     if (!lease.interruptWork) {
-      const reason = this.maintenanceWorkConflict(
-        lease.includeAttached,
-        lease.preserveWork,
-      );
+      const reason = this.maintenanceWorkConflict(lease.includeAttached);
       if (reason) return { kind: "skipped", reason };
     }
     // No await between validation and closing admission indefinitely. A delayed
@@ -886,11 +872,9 @@ export class RuntimeController extends EventEmitter {
 
   private maintenanceWorkConflict(
     includeAttached: boolean,
-    preserveWork: boolean,
   ): RestartWorkConflict | undefined {
-    // A preserving restart still waits for Host operations in flight.
     if (
-      (!preserveWork && this.hasActiveRuntimeWork()) ||
+      this.hasActiveRuntimeWork() ||
       (includeAttached && this.hasActiveAttachedWork())
     )
       return "active-work";
@@ -5683,12 +5667,8 @@ export class RuntimeController extends EventEmitter {
     return this.reads.resourceContext(sessionId);
   }
 
-  close(preserveWorkers = false): Promise<void> {
+  close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
-    const keepWorkers =
-      preserveWorkers ||
-      (this.maintenanceRestart?.phase === "committed" &&
-        this.maintenanceRestart.preserveWork);
     if (this.maintenanceRestartTimer !== null)
       clearTimeout(this.maintenanceRestartTimer);
     this.maintenanceRestartTimer = null;
@@ -5699,14 +5679,11 @@ export class RuntimeController extends EventEmitter {
     this.externalRecoveryTimer = null;
     this.externalSessions?.close();
     this.selectionSequence += 1;
-    this.closePromise = this.closeInside(keepWorkers);
+    this.closePromise = this.closeInside();
     return this.closePromise;
   }
 
-  private stopSlotsForClose(
-    slots: Iterable<RuntimeSlot>,
-    preserveWorkers: boolean,
-  ): Promise<unknown>[] {
+  private stopSlotsForClose(slots: Iterable<RuntimeSlot>): Promise<unknown>[] {
     const stopping: Promise<unknown>[] = [];
     for (const slot of slots) {
       this.extensionUi.clear(slot, "closed");
@@ -5723,15 +5700,14 @@ export class RuntimeController extends EventEmitter {
       slot.ready = false;
       if (rpc) {
         this.workerLifecycle.unbind(slot);
-        // A Host-only restart leaves the worker and its work running.
-        stopping.push((preserveWorkers ? rpc.detach() : null) ?? rpc.stop());
+        stopping.push(rpc.stop());
       }
       if (slot.stopping) stopping.push(slot.stopping);
     }
     return stopping;
   }
 
-  private async closeInside(preserveWorkers: boolean): Promise<void> {
+  private async closeInside(): Promise<void> {
     // Provisional workers are registered before startup's first await, so the
     // same shutdown ownership covers them and established slots.
     const provisional = [...this.provisionalSlots.values()];
@@ -5739,9 +5715,7 @@ export class RuntimeController extends EventEmitter {
       ...this.slots.values(),
       ...provisional.map((entry) => entry.slot),
     ]);
-    const stopping = Promise.allSettled(
-      this.stopSlotsForClose(ownedSlots, preserveWorkers),
-    );
+    const stopping = Promise.allSettled(this.stopSlotsForClose(ownedSlots));
     await Promise.allSettled([
       ...this.loadingSlots.values(),
       ...this.loadingPaths.values(),
@@ -5769,7 +5743,7 @@ export class RuntimeController extends EventEmitter {
       ...[...this.provisionalSlots.values()].map((entry) => entry.slot),
     ]);
     const finalStopping = Promise.allSettled(
-      this.stopSlotsForClose(finalSlots, preserveWorkers),
+      this.stopSlotsForClose(finalSlots),
     );
     await Promise.allSettled([
       finalStopping,

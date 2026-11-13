@@ -659,49 +659,6 @@ async function prepareRestart() {
     );
 }
 
-async function restartHostOnly(context, serviceStatus) {
-  const owner = await inspect(context);
-  if (owner.kind !== "healthy") {
-    if (owner.kind === "unavailable" || serviceStatus === 0)
-      throw new Error(
-        "Cannot verify the running Host for a Host-only restart.",
-      );
-    return startHost(serviceStatus === 5);
-  }
-  const invocationId = owner.state.systemdInvocationId;
-  const control =
-    serviceStatus === 0
-      ? await import(pathToFileURL(hostServiceController).href)
-      : null;
-  if (
-    serviceStatus === 5 ||
-    (control &&
-      (await control.inspectBrowserRestart(root, { invocationId })).kind !==
-        "managed")
-  )
-    throw new Error(
-      "The running Host does not match the requested service. The Host was not stopped.",
-    );
-
-  const stopped = await stopManagedInstance(
-    context.statePath,
-    expected(context),
-    { scopedOwner: owner.state },
-  );
-  if (stopped.kind !== "stopped")
-    throw new Error(
-      "The Host did not confirm a clean Host-only shutdown. No replacement was started.",
-    );
-  if (control) {
-    if (!(await control.waitForHostServiceExit(invocationId)))
-      throw new Error(
-        "The old Host service did not finish stopping. No replacement was started.",
-      );
-    return (await manageHostService("start")).code;
-  }
-  return startHost(false);
-}
-
 async function restartHost(scope = "host") {
   const allPi = scope === "all-pi";
   const terminals = scope === "all" || allPi;
@@ -737,7 +694,6 @@ async function restartHost(scope = "host") {
   console.log("Preparing restart…");
   await prepareRestart();
   const context = instanceContext();
-  if (scope === "host-only") return restartHostOnly(context, inspected.code);
   const owner = await inspect(context);
   if (owner.kind === "unavailable")
     throw new Error("Cannot verify the running Host for restart.");
@@ -851,7 +807,7 @@ function requireLinuxService() {
 
 function printHelp() {
   console.log(
-    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --host-only  restart only Inspire; keep Pi work and terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
+    `Usage:\n  inspire                 start the configured service or local Host\n  inspire restart             restart Inspire and its Pi workers; keep terminals\n  inspire restart --terminals  also close project terminals (Linux services)\n  inspire restart --all        close Pi sessions and restart; include Herdr in enhanced mode (Linux services)\n  inspire stop            stop the service or local Host\n  inspire status          inspect the service or local Host\n  inspire token           show the verified Host token for manual pairing\n  inspire recover-session <folder>  restore a session recovery bundle\n  inspire terminal <status|stop|restart> [--force]  manage this instance\'s terminals\n  inspire dev             run Vite and the development Host\n  inspire build           build the source checkout\n  inspire connection <name> [action]\n  inspire --ssh-reverse [action]\n  inspire service [install-host|enable-host|disable-host|status-host]\n\nCore lifecycle commands support Linux, macOS, and Windows. System service\ncommands remain Linux-only.`,
   );
 }
 
@@ -872,13 +828,13 @@ async function main() {
     case "stop":
       return stopHost();
     case "restart":
-      if (args.length > 1 || (args.length === 1 && !["--all", "--host-only", "--terminals"].includes(args[0]))) {
-        console.error("Use: inspire restart [--all | --terminals | --host-only]");
+      if (args.length > 1 || (args.length === 1 && !["--all", "--terminals"].includes(args[0]))) {
+        console.error("Use: inspire restart [--all | --terminals]");
         return 64;
       }
       return restartHost(args[0] === "--all" ? "all-pi"
         : args[0] === "--terminals" ? "all"
-        : args[0] === "--host-only" ? "host-only" : "host");
+        : "host");
     case "recover-session": {
       if (args.length !== 1) {
         console.error("Use: inspire recover-session <bundle-folder>");

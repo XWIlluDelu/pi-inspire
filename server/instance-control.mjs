@@ -19,7 +19,7 @@ const actions = new Set([
 ]);
 const encodedSecret = /^[A-Za-z0-9_-]{43}$/u;
 
-// The managed control contract includes a shutdown that preserves Pi workers.
+// Keep the published marker for compatibility with running Hosts and launchers.
 export function supportsInstanceControl(state) {
   return state?.durableWorkerRelease === true;
 }

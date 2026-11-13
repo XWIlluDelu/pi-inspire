@@ -36,10 +36,6 @@ covers installed Pi discovery, and [[platform-compatibility]] holds the platform
   32-core Linux host, half the workers held the suite at 41–43 seconds and reduced queue pressure
   that had caused failures at short wait deadlines.
 
-- Herdr Host-only restart publishes a single durable ownership release before shutdown. Isolated
-  checks covered publication failure, a signed refusal with the old Host still running, and
-  recovery after the old Host exits while the released leases remain on disk.
-
 ## Remaining acceptance
 
 [[follow-notifications-2026-10-22]] owns Android and iOS/iPadOS push and same-Pi click-through

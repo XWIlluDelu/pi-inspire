@@ -1,5 +1,4 @@
 import { requestError } from "./request-error.js";
-import type { ExternalSessionConnection } from "./external-session.js";
 import {
   type ExtensionUiRequest,
   parsePendingExtensionUiRequest,
@@ -23,7 +22,6 @@ interface RuntimeExtensionUiHost {
   ): Promise<T>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   throwIfConflicted(slot: RuntimeSlot): void;
-  externalOwner(slot: RuntimeSlot): ExternalSessionConnection | undefined;
   failUnknown(
     slot: RuntimeSlot,
     error: PiRpcOutcomeUnknownError,
@@ -44,7 +42,7 @@ export class RuntimeExtensionUiController {
   add(
     slot: RuntimeSlot,
     value: unknown,
-    process: PiRpcProcess | ExternalSessionConnection,
+    process: PiRpcProcess,
   ): ExtensionUiRequest | null {
     const request = parsePendingExtensionUiRequest(value);
     if (!request) return null;
@@ -52,37 +50,6 @@ export class RuntimeExtensionUiController {
     slot.pendingExtensionUiOwners.set(request.id, process);
     this.scheduleExpiry(slot, request);
     return request;
-  }
-
-  /** Reconcile a retained RPC dialog snapshot without changing its deadlines.
-   * Answers remain bound to the exact attached instance, not just its session. */
-  synchronize(
-    slot: RuntimeSlot,
-    requests: Record<string, unknown>[],
-    owner: ExternalSessionConnection,
-  ): void {
-    const pending = new Set<string>();
-    for (const value of requests) {
-      const request = parsePendingExtensionUiRequest({
-        ...value,
-        sessionId: slot.id,
-      });
-      if (
-        !request ||
-        (request.expiresAt !== undefined && request.expiresAt <= Date.now())
-      )
-        continue;
-      pending.add(request.id);
-      if (slot.pendingExtensionUiOwners.get(request.id) === owner) continue;
-      this.add(slot, request, owner);
-      this.host.emitSlotEvent(slot, {
-        ...request,
-        type: "extension_ui_request",
-      });
-    }
-    for (const [id, current] of slot.pendingExtensionUiOwners)
-      if (current === owner && !pending.has(id))
-        this.remove(slot, id, "cleared");
   }
 
   clear(slot: RuntimeSlot, reason: ExtensionUiClearReason): void {
@@ -121,7 +88,7 @@ export class RuntimeExtensionUiController {
   private remove(
     slot: RuntimeSlot,
     id: string,
-    reason: "answered" | "expired" | "cleared",
+    reason: "answered" | "expired",
   ): boolean {
     if (!slot.pendingExtensionUiRequests.delete(id)) return false;
     slot.pendingExtensionUiOwners.delete(id);
@@ -196,15 +163,13 @@ export class RuntimeExtensionUiController {
         throw requestError("The extension request owner changed", 409);
       this.host.throwIfConflicted(slot);
       const request = slot.pendingExtensionUiRequests.get(requestId);
-      const process = slot.pendingExtensionUiOwners.get(requestId);
-      if (!request || !process)
+      const rpc = slot.pendingExtensionUiOwners.get(requestId);
+      if (!request || !rpc)
         throw requestError("The extension request is no longer pending", 409);
-      const rpc = "sendExtensionUiResponse" in process ? process : null;
       if (
         request.sessionId !== sessionId ||
-        (rpc
-          ? slot.process !== rpc || !slot.ready
-          : this.host.externalOwner(slot) !== process)
+        slot.process !== rpc ||
+        !slot.ready
       ) {
         throw requestError(
           "The extension request no longer belongs to this worker",
@@ -218,11 +183,6 @@ export class RuntimeExtensionUiController {
           "The extension request expired before the response",
           409,
         );
-      }
-      if (!rpc) {
-        await (process as ExternalSessionConnection).answerUi(wireResponse);
-        this.remove(slot, requestId, "answered");
-        return;
       }
       try {
         await rpc.sendExtensionUiResponse(wireResponse);

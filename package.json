@@ -61,7 +61,6 @@
       "server/terminal-control-entry.ts",
       "server/session-recovery-entry.ts",
       "server/herdr-worker-entry.ts",
-      "server/pi-worker-keeper.mjs",
       "server/restart-preflight.ts",
       "server/session-search-worker.ts",
       "server/model-metadata-worker.ts",
@@ -109,7 +108,6 @@
       "server/platform-environment.d.mts",
       "server/process-tree.d.mts",
       "server/pi-processes.d.mts",
-      "server/pi-rpc-ui-relay.d.mts",
       "server/launcher-restart.d.mts",
       "server/static-asset-cache.d.mts",
       "server/user-environment.d.mts"

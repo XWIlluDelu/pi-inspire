@@ -71,7 +71,6 @@ function nativeFixture() {
     abort: vi.fn(async () => {
       if (!("ended" in state)) state = { ...state, activity: "idle" };
     }),
-    answerUi: vi.fn(async () => {}),
     models: vi.fn(async () => ({
       model: null,
       thinkingLevel: "off" as const,
@@ -136,7 +135,6 @@ async function directAttachment(
       emit: vi.fn(),
       assertUsable: vi.fn(),
       released: vi.fn(),
-      syncUi: vi.fn(),
       corresponds: () => true,
       continues: () => true,
       followLeaf: vi.fn(),
@@ -237,8 +235,8 @@ describe("continue an externally owned Pi", () => {
     const controller = new HostRestartController(runtime, {
       inspect: async () => ({ host: true, all: true }),
       prepare: async () => {},
-      request: async (all, commit) => {
-        expect(all).toBe(true);
+      request: async (scope, commit) => {
+        expect(scope).toBe("all");
         const before = vi.mocked(f.native.read).mock.calls.length;
         if (startsAfterReservation) {
           // The TUI starts work after reservation while its last poll is idle.
@@ -272,10 +270,6 @@ describe("continue an externally owned Pi", () => {
       expect(dispatch).not.toHaveBeenCalled();
       expect(f.native.abort).not.toHaveBeenCalled();
       expect(events).not.toContain("agent_start");
-      const hostOnly = runtime.reserveMaintenanceRestart(false, false, true);
-      if (hostOnly.kind !== "ready")
-        throw new Error("Host-only restart blocked");
-      runtime.releaseMaintenanceRestart(hostOnly.leaseId);
       controller.start({
         hostId: (await controller.status()).hostId,
         operationId: "forced-before-poll",

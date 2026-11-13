@@ -51,11 +51,6 @@ interface ExternalSessionHost {
   released(slot: RuntimeSlot): void;
   followLeaf(slot: RuntimeSlot, leafId: string | null): void;
   renewView(slot: RuntimeSlot): void;
-  syncUi(
-    slot: RuntimeSlot,
-    requests: Record<string, unknown>[],
-    owner: ExternalSessionConnection,
-  ): void;
   /** Whether a leaf still continues this view's branch. */
   corresponds(slot: RuntimeSlot, leafId: string | null): boolean;
   /** A confirmed leaf at or after the selected position. */
@@ -351,7 +346,6 @@ export class RuntimeExternalSessions {
       priorState.taskRuns.instanceId !== state.taskRuns.instanceId;
     connection.state = state;
     this.host.followLeaf(slot, state.leafId);
-    this.host.syncUi(slot, state.uiRequests ?? [], connection.native);
     if (selectionChanged) connection.selectionRevision++;
     if (force || receiverChanged) {
       slot.availableModels = null;
@@ -670,7 +664,6 @@ export class RuntimeExternalSessions {
     const connection = this.connections.get(slot);
     if (!connection) return;
     this.connections.delete(slot);
-    this.host.syncUi(slot, [], connection.native);
     clearTimeout(connection.timer);
   }
 

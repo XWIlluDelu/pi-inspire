@@ -13,7 +13,6 @@ import {
   type RunState,
   type SessionReadOnlyReason,
 } from "../shared/contracts.js";
-import type { ExternalSessionConnection } from "./external-session.js";
 import type { PiRpcProcess } from "./pi-rpc.js";
 import type { NativeBashExecution } from "./runtime-bash.js";
 import type { PendingImageRecovery } from "./runtime-pending-images.js";
@@ -222,10 +221,7 @@ export interface RuntimeSlot {
   summarizationRetry: RetryInfo | null;
   attention: CompletionAttention | null;
   pendingExtensionUiRequests: Map<string, ExtensionUiRequest>;
-  pendingExtensionUiOwners: Map<
-    string,
-    PiRpcProcess | ExternalSessionConnection
-  >;
+  pendingExtensionUiOwners: Map<string, PiRpcProcess>;
   pendingExtensionUiTimers: Map<string, ReturnType<typeof setTimeout>>;
   extensionResponseQueue: RuntimeOperationQueue;
   pendingQueues: PendingQueues;

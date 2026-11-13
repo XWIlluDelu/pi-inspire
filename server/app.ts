@@ -574,7 +574,7 @@ export function createInspireServer(deps: AppDependencies): {
   /** Process-lifetime prompt-delivery authority, also advertised by bootstrap. */
   authorityId: string;
   launchUrl: (origin: string) => string;
-  close: (preserveWorkers?: boolean) => Promise<void>;
+  close: () => Promise<void>;
 } {
   const app = express();
   const generatedExports = new GeneratedExportStore();
@@ -953,7 +953,7 @@ export function createInspireServer(deps: AppDependencies): {
     .object({
       hostId: z.string().uuid(),
       operationId: z.string().uuid(),
-      scope: z.enum(["host", "host-only", "all", "all-pi"]),
+      scope: z.enum(["host", "all", "all-pi"]),
       interruptWork: z.literal(true).optional(),
       skipAttachedStop: z.literal(true).optional(),
     })
@@ -1995,7 +1995,7 @@ export function createInspireServer(deps: AppDependencies): {
     server,
     authorityId,
     launchUrl,
-    close: async (preserveWorkers) => {
+    close: async () => {
       deps.providerAuth?.close();
       htmlPreviews.close();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
@@ -2009,7 +2009,7 @@ export function createInspireServer(deps: AppDependencies): {
       deps.runtime.off("event", taskNotifications.observe);
       await taskNotifications.close();
       terminalGateway.close();
-      const runtimeResult = await deps.runtime.close(preserveWorkers).then(
+      const runtimeResult = await deps.runtime.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );

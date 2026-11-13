@@ -19,13 +19,6 @@ const processIdentitySchema = z
   })
   .strict();
 const leaseIdSchema = z.string().uuid();
-export const herdrReleaseBindingSchema = z
-  .object({
-    directory: z.string().refine(isAbsolute),
-    owner: processIdentitySchema,
-    leaseId: leaseIdSchema,
-  })
-  .strict();
 const releaseRecordSchema = z
   .object({
     version: z.literal(1),
@@ -40,7 +33,6 @@ const releaseRecordSchema = z
   })
   .strict();
 type ReleaseRecord = z.infer<typeof releaseRecordSchema>;
-type ReleaseBinding = z.infer<typeof herdrReleaseBindingSchema>;
 
 function sameProcess(
   a: HerdrProcessIdentity,
@@ -70,22 +62,6 @@ async function readRelease(path: string): Promise<ReleaseRecord | null> {
   }
 }
 
-export async function herdrWorkerWasReleased(
-  binding: ReleaseBinding,
-  bridge: HerdrProcessIdentity,
-): Promise<boolean> {
-  const record = await readRelease(
-    join(binding.directory, releaseName(binding.owner)),
-  );
-  return (
-    record !== null &&
-    sameProcess(record.owner, binding.owner) &&
-    record.workers.some(
-      ({ leaseId, bridge: recorded }) =>
-        leaseId === binding.leaseId && sameProcess(recorded, bridge),
-    )
-  );
-}
 const leaseSchema = z
   .object({
     version: z.literal(1),
@@ -182,38 +158,21 @@ export class HerdrWorkerRegistry {
     return granted;
   }
 
-  /** A single publication transfers all selected workers, including when the
-   * Host exits before their sockets observe the disconnect. */
-  async release(
-    leases: readonly HerdrWorkerLease[],
-    verify?: () => void,
-  ): Promise<void> {
-    if (!leases.length) return;
-    await this.assertPrivateDirectory();
-    const owner = await (this.owner ??= captureHerdrHostIdentity());
-    const workers = leases.map(({ id, owner: leaseOwner, group }) => {
-      if (!group || !sameProcess(owner, leaseOwner))
-        throw new Error("Cannot release an unverified Herdr worker");
-      const { pid, birth, boot } = group;
-      return { leaseId: id, bridge: { pid, birth, boot } };
-    });
-    const record = releaseRecordSchema.parse({ version: 1, owner, workers });
-    await replacePrivateStateFile(
-      join(this.directory, releaseName(owner)),
-      `${JSON.stringify(record)}\n`,
-      { beforeReplace: verify },
+  /** Older Hosts could release a worker before shutdown. Honor that record
+   * when reconciling a lease the old Host left behind. */
+  async wasReleased(lease: HerdrWorkerLease): Promise<boolean> {
+    const bridge = lease.group;
+    if (!bridge) return false;
+    const record = await readRelease(
+      join(this.directory, releaseName(lease.owner)),
     );
-  }
-
-  wasReleased(lease: HerdrWorkerLease): Promise<boolean> {
-    if (!lease.group) return Promise.resolve(false);
-    return herdrWorkerWasReleased(
-      {
-        directory: this.directory,
-        owner: lease.owner,
-        leaseId: lease.id,
-      },
-      lease.group,
+    return Boolean(
+      record &&
+        sameProcess(record.owner, lease.owner) &&
+        record.workers.some(
+          ({ leaseId, bridge: recorded }) =>
+            leaseId === lease.id && sameProcess(recorded, bridge),
+        ),
     );
   }
 

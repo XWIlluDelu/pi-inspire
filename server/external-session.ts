@@ -9,7 +9,7 @@ export const PI_STATE_OBSERVATION_TIMEOUT_MS = 1_500;
 
 export type ExternalSessionState = Pick<
   AttachControlState,
-  "activity" | "leafId" | "modelSelection" | "taskRuns" | "uiRequests"
+  "activity" | "leafId" | "modelSelection" | "taskRuns"
 >;
 
 /** Why Inspire stopped following an attached Pi. Only "exited" is evidence
@@ -38,7 +38,6 @@ export interface ExternalSessionConnection {
   ): Promise<void>;
   /** Interrupts agent work, not native TUI shell execution. */
   abort(expectedLeafId?: string | null): Promise<void>;
-  answerUi(response: Record<string, unknown>): Promise<void>;
   rename(name: string, beforeSend?: () => void): Promise<void>;
   models(): Promise<NativeModelCatalog>;
   setModel(

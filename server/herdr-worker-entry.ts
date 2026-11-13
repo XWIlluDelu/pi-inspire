@@ -1,7 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { lstat, readFile, rm } from "node:fs/promises";
 import { connect } from "node:net";
-import { createPiRpcUiRelay } from "./pi-rpc-ui-relay.mjs";
 import {
   herdrLaunchGrantSchema,
   herdrLaunchTicketSchema,
@@ -12,7 +11,6 @@ import {
   captureHerdrBridgeGroup,
   stopHerdrProcessGroup,
 } from "./herdr-process-group.js";
-import { herdrWorkerWasReleased } from "./herdr-worker-registry.js";
 
 async function run(): Promise<void> {
   const path = process.argv[2];
@@ -35,9 +33,7 @@ async function run(): Promise<void> {
   const rpc = connect(ticket.address);
   const stderr = connect(ticket.address);
   let child: ChildProcessWithoutNullStreams | null = null;
-  let ui: Awaited<ReturnType<typeof createPiRpcUiRelay>> | null = null;
   let stopping = false;
-  let release: Parameters<typeof herdrWorkerWasReleased>[0] | undefined;
   const terminate = (graceful: boolean) => {
     void stopHerdrProcessGroup(group, graceful, () => {}).catch(() => {
       process.stderr.write("Inspire worker scope could not be stopped\n");
@@ -55,17 +51,9 @@ async function run(): Promise<void> {
     stderr.destroy();
     // The same kernel-owned tree is available here after Host loss and to the
     // Host after bridge loss. Pi's detached Bash tools remain in this scope.
-    void (async () => {
-      const running =
-        !!child?.pid && child.exitCode === null && child.signalCode === null;
-      if (
-        running &&
-        release &&
-        (await herdrWorkerWasReleased(release, group).catch(() => true))
-      )
-        return;
-      terminate(running);
-    })();
+    terminate(
+      !!child?.pid && child.exitCode === null && child.signalCode === null,
+    );
   };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
@@ -86,7 +74,6 @@ async function run(): Promise<void> {
     const grant = herdrLaunchGrantSchema.parse(
       await readHerdrBridgeRecord(rpc, AbortSignal.timeout(60_000)),
     );
-    release = grant.release;
     if (stopping) return;
     const environment: NodeJS.ProcessEnv = { ...grant.env };
     for (const key of Object.keys(environment))
@@ -96,8 +83,6 @@ async function run(): Promise<void> {
       if (key.startsWith("HERDR_") && key !== "HERDR_BIN")
         environment[key] = value;
 
-    ui = await createPiRpcUiRelay();
-    if (ui) environment.PI_ATTACH_CONTROL_RPC_UI = ui.environment;
     if (environment.PI_ATTACH_CONTROL_TAG)
       environment.PI_ATTACH_CONTROL_TAG_PARENT_PID = String(process.pid);
     child = spawn(grant.executable, grant.args, {
@@ -107,20 +92,10 @@ async function run(): Promise<void> {
       // The verified bridge is the process-group leader. Never detach Pi.
       detached: false,
     });
-    if (ui) {
-      ui.attach(child);
-      rpc.on("data", ui.observeInput);
-    }
-    child.once("error", () => {
-      void ui?.close();
-      stop();
-    });
+    child.once("error", stop);
     // An orderly Pi exit ends the grace period immediately. A killed Pi cannot
     // run its own detached-child cleanup, so both cases still reap the scope.
-    child.once("exit", async () => {
-      await ui?.close();
-      terminate(false);
-    });
+    child.once("exit", () => terminate(false));
     for (const stream of [child.stdin, child.stdout, child.stderr])
       stream.on("error", stop);
     if (!child.pid) {
@@ -133,7 +108,6 @@ async function run(): Promise<void> {
     rpc.pipe(child.stdin, { end: false });
     process.stdout.write("INSΠRE Pi worker\n");
   } catch {
-    await ui?.close();
     process.stderr.write("Inspire worker bridge could not start Pi\n");
     stop();
   }

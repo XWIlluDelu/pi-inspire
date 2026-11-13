@@ -268,8 +268,6 @@ try {
   // The installed smoke exercises the Host, launcher, recovery, fork and PTY
   // module graph. Keep a contents check for optional entries it cannot load.
   const required = [
-    "build/server/pi-worker-keeper.mjs",
-    "build/server/pi-rpc-ui-relay.mjs",
     "build/server/host-restart-systemd.js",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",

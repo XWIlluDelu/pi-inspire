@@ -560,10 +560,6 @@ export class AttachControlConnection implements ExternalSessionConnection {
     await this.send({ op: "abort" }, undefined, expectedLeafId);
   }
 
-  async answerUi(response: Record<string, unknown>): Promise<void> {
-    await this.send({ op: "ui_response", response });
-  }
-
   async rename(name: string, beforeSend?: () => void): Promise<void> {
     await this.send({ op: "rename", name }, beforeSend);
   }

@@ -49,7 +49,6 @@ export class HostRestartController {
       | "stopAttachedPiWork"
     >,
     private readonly backend: HostRestartBackend,
-    private readonly canPreserveWorkers = () => true,
   ) {}
 
   async status(): Promise<HostRestartStatus> {
@@ -145,13 +144,9 @@ export class HostRestartController {
       await this.backend.prepare();
       // Preparation can be slow. Acquire the authoritative admission fence
       // afterwards, not from an earlier observation of active work.
-      const preserveWork = operation.scope === "host-only";
-      // Host only keeps every Pi process and its running work: Inspire's
-      // workers are detached instead of stopped when this Host closes.
       const reservation = this.runtime.reserveMaintenanceRestart(
         operation.interruptWork === true,
-        !preserveWork,
-        preserveWork,
+        true,
       );
       if (reservation.kind === "busy") {
         operation.busyReason = reservation.reason;
@@ -163,7 +158,6 @@ export class HostRestartController {
       }
       leaseId = reservation.leaseId;
       if (
-        !preserveWork &&
         operation.scope !== "all-pi" &&
         operation.interruptWork &&
         !operation.skipAttachedStop
@@ -176,11 +170,7 @@ export class HostRestartController {
         }
       }
       const result = await this.backend.request(operation.scope, async () => {
-        if (preserveWork && !this.canPreserveWorkers())
-          throw new Error(
-            "Use inspire restart --host-only to preserve enhanced Pi workers.",
-          );
-        if (!preserveWork && !operation.interruptWork) {
+        if (!operation.interruptWork) {
           const busy = await this.runtime.checkAttachedRestartWork();
           if (busy) {
             operation.busyReason = busy;

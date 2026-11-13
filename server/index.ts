@@ -30,7 +30,6 @@ import {
   type InstanceState,
   instanceUrl,
   processStartIdentity,
-  refuseInstanceShutdown,
   removeInstanceState,
   watchInstanceShutdown,
   writeInstanceState,
@@ -176,8 +175,7 @@ void herdr.initialize();
 const attachments = new AttachmentStore();
 const catalog = createHostSessionCatalog(process.cwd(), preferences);
 const modelMetadata = new ModelMetadataCatalog();
-// The Host's own workers carry their worker tag; while it owns them they are
-// not other Pi instances. After a Host-only restart nobody owns those tags.
+// Worker tags distinguish this Host's processes from other live Pi instances.
 const attachControl: AttachControlRegistry = new AttachControlRegistry(
   undefined,
   (record): boolean =>
@@ -318,7 +316,6 @@ const application = createInspireServer({
       restart: () =>
         shutdown("launcher-owned Host restart", HOST_RESTART_EXIT_CODE),
     }),
-    () => !herdr.needsOwnershipRelease,
   ),
   updateCoordinator,
   bootstrapModels: () => modelMetadata.peek(process.cwd())?.models ?? [],
@@ -345,36 +342,8 @@ let statePublication: Promise<void> | null = null;
 let publishedState: InstanceState | null = null;
 let shuttingDown = false;
 let closeShutdownControl: (() => void) | undefined;
-let scopedShutdownPreparation: Promise<boolean> | null = null;
 
-async function prepareScopedHerdrShutdown(): Promise<boolean> {
-  let leaseId: string | undefined;
-  try {
-    const reservation = runtime.reserveMaintenanceRestart(false, false, true);
-    if (reservation.kind !== "ready") throw new Error(reservation.reason);
-    leaseId = reservation.leaseId;
-    if (runtime.commitMaintenanceRestart(leaseId).kind !== "committed")
-      throw new Error("The Host could not reserve ownership release");
-    await herdr.prepareOwnershipRelease();
-    return true;
-  } catch (error) {
-    if (leaseId) runtime.releaseMaintenanceRestart(leaseId);
-    console.error("Unable to release enhanced Pi ownership", error);
-    return false;
-  }
-}
-
-async function shutdown(
-  reason: string,
-  requestedExitCode = 0,
-  preserveWorkersRequest?: string,
-): Promise<void> {
-  if (
-    !preserveWorkersRequest &&
-    scopedShutdownPreparation &&
-    (await scopedShutdownPreparation)
-  )
-    return;
+async function shutdown(reason: string, requestedExitCode = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   closeShutdownControl?.();
@@ -383,7 +352,7 @@ async function shutdown(
   console.log(`Shutting down after ${reason}…`);
   diagnostics.record("info", "host_stopping", { reason, requestedExitCode });
   try {
-    await application.close(preserveWorkersRequest !== undefined);
+    await application.close();
     if (statePublication) await statePublication;
   } catch (error) {
     console.error("Failed to shut down cleanly", error);
@@ -407,7 +376,6 @@ async function shutdown(
           statePath,
           publishedState,
           exitCode === requestedExitCode,
-          preserveWorkersRequest,
         );
         await removeInstanceState(statePath, publishedState);
       }
@@ -466,30 +434,8 @@ async function announceStarted(): Promise<void> {
   }
   if (shuttingDown) return;
   if (statePath)
-    closeShutdownControl = watchInstanceShutdown(
-      statePath,
-      instanceState,
-      async (request) => {
-        const scoped = request.scope === "host-only";
-        if (scoped && herdr.enhancedWorkersEnabled) {
-          scopedShutdownPreparation = prepareScopedHerdrShutdown();
-          const prepared = await scopedShutdownPreparation;
-          scopedShutdownPreparation = null;
-          if (!prepared) {
-            await refuseInstanceShutdown(
-              statePath,
-              instanceState,
-              request.nonce,
-            );
-            return false;
-          }
-        }
-        await shutdown(
-          "authenticated local shutdown",
-          0,
-          scoped ? request.nonce : undefined,
-        );
-      },
+    closeShutdownControl = watchInstanceShutdown(statePath, instanceState, () =>
+      shutdown("authenticated local shutdown"),
     );
   diagnostics.record("info", "host_ready", { processId: process.pid });
   const url = application.launchUrl(new URL(instanceUrl(instanceState)).origin);

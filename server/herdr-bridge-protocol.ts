@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { herdrReleaseBindingSchema } from "./herdr-worker-registry.js";
 
 // Framing applies only to authenticated startup, never to Pi's steady-state
 // conversation stream. The same bounded primitive serves Herdr control RPC.
@@ -8,7 +7,7 @@ export {
   writeLocalJsonLine as writeHerdrBridgeRecord,
 } from "./local-json-line.js";
 
-export const HERDR_BRIDGE_VERSION = 2;
+export const HERDR_BRIDGE_VERSION = 3;
 
 export const herdrLaunchTicketSchema = z
   .object({
@@ -33,7 +32,6 @@ export const herdrLaunchGrantSchema = z
     args: z.array(z.string()),
     cwd: z.string().min(1),
     env: z.record(z.string(), z.string()),
-    release: herdrReleaseBindingSchema,
   })
   .strict();
 

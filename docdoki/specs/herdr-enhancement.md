@@ -63,8 +63,6 @@ Extensions keep their Pi RPC compatibility requirements.
 - Authenticate each launch over current-user-private IPC. Credentials and launch capabilities stay
   out of command text, terminal history, browser state, and diagnostics. Forwarding preserves RPC
   order, payload limits, and backpressure.
-- The Host and worker use the current bridge protocol. The launch grant carries the identity
-  the bridge uses to verify a later ownership release.
 
 ## Worker lifecycle
 
@@ -82,11 +80,7 @@ Extensions keep their Pi RPC compatibility requirements.
   the next worker-start request, sharing an in-flight attempt with other starts. Successful
   recovery stays established for the Host lifetime; later owned workers are not old recovery
   candidates. Status inspection reports the current result without starting recovery or cleanup.
-- Host shutdown and ordinary restart end its Pi workers. Before a CLI Host-only restart, publish
-  one ownership release record for the exact ready enhanced workers of that Host. The pane bridge
-  reads it on disconnect. Recovery skips those workers even if their old lease files cannot be
-  removed. If publication fails, the signed request is refused and the old Host keeps running.
-  A shared Herdr server launched by a Linux Host service uses a separate user unit so it survives
+- Host shutdown and ordinary restart end Inspire-owned Pi workers. A shared Herdr server launched by a Linux Host service uses a separate user unit so it survives
   Host replacement. Failure to establish that unit fails startup instead of attaching it to Host.
 - **Restart all** closes current-user Herdr Pi, including independent terminal Pi, only when
   enhancement is active in the running Host. Disabled mode preserves Herdr Pi. This explicit

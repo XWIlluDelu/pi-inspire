@@ -118,7 +118,6 @@ compare the same page and theme in an ordinary Chrome tab.
 | `inspire status` | Check the managed Host and print a fresh local pairing link. |
 | `inspire token` | Print the verified Host token for manual pairing; keep this output private. |
 | `inspire restart` | Prepare the next build and runtime, then restart the Host and its own Pi workers. Project terminals keep running. |
-| `inspire restart --host-only` | Restart Inspire and detach its Pi workers so their work can continue. |
 | `inspire restart --terminals` | Restart the Linux Host and terminal services, closing project terminals. |
 | `inspire restart --all` | Close current-user Pi sessions, then restart the Linux Host and terminals. Include Herdr Pi when enhancement is active. |
 | `inspire stop` | Stop the Host and its installed terminal service. A direct-launch terminal daemon keeps running. |
@@ -191,12 +190,6 @@ starts again. This action requires the installed Linux services.
 Use **Recheck status** if a restart request is unconfirmed. **Reset restart recovery…** clears
 an invalid browser record while any submitted restart continues on the Host.
 
-`inspire restart --host-only` detaches Inspire's Pi workers so their work and loaded settings
-can continue. When the session opens again, Inspire reconnects automatically to a sole idle
-worker. **Take over** reconnects to a busy worker and restores pending browser questions.
-The [Herdr lifecycle notes](../docdoki/specs/herdr-enhancement.md#worker-lifecycle)
-describe lease recovery for pane-backed workers.
-
 Page restart works with the Inspire launcher on Windows, macOS and Linux, and with the installed
 Linux service. It reuses the launcher or service, configuration and browser pairing. Preparation
 or worker-retirement failure prevents replacement. A Host started directly from the internal
@@ -211,7 +204,7 @@ then start Inspire after shutdown. Stopping an installed service also ends its p
 
 ### Terminal-service maintenance
 
-**Restart** and `inspire restart --host-only` keep the existing terminal daemon. Manage it from an
+**Restart** keeps the existing terminal daemon. Manage it from an
 **external terminal**, not from an Inspire project terminal (stopping the daemon would end the
 command; it refuses to run there, while `status` is allowed):
 

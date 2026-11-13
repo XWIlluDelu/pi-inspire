@@ -90,6 +90,7 @@ describe("Host administration API", () => {
     };
     await submit(intent).set("Origin", "https://foreign.example").expect(403);
     await submit({ ...intent, scope: "arbitrary-service" }).expect(400);
+    await submit({ ...intent, scope: "host-only" }).expect(400);
     await submit({ ...intent, interruptWork: false }).expect(400);
     await submit({ ...intent, hostId: randomUUID() }).expect(409);
     await submit(intent).expect(202);

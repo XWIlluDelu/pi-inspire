@@ -9,7 +9,6 @@ covers:
   - vite.config.ts
   - tests/server/dev-launcher.integration.test.ts
   - server/{app,index,pi-rpc,pi-installation,preferences,access-token,terminal-daemon-launcher}.ts
-  - server/{pi-worker-keeper,pi-rpc-ui-relay}.mjs
   - server/{herdr-worker-entry,attach-control,runtime-extension-ui}.ts
   - tests/server/attach-control.integration.test.ts
   - server/user-environment.{mjs,d.mts}
@@ -197,7 +196,7 @@ local requests, never by sending the reusable Host token.
   only their local companion-process lifecycle and ingress path; they never become Pi/data authority
   or own host shutdown. Forwarded protocol is trusted only from a loopback hop.
 - Production launch is single-instance per checkout, host and port. Reuse requires matching private
-  state, support for worker-preserving shutdown, and a fresh authenticated HTTP readiness result.
+  state, support for signed local control, and a fresh authenticated HTTP readiness result.
   An unsupported live owner blocks takeover. Case aliases are verified against the native
   directory identity, so distinct case-sensitive roots remain distinct on Windows.
 - The local HTTP control protocol binds each request and response to the published installation,
@@ -258,18 +257,9 @@ Inspire's own Pi workers are child processes the Host owns; terminal Pi and atta
 - Native commands receiving copied Windows environments resolve SystemRoot
   case-insensitively. Repeated lookups of the current process share its immutable birth identity;
   foreign PIDs are always re-queried and failed self lookups remain retryable.
-- Direct workers run under `server/pi-worker-keeper.mjs`, which passes RPC bytes through and, after
-  a `detach` control message, keeps Pi's input open when the Host goes away. Under a systemd service
-  the keeper starts in its own transient scope so the Host unit's restart does not end it. Herdr
-  workers detach in their pane bridge after one durable release for all ready enhanced workers,
-  so a retained lease never makes their new owner stop them. Without a detach or release, losing
-  the Host ends Pi's input.
-- Both launch backends retain response-bearing native RPC dialogs beside Pi. After Host-only
-  restart, attach-control exposes pending questions with their original IDs and deadlines and
-  routes answers into the original RPC stdin. The replacement Host uses the existing browser
-  dialogs for select, confirm, input and editor, with no worker replacement or automatic answer
-  replay. Terminal Pi keeps its native terminal dialogs. The retention channel is auxiliary: when
-  its local socket cannot be created, Pi still starts and only this recovery is unavailable.
+- Direct workers use Pi's RPC stdin and stdout. Herdr workers forward the same RPC through the
+  pane bridge. The Host retires its workers during shutdown. If the Host disappears, direct Pi
+  workers receive EOF and the Herdr bridge stops its worker scope when the RPC sockets close.
 
 ## Installed Linux services
 
@@ -325,8 +315,8 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
 ### Scope and preparation
 
 - `inspire restart` prepares dependencies/client build and imports the next runtime and external
-  Pi SDK before stopping the Host. Preparation failure leaves it running. Host-only restart
-  preserves the independent terminal daemon.
+  Pi SDK before stopping the Host. Preparation failure leaves it running. Ordinary restart ends
+  Inspire-owned Pi workers and keeps the independent terminal daemon.
 - `inspire restart --terminals` requires this installation\'s verified Linux systemd Host and terminal
   units. It restarts both in one transaction, with Host ordered after terminal readiness, ending
   project terminals in the installed unit. An independent daemon retained from a direct launch
@@ -391,15 +381,8 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   surviving identities and verify exit. Never signal shells, Herdr, the Host, or a reused PID.
   Fresh final discovery must confirm that no included Pi remains. Discovery, signalling or exit
   verification failures prevent restart and report the failure, including partial shutdown.
-- `inspire restart --host-only` preserves every Pi process and its running work, including
-  Inspire's workers. Running work can continue during restart because the closing Host detaches
-  its workers. When the browser returns to a preserved session, it automatically attaches to a
-  sole idle worker. A busy worker can be attached through **Take over**.
-- After preflight, ordinary CLI restart verifies the running Host with signed readiness.
-  `--host-only` authenticates the running Host and binds worker preservation to the signed
-  shutdown request for that exact process. Start the replacement only after the old Host exits
-  with a clean signed receipt for that request. For an active installed service, verify the service
-  invocation and wait for it to exit, then start the Host unit. The terminal unit stays running.
+- CLI restart verifies the running Host with signed readiness. A managed shutdown waits for
+  actual process exit and a signed cleanup result before starting a replacement.
 
 ### Submission and recovery
 

@@ -374,10 +374,10 @@ Writes run one batch at a time; output arriving during a slow write stays in the
 Browser-local preferences never become process authority.
 
 Source, npm-release, direct-launch, and installed Linux service paths include the daemon and its runtime
-dependencies. The terminal user service is separate from `inspire-host.service`, so Host-only
+dependencies. The terminal user service is separate from `inspire-host.service`, so ordinary
 lifecycle operations preserve PTYs; disabling the terminal service ends them. [[host-lifecycle]]
 defines CLI stop and `inspire restart --terminals`, which address both installed services,
-ordinary/Host-only restart, and **Restart all**, which additionally closes Pi processes.
+ordinary restart, and **Restart all**, which additionally closes Pi processes.
 
 ## Boundaries
 

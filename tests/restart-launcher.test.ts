@@ -355,75 +355,22 @@ describe.runIf(process.platform === "linux")(
       expect(await f.log()).toContain("stop-all-pi");
       expect(await f.log()).not.toContain("--user start inspire-host.service");
     });
-    it.each([{ flags: [] }, { flags: ["--host-only"] }])(
-      "verifies the running Host after preflight ($flags)",
-      async ({ flags }) => {
-        const f = await fixture(false);
-        await f.stubInstanceState(`
+    it("verifies the running Host after preflight", async () => {
+      const f = await fixture(false);
+      await f.stubInstanceState(`
           import { appendFile } from "node:fs/promises";
           export async function inspectInstance() {
             await appendFile(process.env.FIXTURE_LOG, "inspect owner\\n");
             return { kind: "unavailable" };
           }
         `);
-        expect(() => f.run(["restart", ...flags])).toThrow(
-          /Cannot verify the running Host/,
-        );
-        const log = await f.log();
-        expect(log).toContain("preflight\ninspect owner\n");
-        expect(log).not.toMatch(/--user (start|stop|restart)/u);
-      },
-    );
-    it.each([
-      {
-        case: "different invocation",
-        invocation: "b",
-        error: /does not match the requested service/,
-      },
-      {
-        case: "matching invocation",
-        invocation: "a",
-        error: null,
-      },
-    ])(
-      "binds Host-only restart to the service owner ($case)",
-      async ({ invocation, error }) => {
-        const f = await fixture(false);
-        const owner = {
-          pid: 321,
-          systemdInvocationId: invocation.repeat(32),
-        };
-        await f.stubInstanceState(`
-          import { appendFile, writeFile } from "node:fs/promises";
-          import { join } from "node:path";
-          const owner = ${JSON.stringify(owner)};
-          export async function inspectInstance() {
-            return { kind: "healthy", state: owner };
-          }
-          export async function stopManagedInstance(_path, { root }, { scopedOwner }) {
-            if (scopedOwner !== owner) throw new Error("Missing scoped owner");
-            await writeFile(join(root, "old-host-exited"), "");
-            await appendFile(process.env.FIXTURE_LOG, "scoped shutdown\\n");
-            return { kind: "stopped", state: owner };
-          }
-        `);
-        if (error) {
-          expect(() => f.run(["restart", "--host-only"])).toThrow(error);
-          expect(await f.log()).not.toMatch(
-            /scoped shutdown|--user (start|stop|restart)/u,
-          );
-        } else {
-          f.run(["restart", "--host-only"]);
-          const log = await f.log();
-          expect(log.match(/^--user (?:start|stop|restart).*$/gmu)).toEqual([
-            "--user start inspire-host.service",
-          ]);
-          expect(log.indexOf("scoped shutdown")).toBeLessThan(
-            log.indexOf("--user start"),
-          );
-        }
-      },
-    );
+      expect(() => f.run(["restart"])).toThrow(
+        /Cannot verify the running Host/,
+      );
+      const log = await f.log();
+      expect(log).toContain("preflight\ninspect owner\n");
+      expect(log).not.toMatch(/--user (start|stop|restart)/u);
+    });
     it("blocks terminal-ending restart inside a project terminal and keeps default Host restart on systemd", async () => {
       const f = await fixture(false);
       f.env.INSPIRE_TERMINAL_ID = "project-terminal";
@@ -445,12 +392,13 @@ describe.runIf(process.platform === "linux")(
         .filter((line) => /^--user (start|stop|restart)/u.test(line));
       expect(mutations).toEqual(["--user restart inspire-host.service"]);
     });
-    it("rejects unknown restart flags", async () => {
-      const f = await fixture(false);
-      expect(() => f.run(["restart", "--unknown"])).toThrow(
-        /Use: inspire restart/,
-      );
-      expect(await f.log()).not.toMatch(/^--user (start|stop|restart)/mu);
-    });
+    it.each(["--unknown", "--host-only"])(
+      "rejects restart flag %s",
+      async (flag) => {
+        const f = await fixture(false);
+        expect(() => f.run(["restart", flag])).toThrow(/Use: inspire restart/);
+        expect(await f.log()).not.toMatch(/^--user (start|stop|restart)/mu);
+      },
+    );
   },
 );

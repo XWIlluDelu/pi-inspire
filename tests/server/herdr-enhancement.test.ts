@@ -213,33 +213,6 @@ describe.skipIf(process.platform !== "linux")(
       expect(await registry.list()).toEqual([owned]);
     });
 
-    it("publishes the entire ownership release or leaves all leases owned", async () => {
-      const { lease, registry } = await harness();
-      const owned = await Promise.all([lease(), lease()]);
-      const workers = await Promise.all(
-        owned.map((item) => registry.grant(item, item.owner)),
-      );
-      await expect(
-        registry.release(workers, () => {
-          throw new Error("Release write failed");
-        }),
-      ).rejects.toThrow("Release write failed");
-      expect(
-        await Promise.all(workers.map((item) => registry.wasReleased(item))),
-      ).toEqual([false, false]);
-      await registry.release(workers);
-      expect(
-        await Promise.all(workers.map((item) => registry.wasReleased(item))),
-      ).toEqual([true, true]);
-      const [released] = workers;
-      expect(
-        await registry.wasReleased({
-          ...released!,
-          owner: { ...released!.owner, birth: "0" },
-        }),
-      ).toBe(false);
-    });
-
     it("recovers only unreleased work after the old Host exits, even when released leases cannot be deleted", async () => {
       const { enhancement, root, registry, closePane } = await harness();
       await promisify(execFileCallback)(process.execPath, [
@@ -248,7 +221,7 @@ describe.skipIf(process.platform !== "linux")(
         "--input-type=module",
         "-e",
         `const { HerdrWorkerRegistry } = await import(process.argv[1]);
-        const { mkdtemp } = await import("node:fs/promises");
+        const { mkdtemp, writeFile } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const registry = new HerdrWorkerRegistry(process.argv[2]);
         const root = process.argv[3];
@@ -257,7 +230,9 @@ describe.skipIf(process.platform !== "linux")(
           const lease = await registry.create(root, { serverId: "old", workspaceId: "w", tabId: "t", paneId }, await mkdtemp(join(root, "inspire-herdr-")));
           if (paneId !== "owned") workers.push(await registry.grant(lease, lease.owner));
         }
-        await registry.release(workers);`,
+        const { owner } = workers[0];
+        const record = { version: 1, owner, workers: workers.map(({ id, group }) => ({ leaseId: id, bridge: group })) };
+        await writeFile(join(registry.directory, \`\${owner.boot}-\${owner.pid}-\${owner.birth}.released\`), JSON.stringify(record), { mode: 0o600 });`,
         new URL("../../server/herdr-worker-registry.ts", import.meta.url).href,
         registry.directory,
         root,
