@@ -71,7 +71,9 @@ attachment-retention and PDF experiments are outside the main plan.
   asset cache, retired palette/menu identifiers and redundant literal checks were removed.
 - Tool, Thinking, custom-message and checkpoint presentation use one generation. Live and
   History load the same deferred Markdown reader.
-- Counted source is 237,818 lines, 14,123 below the handbook baseline and 422 above the previous
+- Model discovery resolves extension registrations before constructing its one in-memory preview;
+  validation constructs no session.
+- Counted source is 237,777 lines, 14,164 below the handbook baseline and 381 above the previous
   pass. The build cleanup removes code, while the native queue path, receipt boundary and
   regression coverage add code. The handbook's full deletion estimate has not been realized.
 

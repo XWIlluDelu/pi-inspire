@@ -143,8 +143,10 @@ Skipped project resources and individual extension-load failures produce warning
 the models Pi can load. Invalid model configuration and persistent metadata-query failures produce
 local errors. Fresh trust decisions remain part of Pi startup.
 
-Discovery completes extension registration before resolving defaults. The short-lived SDK process
-creates no persistent session, emits no session-start event and makes no agent/model request.
+Discovery registers extension providers through Pi's service factory before building one in-memory
+session for commands and defaults. Validation uses the same services without creating a session.
+The short-lived SDK process writes no session file, emits no session-start event and makes no
+agent/model request.
 Refresh replaces an older preview without replacing explicit or inherited choices. Directory/catalog,
 inherited-selection and per-model thinking reads use bounded automatic recovery for transient failure.
 Each attempt stays bound to its directory, source, input intent and browser transport; changing these
