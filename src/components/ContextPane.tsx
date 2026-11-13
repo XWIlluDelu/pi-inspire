@@ -39,6 +39,9 @@ import { selectContextPaneView } from "./context-pane-view";
 import type { FileReadingState } from "./FilePreview";
 import { FilesPane } from "./FilesPane";
 import { PiLoader } from "./PiLoader";
+import { TerminalTabs, type TerminalTab } from "./TerminalTabs";
+
+import { handleDockTabKey } from "./dock-tab-keyboard";
 
 const TerminalPane = lazy(() =>
   import("./TerminalPane").then((module) => ({ default: module.TerminalPane })),
@@ -76,8 +79,7 @@ export const ContextPane = memo(function ContextPane({
     [state.sessionId, state.cwd, transportGeneration],
   );
   const [terminalVisited, setTerminalVisited] = useState(false);
-  const [terminalTabsHost, setTerminalTabsHost] =
-    useState<HTMLDivElement | null>(null);
+  const [terminalTabs, setTerminalTabs] = useState<readonly TerminalTab[]>([]);
   const fileTabsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (state.contextMode === "terminal" || (state.resourcesOpen && state.cwd))
@@ -346,6 +348,23 @@ export const ContextPane = memo(function ContextPane({
       setManualRefresh((current) => (current === request ? null : current));
     }
   };
+  const fileTabs = state.resourceTabs.map((tab) => {
+    const title =
+      tab.workspacePath ??
+      tab.git?.displayPath ??
+      resourceReferenceLabel(tab.reference);
+    return { ...tab, title, label: title.split(/[\\/]/u).at(-1) || title };
+  });
+  const tabs = [
+    ...fileTabs.map((tab) => ({
+      id: `file:${tab.reference}`,
+      label: tab.label,
+      title: tab.title,
+      selected: activeFile && selectedReference === tab.reference,
+      select: () => void store.selectResourceTab(tab.reference),
+    })),
+    ...terminalTabs.map((tab) => ({ ...tab, id: `terminal:${tab.id}` })),
+  ];
   const contents = (
     <>
       <div className="ctx__header" ref={recoverModalFocus}>
@@ -353,41 +372,11 @@ export const ContextPane = memo(function ContextPane({
           className="ctx__tabs"
           role="tablist"
           aria-label="Context tabs"
-          onKeyDown={(event) => {
-            if (
-              !(event.target instanceof HTMLElement) ||
-              event.target.getAttribute("role") !== "tab"
-            )
-              return;
-            const tabs = [
-              ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                '[role="tab"]',
-              ),
-            ].filter((tab) => !tab.closest("[hidden]"));
-            const index = tabs.indexOf(event.target as HTMLButtonElement);
-            const next =
-              event.key === "ArrowRight"
-                ? (index + 1) % tabs.length
-                : event.key === "ArrowLeft"
-                  ? (index + tabs.length - 1) % tabs.length
-                  : event.key === "Home"
-                    ? 0
-                    : event.key === "End"
-                      ? tabs.length - 1
-                      : -1;
-            if (next < 0) return;
-            event.preventDefault();
-            tabs[next]?.focus();
-            tabs[next]?.click();
-          }}
+          onKeyDown={handleDockTabKey}
         >
-          <ContextTabStrip stripRef={fileTabsRef}>
-            {state.resourceTabs.map((tab) => {
-              const path =
-                tab.workspacePath ??
-                tab.git?.displayPath ??
-                resourceReferenceLabel(tab.reference);
-              const label = path.split(/[\\/]/u).at(-1) || path;
+          <ContextTabStrip stripRef={fileTabsRef} tabs={tabs}>
+            {fileTabs.map((tab) => {
+              const { label, title: path } = tab;
               const selected =
                 activeFile && selectedReference === tab.reference;
               return (
@@ -399,6 +388,7 @@ export const ContextPane = memo(function ContextPane({
                     type="button"
                     role="tab"
                     aria-label={label}
+                    data-dock-tab={`file:${tab.reference}`}
                     title={path}
                     aria-selected={selected}
                     aria-controls="context-file-content"
@@ -443,7 +433,9 @@ export const ContextPane = memo(function ContextPane({
                 </div>
               );
             })}
-            <div className="ctx__terminal-tabs" ref={setTerminalTabsHost} />
+            <div className="ctx__terminal-tabs">
+              <TerminalTabs tabs={terminalTabs} sharedTabs />
+            </div>
           </ContextTabStrip>
           <div className="ctx__modes">
             {(["files", "changes"] as const).map((mode) => {
@@ -576,7 +568,7 @@ export const ContextPane = memo(function ContextPane({
           >
             <TerminalPane
               cwd={state.cwd}
-              sharedTabsHost={terminalTabsHost}
+              onDockTabs={setTerminalTabs}
               onActivate={activateTerminal}
               active={state.resourcesOpen && state.contextMode === "terminal"}
               reloadKey={terminalReloadKey}

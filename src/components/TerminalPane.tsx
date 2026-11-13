@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   ArrowRight,
-  Bell,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -68,13 +67,14 @@ import { NoticeCard } from "./NoticeCard";
 import { PiLoader } from "./PiLoader";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 import { TerminalSettingsDialog } from "./TerminalSettingsDialog";
+import { TerminalTabs, type TerminalTab } from "./TerminalTabs";
 import { TerminalView } from "./TerminalView";
 
 interface TerminalPaneProps {
   cwd: string | null;
   active?: boolean;
   reloadKey?: number;
-  sharedTabsHost?: HTMLElement | null;
+  onDockTabs?(tabs: readonly TerminalTab[]): void;
   onActivate?(): void;
   onOpenFile?(reference: string): void;
   onSendToComposer?(text: string): void;
@@ -93,6 +93,7 @@ interface RecentlyClosed {
 
 const ACTIVE_KEY_PREFIX = "inspire:terminal-active:";
 const EMPTY_TERMINALS: TerminalDescriptor[] = [];
+const EMPTY_DOCK_TABS: readonly TerminalTab[] = [];
 
 function readTerminalLaunchTarget(): TerminalLaunchTarget | null {
   const params = new URLSearchParams(window.location.search);
@@ -133,7 +134,7 @@ export const TerminalPane = memo(function TerminalPane({
   cwd: sessionCwd,
   active = true,
   reloadKey = 0,
-  sharedTabsHost,
+  onDockTabs,
   onActivate,
   onOpenFile,
   onSendToComposer,
@@ -167,7 +168,7 @@ export const TerminalPane = memo(function TerminalPane({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(launchTarget?.focus ?? false);
-  const sharedTabs = Boolean(sharedTabsHost && !focused);
+  const sharedTabs = Boolean(onDockTabs && !focused);
   const [controlsExpanded, setControlsExpanded] = useState(true);
   const controlsRef = useRef<HTMLDivElement>(null);
   const controlsToggleRef = useRef<HTMLButtonElement>(null);
@@ -226,6 +227,7 @@ export const TerminalPane = memo(function TerminalPane({
   const terminals = catalog?.terminals ?? EMPTY_TERMINALS;
   const activeTerminal = terminals.find((terminal) => terminal.id === activeId);
   const activeTabId = activeTerminal?.id;
+  useLayoutEffect(() => () => onDockTabs?.(EMPTY_DOCK_TABS), [onDockTabs]);
 
   useLayoutEffect(() => {
     if (!active || !activeTabId || sharedTabs) return;
@@ -326,12 +328,12 @@ export const TerminalPane = memo(function TerminalPane({
   }, [api, globalLoading]);
 
   useEffect(() => {
-    if (!active && !sharedTabsHost) return;
+    if (!active && !onDockTabs) return;
     void load();
     return () => {
       requestGeneration.current += 1;
     };
-  }, [active, load, reloadKey, sharedTabsHost]);
+  }, [active, load, reloadKey, onDockTabs]);
 
   useEffect(() => {
     if (!active || !cwd) return;
@@ -788,31 +790,7 @@ export const TerminalPane = memo(function TerminalPane({
     index: number,
   ) => {
     const reorderShortcut = event.shiftKey && (event.ctrlKey || event.metaKey);
-    if (sharedTabs && !reorderShortcut) {
-      const tabs = [
-        ...(event.currentTarget
-          .closest('[role="tablist"]')
-          ?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []),
-      ].filter((tab) => !tab.closest("[hidden]"));
-      const index = tabs.indexOf(event.currentTarget);
-      const next =
-        event.key === "ArrowRight"
-          ? (index + 1) % tabs.length
-          : event.key === "ArrowLeft"
-            ? (index + tabs.length - 1) % tabs.length
-            : event.key === "Home"
-              ? 0
-              : event.key === "End"
-                ? tabs.length - 1
-                : -1;
-      if (next >= 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        tabs[next]?.focus();
-        tabs[next]?.click();
-      }
-      return;
-    }
+    if (sharedTabs && !reorderShortcut) return;
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const direction = event.key === "ArrowRight" ? 1 : -1;
@@ -927,6 +905,44 @@ export const TerminalPane = memo(function TerminalPane({
     uiSettings.shortcutMode,
   ]);
 
+  const tabs: TerminalTab[] = terminals.map((terminal, index) => ({
+    id: terminal.id,
+    label: terminalLabel(terminal),
+    title: terminal.currentCwd,
+    status: terminal.status,
+    selected: terminal.id === activeId && (!sharedTabs || active),
+    open: openedIds.has(terminal.id),
+    unread: unreadIds.has(terminal.id),
+    bell: bellIds.has(terminal.id),
+    rename:
+      renameId === terminal.id
+        ? {
+            value: renameValue,
+            change: setRenameValue,
+            commit: () => void commitRename(),
+            cancel: () => {
+              renamePendingRef.current = false;
+              setRenameId(null);
+            },
+          }
+        : undefined,
+    select: () => {
+      setActiveId(terminal.id);
+      onActivate?.();
+    },
+    beginRename: () => beginRename(terminal),
+    close: () => void closeTerminal(terminal),
+    keyDown: (event) => handleTabKey(event, index),
+    drag: () => {
+      draggedId.current = terminal.id;
+    },
+    drop: (event) => handleDrop(event, terminal.id),
+  }));
+  // Publish descriptors, not rendered children. The dock owns its tab strip.
+  useLayoutEffect(() => {
+    onDockTabs?.(sharedTabs ? tabs : EMPTY_DOCK_TABS);
+  });
+
   if (!cwd) {
     return (
       <div className="terminal-empty">
@@ -959,122 +975,6 @@ export const TerminalPane = memo(function TerminalPane({
     globalGroups.set(terminal.projectCwd, group);
   }
 
-  const terminalTabs = (
-    <div
-      className={
-        sharedTabs ? "terminal-tabs terminal-tabs--shared" : "terminal-tabs"
-      }
-      {...(!sharedTabs
-        ? { role: "toolbar" as const, "aria-label": "Project terminals" }
-        : {})}
-    >
-      {terminals.map((terminal, index) => (
-        <div
-          key={terminal.id}
-          className={
-            sharedTabs
-              ? `ctx__file-tab${active && terminal.id === activeId ? " ctx__file-tab--active" : ""}`
-              : `terminal-tab${terminal.id === activeId ? " terminal-tab--active" : ""}`
-          }
-          role="presentation"
-          draggable
-          onDragStart={() => {
-            draggedId.current = terminal.id;
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={(event) => handleDrop(event, terminal.id)}
-        >
-          {renameId === terminal.id ? (
-            <input
-              className="inline-rename-input terminal-tab__rename"
-              value={renameValue}
-              autoFocus
-              size={1}
-              maxLength={120}
-              aria-label="Terminal name"
-              onChange={(event) => setRenameValue(event.target.value)}
-              onBlur={() => void commitRename()}
-              onKeyDown={(event) => {
-                if (isComposingKeyboardEvent(event.nativeEvent)) return;
-                event.stopPropagation();
-                if (event.key === "Enter") void commitRename();
-                else if (event.key === "Escape") {
-                  renamePendingRef.current = false;
-                  setRenameId(null);
-                }
-              }}
-            />
-          ) : (
-            <button
-              type="button"
-              id={`terminal-tab-${terminal.id}`}
-              className={
-                sharedTabs ? "ctx__terminal-select" : "terminal-tab__select"
-              }
-              {...(sharedTabs
-                ? {
-                    role: "tab" as const,
-                    "aria-selected": active && terminal.id === activeId,
-                  }
-                : { "aria-pressed": terminal.id === activeId })}
-              data-terminal-focus-trigger
-              aria-label={`${terminalLabel(terminal)}${unreadIds.has(terminal.id) ? ", new output" : ""}${bellIds.has(terminal.id) ? ", bell" : ""}`}
-              aria-controls={
-                sharedTabs
-                  ? "context-terminal-content"
-                  : openedIds.has(terminal.id)
-                    ? `terminal-view-${terminal.id}`
-                    : undefined
-              }
-              aria-keyshortcuts="Control+Shift+ArrowLeft Control+Shift+ArrowRight Meta+Shift+ArrowLeft Meta+Shift+ArrowRight"
-              tabIndex={
-                terminal.id === activeId && (!sharedTabs || active) ? 0 : -1
-              }
-              onClick={() => {
-                setActiveId(terminal.id);
-                onActivate?.();
-              }}
-              onDoubleClick={() => beginRename(terminal)}
-              onKeyDown={(event) => handleTabKey(event, index)}
-              title={`${terminalLabel(terminal)} — ${terminal.currentCwd}`}
-            >
-              {sharedTabs ? (
-                <span className="ctx__terminal-icon" aria-hidden>
-                  <span
-                    className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                  />
-                </span>
-              ) : (
-                <span
-                  className={`terminal-tab__status terminal-tab__status--${terminal.status}`}
-                  aria-hidden
-                />
-              )}
-              <span className="terminal-tab__label">
-                {terminalLabel(terminal)}
-              </span>
-              {bellIds.has(terminal.id) ? (
-                <Bell className="terminal-tab__bell" size={10} aria-hidden />
-              ) : null}
-              {unreadIds.has(terminal.id) ? (
-                <span className="terminal-tab__unread" aria-hidden />
-              ) : null}
-            </button>
-          )}
-          <button
-            type="button"
-            className={sharedTabs ? "ctx__file-close" : "terminal-tab__close"}
-            onClick={() => void closeTerminal(terminal)}
-            aria-label={`Close ${terminalLabel(terminal)}`}
-            title="Close terminal"
-          >
-            <X size={sharedTabs ? 13 : 12} aria-hidden />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-
   return (
     <div
       ref={paneRef}
@@ -1102,9 +1002,6 @@ export const TerminalPane = memo(function TerminalPane({
           </button>
         </div>
       ) : null}
-      {sharedTabs && sharedTabsHost
-        ? createPortal(terminalTabs, sharedTabsHost)
-        : null}
       <div
         className="terminal-tabs-shell"
         onKeyDown={(event) => {
@@ -1126,7 +1023,7 @@ export const TerminalPane = memo(function TerminalPane({
           controlsToggleRef.current?.focus();
         }}
       >
-        {!sharedTabs ? terminalTabs : null}
+        {!sharedTabs ? <TerminalTabs tabs={tabs} /> : null}
         <div
           className="terminal-controls"
           ref={controlsRef}

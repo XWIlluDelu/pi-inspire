@@ -214,15 +214,15 @@ body.pane-resizing .nav {
 }
 
 .ctx__file-tabs {
-  --ctx-tab-max: 180px;
   min-width: 0;
   flex: 1;
   display: flex;
-  overflow: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
   gap: 0;
 }
 
-.ctx__file-tab[hidden], .ctx__tab-overflow[hidden] { display: none; }
+.ctx__file-tabs::-webkit-scrollbar { display: none; }
 
 .ctx__tab-overflow {
   flex: 0 0 30px;
@@ -241,13 +241,18 @@ body.pane-resizing .nav {
 .ctx__tab-overflow .dropdown__value,
 .ctx__tab-overflow .dropdown__trigger > .lucide-chevron-down { display: none; }
 
+.ctx__open-tabs-menu input {
+  margin: var(--space-2);
+  width: calc(100% - 2 * var(--space-2));
+}
+
 .ctx__terminal-tabs { display: contents; }
 
 .ctx__file-tab {
   position: relative;
   flex: 0 0 auto;
   min-width: 132px;
-  max-width: var(--ctx-tab-max);
+  max-width: 180px;
   display: flex;
   align-items: stretch;
   color: var(--muted);

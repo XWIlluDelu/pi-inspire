@@ -2227,7 +2227,7 @@ export class AppStore {
       const dynamic = inventory.find(
         (command) => command.name === invocation.name,
       );
-      if (!dynamic) {
+      if (!dynamic && this.state.modelDiscovery !== "loading") {
         const sessionId = this.state.sessionId;
         if (sessionId)
           this.presentCommandActivity(

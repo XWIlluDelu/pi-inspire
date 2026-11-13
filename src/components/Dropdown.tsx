@@ -53,6 +53,8 @@ export function Dropdown({
   header,
   indicator,
   menuWidth,
+  emptyText = "Thinking unavailable",
+  selectCurrent = false,
 }: {
   label: string;
   value: string;
@@ -74,6 +76,8 @@ export function Dropdown({
   header?: ReactNode;
   indicator?: ReactNode;
   menuWidth?: number;
+  emptyText?: string;
+  selectCurrent?: boolean;
 }) {
   const id = useId();
   const composed = Boolean(header);
@@ -119,7 +123,7 @@ export function Dropdown({
   const pick = (option: DropdownOption) => {
     if (disabled) return;
     setOpen(false);
-    if (option.value !== value) onChange(option.value);
+    if (selectCurrent || option.value !== value) onChange(option.value);
   };
 
   useEffect(() => {
@@ -192,6 +196,16 @@ export function Dropdown({
     const option = (event.target as HTMLElement).closest<HTMLElement>(
       "[data-dropdown-option]",
     );
+    if (!options.length) return;
+    if (!option && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const index = event.key === "ArrowDown" ? 0 : options.length - 1;
+      setActive(index);
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-dropdown-option="${index}"]`)
+        ?.focus();
+      return;
+    }
     if (!option || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key))
       return;
     event.preventDefault();
@@ -306,9 +320,7 @@ export function Dropdown({
             >
               {header}
               {options.length === 0 && header ? (
-                <div className="dropdown__unavailable">
-                  Thinking unavailable
-                </div>
+                <div className="dropdown__unavailable">{emptyText}</div>
               ) : null}
               {options.map((option, index) => {
                 const Option = header ? "button" : "div";

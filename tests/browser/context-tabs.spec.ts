@@ -11,182 +11,51 @@ import { terminalMutationHeaders } from "./support/terminal-operations";
 
 test.use({ contextOptions: { reducedMotion: "reduce" } });
 
-test("@cross-browser keeps tab focus as a context tab moves through overflow", async ({
+test("finds an open tab by name and keeps it reachable in the narrow workbench @cross-browser", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1500, height: 850 });
-  await page.addInitScript(() =>
-    localStorage.setItem("inspire.ctx-width", "680"),
-  );
   const pane = await openResourceFixture(page);
   await openWorkspaceFile(pane, "src/components/TerminalSettingsDialog.tsx");
   await openPreviewFixture(pane, "document.md");
-  const selected = pane.getByRole("tab", { name: "document.md", exact: true });
-  const closeOther = pane.getByRole("button", {
-    name: "Close TerminalSettingsDialog.tsx",
+  const documentTab = pane.getByRole("tab", {
+    name: "document.md",
     exact: true,
   });
-  const overflow = pane.getByRole("combobox", {
-    name: "More tabs",
+  await expect(documentTab).toHaveAttribute("aria-selected", "true");
+  await page.setViewportSize({ width: 320, height: 850 });
+  const dialog = page.getByRole("dialog", {
+    name: "Context panel",
     exact: true,
   });
-  await selected.focus();
-  await page.keyboard.press("Shift+Tab");
-  await expect(closeOther).toBeFocused();
-
-  await page.setViewportSize({ width: 901, height: 850 });
-  await expect(closeOther).toBeHidden();
-  await expect(overflow).toBeFocused();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Open tabs", exact: true }).click();
+  const tabs = page.getByRole("dialog", { name: "Open tabs", exact: true });
+  const filter = tabs.getByRole("textbox", { name: "Find open tab" });
+  await filter.fill("TerminalSettings");
+  await expect(tabs.getByRole("button", { name: /document\.md/ })).toHaveCount(
+    0,
+  );
+  await filter.press("ArrowDown");
+  const match = tabs.getByRole("button", { name: /TerminalSettingsDialog/ });
+  await expect(match).toBeFocused();
+  await match.press("Enter");
+  const selected = dialog.getByRole("tab", {
+    name: "TerminalSettingsDialog.tsx",
+    exact: true,
+  });
   await expect(selected).toHaveAttribute("aria-selected", "true");
-
-  await page.setViewportSize({ width: 1500, height: 850 });
-  await expect(overflow).toBeHidden();
-  await expect(closeOther).toBeVisible();
   await expect(selected).toBeFocused();
+  const strip = dialog.locator(".ctx__file-tabs");
+  const active = (await selected.locator("..").boundingBox())!;
+  const bounds = (await strip.boundingBox())!;
+  expect(active.x).toBeGreaterThanOrEqual(bounds.x - 1);
+  expect(active.x + active.width).toBeLessThanOrEqual(
+    bounds.x + bounds.width + 1,
+  );
+  await selected.press("ArrowRight");
+  await expect(documentTab).toHaveAttribute("aria-selected", "true");
 });
-
-for (const hasTouch of [false, true]) {
-  test.describe(`shared file tabs · ${hasTouch ? "touch" : "mouse"}`, () => {
-    test.use({ hasTouch });
-    test("fit a single long label and retain navigation through overflow", async ({
-      page,
-    }) => {
-      await page.setViewportSize({ width: 1440, height: 900 });
-      await page.route("**/api/git/status**", async (route) => {
-        const response = await route.fetch();
-        const body = await response.json();
-        if (body.kind === "repository") body.total = 123;
-        await route.fulfill({ response, json: body });
-      });
-      await pairedPage(page);
-      await openFixtureSession(
-        page,
-        /Resource virtualization and sandbox fixture/,
-      );
-      await page
-        .getByRole("button", { name: "Toggle resources panel" })
-        .click();
-      const pane = page.locator(".ctx");
-      const resize = page.getByRole("separator", {
-        name: "Resize files panel",
-      });
-      const handle = (await resize.boundingBox())!;
-      const delta =
-        Number(await resize.getAttribute("aria-valuenow")) -
-        Number(await resize.getAttribute("aria-valuemin"));
-      await page.mouse.move(
-        handle.x + handle.width / 2,
-        handle.y + handle.height / 2,
-      );
-      await page.mouse.down();
-      await page.mouse.move(
-        handle.x + handle.width / 2 + delta,
-        handle.y + handle.height / 2,
-      );
-      await page.mouse.up();
-
-      await openWorkspaceFile(
-        pane,
-        "src/components/TerminalSettingsDialog.tsx",
-      );
-      const longTab = pane.getByRole("tab", {
-        name: "TerminalSettingsDialog.tsx",
-        exact: true,
-      });
-      await expect(longTab).toBeVisible();
-      await expect(
-        pane.getByRole("combobox", { name: "More tabs", exact: true }),
-      ).toHaveCount(0);
-      const single = await longTab.locator("..").boundingBox();
-      expect(single!.width).toBeGreaterThanOrEqual(132);
-      expect(single!.width).toBeLessThanOrEqual(180);
-
-      await openPreviewFixture(pane, "document.md");
-      const documentTab = pane.getByRole("tab", {
-        name: "document.md",
-        exact: true,
-      });
-      await expect(documentTab).toHaveAttribute("aria-selected", "true");
-      await expect(documentTab).toBeVisible();
-      await expect(pane.locator(".ctx__mode-count")).toHaveText("99+");
-      const desktopFile = (await documentTab.locator("..").boundingBox())!;
-      const desktopStrip = (await pane
-        .locator(".ctx__file-tabs")
-        .boundingBox())!;
-      expect(desktopFile.x + desktopFile.width).toBeLessThanOrEqual(
-        desktopStrip.x + desktopStrip.width + 0.5,
-      );
-      await pane.getByRole("tab", { name: "Files", exact: true }).click();
-      await page.setViewportSize({ width: 390, height: 900 });
-      await expect(pane).toHaveAttribute("role", "dialog");
-      await expect(longTab).toBeVisible();
-      const more = pane.getByRole("combobox", {
-        name: "More tabs",
-        exact: true,
-      });
-      await more.click();
-      await page.getByRole("option", { name: /^document\.md(?:\s|$)/ }).click();
-      await expect(documentTab).toBeVisible();
-      await expect(documentTab).toHaveAttribute("aria-selected", "true");
-
-      // Exercise the narrowest drawer with the larger touch controls, and the
-      // adjacent compact layout with fine-pointer controls.
-      await page.setViewportSize({ width: hasTouch ? 320 : 361, height: 900 });
-      await expect(
-        page.getByRole("dialog", { name: "Context panel", exact: true }),
-      ).toBeVisible();
-      await documentTab.hover();
-      await expect(documentTab).toBeVisible();
-      const header = (await pane.locator(".ctx__header").boundingBox())!;
-      const strip = (await pane.locator(".ctx__file-tabs").boundingBox())!;
-      const activeTab = (await documentTab.locator("..").boundingBox())!;
-      const close = (await pane
-        .getByRole("button", { name: "Close document.md", exact: true })
-        .boundingBox())!;
-      expect(activeTab.width).toBeGreaterThanOrEqual(132);
-      expect(activeTab.x).toBeGreaterThanOrEqual(strip.x - 0.5);
-      expect(activeTab.x + activeTab.width).toBeLessThanOrEqual(
-        strip.x + strip.width + 0.5,
-      );
-      expect(close.width).toBeGreaterThanOrEqual(hasTouch ? 32 : 22);
-      expect(close.x + close.width).toBeLessThanOrEqual(
-        strip.x + strip.width + 0.5,
-      );
-      for (const control of await pane.locator(".ctx__header button").all()) {
-        if (!(await control.isVisible())) continue;
-        const box = (await control.boundingBox())!;
-        expect(box.x).toBeGreaterThanOrEqual(header.x - 0.5);
-        expect(box.x + box.width).toBeLessThanOrEqual(
-          header.x + header.width + 0.5,
-        );
-        expect(box.y + box.height).toBeLessThanOrEqual(
-          header.y + header.height + 0.5,
-        );
-      }
-      expect(
-        await pane.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
-      ).toBe(true);
-      const withTabs = (await pane.locator(".ctx__header").boundingBox())!
-        .height;
-      await pane
-        .getByRole("button", { name: "Close document.md", exact: true })
-        .click();
-      await pane
-        .getByRole("button", {
-          name: "Close TerminalSettingsDialog.tsx",
-          exact: true,
-        })
-        .click();
-      await expect
-        .poll(
-          async () =>
-            (await pane.locator(".ctx__header").boundingBox())!.height,
-        )
-        .toBeLessThan(withTabs);
-      await page.unrouteAll({ behavior: "wait" });
-    });
-  });
-}
 
 test("shared terminal tabs reactivate the same shell and keep rename editing in the tab", async ({
   page,
@@ -218,7 +87,19 @@ test("shared terminal tabs reactivate the same shell and keep rename editing in 
     await expect(tab).toHaveAttribute("aria-selected", "true");
     await tab.press("Home");
     await expect(file).toBeFocused();
-    await tab.click();
+    await pane.getByRole("button", { name: "Open tabs", exact: true }).click();
+    const openTabs = page.getByRole("dialog", {
+      name: "Open tabs",
+      exact: true,
+    });
+    const terminalLabel = (await tab.getAttribute("aria-label"))!;
+    await openTabs
+      .getByRole("textbox", { name: "Find open tab" })
+      .fill(terminalLabel);
+    await openTabs
+      .getByRole("button", { name: terminalLabel, exact: false })
+      .click();
+    await expect(tab).toHaveAttribute("aria-selected", "true");
     expect(await catalogIds()).toEqual(originalIds);
     await pane
       .getByRole("button", { name: "Close README.md", exact: true })

@@ -86,16 +86,10 @@ independent project shells in [[terminal]].
 
 ## Short-window input and extension content
 
-File and terminal tabs share one strip. Each tab has a 132px minimum for short titles and a 180px
-cap for longer names, bounded by strip width, with matching close slots and label ellipsis. Excess
-tabs are reachable through a trailing ellipsis that uses the existing dropdown's keyboard and modal
-behavior. The selected tab stays visible, and selecting an overflow entry preserves the underlying
-order. Opening, closing, renaming and resizing recompute the visible subset without unmounting
-readers or terminal processes. If a focused tab control moves into overflow, focus follows to
-More tabs. Compact pane spacing leaves room for a full tab and the overflow
-trigger. Drawers up to 384px and desktop touch panes with up to 342px of content width put the
-tab strip on its own row, keeping the selected tab, overflow and tool targets complete. Fine-pointer
-desktop panes keep one row and tighten the tool widths at their minimum pane size.
+File and terminal tabs share one horizontally scrollable strip with a searchable Open tabs list.
+The selected tab is brought into view. Arrow keys, Home and End navigate the strip. On compact
+panes the tab strip gets its own row, keeping the selected tab and tools reachable. Opening,
+closing, renaming and resizing preserve the underlying readers and terminal processes.
 
 Files and Changes use the same content-connected selected-tab background, top corners and fine
 boundary as file/terminal tabs, with no additional accent underline. The Terminal shortcut remains
@@ -219,8 +213,8 @@ completion behavior are unchanged.
   scroll. File tabs keep independent reader modes and Source/rendered scroll offsets;
   [[resource-preview]] defines the boundary for embedded readers and execution.
 
-  Overflowing file/terminal tabs move into the strip's trailing overflow menu (see Short-window
-  input above) while the tool actions remain available. Filename tabs fill the header height, starting flush at its leading content edge, with
+  The searchable Open tabs list keeps all open files and terminals reachable while the tool actions
+  remain available. Filename tabs fill the header height, starting at its leading edge, with
   internal label spacing instead of floating rounded backgrounds. Title and close action share one
   continuous tab background; close hover changes only its icon ink, and keyboard focus uses a thin
   outline. Selection indicators remain. File-specific and terminal controls float over their own

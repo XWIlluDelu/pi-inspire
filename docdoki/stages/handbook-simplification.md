@@ -37,6 +37,9 @@ attachment-retention and PDF experiments are outside the main plan.
 - Thinking level and per-session runtime settings keep confirmed values separate from pending
   writes. Deletion applies the committed result once and keeps confirmed navigation metadata
   when cleanup fails.
+- The workspace tab strip scrolls and offers one searchable list for files and terminals. The
+  old width-based hide/show registry and mutation observer are gone. The dock renders terminal
+  tab descriptors directly; terminal output and control lifetimes stay with their existing owner.
 - The start and session editors render their stored text directly. Input history copies text and
   artifacts on explicit selection. Provider and extension prompts share form controls.
 - Update probes share a cache owner. Live and saved views share snapshot assembly without
@@ -53,7 +56,7 @@ attachment-retention and PDF experiments are outside the main plan.
   without reconstructing runs from browser events.
 - The last-opened hint supplies a fresh browser's starting address. It no longer controls worker
   retention, addressed reads or another browser's completion and failure indicators.
-- Counted source is 237,432 lines, down 14,509 from the handbook baseline and 2,874 from the
+- Counted source is 237,339 lines, down 14,602 from the handbook baseline and 2,967 from the
   previous pass. Browser verification covers a real 600-turn saved conversation, branch previews
   without writer movement, editing with newer draft preservation, saved image copies and shell logs.
 - The full architecture and test replacement remain open. An attached Pi can still queue input

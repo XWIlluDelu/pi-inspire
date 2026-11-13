@@ -368,28 +368,21 @@ describe("terminal creation controls", () => {
 });
 
 describe("terminal project ownership", () => {
-  it("keeps a running terminal when its shared-tab close confirmation is cancelled", async () => {
+  it("keeps a running terminal when its close confirmation is cancelled", async () => {
     const running = { ...terminal("busy A"), commandRunning: true };
     api.terminals.mockResolvedValue(catalog([running]));
     const confirm = vi.fn(() => false);
     vi.stubGlobal("confirm", confirm);
-    const host = document.createElement("div");
-    document.body.append(host);
-    const view = render(<TerminalPane cwd="/A" sharedTabsHost={host} />);
-    try {
-      await within(host).findByRole("tab", { name: "busy A", selected: true });
-      fireEvent.click(
-        within(host).getByRole("button", { name: "Close busy A" }),
-      );
-      expect(confirm).toHaveBeenCalledWith(
-        "Close “busy A” and terminate its running process?",
-      );
-      expect(api.removeTerminal).not.toHaveBeenCalled();
-      expect(within(host).getByRole("tab", { name: "busy A" })).toBeVisible();
-    } finally {
-      view.unmount();
-      host.remove();
-    }
+    render(<TerminalPane cwd="/A" />);
+    await screen.findByRole("button", { name: "busy A", pressed: true });
+    fireEvent.click(screen.getByRole("button", { name: "Close busy A" }));
+    expect(confirm).toHaveBeenCalledWith(
+      "Close “busy A” and terminate its running process?",
+    );
+    expect(api.removeTerminal).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "busy A", pressed: true }),
+    ).toBeVisible();
   });
 
   it("retains the selected view while hidden without accepting terminal actions", async () => {

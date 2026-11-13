@@ -3083,11 +3083,6 @@ export class RuntimeController extends EventEmitter {
     try {
       const deliver = async () => {
         enteredGate = true;
-        // Pi's resource dispatcher splits on a literal space. The Host must
-        // enforce the same normalization as the browser for other API clients.
-        const message = invocation
-          ? `/${invocation.name}${invocation.argument ? ` ${invocation.argument}` : ""}`
-          : entered;
         let accepted = false;
         let imageDelivery: PendingImageDelivery | null = null;
         let imageOwner: PendingImageRecovery | null = null;
@@ -3111,20 +3106,35 @@ export class RuntimeController extends EventEmitter {
           if (!readyProcess || !readySlot.ready) {
             throw requestError("Pi runtime failed to start", 503);
           }
-          assertPublicPrompt(readySlot, message);
-          // A preceding native reload or worker replacement may have retired
-          // the resource after admission. Never send stale slash text as input.
-          if (invocation)
+          assertPublicPrompt(readySlot, entered);
+          // Re-read on the actual writer. Cold previews may not yet know
+          // extension names that contain punctuation or Unicode.
+          if (entered.startsWith("/"))
             await this.readRuntimeCommands(readySlot, readyProcess);
-          if (
-            invocation &&
-            !runtimeResourceOwnsCommand(readySlot, invocation.name)
-          ) {
+          const command =
+            invocation ??
+            parseCommandInvocation(entered, (name) =>
+              runtimeResourceOwnsCommand(readySlot, name),
+            );
+          if (command && !runtimeResourceOwnsCommand(readySlot, command.name))
             throw requestError(
-              `Pi command /${invocation.name} is no longer available; refresh the command inventory`,
+              `Pi command /${command.name} is no longer available; refresh the command inventory`,
               409,
             );
-          }
+          if (
+            command &&
+            (request.attachmentIds?.length ||
+              request.historyArtifacts ||
+              request.projectFiles?.length)
+          )
+            throw requestError(
+              "Pi commands cannot include attachments or project-file references",
+              409,
+            );
+          // Pi splits extension commands on a literal space.
+          const message = command
+            ? `/${command.name}${command.argument ? ` ${command.argument}` : ""}`
+            : entered;
           if (request.historyArtifacts) {
             const refreshed = await resolveComposerHistoryArtifacts(
               slot,

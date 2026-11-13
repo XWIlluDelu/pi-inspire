@@ -36,6 +36,8 @@ import {
 let newSessionBody: Record<string, unknown> | null;
 let promptBody: Record<string, unknown> | null;
 let promptGate: Promise<RouteResponse> | null = null;
+let recoveredPromptId: unknown;
+let observedPromptReceipt: string | null;
 let beforeUpload: (() => Promise<void>) | null = null;
 const welcomeModels = [
   {
@@ -169,11 +171,16 @@ beforeEach(async () => {
         },
       };
     }
-    if (url.startsWith("/api/prompt/"))
+    if (url.startsWith("/api/prompt/")) {
+      observedPromptReceipt =
+        new URL(url, "http://local").pathname.split("/").at(-1) ?? null;
+      if (observedPromptReceipt === recoveredPromptId)
+        return { status: 202, body: { accepted: true, historyEntry: null } };
       return {
         status: 409,
         body: { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true },
       };
+    }
     if (url.startsWith("/api/prompt")) {
       promptBody = jsonBody(init);
       return promptGate ?? { status: 202, body: { accepted: true } };
@@ -192,6 +199,8 @@ afterEach(() => {
   directoryFailure = null;
   sourceWriterActive = false;
   promptGate = null;
+  recoveredPromptId = null;
+  observedPromptReceipt = null;
   beforeUpload = null;
   setStartDraft("");
 });
@@ -462,10 +471,13 @@ describe("new-session start surface", () => {
     ).toBeInTheDocument();
     promptGate = null;
     promptBody = null;
+    observedPromptReceipt = null;
+    recoveredPromptId = original?.operationId;
     await act(async () =>
       fireEvent.click(screen.getByRole("button", { name: "Send message" })),
     );
-    expect(promptBody).toEqual(original);
+    expect(promptBody).toBeNull();
+    expect(observedPromptReceipt).toBe(recoveredPromptId);
     expect(screen.getByLabelText("Message")).toHaveValue("");
   });
 
@@ -630,9 +642,11 @@ describe("Welcome capability controls and command completion", () => {
   let rejectCommand = false;
   let requests: string[];
   let created: number;
-  function snapshot(mode = "normal", sessionId = "new-session") {
+  let sessionId: string;
+  let fixtureNumber = 0;
+  function snapshot(mode = "normal", id = sessionId) {
     return {
-      ...activeSnapshot({ sessionId, cwd: "/target", model, commands }),
+      ...activeSnapshot({ sessionId: id, cwd: "/target", model, commands }),
       extensionStatuses: { mode: JSON.stringify({ mode }) },
     };
   }
@@ -642,6 +656,7 @@ describe("Welcome capability controls and command completion", () => {
     rejectCommand = false;
     requests = [];
     created = 0;
+    sessionId = `configured-session-${++fixtureNumber}`;
     setStartDraft("");
     for (const notice of store.getState().notices)
       store.dismissNotice(notice.id);
@@ -671,7 +686,7 @@ describe("Welcome capability controls and command completion", () => {
         created++;
         return { body: snapshot() };
       }
-      if (url.startsWith("/api/prompt")) {
+      if (url === "/api/prompt") {
         const message = String(jsonBody(init).message);
         requests.push(message);
         if (rejectCommand && message.startsWith("/"))
@@ -723,7 +738,7 @@ describe("Welcome capability controls and command completion", () => {
 
   it("discovers target commands without a session and confirms a preselection before first input", async () => {
     await selectMode();
-    expect(sessionDraft("new-session")).toBe("Review this project");
+    expect(sessionDraft(sessionId)).toBe("Review this project");
     await act(async () => {});
     expect(requests).toHaveLength(1);
     act(() =>
@@ -784,7 +799,7 @@ describe("Welcome capability controls and command completion", () => {
           ),
       ).toBe(true),
     );
-    expect(sessionDraft("new-session")).toBe("Review this project");
+    expect(sessionDraft(sessionId)).toBe("Review this project");
     expect(requests).toEqual(["/response-mode quick"]);
   });
 
@@ -797,7 +812,7 @@ describe("Welcome capability controls and command completion", () => {
     );
     await act(async () => {});
     expect(requests).toEqual(["/response-mode quick"]);
-    expect(sessionDraft("new-session")).toBe("Review this project");
+    expect(sessionDraft(sessionId)).toBe("Review this project");
     expect(
       store
         .getState()

@@ -3,178 +3,91 @@ import {
   type ReactNode,
   type RefObject,
   useLayoutEffect,
-  useRef,
   useState,
 } from "react";
 import { Dropdown } from "./Dropdown";
 
-interface OverflowTab {
-  button: HTMLButtonElement;
+interface DockTab {
+  id: string;
   label: string;
   title: string;
+  selected: boolean;
+  select(): void;
 }
 
-/** Layout belongs to the shared strip; files and portalled terminal tabs keep
- * their own selection, ordering and lifetime. Hidden tabs remain mounted. */
+function selector(id: string) {
+  return `[data-dock-tab="${CSS.escape(id)}"]`;
+}
+
 export function ContextTabStrip({
   children,
   stripRef,
+  tabs,
 }: {
   children: ReactNode;
   stripRef: RefObject<HTMLDivElement | null>;
+  tabs: readonly DockTab[];
 }) {
-  const shellRef = useRef<HTMLDivElement>(null);
-  const overflowRef = useRef<HTMLDivElement>(null);
-  const overflowFocusFrom = useRef<Element | null>(null);
-  const [overflow, setOverflow] = useState<OverflowTab[]>([]);
-
+  const [query, setQuery] = useState("");
+  const active = tabs.find((tab) => tab.selected)?.id;
   useLayoutEffect(() => {
-    const shell = shellRef.current;
     const strip = stripRef.current;
-    const trigger = overflowRef.current;
-    if (!shell || !strip || !trigger) return;
-    const measure = () => {
-      const width = shell.clientWidth;
-      if (!width) return;
-      const focused = document.activeElement;
-      const tabs = [...strip.querySelectorAll<HTMLElement>(".ctx__file-tab")];
-      // Measure the natural, capped widths before excluding overflow from flex
-      // layout. This also covers terminal title changes and inline rename.
-      for (const tab of tabs) tab.hidden = false;
-      strip.style.removeProperty("--ctx-tab-max");
-      trigger.hidden = false;
-      const widths = tabs.map((tab) => tab.getBoundingClientRect().width);
-      const visible = new Set<HTMLElement>();
-      if (widths.reduce((sum, value) => sum + value, 0) <= width) {
-        for (const tab of tabs) visible.add(tab);
-      } else if (tabs.length === 1 && width >= 132) {
-        strip.style.setProperty("--ctx-tab-max", `${Math.min(180, width)}px`);
-        visible.add(tabs[0]!);
-      } else {
-        let remaining = width - trigger.getBoundingClientRect().width;
-        const maxWidth = Math.max(132, Math.min(180, remaining));
-        strip.style.setProperty("--ctx-tab-max", `${maxWidth}px`);
-        for (const [index, value] of widths.entries())
-          widths[index] = Math.min(value, maxWidth);
-        let active = tabs.findIndex((tab) =>
-          tab.classList.contains("ctx__file-tab--active"),
-        );
-        if (active < 0) active = tabs.findIndex((tab) => tab.contains(focused));
-        if (active < 0 && tabs.length > 0) active = 0;
-        if (active >= 0) {
-          visible.add(tabs[active]!);
-          remaining -= widths[active]!;
-        }
-        for (const [index, tab] of tabs.entries()) {
-          if (index === active) continue;
-          if (widths[index]! > remaining) break;
-          visible.add(tab);
-          remaining -= widths[index]!;
-        }
-      }
-      const next: OverflowTab[] = [];
-      for (const tab of tabs) {
-        tab.hidden = !visible.has(tab);
-        const button = tab.querySelector<HTMLButtonElement>('[role="tab"]');
-        if (tab.hidden && button) {
-          if (tab.contains(focused)) overflowFocusFrom.current = focused;
-          next.push({
-            button,
-            label:
-              button.getAttribute("aria-label") ?? button.textContent ?? "",
-            title: button.title,
-          });
-        }
-      }
-      trigger.hidden = next.length === 0;
-      if (!next.length) {
-        overflowFocusFrom.current = null;
-        if (trigger.contains(focused))
-          strip
-            .closest(".ctx__tabs")
-            ?.querySelector<HTMLButtonElement>(
-              '[role="tab"][aria-selected="true"]',
-            )
-            ?.focus({ preventScroll: true });
-      }
-      strip.scrollLeft = 0;
-      setOverflow((current) =>
-        current.length === next.length &&
-        current.every(
-          (tab, index) =>
-            tab.button === next[index]?.button &&
-            tab.label === next[index]?.label &&
-            tab.title === next[index]?.title,
-        )
-          ? current
-          : next,
-      );
-    };
-    measure();
-    const resize = new ResizeObserver(measure);
-    resize.observe(shell);
-    // Terminal tabs render through a portal and can change without rerendering
-    // this component. Ignore our own hidden attributes to avoid observer loops.
-    const mutations = new MutationObserver(measure);
-    mutations.observe(strip, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ["class", "aria-selected", "aria-label", "title"],
-    });
-    document.fonts?.addEventListener("loadingdone", measure);
-    return () => {
-      resize.disconnect();
-      mutations.disconnect();
-      document.fonts?.removeEventListener("loadingdone", measure);
-    };
-  }, [stripRef]);
-
-  // The overflow list renders the trigger, so transfer focus after it mounts.
-  useLayoutEffect(() => {
-    const from = overflowFocusFrom.current;
-    overflowFocusFrom.current = null;
-    if (!from || !overflow.length) return;
-    const focused = document.activeElement;
-    if (focused === from || focused === document.body)
-      overflowRef.current
-        ?.querySelector("button")
-        ?.focus({ preventScroll: true });
-  }, [overflow]);
-
+    if (!strip || !active) return;
+    const reveal = () =>
+      strip
+        .querySelector(selector(active))
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, [active, stripRef]);
+  const matching = tabs.filter((tab) =>
+    `${tab.label} ${tab.title}`
+      .toLocaleLowerCase()
+      .includes(query.trim().toLocaleLowerCase()),
+  );
   return (
-    <div className="ctx__file-tabs-shell" ref={shellRef}>
+    <div className="ctx__file-tabs-shell">
       <div className="ctx__file-tabs" ref={stripRef}>
         {children}
       </div>
-      <div
-        className="ctx__tab-overflow"
-        ref={overflowRef}
-        hidden={overflow.length === 0}
-      >
-        {overflow.length > 0 ? (
+      {tabs.length > 1 && (
+        <div className="ctx__tab-overflow">
           <Dropdown
-            label="More tabs"
-            title="More tabs"
-            value=""
+            label="Open tabs"
+            title="Open tabs"
+            value={active ?? ""}
+            emptyText="No matching tabs"
+            selectCurrent
+            menuClassName="ctx__open-tabs-menu"
             display=""
             indicator={<MoreHorizontal size={16} aria-hidden />}
-            options={overflow.map((tab, index) => ({
-              value: String(index),
-              label: tab.label,
-              description: tab.title === tab.label ? undefined : tab.title,
+            header={
+              <input
+                aria-label="Find open tab"
+                placeholder="Find open tab"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            }
+            options={matching.map(({ id, label, title }) => ({
+              value: id,
+              label,
+              description: title === label ? undefined : title,
             }))}
-            onChange={(value) => {
-              const button = overflow[Number(value)]?.button;
-              button?.click();
+            onChange={(id) => {
+              tabs.find((tab) => tab.id === id)?.select();
+              setQuery("");
               requestAnimationFrame(() =>
-                button?.focus({ preventScroll: true }),
+                stripRef.current
+                  ?.querySelector<HTMLElement>(selector(id))
+                  ?.focus(),
               );
             }}
           />
-        ) : null}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
