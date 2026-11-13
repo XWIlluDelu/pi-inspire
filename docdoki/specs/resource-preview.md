@@ -145,16 +145,16 @@ session slot, never the Host's last global selection, so one browser cannot reta
 
 ### File handles and content
 
-Opening a preview issues an opaque handle bound to the branch view and an open descriptor for the
-resolved device/inode. The Host checks the opened lexical path and file identity against the
-canonical target and uses `O_NOFOLLOW` for an already-canonical final component. Probes and file
-manager requests release their validation descriptors immediately.
+An opaque resource handle names the canonical path authorized by the current branch view.
+Each request revalidates session and view, citation or workspace containment, and the opened
+descriptor's identity against the current canonical target. The Host uses `O_NOFOLLOW` for an
+already-canonical final component. Same-path atomic replacement is readable on refresh. A path
+retarget that escapes the authorization fails.
 
-Before sending content headers or bytes, every request revalidates session/view, citation or current
-workspace containment, regular-file status, and opened-object identity. A path or ancestor exchange
-is rejected; a legitimate in-place rewrite of the same authorized file stays readable. Handles
-cannot authorize another path. Embedded image reads also validate supported MIME, decoded size, and
-canonical Base64 on the projection supplying the bytes.
+Each response reads one descriptor. An ETag identifies the opened file version and a continuation
+with a stale `If-Match` or `If-Range` fails. Detected in-place changes interrupt the transfer.
+Embedded images validate supported MIME, decoded size and canonical Base64 on the projection
+supplying the bytes.
 
 Same-branch append keeps the view stable and keeps a citation handle only while its message stays
 on the active path. Explicit branch navigation or worker/projection reset changes the view. Cache
@@ -364,7 +364,8 @@ HTTP(S) and WebSocket networking is allowed and not presented as offline executi
 
 An authenticated start creates a revocable random capability for the exact loaded HTML snapshot.
 The capability URL, not browser pairing, authorizes document and asset requests. Every request
-rechecks the original resource's current session/view authority and anchored file identity.
+rechecks the parent resource's current session/view authority and canonical asset root. The captured
+HTML remains readable after the source file is replaced.
 Relative assets stream with correct MIME, byte ranges and credential-free CORS for opaque-origin
 module/font/fetch requests. Local scope is the canonical workspace for a contained document, or the
 containing directory for an explicitly cited external document; traversal and escaping symlinks are

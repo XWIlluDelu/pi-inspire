@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, open, realpath } from "node:fs/promises";
-import { basename, extname, isAbsolute, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { composerArtifactReference } from "../shared/composer-artifact-references.js";
 import {
@@ -10,6 +18,11 @@ import {
   type ResourceKind,
   type ResourceProbeResult,
 } from "../shared/contracts.js";
+import {
+  HTML_PREVIEW_BYTES,
+  type HtmlPreviewResponse,
+} from "../shared/html-preview.js";
+import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import {
   collectSessionResourceReferences,
   fileResourceReference,
@@ -21,7 +34,6 @@ import {
   type SessionResourceReference,
   stripResourceLocation,
 } from "../shared/resource-references.js";
-import { isSupportedPromptImageMimeType } from "../shared/image-types.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import {
   canonicalBase64DecodedSize,
@@ -78,7 +90,7 @@ function changedResourceError(): Error & { status: number } {
  * or symlinked cwd, the post-open path and inode witnesses bind the followed
  * chain to the retained descriptor without relying on a platform-specific
  * descriptor filesystem. */
-async function openAuthorizedResourceFile(
+export async function openAuthorizedResourceFile(
   selectedPath: string,
   canonicalPath: string,
 ): Promise<{ handle: FileHandle; details: BigIntStats }> {
@@ -107,9 +119,7 @@ async function openAuthorizedResourceFile(
   }
 }
 
-export function openCanonicalResourceFile(
-  canonicalPath: string,
-): Promise<{ handle: FileHandle; details: BigIntStats }> {
+export function openCanonicalResourceFile(canonicalPath: string) {
   return openAuthorizedResourceFile(canonicalPath, canonicalPath);
 }
 
@@ -121,15 +131,14 @@ interface ResourceCandidate {
   path?: string;
   /** Index root to invalidate if an indexed serving path disappears. */
   workspaceRoot?: string;
-  /** Filesystem object captured at resolve time. The retained anchor keeps
-   * that inode allocated, making the device/inode pair non-reusable while this
-   * opaque resource handle is live. */
-  fileId?: FileIdentity;
-  /** Never streamed: it anchors fileId until eviction, session deletion, or
-   * server shutdown. A separately opened serving handle can still observe a
-   * legitimate in-place rewrite of this same filesystem object. */
-  anchor?: FileHandle;
   authority: "embedded" | "workspace" | "filesystem" | "citation";
+}
+
+interface HtmlPreview {
+  resource: ResolvedResource;
+  root: string;
+  entryPath: string;
+  html: string;
 }
 
 type ResolvedResource = ResourceCandidate & { descriptor: ResourceDescriptor };
@@ -470,6 +479,7 @@ function referencedByIndex(
 
 export class ResourceStore {
   private readonly handles = new Map<string, ResolvedResource>();
+  private readonly htmlPreviews = new Map<string, HtmlPreview>();
   private readonly citationIndexes = new Map<
     string,
     {
@@ -555,7 +565,6 @@ export class ResourceStore {
             undefined,
             getIndex,
           );
-          await resource.anchor?.close();
           return {
             reference,
             availability: "available" as const,
@@ -611,13 +620,9 @@ export class ResourceStore {
       reference,
       workspacePath,
     );
-    try {
-      if (!resource.path)
-        throw requestError("This resource has no file on disk", 400);
-      return resource.path;
-    } finally {
-      this.release(resource);
-    }
+    if (!resource.path)
+      throw requestError("This resource has no file on disk", 400);
+    return resource.path;
   }
 
   private async resolveCandidate(
@@ -729,9 +734,7 @@ export class ResourceStore {
       );
     }
 
-    // Bind the authorized inode to an open descriptor. Only browser preview
-    // resolution retains it; availability and file-manager calls release it.
-    const { handle: anchor, details } = await openAuthorizedResourceFile(
+    const { handle, details } = await openAuthorizedResourceFile(
       selectedPath,
       path,
     );
@@ -739,7 +742,7 @@ export class ResourceStore {
       if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
         throw requestError("The referenced file is too large to preview", 413);
       }
-      const mimeType = await openedResourceMimeType(path, anchor);
+      const mimeType = await openedResourceMimeType(path, handle);
       const workspacePath = within
         ? sep === "\\"
           ? within.split(sep).join("/")
@@ -769,42 +772,19 @@ export class ResourceStore {
         selectedPath,
         path,
         ...(insideWorkspace && workspaceRoot ? { workspaceRoot } : {}),
-        fileId: fileIdentity(details),
-        anchor,
         authority,
       };
-    } catch (error) {
-      await anchor.close().catch(() => undefined);
-      throw error;
+    } finally {
+      await handle.close();
     }
   }
 
-  /** Open the resource for serving. The retained anchor keeps the originally
-   * authorized inode allocated, then this method proves the current pathname
-   * still resolves to that same object before streaming a fresh handle. */
+  /** Open the currently authorized logical file for one response. */
   async openForServing(
     resource: ResolvedResource,
-  ): Promise<{ handle: FileHandle; size: number }> {
-    if (
-      !resource.selectedPath ||
-      !resource.path ||
-      !resource.fileId ||
-      !resource.anchor
-    ) {
+  ): Promise<{ handle: FileHandle; details: BigIntStats }> {
+    if (!resource.selectedPath || !resource.path)
       throw requestError("The resource preview is no longer available", 404);
-    }
-    let anchored: BigIntStats;
-    try {
-      anchored = await resource.anchor.stat({ bigint: true });
-    } catch {
-      throw changedResourceError();
-    }
-    if (
-      !anchored.isFile() ||
-      !sameFileObject(fileIdentity(anchored), resource.fileId)
-    ) {
-      throw changedResourceError();
-    }
 
     let handle: FileHandle;
     let details: BigIntStats;
@@ -833,58 +813,71 @@ export class ResourceStore {
       // evidence that the authorized pathname changed.
       throw error;
     }
-    try {
-      if (
-        !details.isFile() ||
-        !sameFileObject(fileIdentity(details), resource.fileId)
-      ) {
-        throw changedResourceError();
-      }
-      if (details.size > BigInt(Number.MAX_SAFE_INTEGER)) {
-        throw requestError("The referenced file is too large to preview", 413);
-      }
-      return { handle, size: Number(details.size) };
-    } catch (error) {
-      await handle.close().catch(() => undefined);
-      throw error;
-    }
-  }
-
-  private release(resource: ResourceCandidate): void {
-    void resource.anchor?.close().catch(() => undefined);
+    return { handle, details };
   }
 
   private remember(resource: ResolvedResource): void {
     this.handles.set(resource.descriptor.id, resource);
-    if (this.handles.size > MAX_HANDLES) {
-      const id = this.handles.keys().next().value as string;
-      const evicted = this.handles.get(id);
-      this.handles.delete(id);
-      if (evicted) this.release(evicted);
+    if (this.handles.size > MAX_HANDLES)
+      this.forgetHandle(this.handles.keys().next().value!);
+  }
+
+  private forgetHandle(id: string): void {
+    this.handles.delete(id);
+    for (const [previewId, preview] of this.htmlPreviews) {
+      if (preview.resource.descriptor.id === id)
+        this.htmlPreviews.delete(previewId);
     }
   }
 
-  async close(): Promise<void> {
-    const resources = [...this.handles.values()];
+  close(): void {
     this.handles.clear();
+    this.htmlPreviews.clear();
     this.citationIndexes.clear();
-    await Promise.all(
-      resources.map(async (resource) =>
-        resource.anchor?.close().catch(() => undefined),
-      ),
-    );
   }
 
   forgetSession(sessionId: string): void {
     for (const [id, resource] of this.handles) {
-      if (resource.descriptor.sessionId === sessionId) {
-        this.handles.delete(id);
-        this.release(resource);
-      }
+      if (resource.descriptor.sessionId === sessionId) this.forgetHandle(id);
     }
     for (const [key, entry] of this.citationIndexes) {
       if (entry.sessionId === sessionId) this.citationIndexes.delete(key);
     }
+  }
+
+  async createHtmlPreview(
+    resourceId: string,
+    context: ResourceContext,
+    html: string,
+  ): Promise<HtmlPreviewResponse> {
+    const resource = this.get(resourceId, context.sessionId, context.viewId);
+    if (resource.descriptor.kind !== "html" || !resource.path)
+      throw requestError("Only HTML files support interactive preview", 400);
+    if (Buffer.byteLength(html) > HTML_PREVIEW_BYTES)
+      throw requestError("The HTML is too large for interactive preview", 413);
+    await this.revalidate(resource, context);
+    this.get(resourceId, context.sessionId, context.viewId);
+    const root = resource.workspaceRoot ?? dirname(resource.path);
+    const entryPath = relative(root, resource.path);
+    const id = randomUUID();
+    this.htmlPreviews.set(id, { resource, root, entryPath, html });
+    if (this.htmlPreviews.size > 32)
+      this.htmlPreviews.delete(this.htmlPreviews.keys().next().value!);
+    return {
+      id,
+      url: `/html-preview/${id}/${entryPath.split(sep).map(encodeURIComponent).join("/")}`,
+    };
+  }
+
+  removeHtmlPreview(id: string, sessionId: string): void {
+    if (this.htmlPreviews.get(id)?.resource.descriptor.sessionId === sessionId)
+      this.htmlPreviews.delete(id);
+  }
+
+  getHtmlPreview(id: string): HtmlPreview {
+    const preview = this.htmlPreviews.get(id);
+    if (!preview) throw requestError("The interactive preview has ended", 404);
+    return preview;
   }
 
   get(id: string, sessionId: string, viewId: string): ResolvedResource {
@@ -933,7 +926,7 @@ export class ResourceStore {
       )
         return;
       // Exact selections are literal paths, never reinterpreted as citations.
-      // Serving additionally checks the original pinned filesystem object.
+      // Serving additionally checks that the selected path still resolves to the authorized path.
       if (resource.authority === "workspace") {
         throw requestError("The file is no longer inside this workspace", 403);
       }

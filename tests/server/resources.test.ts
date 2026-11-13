@@ -367,7 +367,7 @@ describe("ResourceStore", () => {
     ).resolves.toMatchObject({ workspacePath: "indexed.txt" });
   });
 
-  it("anchors serving to the resolved inode while observing same-file rewrites", async () => {
+  it("opens the latest regular file at its authorized path and refuses a retargeted symlink", async () => {
     const { root, project } = await workspace();
     const report = join(project, "report.md");
     await writeFile(report, "# Result\n");
@@ -384,13 +384,10 @@ describe("ResourceStore", () => {
     );
     const resource = resources.get(descriptor.id, "s1", descriptor.viewId);
     const opened = await resources.openForServing(resource);
-    expect(opened.size).toBe("# Result\n".length);
+    expect(opened.details.size).toBe(BigInt("# Result\n".length));
     expect(await opened.handle.readFile("utf8")).toBe("# Result\n");
     await opened.handle.close();
 
-    // A legitimate rewrite retains the authorized filesystem object. Serving
-    // opens a fresh handle, so it reports current bytes rather than stale
-    // resolve-time metadata.
     await writeFile(report, "# Rewritten in place\n");
     const rewritten = await resources.openForServing(resource);
     expect(await rewritten.handle.readFile("utf8")).toBe(
@@ -409,13 +406,10 @@ describe("ResourceStore", () => {
       await rm(report);
     }
 
-    // Same-path regeneration would otherwise be able to reuse an inode on some
-    // filesystems. The retained anchor keeps the original inode live, so the
-    // stale handle must be re-resolved rather than serving new bytes.
     await writeFile(report, "# Regenerated\n");
-    await expect(resources.openForServing(resource)).rejects.toMatchObject({
-      status: 409,
-    });
+    const regenerated = await resources.openForServing(resource);
+    expect(await regenerated.handle.readFile("utf8")).toBe("# Regenerated\n");
+    await regenerated.handle.close();
   });
 
   it("authorizes a complete spaced diagnostic path, never its existing sibling prefix", async () => {

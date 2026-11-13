@@ -179,7 +179,7 @@ describe("interactive HTML capabilities", () => {
       .expect(403);
   });
 
-  it("revokes on stop and refuses a retired branch view or replaced entry file", async () => {
+  it("revokes on stop and view change while keeping the captured HTML after atomic replacement", async () => {
     const stopped = await start();
     await fixture.localRequest
       .delete(`/api/html-previews/${stopped.id}?sessionId=other`)
@@ -194,8 +194,11 @@ describe("interactive HTML capabilities", () => {
     await request(fixture.application.server).get(moved.url).expect(404);
     const replaced = await start();
     await rename(source, `${source}.old`);
-    await writeFile(source, html);
-    await request(fixture.application.server).get(replaced.url).expect(409);
+    await writeFile(source, "<h1>New source</h1>");
+    const captured = await request(fixture.application.server)
+      .get(replaced.url)
+      .expect(200);
+    expect(captured.text).toBe(html);
   });
 
   it("allows a cited external document's sibling assets without granting its ancestors", async () => {

@@ -3,6 +3,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -464,6 +465,45 @@ describe("HTTP resource and upload authority", () => {
       `bytes 0-${shrunk.length - 1}/${shrunk.length}`,
     );
     expect(shrunkResponse.text).toBe(shrunk);
+  });
+
+  it("refuses stale range continuation and serves the atomic replacement on refresh", async () => {
+    const path = join(temporary, "document.pdf");
+    await writeFile(path, "%PDF-old-body");
+    const sessionId = await openProject();
+    const resolved = await local
+      .post("/api/resources/resolve")
+      .send({ sessionId, reference: "document.pdf" })
+      .expect(200);
+    const url = `/api/resources/${resolved.body.id}/content?sessionId=${encodeURIComponent(sessionId)}`;
+    const first = await local.get(url).set("Range", "bytes=0-7").expect(206);
+    expect(first.body.toString()).toBe("%PDF-old");
+    const version = first.headers.etag ?? "";
+    expect(version).toMatch(/^"[\w-]+"$/);
+    await local
+      .get(url)
+      .set("Range", "bytes=8-")
+      .set("If-Match", version)
+      .expect(206);
+
+    await writeFile(`${path}.new`, "%PDF-new-body");
+    await rename(`${path}.new`, path);
+    await local
+      .get(url)
+      .set("Range", "bytes=8-")
+      .set("If-Match", version)
+      .expect(409);
+    await local
+      .get(url)
+      .set("Range", "bytes=8-")
+      .set("If-Range", version)
+      .expect(409);
+    const refreshed = await local
+      .get(url)
+      .set("Range", "bytes=0-7")
+      .expect(206);
+    expect(refreshed.body.toString()).toBe("%PDF-new");
+    expect(refreshed.headers.etag).not.toBe(version);
   });
 
   it("closes an opened file when the client aborts during authorization", async () => {

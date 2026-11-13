@@ -50,7 +50,7 @@ import { showInFileManager } from "./file-manager.js";
 import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionService } from "./git-inspection.js";
 import { listHostDirectories, listHostRoots } from "./host-dirs.js";
-import { HtmlPreviewStore } from "./html-preview.js";
+import { serveHtmlPreview } from "./html-preview.js";
 import { InstanceHttpControl } from "./instance-control.mjs";
 import { type InstanceState, instanceUrl } from "./instance-state.mjs";
 import type { MaintenanceRestartController } from "./maintenance-restart.js";
@@ -72,7 +72,11 @@ import {
 } from "./project-files.js";
 import type { ProviderAuthService } from "./provider-auth.js";
 import { requestError } from "./request-error.js";
-import { resourceByteRange, sendResourceFile } from "./resource-http.js";
+import {
+  checkResourceVersion,
+  resourceByteRange,
+  sendResourceFile,
+} from "./resource-http.js";
 import type { ResourceStore } from "./resources.js";
 import type { RuntimeController } from "./runtime.js";
 import { createRuntimeEventSockets } from "./runtime-event-sockets.js";
@@ -701,11 +705,13 @@ export function createInspireServer(deps: AppDependencies): {
   deps.runtime.on("event", taskNotifications.observe);
   const launchUrl = (origin: string): string =>
     `${origin}/#inspire-bootstrap=${browserAuth.bootstrap(origin)}`;
-  const htmlPreviews = new HtmlPreviewStore(deps.resources, (sessionId) =>
-    deps.runtime.resourceContext(sessionId),
-  );
   app.get("/html-preview/:id/*path", (request, response) =>
-    htmlPreviews.serve(request, response),
+    serveHtmlPreview(
+      deps.resources,
+      (sessionId) => deps.runtime.resourceContext(sessionId),
+      request,
+      response,
+    ),
   );
 
   app.use("/api", (request, response, next) => {
@@ -1675,8 +1681,13 @@ export function createInspireServer(deps: AppDependencies): {
       .strict()
       .parse(request.body);
     const context = await deps.runtime.resourceContext(sessionId);
-    const preview = await htmlPreviews.create(request.params.id, context, html);
-    if (response.destroyed) htmlPreviews.remove(preview.id, sessionId);
+    const preview = await deps.resources.createHtmlPreview(
+      request.params.id,
+      context,
+      html,
+    );
+    if (response.destroyed)
+      deps.resources.removeHtmlPreview(preview.id, sessionId);
     else response.json(preview);
   });
   app.delete("/api/html-previews/:id", (request, response) => {
@@ -1684,7 +1695,7 @@ export function createInspireServer(deps: AppDependencies): {
       .object({ sessionId: z.string().min(1) })
       .strict()
       .parse(request.query);
-    htmlPreviews.remove(request.params.id, sessionId);
+    deps.resources.removeHtmlPreview(request.params.id, sessionId);
     response.status(204).end();
   });
   app.post("/api/resources/:id/download-ticket", async (request, response) => {
@@ -1748,9 +1759,12 @@ export function createInspireServer(deps: AppDependencies): {
         context,
       );
       if (closed || response.destroyed) return;
+      const version =
+        '"' + createHash("sha256").update(data).digest("base64url") + '"';
+      checkResourceVersion(request, version);
       const range = resourceByteRange(request, data.length);
       setResourceHeaders(mimeType);
-      response.set("Accept-Ranges", "bytes");
+      response.set({ "Accept-Ranges": "bytes", ETag: version });
       if (range) {
         response.status(206).set({
           "Content-Range": `bytes ${range.start}-${range.end}/${data.length}`,
@@ -1762,13 +1776,8 @@ export function createInspireServer(deps: AppDependencies): {
         response.send(data);
       }
     } else if (resource.path) {
-      const { handle, size } = await deps.resources.openForServing(resource);
-      if (closed || response.destroyed) {
-        await handle.close();
-        return;
-      }
-      setResourceHeaders();
-      await sendResourceFile(request, response, handle, size);
+      const opened = await deps.resources.openForServing(resource);
+      await sendResourceFile(request, response, opened, setResourceHeaders);
     } else {
       response
         .status(404)
@@ -1982,7 +1991,6 @@ export function createInspireServer(deps: AppDependencies): {
     launchUrl,
     close: async () => {
       deps.providerAuth?.close();
-      htmlPreviews.close();
       // Stop accepting HTTP/upgrades first, but do not await the drain before
       // runtime teardown: an active request may itself be waiting on runtime.
       const drained = server.listening
@@ -2019,10 +2027,7 @@ export function createInspireServer(deps: AppDependencies): {
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
       );
-      const resourceResult = await deps.resources.close().then(
-        () => ({ status: "fulfilled" as const }),
-        (reason: unknown) => ({ status: "rejected" as const, reason }),
-      );
+      deps.resources.close();
       const exportResult = await generatedExports.close().then(
         () => ({ status: "fulfilled" as const }),
         (reason: unknown) => ({ status: "rejected" as const, reason }),
@@ -2039,7 +2044,6 @@ export function createInspireServer(deps: AppDependencies): {
         runtimeResult,
         drainedResult,
         terminalResult,
-        resourceResult,
         exportResult,
         attachmentResult,
         updateResult,
