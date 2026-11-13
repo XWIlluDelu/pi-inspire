@@ -16,10 +16,14 @@ if (
     createAgentSessionFromServices,
     createAgentSessionRuntime,
     createAgentSessionServices,
+    createCodemodeExtension,
+    createMcpExtension,
+    createToolSearchExtension,
     getAgentDir,
     hasTrustRequiringProjectResources,
     InteractiveMode,
     ProjectTrustStore,
+    resolveModelScopeWithDiagnostics,
     SessionManager,
     SettingsManager,
   } = piInstallation.sdk;
@@ -33,19 +37,41 @@ if (
   const attachControl = attachControlForSession(() => runtime.session);
   runtime = await createAgentSessionRuntime(
     async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
-      // Use Pi's saved trust decision. Without a decision, do not load
-      // project-local code that the stock CLI would ask the user to trust.
-      const projectTrusted =
-        trust.get(cwd) ?? !hasTrustRequiringProjectResources(cwd);
+      const settingsManager = SettingsManager.create(cwd, agentDir, {
+        projectTrusted: false,
+      });
+      // A saved denial takes precedence. Without a saved decision honor Pi's
+      // global default, and leave projects requiring a trust prompt untrusted.
+      settingsManager.setProjectTrusted(
+        trust.get(cwd) ??
+          (!hasTrustRequiringProjectResources(cwd) ||
+            settingsManager.getDefaultProjectTrust() === "always"),
+      );
       const services = await createAgentSessionServices({
         cwd,
         agentDir,
-        settingsManager: SettingsManager.create(cwd, agentDir, {
-          projectTrusted,
-        }),
+        settingsManager,
         modelRuntimeSignal: AbortSignal.timeout(15_000),
         resourceLoaderOptions: {
           extensionFactories: [
+            {
+              name: "codemode",
+              factory: createCodemodeExtension(),
+              builtin: true,
+              replaceable: true,
+            },
+            {
+              name: "tool-search",
+              factory: createToolSearchExtension(),
+              builtin: true,
+              replaceable: true,
+            },
+            {
+              name: "mcp",
+              factory: createMcpExtension(),
+              builtin: true,
+              replaceable: true,
+            },
             {
               name: "inspire-attach-control",
               factory: attachControl,
@@ -54,10 +80,30 @@ if (
           ],
         },
       });
+      const patterns = settingsManager.getEnabledModels() ?? [];
+      const scoped = patterns.length
+        ? (
+            await resolveModelScopeWithDiagnostics(
+              patterns,
+              services.modelRuntime,
+              { signal: AbortSignal.timeout(15_000) },
+            )
+          ).scopedModels
+        : [];
+      const initial = sessionManager.buildSessionContext().messages.length
+        ? undefined
+        : (scoped.find(
+            ({ model }) =>
+              model.provider === settingsManager.getDefaultProvider() &&
+              model.id === settingsManager.getDefaultModel(),
+          ) ?? scoped[0]);
       const result = await createAgentSessionFromServices({
         services,
         sessionManager,
         sessionStartEvent,
+        scopedModels: scoped,
+        model: initial?.model,
+        thinkingLevel: initial?.thinkingLevel,
       });
       return { ...result, services, diagnostics: services.diagnostics };
     },

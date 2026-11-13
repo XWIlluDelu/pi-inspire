@@ -363,6 +363,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
         env: {
           ...environment,
           INSPIRE_PI_COMMAND: piInstallation.commandPath,
+          INSPIRE_ATTACH_TEST_NATIVE: "1",
         },
       },
     );
@@ -381,6 +382,11 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
       throw new Error(output, { cause: error });
     });
     expect(record.mode).toBe("tui");
+    await vi.waitFor(async () =>
+      expect(
+        JSON.parse(await readFile(join(root, "native-commands.json"), "utf8")),
+      ).toContain("mcp"),
+    );
     terminal.write("gated run\r");
     await vi.waitFor(() => access(join(root, "gated run.entered")), {
       timeout: 5_000,

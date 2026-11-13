@@ -81,7 +81,7 @@ attachment-retention and PDF experiments are outside the main plan.
   single endpoint. The daemon epoch still owns receipt recovery. A retired browser build releases
   its terminal attachment without stopping the process. Browser-issued Host restart uses the same
   receipt shape; only observation of the replacement Host settles restart completion.
-- Counted source is 237,677 lines, 14,264 below the handbook baseline and 281 above the previous
+- Counted source is 237,736 lines, 14,205 below the handbook baseline and 340 above the previous
   pass. The handbook's full deletion estimate has not been realized.
 
 ## Remaining architecture and test replacement

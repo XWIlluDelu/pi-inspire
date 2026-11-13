@@ -20,6 +20,13 @@ async function gate(cwd: string, name: string): Promise<void> {
 }
 
 export default function attachPromptFixture(pi: ExtensionAPI) {
+  if (process.env.INSPIRE_ATTACH_TEST_NATIVE === "1")
+    pi.on("session_start", async (_event, ctx) => {
+      await writeFile(
+        join(ctx.cwd, "native-commands.json"),
+        JSON.stringify(pi.getCommands().map(({ name }) => name)),
+      );
+    });
   pi.on("input", async (event, ctx) => {
     if (
       event.source !== "extension" ||

@@ -151,7 +151,7 @@ Limits of attaching to another Pi:
 - To send Steer or Follow up from the browser, start the terminal session with
   `inspire pi` or `inspire pi --session <session.jsonl>` (from a source checkout:
   `npm run inspire -- pi --session <session.jsonl>`). This opens Pi's native terminal UI using
-  its SDK and existing user settings and saved project trust. It confirms each input when Pi
+  its SDK, existing model scope, built-in MCP support and saved project trust. It confirms each input when Pi
   queues or handles it. Native terminal queues remain outside Inspire's Pending.
 - A regular `pi` process running the extension can accept browser input when idle. While it
   works, queue input in its terminal. The extension API cannot return a per-input queue
