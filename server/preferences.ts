@@ -109,12 +109,6 @@ function projectPreferences(value: unknown): DiskPreferences {
   }
 
   const source = { ...(value as Record<string, unknown>) };
-  if (source.palette === "amber") source.palette = "chimonanthus";
-  else if (source.palette === "teal") source.palette = "hydrangea";
-  if (Array.isArray(source.sessionActionOrder))
-    source.sessionActionOrder = source.sessionActionOrder.map((id) =>
-      id === "resume-command" || id === "terminal" ? "switch-branch" : id,
-    );
   const normalized = structuredClone(defaultPreferences) as unknown as Record<
     string,
     unknown

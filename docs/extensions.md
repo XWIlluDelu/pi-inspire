@@ -121,9 +121,8 @@ activity, and to continue them. It is a single file that ships with Inspire:
 pi install /absolute/path/to/inspire/extensions/attach-control.ts
 ```
 
-New Pi processes load it; run `/reload` in an idle terminal Pi to activate it there. Configurations
-that point to the former `extensions/inspire-session-bridge.ts` or
-`docs/examples/session-activity.ts` keep loading it.
+New Pi processes load it. Run `/reload` in an idle terminal Pi to activate it there. Use
+`extensions/attach-control.ts` as the configured extension path.
 
 With attach-control installed:
 

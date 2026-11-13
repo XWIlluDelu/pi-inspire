@@ -165,10 +165,9 @@ capture mechanism and service handoff.
 - Without explicit `INSPIRE_TOKEN`, generated tokens contain 64 cryptographic random bytes
   (86 base64url characters), in a current-user-private `0700` directory and `0600` plain-text
   `.token` file keyed by installation/host/port. Existing non-private POSIX parent directories are
-  refused without changing their permissions; new parents are created private. All cookie-era
-  generated lengths, including 64 characters, rotate once on the next Host start; later starts
-  reuse the new generation. Operators must rotate an explicitly configured token that was
-  previously shared through cookies. Noninteractive Host services suppress token-bearing startup
+  refused without changing their permissions; new parents are created private. A stored generated
+  token must have the current format. An invalid token file is reported and left in place for
+  explicit replacement and re-pairing. Noninteractive Host services suppress token-bearing startup
   output so it cannot enter their journal.
 
 ## Development launch

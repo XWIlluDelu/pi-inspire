@@ -411,7 +411,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     const fixture = await livePi({}, [
       NAVIGATE,
       RELOAD,
-      "docs/examples/session-activity.ts",
+      "extensions/attach-control.ts",
     ]);
     const { pi, registry, id, sessionFile } = fixture;
     const record = await soleReceiver(fixture);

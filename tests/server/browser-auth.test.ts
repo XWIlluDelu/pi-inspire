@@ -284,19 +284,15 @@ describe("persistent host access token", () => {
     },
   );
 
-  it("rotates prior generated token lengths once and then reuses the replacement", async () => {
-    for (const length of [43, 64, 128]) {
-      const path = await temporaryPath();
-      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-      const legacy = "a".repeat(length);
-      await writeFile(path, `${legacy}\n`, { mode: 0o600 });
-
-      const rotated = await resolveAccessToken(undefined, path);
-      expect(rotated).toMatch(/^[A-Za-z0-9_-]{86}$/);
-      expect(rotated).not.toBe(legacy);
-      expect((await readFile(path, "utf8")).trim()).toBe(rotated);
-      await expect(resolveAccessToken(undefined, path)).resolves.toBe(rotated);
-    }
+  it("rejects an unsupported stored token without rewriting it", async () => {
+    const path = await temporaryPath();
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const token = "a".repeat(64) + "\n";
+    await writeFile(path, token, { mode: 0o600 });
+    await expect(resolveAccessToken(undefined, path)).rejects.toThrow(
+      /invalid/,
+    );
+    expect(await readFile(path, "utf8")).toBe(token);
   });
 
   it("keeps an explicit environment token outside persistent storage", async () => {

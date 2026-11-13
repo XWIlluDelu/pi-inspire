@@ -21,41 +21,6 @@ afterEach(async () => {
 });
 
 describe("PreferencesStore validation", () => {
-  it.each([
-    ["amber", "chimonanthus"],
-    ["teal", "hydrangea"],
-  ])(
-    "migrates saved %s to %s without invalidating other settings",
-    async (legacy, palette) => {
-      const { path, store } = await fixture();
-      const raw = JSON.stringify({
-        palette: legacy,
-        theme: "dark",
-        pinnedSessionIds: ["kept"],
-      });
-      await writeFile(path, raw);
-      const inspected = await store.inspect();
-      expect(inspected.warning).toBeUndefined();
-      expect(inspected.preferences).toMatchObject({
-        palette,
-        theme: "dark",
-        pinnedSessionIds: ["kept"],
-      });
-      // Observation is read-only; the next ordinary write saves canonical IDs.
-      expect(await readFile(path, "utf8")).toBe(raw);
-      await store.patch({ readingWidth: "wide" });
-      expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
-        palette,
-        theme: "dark",
-        readingWidth: "wide",
-        pinnedSessionIds: ["kept"],
-      });
-      expect(
-        (await new PreferencesStore(path).inspect()).warning,
-      ).toBeUndefined();
-    },
-  );
-
   it("accepts only current palette identifiers in patches", async () => {
     const { path, store } = await fixture();
     await store.patch({ palette: "wisteria" });
@@ -101,35 +66,27 @@ describe("PreferencesStore validation", () => {
     expect((await store.read()).sessionActionOrder).toEqual(order);
   });
 
-  it.each([
-    {
-      retired: "resume-command",
-      savedOrder: ["rename", "copy-id", "clone", "resume-command", "export"],
-      migratedOrder: ["rename", "copy-id", "clone", "switch-branch", "export"],
-    },
-    {
-      retired: "terminal",
-      savedOrder: ["export", "terminal", "rename"],
-      migratedOrder: ["export", "switch-branch", "rename", "copy-id", "clone"],
-    },
-  ])(
-    "replaces saved $retired with Switch branch in place",
-    async ({ savedOrder, migratedOrder }) => {
-      const { path, store } = await fixture();
-      const raw = JSON.stringify({
-        sessionActionOrder: savedOrder,
-      });
-      await writeFile(path, raw);
-      const inspected = await store.inspect();
-      expect(inspected.warning).toBeUndefined();
-      expect(inspected.preferences.sessionActionOrder).toEqual(migratedOrder);
-      expect(await readFile(path, "utf8")).toBe(raw);
-
-      await store.patch({ theme: "dark" });
-      const saved = JSON.parse(await readFile(path, "utf8"));
-      expect(saved.sessionActionOrder).toEqual(migratedOrder);
-    },
-  );
+  it("leaves retired preference IDs on disk until the affected field is repaired", async () => {
+    const { path, store } = await fixture();
+    const old = {
+      palette: "teal",
+      sessionActionOrder: ["terminal"],
+      theme: "dark",
+    };
+    await writeFile(path, JSON.stringify(old));
+    const { preferences, warning } = await store.inspect();
+    expect(warning).toMatch(/palette.*sessionActionOrder/u);
+    expect(preferences).toMatchObject({
+      palette: defaultPreferences.palette,
+      sessionActionOrder: defaultPreferences.sessionActionOrder,
+      theme: "dark",
+    });
+    await store.patch({ readingWidth: "wide" });
+    expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
+      ...old,
+      readingWidth: "wide",
+    });
+  });
 
   it("preserves invalid and unknown fields while saving unrelated settings and allows field repair", async () => {
     const { path, store } = await fixture();

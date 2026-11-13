@@ -75,8 +75,8 @@ Extensions keep their Pi RPC compatibility requirements.
   A disconnected bridge or rejected stop cannot release it. Failed new-session creation retains
   its provisional reservation until retirement, even before Pi reports its native session file.
 - Recovery processes old leases even when enhancement is disabled. A live previous Host retains
-  ownership; otherwise the old worker scope must be empty before a new writer starts. A same-boot
-  granted legacy lease without scope evidence remains blocked. A failed recovery is retried on
+  ownership; otherwise the old worker scope must be empty before a new writer starts. A granted
+  lease requires valid scope evidence. A failed recovery is retried on
   the next worker-start request, sharing an in-flight attempt with other starts. Successful
   recovery stays established for the Host lifetime; later owned workers are not old recovery
   candidates. Status inspection reports the current result without starting recovery or cleanup.

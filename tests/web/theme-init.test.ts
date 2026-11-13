@@ -27,7 +27,7 @@ function firstPaint(stored: string | null, systemDark: boolean) {
 it.each([
   { source: null, systemDark: false },
   { source: "not json", systemDark: true },
-  { source: '{"theme":"system","palette":"amber"}', systemDark: true },
+  { source: '{"theme":"system","palette":"teal"}', systemDark: true },
   {
     source:
       '{"theme":"violet","palette":"blue","contentTextSize":"giant","readingWidth":"unbounded"}',

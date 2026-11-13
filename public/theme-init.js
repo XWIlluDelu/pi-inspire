@@ -20,13 +20,7 @@
     cached?.theme === "system"
       ? cached.theme
       : "system";
-  // Mirror the Host's legacy identifier migration, without owning persistence.
-  const savedPalette =
-    cached?.palette === "amber"
-      ? "chimonanthus"
-      : cached?.palette === "teal"
-        ? "hydrangea"
-        : cached?.palette;
+  const savedPalette = cached?.palette;
   const palette = [
     "wisteria",
     "hydrangea",

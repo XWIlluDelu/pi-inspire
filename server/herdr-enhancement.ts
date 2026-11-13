@@ -117,15 +117,6 @@ export class HerdrEnhancement {
         }
       }
       for (const lease of leases) {
-        if (await this.options.registry.wasReleased(lease)) {
-          // Cleanup failure leaves the release proof in place for retries.
-          await this.options.registry
-            .remove(lease)
-            .catch((error) =>
-              this.recordError("herdr_released_lease_cleanup_failed", error),
-            );
-          continue;
-        }
         if (lease.group) {
           await stopHerdrProcessGroup(lease.group, false, (event, fields) => {
             this.diagnostics.record("warning", event, fields);
@@ -145,17 +136,9 @@ export class HerdrEnhancement {
           this.recordError("herdr_recovery_lease_cleanup_failed", error);
         }
       }
-      await this.options.registry
-        .pruneReleases()
-        .catch((error) =>
-          this.recordError("herdr_release_cleanup_failed", error),
-        );
     } catch (error) {
       this.recoveryIssue =
-        (error as NodeJS.ErrnoException | null)?.code ===
-        "HERDR_LEGACY_WORKER_LEASE"
-          ? "Previous-version Herdr workers have no retained tool scope, so detached tool exit cannot be verified. Shut down the old environment, then reboot this machine to clear the old boot's ownership fence"
-          : "Previous enhanced sessions could not be verified as stopped. Check the Host diagnostics before starting new work";
+        "Previous enhanced sessions could not be verified as stopped. Check the Host diagnostics before starting new work";
       this.recordError("herdr_recovery_failed", error);
     } finally {
       this.initialized = true;

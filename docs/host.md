@@ -386,6 +386,7 @@ replacing its files. If the terminal daemon also needs an update, finish termina
 through its original owner. Stop all old Hosts that share the same upload store.
 
 Start the updated Host and reload the browser. Use the launcher link or Pair form if pairing is
-needed. Rotate any explicitly configured token that was previously shared through cookies.
+needed. A stored generated token with an unsupported format requires explicit replacement and
+browser re-pairing.
 In a source checkout, `npm run inspire -- restart` rebuilds changed client inputs when restarting a
 current Host. Pi extension changes use [`/reload`](pi-commands.md#compaction-and-reload).
