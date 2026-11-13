@@ -21,16 +21,12 @@ afterEach(() => {
 });
 
 describe("prompt delivery transport", () => {
-  it("bounds a prompt confirmation even when the request ignores abort", async () => {
+  it("bounds each observation even when the transport ignores abort", async () => {
     vi.useFakeTimers();
-    let signal: AbortSignal | undefined;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-        signal = init?.signal ?? undefined;
-        return new Promise<Response>(() => {});
-      }),
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      () => new Promise<Response>(() => {}),
     );
+    vi.stubGlobal("fetch", fetch);
 
     const delivery = createApi().prompt(prompt);
     const rejected = expect(delivery).rejects.toMatchObject({
@@ -38,10 +34,65 @@ describe("prompt delivery transport", () => {
       outcomeUnknown: true,
       timedOut: true,
     });
-    await vi.advanceTimersByTimeAsync(30_000);
-
-    expect(signal?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(125_000);
     await rejected;
+    expect(fetch).toHaveBeenCalledTimes(4);
+    expect(fetch.mock.calls.every(([, init]) => init?.signal?.aborted)).toBe(
+      true,
+    );
+    expect(
+      fetch.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(1);
+  });
+
+  it("confirms a lost submission response using only the original receipt", async () => {
+    vi.useFakeTimers();
+    const accepted = { accepted: true, historyEntry: null };
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValueOnce(
+        new TypeError("Connection closed during POST response"),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ error: "Proxy unavailable" }, { status: 503 }),
+      )
+      .mockResolvedValueOnce(Response.json(accepted));
+    vi.stubGlobal("fetch", fetch);
+
+    const delivery = createApi().prompt(prompt);
+    await vi.advanceTimersByTimeAsync(1_500);
+    await expect(delivery).resolves.toEqual(accepted);
+    expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      ["/api/prompt", "POST"],
+      ["/api/prompt/operation-1?authorityId=authority-1", undefined],
+      ["/api/prompt/operation-1?authorityId=authority-1", undefined],
+    ]);
+  });
+
+  it("preserves unknown delivery when a lost submission has no matching receipt", async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockRejectedValueOnce(new TypeError("Connection closed"))
+      .mockResolvedValueOnce(
+        Response.json(
+          { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true },
+          { status: 409 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetch);
+
+    const delivery = createApi().prompt(prompt);
+    const rejected = expect(delivery).rejects.toMatchObject({
+      code: "PROMPT_OPERATION_NOT_FOUND",
+      outcomeUnknown: true,
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await rejected;
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      "/api/prompt",
+      "/api/prompt/operation-1?authorityId=authority-1",
+    ]);
   });
 
   it("keeps a submitted prompt unconfirmed when its receipt read returns 401", async () => {

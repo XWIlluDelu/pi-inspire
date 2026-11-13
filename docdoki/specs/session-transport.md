@@ -176,7 +176,9 @@ no confirmation. Non-JSON error pages keep HTTP status and edge markers for conn
 The Host admits each random prompt operation id once for its process lifetime and checks that
 retries carry the original payload. POST waits up to 20 seconds before returning a pending receipt.
 Authenticated GETs observe that receipt without resending the payload. Each browser request has a
-30-second deadline. Replacing the transport cancels the browser observation while execution continues.
+30-second deadline. After a lost HTTP response, up to three consecutive receipt reads recover the
+same operation. A valid pending receipt renews the read budget. Replacing the transport cancels
+the browser observation while execution continues.
 
 The browser API confirms refusal only from a retained rejected receipt with matching Host authority
 and operation id. Transport failures and unavailable or unknown receipts leave delivery unconfirmed.

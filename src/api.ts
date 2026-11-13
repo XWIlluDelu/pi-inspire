@@ -460,7 +460,7 @@ function post<T>(
   );
 }
 
-function waitForPromptPoll(signal?: AbortSignal): Promise<void> {
+function waitForPromptPoll(delay: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const finish = () => {
       window.clearTimeout(timer);
@@ -468,7 +468,7 @@ function waitForPromptPoll(signal?: AbortSignal): Promise<void> {
       if (signal?.aborted) reject(new ApiRequestCancelledError(true));
       else resolve();
     };
-    const timer = window.setTimeout(finish, 250);
+    const timer = window.setTimeout(finish, delay);
     signal?.addEventListener("abort", finish, { once: true });
     if (signal?.aborted) finish();
   });
@@ -486,6 +486,8 @@ async function deliverPrompt(
   };
   const receiptPath = `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`;
   let first = true;
+  let failures = 0;
+  const retryDelays = [250, 1_000, 3_000];
   for (;;) {
     let response: PromptDeliveryResponse;
     try {
@@ -493,21 +495,28 @@ async function deliverPrompt(
         ? post<PromptDeliveryResponse>("/api/prompt", body, init, observation)
         : request<PromptDeliveryResponse>(receiptPath, init, observation));
     } catch (error) {
-      // Even an authenticated 401/404/500 can refuse the observation without
-      // saying anything about an earlier dispatch. Only the retained operation
-      // receipt may declare that same operation rejected.
-      if (
-        error instanceof ApiError &&
-        !(
+      // A retained result is authoritative for this operation. Recover a
+      // lost HTTP response by reading its receipt without posting again.
+      if (error instanceof ApiError) {
+        const receipt =
           error.edge !== "ssh-reverse" &&
           error.authorityId === body.authorityId &&
-          error.promptReceipt?.operationId === body.operationId &&
-          error.promptReceipt.outcome === "rejected"
-        )
-      )
+          error.promptReceipt?.operationId === body.operationId;
+        if (receipt && error.promptReceipt?.outcome === "rejected") throw error;
         error.outcomeUnknown = true;
-      throw error;
+        if (
+          receipt ||
+          (error.status < 500 && error.status !== 408 && error.status !== 429)
+        )
+          throw error;
+      } else if (!(error instanceof ApiTransportError)) throw error;
+      const delay = retryDelays[failures++];
+      if (delay === undefined || signal?.aborted) throw error;
+      first = false;
+      await waitForPromptPoll(delay, signal);
+      continue;
     }
+    failures = 0;
     if (response?.accepted === true) return response;
     if (
       !response ||
@@ -519,7 +528,7 @@ async function deliverPrompt(
     // Poll the receipt, not another delivery of potentially large attachments.
     // Pi may still be compacting, running an input hook, or awaiting a dialog.
     first = false;
-    await waitForPromptPoll(signal);
+    await waitForPromptPoll(250, signal);
   }
 }
 

@@ -169,6 +169,11 @@ beforeEach(async () => {
         },
       };
     }
+    if (url.startsWith("/api/prompt/"))
+      return {
+        status: 409,
+        body: { code: "PROMPT_OPERATION_NOT_FOUND", outcomeUnknown: true },
+      };
     if (url.startsWith("/api/prompt")) {
       promptBody = jsonBody(init);
       return promptGate ?? { status: 202, body: { accepted: true } };
