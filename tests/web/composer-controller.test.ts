@@ -326,6 +326,18 @@ describe("ComposerController", () => {
     expect(harness.prompt.mock.calls[2]![0]).toEqual(first);
   });
 
+  it("keeps refused drafts from distinct deliveries of the same text", async () => {
+    const harness = createHarness();
+    harness.restoreDraftIfEmpty.mockReturnValue(false);
+    harness.prompt.mockRejectedValue(new ApiError(409, "Pi refused input"));
+    await harness.controller.send("same text");
+    await harness.controller.send("same text");
+    expect(harness.slice().failedDeliveryCount).toBe(2);
+    harness.restoreDraftIfEmpty.mockReturnValue(true);
+    expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
+    expect(harness.slice().failedDeliveryCount).toBe(1);
+  });
+
   it("starts a new operation after a definitive same-Host 5xx refusal", async () => {
     const harness = createHarness();
     harness.prompt

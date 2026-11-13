@@ -286,7 +286,8 @@ widgets keep Pi's above/below-editor placement; questions remain separately attr
 their own keyboard focus, deadlines and cancellation under [[pi-integration]].
 
 Submission, including the first Welcome message, synchronously hands the exact draft/artifacts to
-an independent operation and leaves the editor ready for the next input. Delayed receipts cannot
+an operation keyed by its original receipt and leaves the editor ready for the next input.
+Sending, unknown acceptance and draft recovery belong to that record. Delayed receipts cannot
 clear newer drafts. On definitive failure or unknown acceptance, input is restored into an empty
 editor; otherwise Restore offers it without replacing newer work. While text or artifacts occupy the
 editor, Restore's compact quiet action uses the shared neutral unavailable state and keeps its 32px

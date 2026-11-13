@@ -46,7 +46,8 @@ attachment-retention and PDF experiments are outside the main plan.
   retaining transcript snapshots in slot metadata. Each socket owns its subscription state, and
   each Pi dialog owns its process and deadline. Deletion reservations share a registry. A lost prompt response
   triggers a bounded read of its original Host receipt. An unchanged retry observes the same
-  receipt without sending the prompt again. Terminal data and maintenance share one
+  receipt without sending the prompt again. Composer keeps in-flight, uncertain and recoverable
+  prompt states under one operation identity. Terminal data and maintenance share one
   wire version. Current credentials, Herdr scopes and attach-control entry paths are in use.
 - The owned Pi bridge publishes bounded native checkpoints. The disk reader verifies the file
   independently, including appends from a second Pi. Live adopts finalized native entries from
@@ -56,7 +57,7 @@ attachment-retention and PDF experiments are outside the main plan.
   without reconstructing runs from browser events.
 - The last-opened hint supplies a fresh browser's starting address. It no longer controls worker
   retention, addressed reads or another browser's completion and failure indicators.
-- Counted source is 237,339 lines, down 14,602 from the handbook baseline and 2,967 from the
+- Counted source is 237,396 lines, down 14,545 from the handbook baseline and 2,910 from the
   previous pass. Browser verification covers a real 600-turn saved conversation, branch previews
   without writer movement, editing with newer draft preservation, saved image copies and shell logs.
 - The full architecture and test replacement remain open. An attached Pi can still queue input

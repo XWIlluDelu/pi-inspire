@@ -3374,13 +3374,13 @@ export class RuntimeController extends EventEmitter {
             // An extension command can reload resources while model work is
             // still active. Its completion refreshes browser discovery without
             // treating the agent or any pending input as settled.
-            if (invocation)
-              this.emitSlotEvent(slot, { type: "prompt_finished" });
+            if (command) this.emitSlotEvent(slot, { type: "prompt_finished" });
             if (
               await this.reconcileAcceptedPersistence(slot, "the prompt", true)
             ) {
               try {
-                const newest = runtimeHistory(slot)?.historyPage(
+                const historyProjection = runtimeHistory(slot);
+                const newest = historyProjection?.historyPage(
                   { kind: "composer" },
                   effectiveRuntimeLeaf(slot),
                   slot.viewId,
@@ -3401,7 +3401,7 @@ export class RuntimeController extends EventEmitter {
                       message,
                       historyArtifacts: {
                         viewId: slot.viewId,
-                        incarnation: slot.projection?.incarnation ?? null,
+                        incarnation: historyProjection?.incarnation ?? null,
                         effectiveLeafId: effectiveRuntimeLeaf(slot),
                         imageReferences: newest.images.map(
                           (image) => image.reference,

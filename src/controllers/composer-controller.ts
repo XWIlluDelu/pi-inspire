@@ -69,26 +69,34 @@ interface DeliveryRecord {
   independent: boolean;
 }
 
-interface DeliveryObservation {
-  record: DeliveryRecord;
-  confirmation: AbortController;
-}
+type DeliveryState =
+  | {
+      state: "sending";
+      signature: string;
+      record: DeliveryRecord;
+      confirmation: AbortController;
+    }
+  | {
+      state: "unknown";
+      signature: string;
+      request: PromptDeliveryRequest;
+      draft?: DeliveryRecord;
+    }
+  | { state: "refused"; draft: DeliveryRecord };
 
 interface ComposerPartition {
   attachments: PendingAttachment[];
   projectFiles: string[];
-  /** Independently owned operations; only an exact retry may reuse an unknown ID. */
-  deliveries: Map<string, DeliveryObservation>;
-  unknownDeliveries: Map<string, PromptDeliveryRequest>;
-  failedDeliveries: DeliveryRecord[];
+  deliveries: Map<string, DeliveryState>;
 }
 
-function attachmentOwners(composer: ComposerPartition) {
-  return [
-    composer,
-    ...Array.from(composer.deliveries.values(), ({ record }) => record),
-    ...composer.failedDeliveries,
-  ];
+function* attachmentOwners(composer: ComposerPartition) {
+  yield composer;
+  for (const delivery of composer.deliveries.values()) {
+    const owner =
+      delivery.state === "sending" ? delivery.record : delivery.draft;
+    if (owner) yield owner;
+  }
 }
 
 interface ComposerControllerState {
@@ -133,7 +141,9 @@ export class ComposerController {
       ? {
           attachments: composer.attachments,
           projectFiles: composer.projectFiles,
-          failedDeliveryCount: composer.failedDeliveries.length,
+          failedDeliveryCount: [...composer.deliveries.values()].filter(
+            (delivery) => delivery.state !== "sending" && delivery.draft,
+          ).length,
         }
       : {
           attachments: [],
@@ -149,13 +159,17 @@ export class ComposerController {
     for (const staged of this.stagedFiles.values()) staged.recovery.reset();
     let deliveryOutcomeUnknown = false;
     for (const [sessionId, composer] of this.composers) {
-      deliveryOutcomeUnknown ||= composer.deliveries.size > 0;
-      for (const [signature, { record, confirmation }] of composer.deliveries) {
-        confirmation.abort();
-        composer.unknownDeliveries.set(signature, record.request);
-        if (!record.independent) composer.failedDeliveries.push(record);
+      for (const delivery of [...composer.deliveries.values()]) {
+        if (delivery.state !== "sending") continue;
+        deliveryOutcomeUnknown = true;
+        delivery.confirmation.abort();
+        this.settleDelivery(
+          composer,
+          delivery.signature,
+          delivery.record,
+          "unknown",
+        );
       }
-      composer.deliveries.clear();
       this.restoreFailed(sessionId, composer, true);
       const invalidateUploads = (items: PendingAttachment[]) =>
         items.map((item) =>
@@ -343,8 +357,8 @@ export class ComposerController {
   discard(sessionId: string): void {
     const composer = this.composers.get(sessionId);
     if (composer) {
-      for (const { confirmation } of composer.deliveries.values())
-        confirmation.abort();
+      for (const delivery of composer.deliveries.values())
+        if (delivery.state === "sending") delivery.confirmation.abort();
       for (const owner of attachmentOwners(composer))
         this.releaseAttachments(owner.attachments);
       // Uploads still in flight retain this object. Emptying it makes their
@@ -353,8 +367,6 @@ export class ComposerController {
       composer.attachments = [];
       composer.projectFiles = [];
       composer.deliveries.clear();
-      composer.failedDeliveries = [];
-      composer.unknownDeliveries.clear();
       this.composers.delete(sessionId);
     }
     deleteSessionDraft(sessionId);
@@ -491,17 +503,26 @@ export class ComposerController {
       expectedViewId: undefined,
       behavior: undefined,
     });
-    if (composer.deliveries.has(signature)) return false;
-    const retained = composer.unknownDeliveries.get(signature);
-    if (retained && retained.authorityId !== authorityId) {
-      composer.unknownDeliveries.delete(signature);
+    const previous = [...composer.deliveries.values()].find(
+      (delivery) =>
+        delivery.state !== "refused" && delivery.signature === signature,
+    );
+    if (previous?.state === "sending") return false;
+    const retained = previous?.state === "unknown" ? previous : undefined;
+    if (retained && retained.request.authorityId !== authorityId) {
+      if (retained.draft)
+        composer.deliveries.set(retained.request.operationId, {
+          state: "refused",
+          draft: retained.draft,
+        });
+      else composer.deliveries.delete(retained.request.operationId);
       this.host.notifyVisible(
         sessionId,
         "The Host restarted before delivery was confirmed. Check the conversation before resending.",
       );
       return false;
     }
-    const request = retained ?? {
+    const request = retained?.request ?? {
       operationId: globalThis.crypto.randomUUID(),
       authorityId,
       ...deliveryContent,
@@ -515,15 +536,18 @@ export class ComposerController {
       projectFiles,
       independent,
     };
-    composer.failedDeliveries = composer.failedDeliveries.filter(
-      (item) => item.request !== retained,
-    );
     const confirmation = new AbortController();
-    const observation = { record, confirmation };
-    composer.deliveries.set(signature, observation);
+    const operationId = request.operationId;
+    const observation = {
+      state: "sending",
+      signature,
+      record,
+      confirmation,
+    } as const;
+    composer.deliveries.set(operationId, observation);
     const ownsTransport = () =>
       this.host.api() === api &&
-      composer.deliveries.get(signature) === observation;
+      composer.deliveries.get(operationId) === observation;
     for (const item of included) {
       const staged = this.stagedFiles.get(item.localId);
       if (staged) {
@@ -554,24 +578,27 @@ export class ComposerController {
         this.forgetStagedFile(item.localId);
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       }
-      composer.unknownDeliveries.delete(signature);
       return { accepted: true, historyEntry: response.historyEntry };
     } catch (error) {
       if (!ownsTransport()) return false;
       const rejection =
         error instanceof ApiError && !error.outcomeUnknown ? error : null;
       if (rejection) {
-        composer.unknownDeliveries.delete(signature);
         for (const item of record.attachments) {
           const staged = this.stagedFiles.get(item.localId);
           if (staged)
-            staged.submitted = [...composer.unknownDeliveries.values()].some(
-              (unknown) =>
+            staged.submitted = [...composer.deliveries.values()].some(
+              (other) =>
+                other !== observation &&
+                other.state !== "refused" &&
                 item.uploadedId &&
-                unknown.attachmentIds?.includes(item.uploadedId),
+                (other.state === "unknown"
+                  ? other.request
+                  : other.record.request
+                ).attachmentIds?.includes(item.uploadedId),
             );
         }
-      } else composer.unknownDeliveries.set(signature, request);
+      }
       if (rejection?.code === "PROMPT_RECOVERED") {
         // Both observers share a handoff. A late observer cannot undo a later
         // removal or send, even after the draft no longer contains the handle.
@@ -618,15 +645,18 @@ export class ComposerController {
             : item,
         );
       }
+      this.settleDelivery(
+        composer,
+        signature,
+        record,
+        rejection ? "refused" : "unknown",
+      );
       if (!independent) {
-        composer.failedDeliveries.push(record);
         this.restoreFailed(sessionId, composer, true);
         if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
       }
       if (rejection?.code === "PROMPT_ABORTED") return false;
       if (error instanceof ApiError && error.status === 401) {
-        composer.deliveries.delete(signature);
-        this.publish(sessionId);
         this.host.handleAuthFailure();
       } else
         (independent
@@ -642,12 +672,31 @@ export class ComposerController {
         );
       return false;
     } finally {
-      if (ownsTransport()) {
-        composer.deliveries.delete(signature);
+      if (this.host.api() === api) {
+        if (ownsTransport()) composer.deliveries.delete(operationId);
         this.prune(sessionId, composer);
         this.publish(sessionId);
       }
     }
+  }
+
+  private settleDelivery(
+    composer: ComposerPartition,
+    signature: string,
+    record: DeliveryRecord,
+    state: "unknown" | "refused",
+  ): void {
+    const id = record.request.operationId;
+    const draft = record.independent ? undefined : record;
+    composer.deliveries.delete(id);
+    if (state === "unknown")
+      composer.deliveries.set(id, {
+        state,
+        signature,
+        request: record.request,
+        draft,
+      });
+    else if (draft) composer.deliveries.set(id, { state, draft });
   }
 
   restoreFailedPrompt(sessionId: string): boolean {
@@ -667,23 +716,22 @@ export class ComposerController {
     automatic: boolean,
   ): boolean {
     const revision = sessionDraftRevision(sessionId);
-    const index = automatic
-      ? composer.failedDeliveries.findIndex(
-          (item) => item.postHandoffRevision === revision,
-        )
-      : 0;
-    const record = composer.failedDeliveries[index];
-    if (
-      !record ||
-      composer.attachments.length > 0 ||
-      composer.projectFiles.length > 0 ||
-      !this.host.restoreDraftIfEmpty(sessionId, record.message)
-    )
+    if (composer.attachments.length || composer.projectFiles.length)
       return false;
-    composer.failedDeliveries.splice(index, 1);
-    composer.attachments = record.attachments;
-    composer.projectFiles = record.projectFiles;
-    return true;
+    for (const [id, delivery] of composer.deliveries) {
+      if (delivery.state === "sending" || !delivery.draft) continue;
+      const record = delivery.draft;
+      if (automatic && record.postHandoffRevision !== revision) continue;
+      if (!this.host.restoreDraftIfEmpty(sessionId, record.message))
+        return false;
+      if (delivery.state === "unknown")
+        composer.deliveries.set(id, { ...delivery, draft: undefined });
+      else composer.deliveries.delete(id);
+      composer.attachments = record.attachments;
+      composer.projectFiles = record.projectFiles;
+      return true;
+    }
+    return false;
   }
 
   useHistoryEntry(
@@ -1052,8 +1100,6 @@ export class ComposerController {
         attachments: [],
         projectFiles: [],
         deliveries: new Map(),
-        unknownDeliveries: new Map(),
-        failedDeliveries: [],
       };
       this.composers.set(sessionId, composer);
     }
@@ -1063,12 +1109,11 @@ export class ComposerController {
   private prune(sessionId: string, composer: ComposerPartition): void {
     if (
       composer.deliveries.size === 0 &&
-      composer.unknownDeliveries.size === 0 &&
-      composer.failedDeliveries.length === 0 &&
       composer.attachments.length === 0 &&
       composer.projectFiles.length === 0
     ) {
-      this.composers.delete(sessionId);
+      if (this.composers.get(sessionId) === composer)
+        this.composers.delete(sessionId);
     }
   }
 
