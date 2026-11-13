@@ -128,7 +128,7 @@ test.describe("narrow touch screen", () => {
     await dismiss.click();
     await authorize.click();
     await settings
-      .getByRole("button", { name: "Copy authorization code" })
+      .getByRole("option", { name: "Copy authorization code" })
       .click();
     await expect(
       settings.getByRole("link", { name: "Open sign-in link" }),

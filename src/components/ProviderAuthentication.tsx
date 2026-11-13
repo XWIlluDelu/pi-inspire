@@ -1,4 +1,4 @@
-import { ArrowLeft, CircleHelp, Eye, EyeOff, Plus } from "lucide-react";
+import { ArrowLeft, CircleHelp, Plus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -13,6 +13,7 @@ import type {
   ProviderLoginOption,
 } from "../../shared/model-settings";
 import { store } from "../store";
+import { PromptChoices, PromptInput } from "./PromptFields";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
 
 type Owner = { sessionId?: string; cwd?: string };
@@ -97,11 +98,9 @@ function AuthenticationPanel({
   const discovering = view.kind === "connect";
   const selected = discovering ? view.provider : undefined;
   const [attempt, setAttempt] = useState<ProviderLoginAttempt | null>(null);
-  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [showInput, setShowInput] = useState(false);
   const inputId = useId();
   const directoryId = useId();
   const searchRef = useRef<HTMLInputElement>(null);
@@ -131,7 +130,6 @@ function AuthenticationPanel({
   const mounted = useRef(false);
   const mutationRevision = useRef(0);
   const attemptRef = useRef<ProviderLoginAttempt | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const ownsPendingAttempt = useCallback(
     (id: string) =>
       mounted.current &&
@@ -146,8 +144,6 @@ function AuthenticationPanel({
   }, []);
   const attemptId = attempt?.id;
   const attemptStatus = attempt?.status;
-  const promptId = attempt?.prompt?.id;
-  const promptType = attempt?.prompt?.type;
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -159,11 +155,6 @@ function AuthenticationPanel({
           .catch(() => {});
     };
   }, [owner]);
-  useEffect(() => {
-    setInput("");
-    setShowInput(false);
-    if (promptId && promptType !== "select") inputRef.current?.focus();
-  }, [promptId, promptType]);
   useEffect(() => {
     if (!attemptId || attemptStatus !== "pending") return;
     let observing = true;
@@ -268,7 +259,6 @@ function AuthenticationPanel({
       })) as ProviderLoginAttempt;
       if (ownsPrompt()) {
         update(next);
-        setInput("");
       }
     } catch (error) {
       if (ownsPrompt()) setError(messageOf(error));
@@ -531,89 +521,48 @@ function AuthenticationPanel({
                 ))}
               </div>
             ))}
-          {attempt.prompt ? (
-            attempt.prompt.type === "select" ? (
-              <div
-                className="models-login__methods"
-                role="group"
-                aria-label={attempt.prompt.message}
-              >
-                <p>{attempt.prompt.message}</p>
-                {attempt.prompt.options?.map((option) => (
-                  <div className="models-login__method" key={option.id}>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={busy}
-                      onClick={() => void answer(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                    {option.remoteHelp ? (
+          {attempt.prompt?.type === "select" ? (
+            <PromptChoices
+              key={attempt.prompt.id}
+              label={attempt.prompt.message}
+              pending={busy}
+              onChoose={(value) => void answer(value)}
+              options={(attempt.prompt.options ?? []).map((option) => ({
+                value: option.id,
+                label: option.label,
+                details: (
+                  <>
+                    {option.remoteHelp && (
                       <RemoteLoginHelp instruction={option.remoteHelp} />
-                    ) : null}
-                    {option.description ? (
+                    )}
+                    {option.description && (
                       <p className="settings__field-help">
                         {option.description}
                       </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <form
-                className="models-login__input"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void answer(input);
-                }}
-              >
-                <label htmlFor={inputId}>{attempt.prompt.message}</label>
-                <div className="models-secret-input">
-                  <input
-                    id={inputId}
-                    ref={inputRef}
-                    type={
-                      !showInput &&
-                      (attempt.prompt.type === "secret" ||
-                        attempt.prompt.type === "manual_code")
-                        ? "password"
-                        : "text"
-                    }
-                    value={input}
-                    autoComplete="off"
-                    placeholder={attempt.prompt.placeholder}
-                    disabled={busy}
-                    onChange={(event) => setInput(event.target.value)}
-                  />
-                  {attempt.prompt.type === "secret" ||
-                  attempt.prompt.type === "manual_code" ? (
-                    <button
-                      type="button"
-                      className="models-icon-button"
-                      aria-label={
-                        showInput ? "Hide credential" : "Show credential"
-                      }
-                      aria-pressed={showInput}
-                      onClick={() => setShowInput((value) => !value)}
-                    >
-                      {showInput ? (
-                        <EyeOff size={16} aria-hidden />
-                      ) : (
-                        <Eye size={16} aria-hidden />
-                      )}
-                    </button>
-                  ) : null}
-                </div>
-                <button
-                  className="button button--primary"
-                  type="submit"
-                  disabled={busy || !input}
-                >
-                  Continue
-                </button>
-              </form>
-            )
+                    )}
+                  </>
+                ),
+              }))}
+            >
+              <p>{attempt.prompt.message}</p>
+            </PromptChoices>
+          ) : attempt.prompt ? (
+            <PromptInput
+              key={attempt.prompt.id}
+              title={attempt.prompt.message}
+              kind={
+                attempt.prompt.type === "secret" ||
+                attempt.prompt.type === "manual_code"
+                  ? "secret"
+                  : "text"
+              }
+              placeholder={attempt.prompt.placeholder}
+              pending={busy}
+              required
+              inlineLabel
+              submitLabel="Continue"
+              onSubmit={(value) => void answer(value)}
+            />
           ) : null}
           <button
             type="button"

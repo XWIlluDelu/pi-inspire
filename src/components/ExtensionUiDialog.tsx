@@ -6,10 +6,9 @@ import {
   useImperativeHandle,
   useState,
 } from "react";
-import type { ExtensionUiRequest } from "../../shared/contracts";
-import { ExtensionDialogContent } from "./ExtensionDialogContent";
 import { shallowEqual, store, useAppState } from "../store";
 import { useModalFocus } from "../use-modal-focus";
+import { ExtensionDialogContent } from "./ExtensionDialogContent";
 
 type Respond = (payload: Record<string, unknown>) => void;
 
@@ -25,35 +24,6 @@ function RequestTime({ expiresAt }: { expiresAt: number }) {
       ? `${seconds}s`
       : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
   return <p className="dialog__remaining">{time} remaining</p>;
-}
-
-function DialogBody({
-  request,
-  responding,
-  error,
-  onRespond,
-}: {
-  request: ExtensionUiRequest;
-  responding: boolean;
-  error: string | null;
-  onRespond: Respond;
-}) {
-  const [value, setValue] = useState(
-    request.method === "editor" && "prefill" in request
-      ? (request.prefill ?? "")
-      : "",
-  );
-  return (
-    <ExtensionDialogContent
-      request={request}
-      value={value}
-      pending={responding}
-      error={error}
-      onValueChange={setValue}
-      onRespond={onRespond}
-      onCancel={() => onRespond({ id: request.id, cancelled: true })}
-    />
-  );
 }
 
 export interface ExtensionUiDialogHandle {
@@ -116,12 +86,13 @@ export const ExtensionUiDialog = memo(function ExtensionUiDialog({
           <Puzzle size={14} aria-hidden /> Extension request
         </div>
         {/* key remounts the form state per request */}
-        <DialogBody
+        <ExtensionDialogContent
           key={`${request.sessionId}:${request.id}`}
           request={request}
-          responding={responding}
+          pending={responding}
           error={responseError?.owner === owner ? responseError.message : null}
           onRespond={onRespond}
+          onCancel={() => onRespond({ id: request.id, cancelled: true })}
         />
         {request.expiresAt !== undefined ? (
           <RequestTime

@@ -1,5 +1,4 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { emptyToolPresentationConfiguration } from "../../shared/tool-presentation-config";
 import { ExtensionDialogContent } from "../../src/components/ExtensionDialogContent";
@@ -82,7 +81,6 @@ it("reuses controlled dialog content without a session store or transport", () =
     pending?: boolean;
     error?: string | null;
   }) {
-    const [value, setValue] = useState("Original notes");
     return (
       <ExtensionDialogContent
         request={{
@@ -90,11 +88,10 @@ it("reuses controlled dialog content without a session store or transport", () =
           id: "notes",
           method: "editor",
           title: "Task notes",
+          prefill: "Original notes",
         }}
-        value={value}
         pending={pending}
         error={error}
-        onValueChange={setValue}
         onRespond={respond}
         onCancel={cancel}
       />
