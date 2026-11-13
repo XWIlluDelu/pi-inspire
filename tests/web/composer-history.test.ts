@@ -1,83 +1,29 @@
-// @vitest-environment jsdom
 import { expect, it } from "vitest";
-import type { ComposerHistoryEntry } from "../../shared/contracts";
 import {
-  type ComposerHistoryScope,
-  composerHistory,
   discardComposerHistory,
-  hydrateComposerHistory,
+  recentComposerHistory,
   rememberComposerHistory,
 } from "../../src/composer-history";
 
-const entry = (text: string): ComposerHistoryEntry => ({
-  text,
-  images: [],
-  files: [],
-});
-
-it("merges prompts accepted while history hydration is in flight", async () => {
-  const scope: ComposerHistoryScope = {
-    sessionId: "history-race",
-    historyVersion: "history-a",
+it("keeps accepted inputs in order across saved appends without guessing duplicate identity", () => {
+  const scope = {
+    sessionId: "recent-inputs",
     viewId: "view-a",
     incarnation: "projection-a",
-    effectiveLeafId: null,
-  };
-  let resolve!: (entries: ComposerHistoryEntry[]) => void;
-  const hydration = hydrateComposerHistory(
-    scope,
-    () =>
-      new Promise<ComposerHistoryEntry[]>((accept) => {
-        resolve = accept;
-      }),
-  );
-
-  rememberComposerHistory(scope, "repeat");
-  rememberComposerHistory(scope, "middle");
-  rememberComposerHistory(scope, "repeat");
-  // The Host captured only the first of those accepted prompts.
-  resolve([entry("repeat"), entry("existing")]);
-
-  await expect(hydration).resolves.toEqual([
-    entry("repeat"),
-    entry("middle"),
-    entry("repeat"),
-    entry("existing"),
-  ]);
-  discardComposerHistory(scope.sessionId);
-});
-
-it("does not let an evicted hydration replace a newer partition", async () => {
-  const scope: ComposerHistoryScope = {
-    sessionId: "evicted-history",
+    effectiveLeafId: "leaf-a",
     historyVersion: "history-a",
-    viewId: "view-original",
-    incarnation: "projection-original",
-    effectiveLeafId: null,
   };
-  let resolve!: (entries: ComposerHistoryEntry[]) => void;
-  const staleHydration = hydrateComposerHistory(
-    scope,
-    () =>
-      new Promise<ComposerHistoryEntry[]>((accept) => {
-        resolve = accept;
-      }),
-  );
-
-  for (let index = 0; index < 12; index += 1) {
-    composerHistory({
-      ...scope,
-      sessionId: `other-${index}`,
-      viewId: `view-${index}`,
-    });
-  }
-  rememberComposerHistory(scope, "new local prompt");
-  resolve([entry("stale host prompt")]);
-
-  await expect(staleHydration).resolves.toEqual([]);
-  expect(composerHistory(scope)).toEqual([entry("new local prompt")]);
+  const first = { text: "same caption", images: [], files: [] };
+  const second = { ...first };
+  rememberComposerHistory(scope, first);
+  rememberComposerHistory(scope, second);
+  const updated = {
+    ...scope,
+    effectiveLeafId: "leaf-b",
+    historyVersion: "history-b",
+  };
+  expect(recentComposerHistory(updated)).toEqual([second, first]);
+  expect(recentComposerHistory({ ...updated, viewId: "view-b" })).toEqual([]);
   discardComposerHistory(scope.sessionId);
-  for (let index = 0; index < 12; index += 1) {
-    discardComposerHistory(`other-${index}`);
-  }
+  expect(recentComposerHistory(updated)).toEqual([]);
 });

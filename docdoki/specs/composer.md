@@ -46,42 +46,32 @@ The next ordinary key keeps its existing behavior.
 
 Each session keeps its unsent text, attachments and project references across switching. Text
 restores from tab-session storage for the same Host origin; New has a separate text partition.
-Attachments and project references are memory-only. Handoff, explicit clear and deletion remove
-saved text; failed/unknown-delivery recovery uses the same draft path. If browser storage is denied,
-in-memory editing and sending still work. Empty partitions are discarded; non-empty work remains
-until sent or removed. Draft partitions, artifact handoff and snapshot commits share one browser
-authority. Append-only transcript updates preserve the active textarea, focus and selection.
+Both editors render text directly from their draft partition. Attachments and project references
+remain in memory. Material edits advance the draft revision. First-message creation transfers the
+captured text to the assigned session, and submission checks its revision after attachment upload
+and initial controls. New input typed during that handoff remains available. Automatic recovery
+requires the revision left by the original handoff. If the user edits and then clears the field,
+the failed input stays available through Restore. Explicit clear and deletion remove saved text.
+Storage refusal leaves an in-memory draft. Append-only transcript updates preserve textarea focus
+and selection.
 
 Send remains mounted across idle/busy transitions. Conflict recovery is the sole action when
 delivery is unavailable.
 
-The textarea grows with content and follows live typography changes. Empty and fitting input has
-no vertical scrollbar. When the dock compresses the editor, the textarea scrolls if its content
-exceeds the space it actually received. Fractional line heights must not create spurious overflow.
-Expand appears with the existing toolbar actions when the compact input scrolls and the reading
-stage leaves room to grow. It expands the same input, preserving text, artifacts, focus and
-selection. Collapse stays available after the text becomes shorter and restores the compact
-layout. The action uses the surrounding controls' sizing and leaves the writing width unchanged.
-Wrapping, container width and visual-viewport changes update the height budget, which reserves
-space for controls. Expand and Collapse take no Escape ownership from completion, modals or Stop.
+The textarea grows to a compact maximum based on the visual viewport. Longer text scrolls within
+it. Expand and Collapse change the height of the same input, preserving text, artifacts, focus and
+selection. Completion options appear below the editor and replace the token at the caret.
 
 ### Retained prompt history
 
-The active editor traverses Pi-style newest-first history from the selected branch's retained user
-messages, including pre-compaction messages and reopened sessions. The shared reading projection is
-specified in [[conversation]].
+Input history opens from the composer or Alt+Up. Saved inputs come from the selected branch's
+retained user messages, including pre-compaction messages and reopened sessions. Recent inputs
+show accepted sends in this browser separately. Browsing and Cancel preserve the live draft.
+**Use this input** replaces its text and artifacts together if the branch and draft still match.
 
-- Image-prompt recall omits Pi's appended dimension/coordinate-mapping notes from editable text but
-  keeps all image artifact coordinates and the original stored source. Mixed image/file prompts
-  unwrap that suffix before recovering file references, so the editable text never gains the
-  model-facing file-context list.
-- Entries are trimmed, only consecutive duplicates are suppressed, and at most 100 prompts are
-  kept. Accepted prompts join immediately.
-- Unmodified Up first performs ordinary wrapped-line navigation, then moves to the logical-line start,
-  then recalls older entries. Down moves to the last visual line, recalls newer entries and finally
-  restores the exact pre-browse draft, selection and artifacts. Editing a recalled entry exits
-  browsing without changing history. Completion and IME own their keys first. History scope follows
-  session/branch.
+Image-prompt recall omits Pi's appended dimension and coordinate-mapping notes from editable text
+while retaining the original image references. Mixed image and file prompts unwrap that suffix
+before recovering file references. The editable text excludes the model-facing file-context list.
 
 Text, embedded images, ordinary uploads and project files are recalled together. Artifacts address
 branch-bound entry identities and image/file coordinates, not mutable context-message offsets. The
@@ -281,7 +271,7 @@ or retention-maintenance writes. See [cleanup operations](../../docs/host.md#upl
 
 Preview failure does not invalidate an otherwise current staging handle. Ready handles survive
 same-Host reconnect. Changed Host authority invalidates old handles in every partition, including
-saved history drafts and failed deliveries. Unsent browser-held bytes are staged again after the
+failed deliveries. Unsent browser-held bytes are staged again after the
 new authority is confirmed; a definite expiry refusal restages only affected files. A restored
 attachment does not resubmit its message. Artifacts without retained bytes explain when reselection
 is necessary. Unusable attachments block send. Once an attachment enters a prompt whose acceptance
@@ -375,7 +365,7 @@ full content is unavailable.
   X cancels. Cleared Host deliveries are definitely rejected and release staged artifacts.
 
 Return/Stop restores original Inspire-submitted pending images, including recalled images, in order
-and multiplicity beside the latest text/artifacts, including history-hidden drafts. Already consumed
+and multiplicity beside the latest text and artifacts. Already consumed
 images do not return; discarding releases copies. An over-limit recovered draft stays intact with a
 send explanation. Expanded file/reference text stays intact. Pi's text-only dequeue and absent
 item/image metadata cannot identify extension-added/replaced bytes, and unresolved ownership does

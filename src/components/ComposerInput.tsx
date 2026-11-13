@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import type { ComposerHistoryEntry, ModelOption } from "../../shared/contracts";
+import type { ModelOption } from "../../shared/contracts";
 import type { ProjectFileResult, ProjectFileSearchResult } from "../api";
 import {
   type CaretCompletion,
@@ -27,29 +27,11 @@ import {
   replaceFileCompletion,
   resolveCommandInventory,
 } from "../composer-completion";
-import {
-  isTextareaCaretOnVisualEdge,
-  textareaCaretLineBounds,
-} from "../composer-history";
 import { fileIconForPath } from "../file-icons";
 import { isComposingKeyboardEvent } from "../keyboard-input";
-import {
-  type FloatingMenuConstraints,
-  type FloatingMenuPlacement,
-  useFloatingMenuPlacement,
-} from "../use-floating-menu";
-import { useModalPortal } from "../use-modal-focus";
 import { HiddenFilesToggle } from "./HiddenFilesToggle";
 import { parentPath, ResourcePathLabel } from "./ResourcePathLabel";
 import { SearchMatchText, searchMatchRanges } from "./SearchMatchText";
-
-const COMPLETION_MENU_CONSTRAINTS: FloatingMenuConstraints = {
-  gap: 8,
-  horizontalMargin: 16,
-  verticalMargin: 8,
-  maxWidth: Number.POSITIVE_INFINITY,
-  maxHeight: 320,
-};
 
 interface CompletionItem {
   key: string;
@@ -71,7 +53,6 @@ function CompletionMenu({
   truncated,
   showHiddenFiles,
   onShowHiddenFilesChange,
-  placement,
   onActive,
   onPick,
   onDismiss,
@@ -86,14 +67,12 @@ function CompletionMenu({
   truncated: boolean;
   showHiddenFiles: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
-  placement: FloatingMenuPlacement | null;
   onActive: (index: number) => void;
   onPick: (item: CompletionItem) => void;
   onDismiss: () => void;
   anchorRef: RefObject<HTMLDivElement | null>;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  useModalPortal(true, anchorRef, menuRef);
   useEffect(() => {
     const outside = (event: Event) => {
       const target = event.target as Node;
@@ -228,18 +207,6 @@ function CompletionMenu({
       className="completion"
       data-keyboard-active={keyboardActive}
       onClick={(event) => event.stopPropagation()}
-      data-placement={placement?.direction}
-      style={
-        placement
-          ? {
-              left: placement.left,
-              top: placement.top,
-              bottom: placement.bottom,
-              width: placement.width,
-              maxHeight: placement.maxHeight,
-            }
-          : { visibility: "hidden" }
-      }
     >
       {token.kind === "file" && onShowHiddenFilesChange ? (
         <div
@@ -320,10 +287,6 @@ function CompletionMenu({
 export function ComposerInput({
   value,
   onChange,
-  onHistoryPreview,
-  onHistoryCommit,
-  onHistoryCancel,
-  history = [],
   commands,
   models = [],
   activeModel = null,
@@ -331,7 +294,6 @@ export function ComposerInput({
   completionDisabled = false,
   disabled = false,
   completionScope,
-  completionPortal,
   searchProjectFiles,
   showHiddenFiles = false,
   onShowHiddenFilesChange,
@@ -348,13 +310,6 @@ export function ComposerInput({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onHistoryPreview?: (
-    value: string,
-    entry: ComposerHistoryEntry | null,
-  ) => void;
-  onHistoryCommit?: () => void;
-  onHistoryCancel?: () => void;
-  history?: readonly ComposerHistoryEntry[];
   commands: readonly PiCommand[];
   models?: readonly ModelOption[];
   activeModel?: ModelOption | null;
@@ -362,8 +317,6 @@ export function ComposerInput({
   completionDisabled?: boolean;
   disabled?: boolean;
   completionScope?: string | null;
-  /** Mount within the active overlay, not above unrelated dialogs. */
-  completionPortal?: RefObject<HTMLElement | null>;
   searchProjectFiles?: (query: string) => Promise<ProjectFileSearchResult>;
   showHiddenFiles?: boolean;
   onShowHiddenFilesChange?: (value: boolean) => void;
@@ -433,250 +386,52 @@ export function ComposerInput({
     setCompletion(null);
   }, []);
   const inputValueRef = useRef(value);
-  const historyIndexRef = useRef(-1);
-  const historyDraftRef = useRef<{
-    value: string;
-    start: number;
-    end: number;
-    direction: "forward" | "backward" | "none";
-    scrollTop: number;
-  } | null>(null);
-  const historyPreviewValueRef = useRef<string | null>(null);
-  const pendingSelectionRef = useRef(0);
-  const resolveCompletionMenuTarget = useCallback(() => {
-    const inputWrap = inputWrapRef.current;
-    const textarea = textareaRef.current;
-    if (!inputWrap || !textarea) return null;
-    const horizontal = inputWrap.getBoundingClientRect();
-    const vertical =
-      textareaCaretLineBounds(textarea, completion?.end) ??
-      textarea.getBoundingClientRect();
-    return {
-      context: inputWrap,
-      anchor: {
-        left: horizontal.left,
-        right: horizontal.right,
-        top: vertical.top,
-        bottom: vertical.bottom,
-      },
-      preferredWidth: horizontal.width,
-      positioningRoot: completionPortal?.current,
-      observe: [inputWrap, textarea],
-    };
-  }, [completion?.end, completionPortal]);
-  const completionPlacement = useFloatingMenuPlacement(
-    completion !== null,
-    resolveCompletionMenuTarget,
-    COMPLETION_MENU_CONSTRAINTS,
-  );
-
-  const exitHistoryBrowsing = useCallback(() => {
-    historyIndexRef.current = -1;
-    historyDraftRef.current = null;
-    historyPreviewValueRef.current = null;
-  }, []);
-
   const resizeEditor = useCallback(() => {
-    const element = textareaRef.current;
-    const wrap = inputWrapRef.current;
-    if (!element || !wrap) return;
-    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-    const main = wrap.closest("main");
-    const composer = wrap.closest(".composer");
-    const dock = wrap.closest(".composer-dock");
-    const lineMinimum =
-      Number.parseFloat(getComputedStyle(element).minHeight) || 0;
-    let chrome = 0;
-    let readingLimit = Infinity;
-    if (composer) {
-      const style = getComputedStyle(composer);
-      const insets = (node: Element) => {
-        const css = getComputedStyle(node);
-        return [
-          css.paddingTop,
-          css.paddingBottom,
-          css.borderTopWidth,
-          css.borderBottomWidth,
-        ].reduce((sum, value) => sum + (Number.parseFloat(value) || 0), 0);
-      };
-      const siblings = [...composer.children].filter((node) => {
-        const css = getComputedStyle(node);
-        return (
-          node !== wrap &&
-          css.display !== "none" &&
-          css.position !== "absolute" &&
-          css.position !== "fixed"
-        );
-      });
-      // Measure the actual controls, not unused flex space in a minimum-height
-      // form; otherwise each resize can turn that space into a larger minimum.
-      chrome =
-        insets(composer) +
-        insets(wrap) +
-        (Number.parseFloat(style.rowGap) || 0) * siblings.length +
-        siblings.reduce((sum, node) => {
-          const css = getComputedStyle(node);
-          return (
-            sum +
-            node.getBoundingClientRect().height +
-            (Number.parseFloat(css.marginTop) || 0) +
-            (Number.parseFloat(css.marginBottom) || 0)
-          );
-        }, 0);
-    }
-    if (composer instanceof HTMLElement && dock) {
-      // Flex layout can share a short dock with widgets, but never compress the
-      // toolbar or the editor below one readable line.
-      composer.style.setProperty(
-        "--composer-min-height",
-        `${chrome + lineMinimum}px`,
-      );
-      const stage = dock.closest<HTMLElement>(".reading-stage");
-      if (stage) {
-        const dockStyle = getComputedStyle(dock);
-        const support = [...dock.children]
-          .filter((node) => node !== composer)
-          .reduce((sum, node) => {
-            const css = getComputedStyle(node);
-            const height = node.matches(".extension-dock, .command-activity")
-              ? Number.parseFloat(css.minHeight) || 0
-              : node.getBoundingClientRect().height;
-            return (
-              sum +
-              height +
-              (Number.parseFloat(css.marginTop) || 0) +
-              (Number.parseFloat(css.marginBottom) || 0)
-            );
-          }, 0);
-        const height = stage.getBoundingClientRect().height;
-        const editorAndReadingSpace =
-          height -
-          chrome -
-          support -
-          (Number.parseFloat(dockStyle.paddingTop) || 0) -
-          (Number.parseFloat(dockStyle.paddingBottom) || 0);
-        const readingMinimum = Math.max(
-          0,
-          Math.min(144, height * 0.28, editorAndReadingSpace - lineMinimum),
-        );
-        stage.style.setProperty("--reading-min-height", `${readingMinimum}px`);
-        readingLimit = editorAndReadingSpace - readingMinimum;
-      }
-    }
-    const dockChrome =
-      dock && composer
-        ? dock.getBoundingClientRect().height -
-          composer.getBoundingClientRect().height
-        : 0;
-    const available = Math.max(
-      lineMinimum,
-      Math.min(
-        viewportHeight * 0.8,
-        readingLimit,
-        Math.min(
-          main?.getBoundingClientRect().height || viewportHeight,
-          viewportHeight,
-        ) -
-          chrome -
-          dockChrome -
-          64,
-      ),
+    const input = textareaRef.current;
+    if (!input) return;
+    const limit = Math.floor(
+      (window.visualViewport?.height ?? window.innerHeight) *
+        (expanded ? 0.56 : maxHeightRatio),
     );
-    const compactLimit = Math.min(viewportHeight * maxHeightRatio, available);
-    const limit = expanded ? available : compactLimit;
-    const scrollTop = element.scrollTop;
-    element.style.maxHeight = `${limit}px`;
-    // Measure without a scrollbar changing line wrapping. scrollHeight is an
-    // integer; one pixel of room keeps fractional line boxes from overflowing.
-    element.style.overflowY = "hidden";
-    element.style.height = "auto";
-    element.style.height = `${
-      expanded ? limit : Math.min(element.scrollHeight + 1, limit)
-    }px`;
-    // The dock may shrink the editor below its requested height. Let native
-    // overflow follow that final height without affecting the fit measurement.
-    const overflowing = element.scrollHeight > element.clientHeight;
-    element.style.removeProperty("overflow-y");
-    element.scrollTop = scrollTop;
-    setCanExpand(available > compactLimit + 1 && overflowing);
+    const scrollTop = input.scrollTop;
+    input.style.height = "auto";
+    input.style.overflowY = "hidden";
+    const height = input.scrollHeight + 1;
+    input.style.height = `${expanded ? limit : Math.min(height, limit)}px`;
+    input.style.removeProperty("overflow-y");
+    input.scrollTop = scrollTop;
+    setCanExpand(height > input.clientHeight && !expanded);
   }, [expanded, maxHeightRatio]);
 
-  useLayoutEffect(() => {
-    resizeEditor();
-  }, [resizeEditor, value]);
+  useLayoutEffect(resizeEditor, [resizeEditor, value]);
 
-  useLayoutEffect(() => {
-    const stage = inputWrapRef.current?.closest<HTMLElement>(".reading-stage");
-    return () => {
-      stage?.style.removeProperty("--reading-min-height");
-    };
-  }, []);
-
-  useLayoutEffect(() => {
+  useEffect(() => {
     let frame = 0;
-    const schedule = () => {
+    const update = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(resizeEditor);
     };
-    const wrap = inputWrapRef.current;
-    const observer = new ResizeObserver(schedule);
-    if (wrap) {
-      observer.observe(wrap);
-      const main = wrap.closest("main");
-      if (main) observer.observe(main);
-      const dock = wrap.closest(".composer-dock");
-      if (dock) observer.observe(dock);
-    }
-    const typography = new MutationObserver(schedule);
-    typography.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-content-text-size"],
-    });
-    window.addEventListener("resize", schedule);
-    window.visualViewport?.addEventListener("resize", schedule);
-    document.fonts?.addEventListener("loadingdone", schedule);
+    const observer = new ResizeObserver(update);
+    if (inputWrapRef.current) observer.observe(inputWrapRef.current);
+    window.visualViewport?.addEventListener("resize", update);
     return () => {
-      cancelAnimationFrame(frame);
       observer.disconnect();
-      typography.disconnect();
-      window.removeEventListener("resize", schedule);
-      window.visualViewport?.removeEventListener("resize", schedule);
-      document.fonts?.removeEventListener("loadingdone", schedule);
+      window.visualViewport?.removeEventListener("resize", update);
+      cancelAnimationFrame(frame);
     };
   }, [resizeEditor]);
 
   useEffect(() => {
-    if (
-      historyIndexRef.current >= 0 &&
-      value !== historyPreviewValueRef.current
-    ) {
-      onHistoryCancel?.();
-      exitHistoryBrowsing();
-    }
-    if (value !== inputValueRef.current) {
-      setCompletion(null);
-    }
+    if (value !== inputValueRef.current) setCompletion(null);
     inputValueRef.current = value;
-  }, [value, exitHistoryBrowsing, onHistoryCancel]);
+  }, [value]);
 
   useEffect(() => {
     setCompletion(null);
-    onHistoryCancel?.();
-    exitHistoryBrowsing();
-  }, [completionScope, exitHistoryBrowsing, onHistoryCancel]);
-
-  useEffect(() => {
-    if (completionDisabled) exitHistoryBrowsing();
-    setCompletion(null);
-  }, [completionDisabled, exitHistoryBrowsing]);
+  }, [completionScope, completionDisabled]);
 
   const updateCompletion = (draft: string, caret: number | null) => {
-    if (
-      composingRef.current ||
-      completionDisabled ||
-      historyIndexRef.current >= 0 ||
-      caret === null
-    ) {
+    if (composingRef.current || completionDisabled || caret === null) {
       setCompletion(null);
       return;
     }
@@ -822,7 +577,6 @@ export function ComposerInput({
     const next = reusesInlineDelimiter
       ? { ...inserted, caret: inserted.caret + 1 }
       : inserted;
-    exitHistoryBrowsing();
     inputValueRef.current = next.value;
     const nextArgument =
       item.command?.source === "builtin" &&
@@ -835,89 +589,6 @@ export function ComposerInput({
     completionSelectionRef.current = next;
     onChange(next.value);
     setCompletion(nextArgument);
-  };
-
-  const previewHistory = (
-    nextValue: string,
-    entry: ComposerHistoryEntry | null,
-    start: number,
-    end: number,
-    direction: "forward" | "backward" | "none",
-    scrollTop: number | "start" | "end",
-  ) => {
-    const nonce = ++pendingSelectionRef.current;
-    historyPreviewValueRef.current = nextValue;
-    inputValueRef.current = nextValue;
-    if (onHistoryPreview) onHistoryPreview(nextValue, entry);
-    else onChange(nextValue);
-    setCompletion(null);
-    requestAnimationFrame(() => {
-      const element = textareaRef.current;
-      if (
-        nonce !== pendingSelectionRef.current ||
-        !element ||
-        element.value !== nextValue
-      )
-        return;
-      element.focus({ preventScroll: true });
-      element.setSelectionRange(start, end, direction);
-      element.scrollTop =
-        scrollTop === "start"
-          ? 0
-          : scrollTop === "end"
-            ? element.scrollHeight
-            : scrollTop;
-    });
-  };
-
-  const navigateHistory = (direction: -1 | 1, element: HTMLTextAreaElement) => {
-    if (history.length === 0) return;
-    const current = historyIndexRef.current;
-    if (direction === -1) {
-      const next = Math.min(current + 1, history.length - 1);
-      if (current === -1) {
-        historyDraftRef.current = {
-          value: element.value,
-          start: element.selectionStart,
-          end: element.selectionEnd,
-          direction: element.selectionDirection,
-          scrollTop: element.scrollTop,
-        };
-      }
-      historyIndexRef.current = next;
-      const entry = history[next];
-      const nextValue = entry?.text ?? "";
-      previewHistory(nextValue, entry ?? null, 0, 0, "none", "start");
-      return;
-    }
-    if (current < 0) return;
-    if (current === 0) {
-      const draft = historyDraftRef.current;
-      exitHistoryBrowsing();
-      const nextValue = draft?.value ?? "";
-      previewHistory(
-        nextValue,
-        null,
-        draft?.start ?? nextValue.length,
-        draft?.end ?? nextValue.length,
-        draft?.direction ?? "none",
-        draft?.scrollTop ?? "end",
-      );
-      historyPreviewValueRef.current = null;
-      return;
-    }
-    const next = current - 1;
-    historyIndexRef.current = next;
-    const entry = history[next];
-    const nextValue = entry?.text ?? "";
-    previewHistory(
-      nextValue,
-      entry ?? null,
-      nextValue.length,
-      nextValue.length,
-      "none",
-      "end",
-    );
   };
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {
@@ -938,7 +609,11 @@ export function ComposerInput({
         );
         return;
       }
-      if (event.key === "ArrowUp" && completionItems.length > 0) {
+      if (
+        event.key === "ArrowUp" &&
+        !event.altKey &&
+        completionItems.length > 0
+      ) {
         event.preventDefault();
         setCompletionKeyboardActive(true);
         setCompletionActive((index) => Math.max(0, index - 1));
@@ -951,45 +626,6 @@ export function ComposerInput({
       ) {
         event.preventDefault();
         pickCompletion(completionItems[activeIndex]);
-        return;
-      }
-    }
-    if (
-      !event.altKey &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey &&
-      event.currentTarget.selectionStart === event.currentTarget.selectionEnd &&
-      history.length > 0
-    ) {
-      const element = event.currentTarget;
-      const caret = element.selectionStart;
-      if (
-        event.key === "ArrowUp" &&
-        isTextareaCaretOnVisualEdge(element, "first")
-      ) {
-        event.preventDefault();
-        const lineStart =
-          caret === 0 ? 0 : element.value.lastIndexOf("\n", caret - 1) + 1;
-        if (historyIndexRef.current >= 0 || caret === lineStart) {
-          navigateHistory(-1, element);
-        } else {
-          element.setSelectionRange(lineStart, lineStart);
-        }
-        return;
-      }
-      if (
-        event.key === "ArrowDown" &&
-        isTextareaCaretOnVisualEdge(element, "last")
-      ) {
-        event.preventDefault();
-        if (historyIndexRef.current >= 0) {
-          navigateHistory(1, element);
-        } else {
-          const newline = element.value.indexOf("\n", caret);
-          const lineEnd = newline < 0 ? element.value.length : newline;
-          element.setSelectionRange(lineEnd, lineEnd);
-        }
         return;
       }
     }
@@ -1026,9 +662,6 @@ export function ComposerInput({
           disabled={disabled}
           onChange={(event) => {
             completionSelectionRef.current = null;
-            pendingSelectionRef.current++;
-            if (historyIndexRef.current >= 0) onHistoryCommit?.();
-            exitHistoryBrowsing();
             inputValueRef.current = event.target.value;
             onChange(event.target.value);
             updateCompletion(event.target.value, event.target.selectionStart);
@@ -1067,6 +700,33 @@ export function ComposerInput({
           autoCorrect="off"
           data-modal-autofocus={autoFocus || undefined}
         />
+        {completion && (
+          <CompletionMenu
+            id={completionId}
+            token={completion}
+            items={completionItems}
+            active={activeIndex}
+            keyboardActive={completionKeyboardActive}
+            status={completion.kind === "file" ? completionStatus : "ready"}
+            truncated={completion.kind === "file" && completionTruncated}
+            showHiddenFiles={showHiddenFiles}
+            onShowHiddenFilesChange={
+              onShowHiddenFilesChange
+                ? (value) => {
+                    onShowHiddenFilesChange(value);
+                    textareaRef.current?.focus();
+                  }
+                : undefined
+            }
+            onActive={(index) => {
+              setCompletionKeyboardActive(false);
+              setCompletionActive(index);
+            }}
+            onPick={pickCompletion}
+            onDismiss={dismissCompletion}
+            anchorRef={inputWrapRef}
+          />
+        )}
       </div>
       {commandUsageHint(value, includeNativeCommands) ? (
         <div className="composer__usage" role="note">
@@ -1100,37 +760,6 @@ export function ComposerInput({
               )}
             </button>,
             sizeActionSlot,
-          )
-        : null}
-      {completion
-        ? createPortal(
-            <CompletionMenu
-              id={completionId}
-              token={completion}
-              items={completionItems}
-              active={activeIndex}
-              keyboardActive={completionKeyboardActive}
-              status={completion.kind === "file" ? completionStatus : "ready"}
-              truncated={completion.kind === "file" && completionTruncated}
-              showHiddenFiles={showHiddenFiles}
-              onShowHiddenFilesChange={
-                onShowHiddenFilesChange
-                  ? (value) => {
-                      onShowHiddenFilesChange(value);
-                      textareaRef.current?.focus();
-                    }
-                  : undefined
-              }
-              placement={completionPlacement}
-              onActive={(index) => {
-                setCompletionKeyboardActive(false);
-                setCompletionActive(index);
-              }}
-              onPick={pickCompletion}
-              onDismiss={dismissCompletion}
-              anchorRef={inputWrapRef}
-            />,
-            completionPortal?.current ?? document.body,
           )
         : null}
     </>

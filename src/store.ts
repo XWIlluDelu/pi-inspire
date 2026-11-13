@@ -2366,10 +2366,6 @@ export class AppStore {
         .join("\n\n");
       setSessionDraft(sessionId, draft);
       if (this.state.sessionId === sessionId) this.replaceComposerText(draft);
-    } else if (hasImages && this.state.sessionId === sessionId) {
-      // Exit a temporary history preview even without recovered text, keeping
-      // the saved draft rather than committing the browsed history caption.
-      this.replaceComposerText(sessionDraft(sessionId));
     }
     if (this.state.sessionId === sessionId) {
       if (recovered.interruptionScope === "agent")
@@ -2813,16 +2809,21 @@ export class AppStore {
 
   // --- Composer attachments & project files ---
 
-  previewComposerHistoryEntry = (
+  useComposerHistoryEntry = (
     scope: ComposerHistoryScope,
-    entry: ComposerHistoryEntry | null,
-  ): void => this.composer.previewHistoryEntry(scope, entry);
-
-  commitComposerHistoryPreview = (scope: ComposerHistoryScope): void =>
-    this.composer.commitHistoryPreview(scope);
-
-  cancelComposerHistoryPreview = (sessionId: string): void =>
-    this.composer.cancelHistoryPreview(sessionId);
+    entry: ComposerHistoryEntry,
+    expectedDraftRevision: number,
+  ): boolean => {
+    if (
+      this.state.sessionSelectionPending ||
+      this.state.transcriptIncarnation !== scope.incarnation ||
+      this.state.transcriptEffectiveLeafId !== scope.effectiveLeafId ||
+      this.state.composerHistoryVersion !== scope.historyVersion ||
+      sessionDraftRevision(scope.sessionId) !== expectedDraftRevision
+    )
+      return false;
+    return this.composer.useHistoryEntry(scope, entry);
+  };
 
   addFiles = (files: File[]): Promise<void> => this.composer.addFiles(files);
 

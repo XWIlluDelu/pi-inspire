@@ -13,7 +13,7 @@ interface FloatingMenuBounds {
   bottom: number;
 }
 
-export interface FloatingMenuPlacement {
+interface FloatingMenuPlacement {
   direction: "up" | "down";
   left: number;
   top?: number;

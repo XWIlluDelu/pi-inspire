@@ -145,27 +145,26 @@ test("sent file prompts retain readable names, original bytes, and history acros
   );
   for (const path of sourcePaths)
     expect(copied).toContain(JSON.stringify(path));
-  // Transcript restoration can precede the independent composer-history page
-  // (especially in WebKit); send the recall key only once that page arrives.
-  const history = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/history" &&
-      new URL(response.url()).searchParams.get("kind") === "composer" &&
-      response.ok(),
-  );
   await page.reload();
-  await (await history).finished();
   await expect(files.getByText(names[0]!, { exact: true })).toBeVisible();
   await expect(bubble.locator(".rich-text")).toHaveText(question);
-  await input.focus();
-  await input.press("ArrowUp");
+  await page
+    .getByRole("button", { name: "Input history", exact: true })
+    .click();
+  const history = page.getByRole("dialog", { name: "Input history" });
+  await history
+    .getByRole("radio", { name: new RegExp(question.replace(/[?]/g, "\\?")) })
+    .first()
+    .check();
+  await expect(input).toHaveValue("");
+  await history.getByRole("button", { name: "Use this input" }).click();
   await expect(input).toHaveValue(question);
   const recalled = page.locator(".composer__attachments");
   for (const name of names)
     await expect(recalled.getByText(name, { exact: true })).toBeVisible();
-
-  await input.press("ArrowDown");
-  await expect(input).toHaveValue("");
+  const removeRecalled = recalled.getByRole("button", { name: /Remove/ });
+  for (const _ of names) await removeRecalled.first().click();
+  await input.fill("");
   await page.locator(".composer__file-input").setInputFiles({
     name: "only-reference.md",
     mimeType: "text/markdown",

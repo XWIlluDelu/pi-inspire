@@ -159,7 +159,7 @@ describe("Pending input recovery and copying", () => {
   });
 
   it.each(["text-only", "image-only"] as const)(
-    "merges %s recovery into the saved draft while browsing history",
+    "merges %s recovery into the current draft",
     async (mode) => {
       const original = {
         id: "saved-file",
@@ -197,27 +197,12 @@ describe("Pending input recovery and copying", () => {
       ]);
       store.addProjectFile("README.md");
       setSessionDraft("s1", "newest saved text");
-      const scope = {
-        sessionId: "s1",
-        viewId: "view-s1",
-        incarnation: null,
-        effectiveLeafId: null,
-        historyVersion: "history-1",
-      };
-      store.previewComposerHistoryEntry(scope, {
-        text: "temporary history preview",
-        images: [{ reference: "old-image", mimeType: "image/png", size: 7 }],
-        files: [],
-      });
       expect(await store.recoverPending()).toBe(true);
-      expect(store.getState().editorText?.text).toBe(
+      expect(sessionDraft("s1")).toBe(
         mode === "text-only"
           ? "returned text\n\nnewest saved text"
           : "newest saved text",
       );
-      // Closing the history preview after Return must keep the restored draft.
-      store.commitComposerHistoryPreview(scope);
-      store.cancelComposerHistoryPreview("s1");
       expect(
         store.getState().attachments.map((item) => item.uploadedId),
       ).toEqual(mode === "text-only" ? [original.id] : [image.id, original.id]);

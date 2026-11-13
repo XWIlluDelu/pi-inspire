@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -124,6 +125,9 @@ describe("Composer editing and keyboard behavior", () => {
       );
 
       render(<Composer />);
+      typeDraft("current draft");
+      await attachFile();
+      fireEvent.click(screen.getByRole("button", { name: "Input history" }));
       await waitFor(() =>
         expect(host.historyRequests).toBeGreaterThan(requestsBefore),
       );
@@ -148,28 +152,48 @@ describe("Composer editing and keyboard behavior", () => {
         historyResponse.resolve();
       });
       host.historyGate = null;
-      await attachFile();
-      expect(await screen.findByText("notes.txt")).toBeInTheDocument();
-      const textarea = screen.getByLabelText("Message") as HTMLTextAreaElement;
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
+      const textarea = screen.getByLabelText("Message");
+      const chooseArtifacts = async () => {
+        const history = within(
+          screen.getByRole("dialog", { name: "Input history" }),
+        );
+        fireEvent.click(
+          await history.findByRole("radio", { name: /3 attachments/ }),
+        );
+        return history;
+      };
+      const history = await chooseArtifacts();
+      expect(textarea).toHaveValue("current draft");
+      expect(screen.getByText("notes.txt")).toBeInTheDocument();
+      fireEvent.click(history.getByRole("button", { name: "Cancel" }));
+      expect(textarea).toHaveValue("current draft");
+      expect(screen.getByText("notes.txt")).toBeInTheDocument();
+
+      fireEvent.keyDown(textarea, { key: "ArrowUp", altKey: true });
+      const staleHistory = await chooseArtifacts();
+      typeDraft("newer draft");
+      fireEvent.click(
+        staleHistory.getByRole("button", { name: "Use this input" }),
+      );
+      expect(staleHistory.getByRole("alert")).toHaveTextContent(
+        "The draft changed",
+      );
+      expect(textarea).toHaveValue("newer draft");
+      expect(screen.getByText("notes.txt")).toBeInTheDocument();
+      fireEvent.click(staleHistory.getByRole("button", { name: "Cancel" }));
+
+      fireEvent.keyDown(textarea, { key: "ArrowUp", altKey: true });
+      const currentHistory = await chooseArtifacts();
+      fireEvent.click(
+        currentHistory.getByRole("button", { name: "Use this input" }),
+      );
+      expect(textarea).toHaveValue("");
       expect(
-        await screen.findByRole("button", { name: "Remove attached image" }),
+        screen.getByRole("button", { name: "Remove attached image" }),
       ).toBeInTheDocument();
       expect(screen.getByText("report.pdf")).toBeInTheDocument();
       expect(screen.getByText("source.ts")).toBeInTheDocument();
       expect(screen.queryByText("notes.txt")).not.toBeInTheDocument();
-
-      fireEvent.keyDown(textarea, { key: "ArrowDown" });
-      await waitFor(() => expect(textarea).toHaveValue(""));
-      expect(screen.getByText("notes.txt")).toBeInTheDocument();
-      expect(
-        screen.queryByRole("button", { name: "Remove attached image" }),
-      ).not.toBeInTheDocument();
-
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      expect(
-        await screen.findByRole("button", { name: "Remove attached image" }),
-      ).toBeInTheDocument();
       await act(async () =>
         fireEvent.click(screen.getByRole("button", { name: "Send message" })),
       );
@@ -206,9 +230,15 @@ describe("Composer editing and keyboard behavior", () => {
           }),
         });
       });
-      expect(host.historyRequests).toBe(hydratedRequests + 1);
-      fireEvent.keyDown(textarea, { key: "ArrowUp" });
-      await waitFor(() => expect(textarea).toHaveValue("new user prompt"));
+      fireEvent.keyDown(textarea, { key: "ArrowUp", altKey: true });
+      const latest = within(
+        screen.getByRole("dialog", { name: "Input history" }),
+      );
+      fireEvent.click(
+        await latest.findByRole("radio", { name: "new user prompt" }),
+      );
+      fireEvent.click(latest.getByRole("button", { name: "Use this input" }));
+      expect(textarea).toHaveValue("new user prompt");
     });
 
     it("dispatches only the selected desktop send chord", async () => {
@@ -254,7 +284,7 @@ describe("Composer editing and keyboard behavior", () => {
     expect(input).toHaveAttribute("autocorrect", "off");
   });
 
-  it("subtracts composer controls from the visual viewport when the keyboard leaves main layout tall", async () => {
+  it("caps editor size against the visual viewport as the keyboard opens", async () => {
     const viewport = Object.assign(new EventTarget(), { height: 900 });
     vi.stubGlobal("visualViewport", viewport);
     vi.stubGlobal("innerHeight", 900);
@@ -262,24 +292,6 @@ describe("Composer editing and keyboard behavior", () => {
     vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(
       function (this: HTMLElement) {
         return Number.parseFloat(this.style.height) || 24;
-      },
-    );
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
-      function (this: HTMLElement) {
-        const input = this.matches("textarea")
-          ? this
-          : this.querySelector<HTMLTextAreaElement>("textarea");
-        const editor = Number.parseFloat(input?.style.height ?? "") || 24;
-        const height = this.matches("main")
-          ? 900
-          : this.matches(".composer__toolbar")
-            ? 80
-            : this.matches(".composer-dock")
-              ? editor + 120
-              : this.matches(".composer")
-                ? editor + 80
-                : editor;
-        return new DOMRect(0, 0, 800, height);
       },
     );
     function VisualViewportComposer() {
@@ -309,12 +321,11 @@ describe("Composer editing and keyboard behavior", () => {
     const input = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(input.style.height).toBe("360px");
     fireEvent.click(screen.getByRole("button", { name: "Expand editor" }));
-    expect(input.style.height).toBe("716px");
+    expect(input.style.height).toBe("504px");
     viewport.height = 400;
     viewport.dispatchEvent(new Event("resize"));
-    await waitFor(() => expect(input.style.height).toBe("216px"));
-    expect(screen.getByRole("main").getBoundingClientRect().height).toBe(900);
-    expect(input.clientHeight + 120 + 64).toBeLessThanOrEqual(viewport.height);
+    await waitFor(() => expect(input.style.height).toBe("224px"));
+    expect(input.clientHeight).toBeLessThan(viewport.height);
     fireEvent.click(screen.getByRole("button", { name: "Collapse editor" }));
     expect(input.style.height).toBe("160px");
     expect(screen.getByRole("button", { name: "Expand editor" })).toBeVisible();

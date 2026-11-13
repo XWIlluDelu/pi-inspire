@@ -1304,13 +1304,11 @@
   color: var(--muted);
 }
 
-/* Caret completion shares the picker's restrained floating surface, but
-   stays anchored to the writing instrument rather than becoming a dialog. */
+/* Completion shares the editor's width and moves with its layout. */
 .completion {
-  position: fixed;
-  z-index: 42;
+  flex: 0 1 auto;
   min-width: 0;
-  max-height: min(320px, 45dvh);
+  max-height: min(280px, 30dvh);
   overflow-y: auto;
   padding: var(--space-1);
   border: 1px solid var(--hairline);
@@ -1566,4 +1564,42 @@
 .model-picker__badge--neutral {
   background: transparent;
   color: var(--muted);
+}
+
+.input-history {
+  max-height: 78dvh;
+}
+
+.input-history__entries {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.input-history__entries fieldset {
+  margin: 0 0 var(--space-3);
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+}
+
+.input-history__entries legend,
+.input-history__entry small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.input-history__entry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.input-history__entry span,
+.input-history__entry small {
+  display: block;
 }

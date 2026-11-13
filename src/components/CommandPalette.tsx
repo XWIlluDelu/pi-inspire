@@ -129,7 +129,6 @@ export const CommandPalette = memo(function CommandPalette({
     command: PiCommand;
     text: string;
   } | null>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
   const commandInventory = useMemo(
     () => resolveCommandInventory(state.commands),
     [state.commands],
@@ -710,7 +709,6 @@ export const CommandPalette = memo(function CommandPalette({
 
   return (
     <div
-      ref={overlayRef}
       className="overlay palette-overlay"
       role="presentation"
       style={active ? undefined : { display: "none" }}
@@ -779,7 +777,6 @@ export const CommandPalette = memo(function CommandPalette({
               models={state.models}
               activeModel={state.model}
               completionScope={preparation.owner}
-              completionPortal={overlayRef}
               disabled={preparationSending || !active}
               completionDisabled={preparationSending || !active}
               label="Prepared command"

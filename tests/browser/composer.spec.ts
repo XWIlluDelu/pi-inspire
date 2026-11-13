@@ -247,7 +247,7 @@ test("composer text drafts survive reload and stay partitioned through switching
   });
   expect(history.ok()).toBe(true);
   const priorHistory: ComposerHistoryPage = await history.json();
-  const priorPrompt = priorHistory.entries[0]!.text;
+  const priorPrompt = priorHistory.entries[0]!.text.slice(0, 200);
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -326,52 +326,42 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill(historyDraft);
   await input.press("ArrowUp");
   await expect(input).toHaveValue(historyDraft);
-  await input.evaluate((element: HTMLTextAreaElement) =>
-    element.setSelectionRange(0, 0),
-  );
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue(repeated);
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue(priorPrompt);
-  await input.press("ArrowDown");
-  await expect(input).toHaveValue(repeated);
-  await input.press("ArrowDown");
+  const openHistory = () =>
+    page.getByRole("button", { name: "Input history", exact: true }).click();
+  const historyDialog = page.getByRole("dialog", { name: "Input history" });
+  await input.press("Alt+ArrowUp");
+  await expect(
+    historyDialog.getByRole("radio", { name: repeated }).first(),
+  ).toBeVisible();
+  await expect(
+    historyDialog.getByRole("radio", { name: priorPrompt }).first(),
+  ).toBeVisible();
+  await historyDialog.getByRole("radio", { name: repeated }).first().check();
   await expect(input).toHaveValue(historyDraft);
-  await expect
-    .poll(() =>
-      input.evaluate((element: HTMLTextAreaElement) => element.selectionStart),
-    )
-    .toBe(0);
   await expect(page.locator(".attachment--ready")).toContainText(
     "source-draft.txt",
   );
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue(repeated);
+  await historyDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(input).toHaveValue(historyDraft);
+  await expect(input).toBeFocused();
+  await openHistory();
+  await historyDialog.getByRole("radio", { name: repeated }).first().check();
   await page.reload();
   await expect(input).toHaveValue(historyDraft);
   await input.fill("send and do not resurrect");
-  const updatedHistory = page.waitForResponse(async (response) => {
-    const url = new URL(response.url());
-    if (
-      url.pathname !== "/api/history" ||
-      url.searchParams.get("kind") !== "composer" ||
-      url.searchParams.get("sessionId") !== "fixture-history" ||
-      !response.ok()
-    )
-      return false;
-    const history: ComposerHistoryPage = await response.json();
-    return history.entries[0]?.text === "send and do not resurrect";
-  });
   const accepted = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/prompt") && response.status() === 202,
   );
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await accepted;
-  await updatedHistory;
   await expect(input).toHaveValue("");
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue("send and do not resurrect");
+  await openHistory();
+  await expect(
+    historyDialog
+      .getByRole("radio", { name: "send and do not resurrect" })
+      .first(),
+  ).toBeVisible();
   await page.reload();
   await expect(input).toHaveValue("");
   await input.fill("explicitly removed");

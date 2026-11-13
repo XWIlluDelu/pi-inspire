@@ -1,7 +1,6 @@
-import { Send, Square } from "lucide-react";
+import { History, Send, Square } from "lucide-react";
 import {
   memo,
-  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -9,12 +8,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { isAbortableRunState, isBusyRunState } from "../../shared/contracts";
+import {
+  type ComposerHistoryEntry,
+  isAbortableRunState,
+  isBusyRunState,
+} from "../../shared/contracts";
 import {
   type ComposerHistoryScope,
-  composerHistory,
-  composerHistoryScopeKey,
-  hydrateComposerHistory,
+  recentComposerHistory,
   rememberComposerHistory,
 } from "../composer-history";
 import { shouldSubmitComposerEnter } from "../composer-keyboard";
@@ -27,10 +28,12 @@ import {
   sessionDraft,
   sessionDraftRevision,
   setSessionDraft,
+  useDraftText,
 } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { hasActiveModal } from "../use-modal-focus";
 import { AttachmentList } from "./AttachmentList";
+import { ComposerHistoryDialog } from "./ComposerHistoryDialog";
 import { ComposerInput } from "./ComposerInput";
 import { ComposerThinkingControl } from "./ComposerThinkingControl";
 import { ModelSelector } from "./ModelSelector";
@@ -217,9 +220,6 @@ export const Composer = memo(function Composer() {
       state.composerHistoryVersion,
     ],
   );
-  const historyKey = historyScope
-    ? composerHistoryScopeKey(historyScope)
-    : null;
   // A branch view remains the same while its effective leaf advances through
   // persisted run activity. Keep the textarea instance alive across that
   // append-only movement so streaming cannot take focus or selection.
@@ -232,19 +232,14 @@ export const Composer = memo(function Composer() {
       ]),
     [sessionId, state.transcriptIncarnation, state.transcriptViewId],
   );
-  const [historyState, setHistoryState] = useState(() => ({
-    key: historyKey,
-    entries: historyScope ? composerHistory(historyScope) : [],
-  }));
-  const history =
-    historyState.key === historyKey
-      ? historyState.entries
-      : historyScope
-        ? composerHistory(historyScope)
-        : [];
-  const [draft, setDraft] = useState(() =>
-    sessionId ? sessionDraft(sessionId) : "",
-  );
+  const historyKey = historyScope
+    ? JSON.stringify([inputKey, historyScope.historyVersion])
+    : null;
+  const [historyOpen, setHistoryOpen] = useState<{
+    key: string;
+    draftRevision: number;
+  } | null>(null);
+  const draft = useDraftText(sessionId);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sizeActionSlot, setSizeActionSlot] = useState<HTMLSpanElement | null>(
     null,
@@ -290,77 +285,47 @@ export const Composer = memo(function Composer() {
 
   const updateDraft = (text: string) => {
     handedOffRef.current = null;
-    setDraft(text);
     if (sessionId) setSessionDraft(sessionId, text);
   };
 
-  const previewHistory = useCallback(
-    (text: string, entry: (typeof history)[number] | null) => {
-      setDraft(text);
-      if (historyScope) store.previewComposerHistoryEntry(historyScope, entry);
-    },
-    [historyScope],
-  );
-  const commitHistoryPreview = useCallback(() => {
-    if (historyScope) store.commitComposerHistoryPreview(historyScope);
-  }, [historyScope]);
-  const cancelHistoryPreview = useCallback(() => {
-    if (sessionId) store.cancelComposerHistoryPreview(sessionId);
-  }, [sessionId]);
+  const openHistory = () => {
+    if (!sessionOpening && sessionId && historyKey)
+      setHistoryOpen({
+        key: historyKey,
+        draftRevision: sessionDraftRevision(sessionId),
+      });
+  };
+
+  const useHistory = (entry: ComposerHistoryEntry): boolean => {
+    if (
+      !historyScope ||
+      !historyOpen ||
+      !store.useComposerHistoryEntry(
+        historyScope,
+        entry,
+        historyOpen.draftRevision,
+      )
+    )
+      return false;
+    updateDraft(entry.text);
+    setHistoryOpen(null);
+    return true;
+  };
 
   useLayoutEffect(() => {
-    setHistoryState({
-      key: historyKey,
-      entries: historyScope ? composerHistory(historyScope) : [],
-    });
-  }, [historyKey, historyScope]);
-
-  useEffect(() => {
-    if (!historyScope) return;
-    let cancelled = false;
-    void hydrateComposerHistory(historyScope, () =>
-      store.loadComposerHistory(
-        historyScope.sessionId,
-        historyScope.viewId,
-        historyScope.incarnation,
-        historyScope.historyVersion,
-      ),
-    ).then((entries) => {
-      if (!cancelled) setHistoryState({ key: historyKey, entries });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [historyKey, historyScope]);
-
-  useEffect(() => {
-    const owner = sessionId;
-    return () => {
-      if (owner) store.cancelComposerHistoryPreview(owner);
-    };
-  }, [historyKey, sessionId]);
+    setHistoryOpen(null);
+  }, [historyKey]);
 
   const previousSessionRef = useRef(sessionId);
-  // Restore the target draft before paint so immediate typing after navigation
-  // cannot be overwritten by delayed session synchronization.
   useLayoutEffect(() => {
     if (previousSessionRef.current === sessionId) return;
     previousSessionRef.current = sessionId;
     handedOffRef.current = null;
     // Every transient composer surface belongs to the session that opened it.
     // Reset before paint so it cannot silently retarget the newly visible one.
-    setDraft(sessionId ? sessionDraft(sessionId) : "");
     setPickerOpen(false);
     setDeliveryBehavior("steer");
   }, [sessionId]);
-
-  const previousHistoryKeyRef = useRef(historyKey);
-  useLayoutEffect(() => {
-    if (previousHistoryKeyRef.current === historyKey) return;
-    previousHistoryKeyRef.current = historyKey;
-    if (previousSessionRef.current === sessionId)
-      setDraft(sessionId ? sessionDraft(sessionId) : "");
-  }, [historyKey, sessionId]);
 
   useEffect(() => {
     if (busy && !wasBusyRef.current) setDeliveryBehavior("steer");
@@ -397,34 +362,46 @@ export const Composer = memo(function Composer() {
     if (!canSend || sessionOpening || handedOffRef.current === inputSnapshot)
       return;
     const owner = sessionId;
-    if (owner && sessionDraft(owner) !== message)
-      setSessionDraft(owner, message);
+    if (!owner || sessionDraft(owner) !== message) return;
+    const current = store.getState();
+    if (
+      current.sessionId !== owner ||
+      current.attachments !== inputSnapshot.attachments ||
+      current.projectFiles !== inputSnapshot.projectFiles
+    )
+      return;
+    const revision = sessionDraftRevision(owner);
     const recordsHistory = !store.isNativeCommand(message);
     let handedOff = false;
     const sent = await store.sendPrompt(message, behavior, () => {
       handedOff = true;
       handedOffRef.current = inputSnapshot;
-      if (owner && sessionDraft(owner) === message) {
-        setSessionDraft(owner, "");
-        if (store.getState().sessionId === owner) setDraft("");
-      }
+      if (sessionDraftRevision(owner) === revision) setSessionDraft(owner, "");
     });
-    if (!sent || !owner) return;
+    if (!sent) return;
     if (recordsHistory && historyScope) {
-      const entries = rememberComposerHistory(
+      rememberComposerHistory(
         historyScope,
-        sent.historyEntry ?? message,
-      );
-      setHistoryState((current) =>
-        current.key === historyKey ? { key: historyKey, entries } : current,
+        sent.historyEntry ?? { text: message.trim(), images: [], files: [] },
       );
     }
-    if (handedOff || sessionDraft(owner) !== message) return;
-    setSessionDraft(owner, "");
-    if (store.getState().sessionId === owner) setDraft("");
+    if (!handedOff && sessionDraftRevision(owner) === revision)
+      setSessionDraft(owner, "");
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key === "ArrowUp" &&
+      event.altKey &&
+      !event.shiftKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !isComposingKeyboardEvent(event.nativeEvent)
+    ) {
+      event.preventDefault();
+      openHistory();
+      return;
+    }
     if (!shouldSubmitComposerEnter(event.nativeEvent, state.desktopSendKey))
       return;
     event.preventDefault();
@@ -483,16 +460,12 @@ export const Composer = memo(function Composer() {
         key={`input-${inputKey}`}
         value={draft}
         onChange={updateDraft}
-        onHistoryPreview={previewHistory}
-        onHistoryCommit={commitHistoryPreview}
-        onHistoryCancel={cancelHistoryPreview}
-        history={history}
         commands={state.commands}
         models={state.availableModels}
         activeModel={activeModel}
         completionDisabled={sessionOpening}
         disabled={sessionOpening}
-        completionScope={historyKey}
+        completionScope={inputKey}
         showHiddenFiles={state.workspaceShowHidden}
         onShowHiddenFilesChange={store.setWorkspaceShowHidden}
         searchProjectFiles={store.searchProjectFiles}
@@ -592,6 +565,18 @@ export const Composer = memo(function Composer() {
           onAdd={(file) => store.addProjectFile(file.path)}
         />
         {attachmentInput.button}
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Input history"
+          aria-haspopup="dialog"
+          aria-keyshortcuts="Alt+ArrowUp"
+          title="Input history (Alt+↑)"
+          disabled={sessionOpening || !historyScope}
+          onClick={openHistory}
+        >
+          <History size={16} aria-hidden />
+        </button>
         <span className="composer__action-slot" ref={setSizeActionSlot} />
         <span className="composer__spacer" />
         <ContextMeter />
@@ -647,6 +632,17 @@ export const Composer = memo(function Composer() {
           </button>
         ) : null}
       </div>
+      {historyScope &&
+        historyOpen &&
+        historyOpen.key === historyKey &&
+        !sessionOpening && (
+          <ComposerHistoryDialog
+            scope={historyScope}
+            recent={recentComposerHistory(historyScope)}
+            onChoose={useHistory}
+            onClose={() => setHistoryOpen(null)}
+          />
+        )}
     </form>
   );
 });

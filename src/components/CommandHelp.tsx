@@ -88,7 +88,7 @@ export function CommandHelp({
           sendKey === "mod-enter" ? ["Enter", "Shift+Enter"] : "Shift+Enter",
           "Insert a line break (Alt+Enter also works)",
         ],
-        [["↑", "↓"], "Browse prompt history at the first / last visual line"],
+        [["Alt", "↑"], "Open input history"],
         [
           {
             steps: [

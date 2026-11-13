@@ -18,7 +18,11 @@ import {
   discardComposerHistory,
 } from "../composer-history";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
-import { deleteSessionDraft, touchSessionDraft } from "../session-drafts";
+import {
+  deleteSessionDraft,
+  sessionDraftRevision,
+  touchSessionDraft,
+} from "../session-drafts";
 
 interface RecalledHistoryArtifact {
   type: "image" | "file";
@@ -28,7 +32,6 @@ interface RecalledHistoryArtifact {
   incarnation: string | null;
   effectiveLeafId: string | null;
   scopeKey: string;
-  preview: boolean;
 }
 
 export interface PendingAttachment {
@@ -56,18 +59,12 @@ interface StagedFile {
   submitted: boolean;
 }
 
-interface ComposerArtifactDraft {
-  scopeKey: string;
-  attachments: PendingAttachment[];
-  projectFiles: string[];
-}
-
 interface DeliveryRecord {
   request: PromptDeliveryRequest;
   message: string;
+  postHandoffRevision: number;
   attachments: PendingAttachment[];
   projectFiles: string[];
-  historyDraft: ComposerArtifactDraft | null;
   /** Palette preparation owns its text; it never transfers the Composer draft. */
   independent: boolean;
 }
@@ -80,7 +77,6 @@ interface DeliveryObservation {
 interface ComposerPartition {
   attachments: PendingAttachment[];
   projectFiles: string[];
-  historyDraft: ComposerArtifactDraft | null;
   /** Independently owned operations; only an exact retry may reuse an unknown ID. */
   deliveries: Map<string, DeliveryObservation>;
   unknownDeliveries: Map<string, PromptDeliveryRequest>;
@@ -88,14 +84,11 @@ interface ComposerPartition {
 }
 
 function attachmentOwners(composer: ComposerPartition) {
-  const owners = [
+  return [
     composer,
     ...Array.from(composer.deliveries.values(), ({ record }) => record),
     ...composer.failedDeliveries,
   ];
-  return owners.flatMap((owner) =>
-    owner.historyDraft ? [owner, owner.historyDraft] : [owner],
-  );
 }
 
 interface ComposerControllerState {
@@ -163,7 +156,7 @@ export class ComposerController {
         if (!record.independent) composer.failedDeliveries.push(record);
       }
       composer.deliveries.clear();
-      this.restoreFailedIfEmpty(sessionId, composer);
+      this.restoreFailed(sessionId, composer, true);
       const invalidateUploads = (items: PendingAttachment[]) =>
         items.map((item) =>
           item.status === "uploading"
@@ -179,10 +172,6 @@ export class ComposerController {
             : item,
         );
       composer.attachments = invalidateUploads(composer.attachments);
-      if (composer.historyDraft)
-        composer.historyDraft.attachments = invalidateUploads(
-          composer.historyDraft.attachments,
-        );
       this.prune(sessionId, composer);
     }
     const sessionId = this.host.state().sessionId;
@@ -261,9 +250,6 @@ export class ComposerController {
       if (!attachments.length) return;
     }
     const composer = this.forSession(sessionId);
-    // Recovery merges into the newest saved draft, not a temporary history
-    // preview. Exiting that preview must not discard returned upload handles.
-    this.restoreHistoryDraft(composer);
     const api = this.host.api();
     const currentAuthority = this.host.authorityId();
     const known = new Set(
@@ -366,7 +352,6 @@ export class ComposerController {
       // deleted partition.
       composer.attachments = [];
       composer.projectFiles = [];
-      composer.historyDraft = null;
       composer.deliveries.clear();
       composer.failedDeliveries = [];
       composer.unknownDeliveries.clear();
@@ -521,12 +506,13 @@ export class ComposerController {
       authorityId,
       ...deliveryContent,
     };
+    const beforeHandoff = sessionDraftRevision(sessionId);
     const record: DeliveryRecord = {
       request,
       message,
+      postHandoffRevision: beforeHandoff,
       attachments: included,
       projectFiles,
-      historyDraft: independent ? null : composer.historyDraft,
       independent,
     };
     composer.failedDeliveries = composer.failedDeliveries.filter(
@@ -548,9 +534,14 @@ export class ComposerController {
     if (!independent) {
       composer.attachments = [];
       composer.projectFiles = [];
-      composer.historyDraft = null;
     }
     onHandoff?.();
+    if (!independent) {
+      // Attachment-only handoffs still create a distinct draft revision.
+      if (sessionDraftRevision(sessionId) === beforeHandoff)
+        touchSessionDraft(sessionId);
+      record.postHandoffRevision = sessionDraftRevision(sessionId);
+    }
     this.publish(sessionId);
     try {
       const response = await api.prompt(request, confirmation.signal);
@@ -559,8 +550,6 @@ export class ComposerController {
         this.forgetStagedFile(item.localId);
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
       }
-      if (record.historyDraft)
-        this.releaseAttachments(record.historyDraft.attachments);
       composer.unknownDeliveries.delete(signature);
       return { accepted: true, historyEntry: response.historyEntry };
     } catch (error) {
@@ -596,35 +585,18 @@ export class ComposerController {
             }
         }
         composer.attachments = [
-          ...record.attachments
-            .filter(
-              (item) =>
-                !rejection.recoveredAttachments || item.kind !== "image",
-            )
-            .map((item) =>
-              item.recalledArtifact?.preview
-                ? {
-                    ...item,
-                    recalledArtifact: {
-                      ...item.recalledArtifact,
-                      preview: false,
-                    },
-                  }
-                : item,
-            ),
+          ...record.attachments.filter(
+            (item) => !rejection.recoveredAttachments || item.kind !== "image",
+          ),
           ...composer.attachments,
         ];
         composer.projectFiles = [
           ...new Set([...record.projectFiles, ...composer.projectFiles]),
         ];
-        if (record.historyDraft)
-          this.releaseAttachments(record.historyDraft.attachments);
         return false;
       }
       if (rejection?.code === "PROMPT_CLEARED") {
         this.releaseAttachments(record.attachments);
-        if (record.historyDraft)
-          this.releaseAttachments(record.historyDraft.attachments);
         return false;
       }
       if (rejection?.code === "ATTACHMENTS_EXPIRED") {
@@ -644,7 +616,7 @@ export class ComposerController {
       }
       if (!independent) {
         composer.failedDeliveries.push(record);
-        this.restoreFailedIfEmpty(sessionId, composer);
+        this.restoreFailed(sessionId, composer, true);
         if (rejection?.code === "ATTACHMENTS_EXPIRED") this.resumeUploads();
       }
       if (rejection?.code === "PROMPT_ABORTED") return false;
@@ -674,7 +646,7 @@ export class ComposerController {
   restoreFailedPrompt(sessionId: string): boolean {
     const composer = this.composers.get(sessionId);
     if (!composer) return false;
-    const restored = this.restoreFailedIfEmpty(sessionId, composer);
+    const restored = this.restoreFailed(sessionId, composer, false);
     if (restored) {
       this.publish(sessionId);
       this.resumeUploads();
@@ -682,11 +654,18 @@ export class ComposerController {
     return restored;
   }
 
-  private restoreFailedIfEmpty(
+  private restoreFailed(
     sessionId: string,
     composer: ComposerPartition,
+    automatic: boolean,
   ): boolean {
-    const record = composer.failedDeliveries[0];
+    const revision = sessionDraftRevision(sessionId);
+    const index = automatic
+      ? composer.failedDeliveries.findIndex(
+          (item) => item.postHandoffRevision === revision,
+        )
+      : 0;
+    const record = composer.failedDeliveries[index];
     if (
       !record ||
       composer.attachments.length > 0 ||
@@ -694,55 +673,29 @@ export class ComposerController {
       !this.host.restoreDraftIfEmpty(sessionId, record.message)
     )
       return false;
-    composer.failedDeliveries.shift();
-    composer.attachments = record.attachments.map((item) =>
-      item.recalledArtifact?.preview
-        ? {
-            ...item,
-            recalledArtifact: { ...item.recalledArtifact, preview: false },
-          }
-        : item,
-    );
+    composer.failedDeliveries.splice(index, 1);
+    composer.attachments = record.attachments;
     composer.projectFiles = record.projectFiles;
-    if (record.historyDraft)
-      this.releaseAttachments(record.historyDraft.attachments);
     return true;
   }
 
-  previewHistoryEntry(
+  useHistoryEntry(
     scope: ComposerHistoryScope,
-    entry: ComposerHistoryEntry | null,
-  ): void {
-    if (this.host.state().sessionId !== scope.sessionId) return;
-    const composer = this.forSession(scope.sessionId);
-    if (entry || composer.historyDraft) touchSessionDraft(scope.sessionId);
-    if (!entry) {
-      this.restoreHistoryDraft(composer);
-      this.prune(scope.sessionId, composer);
-      this.publish(scope.sessionId);
-      return;
-    }
-
+    entry: ComposerHistoryEntry,
+  ): boolean {
+    const { sessionId, transcriptViewId } = this.host.state();
+    if (sessionId !== scope.sessionId || transcriptViewId !== scope.viewId)
+      return false;
+    const composer = this.forSession(sessionId);
+    touchSessionDraft(sessionId);
+    this.releaseAttachments(composer.attachments);
     const scopeKey = composerHistoryScopeKey(scope);
-    if (composer.historyDraft?.scopeKey !== scopeKey) {
-      this.restoreHistoryDraft(composer);
-      composer.historyDraft = {
-        scopeKey,
-        attachments: composer.attachments,
-        projectFiles: composer.projectFiles,
-      };
-    } else {
-      this.releaseAttachments(
-        composer.attachments.filter((item) => !item.recalledArtifact),
-      );
-    }
     composer.projectFiles = [];
     const owner = {
       viewId: scope.viewId,
       incarnation: scope.incarnation,
       effectiveLeafId: scope.effectiveLeafId,
       scopeKey,
-      preview: true,
     };
     composer.attachments = [
       ...entry.images.map<PendingAttachment>((image, index) => ({
@@ -773,26 +726,9 @@ export class ComposerController {
         },
       })),
     ];
-    this.publish(scope.sessionId);
-  }
-
-  commitHistoryPreview(scope: ComposerHistoryScope): void {
-    const composer = this.composers.get(scope.sessionId);
-    if (!composer) return;
-    const scopeKey = composerHistoryScopeKey(scope);
-    if (composer.historyDraft?.scopeKey !== scopeKey) return;
-    touchSessionDraft(scope.sessionId);
-    this.commitHistoryDraft(composer);
-    this.publish(scope.sessionId);
-  }
-
-  cancelHistoryPreview(sessionId: string): void {
-    const composer = this.composers.get(sessionId);
-    if (!composer) return;
-    if (composer.historyDraft) touchSessionDraft(sessionId);
-    this.restoreHistoryDraft(composer);
     this.prune(sessionId, composer);
     this.publish(sessionId);
+    return true;
   }
 
   async addFiles(files: File[]): Promise<void> {
@@ -847,13 +783,9 @@ export class ComposerController {
     sessionId: string,
     localId: string,
   ): PendingAttachment | undefined {
-    const composer = this.composers.get(sessionId);
-    return (
-      composer?.attachments.find((item) => item.localId === localId) ??
-      composer?.historyDraft?.attachments.find(
-        (item) => item.localId === localId,
-      )
-    );
+    return this.composers
+      .get(sessionId)
+      ?.attachments.find((item) => item.localId === localId);
   }
 
   /** Only browser-held, unsent staging is replayable. Prompt delivery has its own identity. */
@@ -1106,43 +1038,12 @@ export class ComposerController {
     }
   }
 
-  private releaseHistoryDraft(composer: ComposerPartition): void {
-    if (!composer.historyDraft) return;
-    this.releaseAttachments(composer.historyDraft.attachments);
-    composer.historyDraft = null;
-  }
-
-  private restoreHistoryDraft(composer: ComposerPartition): void {
-    const draft = composer.historyDraft;
-    if (!draft) return;
-    this.releaseAttachments(
-      composer.attachments.filter((item) => !item.recalledArtifact),
-    );
-    composer.attachments = draft.attachments;
-    composer.projectFiles = draft.projectFiles;
-    composer.historyDraft = null;
-  }
-
-  private commitHistoryDraft(composer: ComposerPartition): void {
-    if (!composer.historyDraft) return;
-    this.releaseHistoryDraft(composer);
-    composer.attachments = composer.attachments.map((item) =>
-      item.recalledArtifact?.preview
-        ? {
-            ...item,
-            recalledArtifact: { ...item.recalledArtifact, preview: false },
-          }
-        : item,
-    );
-  }
-
   private forSession(sessionId: string): ComposerPartition {
     let composer = this.composers.get(sessionId);
     if (!composer) {
       composer = {
         attachments: [],
         projectFiles: [],
-        historyDraft: null,
         deliveries: new Map(),
         unknownDeliveries: new Map(),
         failedDeliveries: [],
@@ -1154,7 +1055,6 @@ export class ComposerController {
 
   private prune(sessionId: string, composer: ComposerPartition): void {
     if (
-      !composer.historyDraft &&
       composer.deliveries.size === 0 &&
       composer.unknownDeliveries.size === 0 &&
       composer.failedDeliveries.length === 0 &&

@@ -5,9 +5,13 @@ import {
   ComposerController,
   type ComposerSlice,
 } from "../../src/controllers/composer-controller";
+import { touchSessionDraft } from "../../src/session-drafts";
 import { deferred } from "./helpers";
 
-function createHarness(sessionId = "session-a") {
+function createHarness(
+  sessionId = "session-a",
+  transcriptViewId: string | null = null,
+) {
   let activeSessionId: string | null = sessionId;
   const prompt = vi.fn();
   const uploadAttachments = vi.fn();
@@ -27,7 +31,7 @@ function createHarness(sessionId = "session-a") {
   const handleAuthFailure = vi.fn();
   const restoreDraftIfEmpty = vi.fn().mockReturnValue(true);
   const controller = new ComposerController({
-    state: () => ({ sessionId: activeSessionId, transcriptViewId: null }),
+    state: () => ({ sessionId: activeSessionId, transcriptViewId }),
     api: () => api,
     authorityId: () => authorityId,
     patch,
@@ -271,6 +275,24 @@ describe("ComposerController", () => {
     },
   );
 
+  it("leaves an edited-then-cleared successor alone when delivery fails", async () => {
+    const harness = createHarness();
+    const receipt = deferred<PromptAcceptedResponse>();
+    harness.prompt.mockReturnValueOnce(receipt.promise);
+    const sending = harness.controller.send("original");
+    touchSessionDraft("session-a");
+    touchSessionDraft("session-a");
+    receipt.reject(new ApiError(409, "not delivered"));
+    await expect(sending).resolves.toBe(false);
+    expect(harness.restoreDraftIfEmpty).not.toHaveBeenCalled();
+    expect(harness.slice().failedDeliveryCount).toBe(1);
+    expect(harness.controller.restoreFailedPrompt("session-a")).toBe(true);
+    expect(harness.restoreDraftIfEmpty).toHaveBeenCalledExactlyOnceWith(
+      "session-a",
+      "original",
+    );
+  });
+
   it("retires confirmation polling without cancelling or losing the delivery", async () => {
     const harness = createHarness();
     const pending = deferred<PromptAcceptedResponse>();
@@ -353,13 +375,13 @@ describe("ComposerController", () => {
   });
 
   it("retains recalled artifacts after a refused send and releases the displaced draft", async () => {
-    const f = createHarness();
+    const f = createHarness("session-a", "view-a");
     f.uploadAttachments.mockResolvedValue({
       attachments: [{ id: "draft-file", fileName: "draft.txt", kind: "file" }],
     });
     await f.controller.addFiles([new File(["draft"], "draft.txt")]);
     const reference = "pi-history-image://entry-4/1";
-    f.controller.previewHistoryEntry(
+    f.controller.useHistoryEntry(
       {
         sessionId: "session-a",
         viewId: "view-a",
@@ -377,11 +399,11 @@ describe("ComposerController", () => {
     await expect(f.controller.send("recalled")).resolves.toBe(false);
     expect(f.deleteAttachment).toHaveBeenCalledWith("draft-file");
     expect(f.slice().attachments).toMatchObject([
-      { recalledArtifact: { type: "image", reference, preview: false } },
+      { recalledArtifact: { type: "image", reference } },
     ]);
   });
 
-  it.each(["staged", "history draft", "failed delivery"])(
+  it.each(["staged", "failed delivery"])(
     "restores a browser-held %s upload in its inactive partition after Host replacement",
     async (location) => {
       const harness = createHarness();
@@ -403,18 +425,7 @@ describe("ComposerController", () => {
         });
         expect(harness.uploadAttachments).toHaveBeenCalledOnce();
       }
-      if (location === "history draft") {
-        harness.controller.previewHistoryEntry(
-          {
-            sessionId: "session-a",
-            viewId: "view-a",
-            incarnation: null,
-            effectiveLeafId: null,
-            historyVersion: "history-a",
-          },
-          { text: "recalled", images: [], files: [] },
-        );
-      } else if (location === "failed delivery") {
+      if (location === "failed delivery") {
         harness.restoreDraftIfEmpty.mockReturnValue(false);
         harness.prompt.mockRejectedValue(new ApiError(409, "not sent"));
         await harness.controller.send("send");
@@ -429,7 +440,6 @@ describe("ComposerController", () => {
       harness.replaceAuthority(nextAuthority);
       harness.controller.reconcileAuthority(nextAuthority);
       harness.controller.resumeUploads();
-      harness.controller.cancelHistoryPreview("session-a");
       harness.restoreDraftIfEmpty.mockReturnValue(true);
       harness.controller.restoreFailedPrompt("session-a");
       await vi.waitFor(() =>

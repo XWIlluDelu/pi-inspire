@@ -28,10 +28,11 @@ import {
 } from "../presentation-adapters";
 import { recoverableRead } from "../recovery-backoff";
 import {
-  sessionDraft,
+  sessionDraftRevision,
   setSessionDraft,
   setStartDraft,
-  startDraft,
+  startDraftRevision,
+  useDraftText,
 } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import {
@@ -118,11 +119,7 @@ export const Welcome = memo(function Welcome({
       inheritance?.modelDiscovery &&
       !sourceSelection,
   );
-  const [draft, setDraft] = useState(startDraft);
-  const updateDraft = (text: string) => {
-    setDraft(text);
-    setStartDraft(text);
-  };
+  const draft = useDraftText();
   const [directory, setDirectory] = useState(() => inheritance?.cwd ?? "");
   const [attachments, setAttachments] = useState<WelcomeAttachment[]>([]);
   const [projectFiles, setProjectFiles] = useState<string[]>([]);
@@ -654,6 +651,7 @@ export const Welcome = memo(function Welcome({
   const start = async (createDirectory = false) => {
     if (createDirectory ? !canCreate : !canStart) return;
     const message = draft;
+    const startRevision = startDraftRevision();
     const files = attachments.map((attachment) => attachment.file);
     const referencedProjectFiles = [...projectFiles];
     // A selected pre-session file binds creation to the canonical workspace
@@ -690,43 +688,32 @@ export const Welcome = memo(function Welcome({
         return;
       }
 
-      // The ordinary composer may mount before this async continuation. Drive
-      // both its durable browser draft and its live nonce channel, then let the
-      // normal upload/send path own all host attachment state.
+      // Transfer captured input to the native session before asynchronous
+      // attachment staging. New input typed in Welcome remains independent.
       setSessionDraft(opened, message);
-      // Creation transfers this input to its session even if uploading/sending
-      // later fails. A newer start-surface draft keeps its separate ownership.
-      if (startDraft() === message) {
-        setStartDraft("");
-        setDraft("");
-      }
-      store.replaceComposerText(message);
+      if (startDraftRevision() === startRevision) setStartDraft("");
+      if (store.getState().sessionId !== opened) return;
       for (const path of referencedProjectFiles) store.addProjectFile(path);
-      if (files.length > 0) await store.addFiles(files);
+      const upload = store.addFiles(files);
+      const revision = sessionDraftRevision(opened);
+      await upload;
+      const ownsDraft = () =>
+        store.getState().sessionId === opened &&
+        sessionDraftRevision(opened) === revision;
       if (
-        store.getState().sessionId !== opened ||
-        sessionDraft(opened) !== message
-      )
-        return;
-      // Creation has transferred the draft and artifacts. Do not deliver the first
-      // input until Pi confirms each explicit choice; failure leaves that draft intact.
-      if (!(await store.applyInitialStatusControls(opened, selections))) return;
-      if (
-        store.getState().sessionId !== opened ||
-        sessionDraft(opened) !== message
+        !ownsDraft() ||
+        !(await store.applyInitialStatusControls(opened, selections)) ||
+        !ownsDraft()
       )
         return;
       let handedOff = false;
       const sent = await store.sendPrompt(message, undefined, () => {
         handedOff = true;
-        if (sessionDraft(opened) !== message) return;
-        setSessionDraft(opened, "");
-        if (store.getState().sessionId === opened)
-          store.replaceComposerText("");
+        if (sessionDraftRevision(opened) === revision)
+          setSessionDraft(opened, "");
       });
-      if (!sent || handedOff || sessionDraft(opened) !== message) return;
-      setSessionDraft(opened, "");
-      if (store.getState().sessionId === opened) store.replaceComposerText("");
+      if (sent && !handedOff && sessionDraftRevision(opened) === revision)
+        setSessionDraft(opened, "");
     } finally {
       setStarting(false);
     }
@@ -821,7 +808,7 @@ export const Welcome = memo(function Welcome({
         />
         <ComposerInput
           value={draft}
-          onChange={updateDraft}
+          onChange={setStartDraft}
           commands={workspaceCommands}
           includeNativeCommands={false}
           completionDisabled={starting}

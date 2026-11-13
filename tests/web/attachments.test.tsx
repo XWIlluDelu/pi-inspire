@@ -59,7 +59,6 @@ describe("attachment presentation", () => {
         fileName: `${fileKind}.md`,
         recalledArtifact: {
           type: "file" as const,
-          preview: true,
           scopeKey: "history-scope",
           viewId: "history-view",
           incarnation: null,
@@ -139,7 +138,6 @@ describe("attachment presentation", () => {
         incarnation: null,
         effectiveLeafId: null,
         reference: "pi-history-image://entry-4/0",
-        preview: true,
       },
     };
 
