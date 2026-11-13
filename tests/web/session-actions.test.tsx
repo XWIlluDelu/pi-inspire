@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context";
 import {
   SESSION_ACTION_IDS,
@@ -26,10 +26,12 @@ import { deferred } from "./helpers";
 function Harness({
   onCopyError = vi.fn(),
   onExport = vi.fn(),
+  onSwitchBranch = vi.fn(),
   readOnly = false,
 }: {
   onCopyError?: (message: string) => void;
   onExport?: () => void;
+  onSwitchBranch?: () => void;
   readOnly?: boolean;
 }) {
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -48,12 +50,12 @@ function Harness({
           anchorRef={anchorRef}
           sessionId="01a163f4-8e43-71df-9bd6-71efa60bd123"
           actionOrder={order}
-          onOrderChange={setOrder}
           onCopyError={onCopyError}
           renameDisabled={readOnly}
           cloneDisabled={readOnly}
           onRename={vi.fn()}
           onClone={vi.fn()}
+          onSwitchBranch={onSwitchBranch}
           onExport={onExport}
           onClose={() => setOpen(false)}
         />
@@ -132,12 +134,6 @@ it("keeps rename writes owned by the active editor and session", async () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Rename session" }));
     return screen.getByRole("textbox", { name: "Session name" });
   };
-  for (const value of ["Original title", "   "]) {
-    const input = edit();
-    fireEvent.change(input, { target: { value } });
-    fireEvent.blur(input, { relatedTarget: null });
-    expect(input).not.toBeInTheDocument();
-  }
   const cancelled = edit();
   fireEvent.change(cancelled, { target: { value: "Discard this edit" } });
   fireEvent.keyDown(cancelled, { key: "Escape" });
@@ -146,17 +142,14 @@ it("keeps rename writes owned by the active editor and session", async () => {
   const original = edit();
   fireEvent.change(original, { target: { value: "  Committed title  " } });
   const save = screen.getByRole("button", { name: "Save session name" });
-  fireEvent.blur(original, { relatedTarget: save });
-  expect(rename).not.toHaveBeenCalled();
   fireEvent.click(save);
   expect(rename).toHaveBeenCalledExactlyOnceWith("s1", "Committed title");
-  fireEvent.keyDown(original, { key: "Escape" });
-  const reopened = edit();
+  fireEvent.change(original, { target: { value: "A newer draft" } });
   await act(async () => receipt.resolve(true));
-  expect(reopened).toBeInTheDocument();
+  expect(original).toHaveValue("A newer draft");
 
   select("s2", "Other session");
-  expect(reopened).not.toBeInTheDocument();
+  expect(original).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Other session" })).toBeVisible();
 });
 
@@ -188,9 +181,6 @@ it.each(["resolve", "reject"] as const)(
 );
 
 describe("Session actions", () => {
-  beforeEach(() => {
-    vi.spyOn(store, "branchLeaves").mockResolvedValue({ total: 1, leaves: [] });
-  });
   afterEach(() => vi.restoreAllMocks());
 
   it("copies the complete ID in read-only sessions and reports clipboard failure before retry", async () => {
@@ -233,212 +223,58 @@ describe("Session actions", () => {
     expect(screen.getByRole("menu", { name: "Session actions" })).toBeVisible();
   });
 
-  it("switches branches from the title menu and disables the choice with one branch", async () => {
-    const leaves = vi.spyOn(store, "branchLeaves").mockResolvedValue({
-      total: 2,
-      leaves: [
-        {
-          id: "newer",
-          excerpt: "Try the other approach",
-          updatedAt: new Date().toISOString(),
-          isDefault: true,
-          isCurrent: false,
-        },
-        {
-          id: "viewed",
-          excerpt: "Original question",
-          updatedAt: new Date().toISOString(),
-          isDefault: false,
-          isCurrent: true,
-        },
-      ],
-    });
-    const select = vi.spyOn(store, "selectBranch").mockResolvedValue(true);
-    try {
-      const user = userEvent.setup();
-      render(<Harness />);
-      await user.click(screen.getByRole("button", { name: "Session title" }));
-      expect(
-        screen.queryByRole("menuitem", { name: "Switch branch…" }),
-      ).toBeNull();
-      await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-      const open = screen.getByRole("menuitem", { name: "Switch branch…" });
-      await waitFor(() => expect(open).toBeEnabled());
-      await user.click(open);
-      const current = screen.getByRole("menuitemradio", {
-        name: /Original question/,
-      });
-      expect(current).toHaveAttribute("aria-checked", "true");
-      const other = screen.getByRole("menuitemradio", {
-        name: /Try the other approach.*Default/,
-      });
-      expect(other).toHaveFocus();
-      await user.click(
-        screen.getByRole("menuitem", { name: "Back to actions" }),
-      );
-      expect(
-        screen.getByRole("menuitem", { name: "Switch branch…" }),
-      ).toHaveFocus();
-      await user.keyboard("{Enter}");
-      expect(
-        screen.getByRole("menuitemradio", {
-          name: /Try the other approach.*Default/,
-        }),
-      ).toHaveFocus();
-      await user.keyboard("{Enter}");
-      expect(select).toHaveBeenCalledWith(
-        "01a163f4-8e43-71df-9bd6-71efa60bd123",
-        "newer",
-      );
-      await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
-
-      leaves.mockResolvedValue({ total: 1, leaves: [] });
-      await user.click(screen.getByRole("button", { name: "Session title" }));
-      await waitFor(() => expect(leaves).toHaveBeenCalledTimes(2));
-      await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-      expect(
-        screen.getByRole("menuitem", { name: "Switch branch…" }),
-      ).toBeDisabled();
-    } finally {
-      leaves.mockRestore();
-      select.mockRestore();
-    }
+  it("opens the shared History destination from the title menu", async () => {
+    const onSwitchBranch = vi.fn();
+    const user = userEvent.setup();
+    render(<Harness onSwitchBranch={onSwitchBranch} />);
+    await user.click(screen.getByRole("button", { name: "Session title" }));
+    await user.click(screen.getByRole("menuitem", { name: "Switch branch…" }));
+    expect(onSwitchBranch).toHaveBeenCalledOnce();
   });
 
-  it("retries unavailable branches and refreshes changes to the same session", async () => {
-    const sessionId = "01a163f4-8e43-71df-9bd6-71efa60bd123";
-    const previous = store.getState();
-    const set = (patch: Partial<typeof previous>) =>
-      act(() => (store as unknown as { set(value: unknown): void }).set(patch));
-    const leaves = vi
-      .spyOn(store, "branchLeaves")
-      .mockRejectedValueOnce(new Error("Branch service unavailable"))
-      .mockResolvedValueOnce({ total: 1, leaves: [] })
-      .mockResolvedValue({
-        total: 2,
-        leaves: [
-          {
-            id: "other",
-            excerpt: "Another branch",
-            updatedAt: "2026-08-01T12:00:00Z",
-            isCurrent: false,
-            isDefault: true,
-          },
-        ],
-      });
-    try {
-      set({ sessionId, transcriptRevision: 1 });
-      const user = userEvent.setup();
-      render(<Harness />);
-      await user.click(screen.getByRole("button", { name: "Session title" }));
-      await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-      const switchBranch = screen.getByRole("menuitem", {
-        name: "Switch branch…",
-      });
-      await waitFor(() => expect(switchBranch).toBeEnabled());
-      await user.click(switchBranch);
-      expect(screen.getByRole("alert")).toHaveTextContent(
-        "Could not load branches",
-      );
-      expect(
-        screen.queryByText("This session has no other branch."),
-      ).toBeNull();
-      await user.click(screen.getByRole("menuitem", { name: "Retry" }));
-      expect(
-        await screen.findByText("This session has no other branch."),
-      ).toBeVisible();
-      set({ transcriptRevision: 2 });
-      expect(
-        await screen.findByRole("menuitemradio", { name: /Another branch/ }),
-      ).toBeVisible();
-      expect(leaves).toHaveBeenCalledTimes(3);
-    } finally {
-      leaves.mockRestore();
-      set({
-        sessionId: previous.sessionId,
-        transcriptRevision: previous.transcriptRevision,
-      });
-    }
-  });
-
-  it("reveals overflow for keyboard use and resets it on reopening", async () => {
+  it("uses the settings order for menu keyboard navigation and returns focus", async () => {
     const user = userEvent.setup();
     const onExport = vi.fn();
     render(<Harness onExport={onExport} />);
+    const up = screen.getByRole("button", { name: "Move Export session… up" });
+    up.focus();
+    await user.keyboard("{Enter}");
+    expect(up).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("position 4 of 5");
     const title = screen.getByRole("button", { name: "Session title" });
     await user.click(title);
-    expect(
-      screen.queryByRole("menuitem", { name: "Export session…" }),
-    ).toBeNull();
-    await user.keyboard("{End}{Enter}");
-    const more = screen.getByRole("menuitem", { name: "Fewer actions" });
-    expect(more).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByRole("menuitem", { name: "Export session…" }),
-    ).toHaveFocus();
-    await user.keyboard("{Enter}");
+    const menu = within(screen.getByRole("menu", { name: "Session actions" }));
+    expect(menu.getAllByRole("menuitem").at(3)).toHaveTextContent(
+      "Export session…",
+    );
+    await user.keyboard("{End}{ArrowUp}{Enter}");
     expect(onExport).toHaveBeenCalledOnce();
     await user.keyboard("{Escape}");
     expect(title).toHaveFocus();
     expect(screen.queryByRole("menu")).toBeNull();
-    await user.click(title);
-    expect(
-      screen.queryByRole("menuitem", { name: "Export session…" }),
-    ).toBeNull();
   });
 
-  it("reorders Switch branch from its menu handle even when switching is unavailable", async () => {
+  it("keeps focus on the moved action at the order boundary", async () => {
     const user = userEvent.setup();
     render(<Harness />);
-    await user.click(screen.getByRole("button", { name: "Session title" }));
-    await user.click(screen.getByRole("menuitem", { name: "More actions" }));
-    expect(
-      screen.getByRole("menuitem", { name: "Switch branch…" }),
-    ).toBeDisabled();
-    const handle = screen.getByRole("menuitem", {
-      name: "Reorder Switch branch…",
+    const up = screen.getByRole("button", { name: "Move Copy session ID up" });
+    const down = screen.getByRole("button", {
+      name: "Move Copy session ID down",
     });
-    handle.focus();
-    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
-    expect(handle).toHaveFocus();
+    await user.click(up);
+    const rows = within(
+      screen.getByRole("list", { name: "Session action order" }),
+    ).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("Copy session ID");
+    expect(up).toBeDisabled();
+    expect(down).toHaveFocus();
+    await user.click(down);
+    expect(down).toHaveFocus();
     expect(
-      within(screen.getByRole("list", { name: "Session action order" }))
-        .getAllByRole("listitem")
-        .at(2),
-    ).toHaveTextContent("Switch branch…");
-    expect(
-      screen.getByRole("menuitem", { name: "Export session…" }),
-    ).toBeVisible();
-  });
-
-  it("moves actions by keyboard and restores focus at the order boundary", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    const list = screen.getByRole("list", { name: "Session action order" });
-    const actionLabels = () =>
-      Array.from(
-        list.querySelectorAll(".session-action-order__label"),
-        (label) => label.textContent,
-      );
-    const copyHandle = screen.getByRole("button", {
-      name: "Reorder Copy session ID",
-    });
-    fireEvent.click(copyHandle);
-    const copyUp = screen.getByRole("menuitem", {
-      name: "Move Copy session ID up",
-    });
-    expect(copyUp).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(actionLabels()[0]).toBe("Copy session ID");
-    fireEvent.click(copyHandle);
-    expect(
-      screen.getByRole("menuitem", { name: "Move Copy session ID up" }),
-    ).toBeDisabled();
-    await user.click(
-      screen.getByRole("menuitem", { name: "Move Copy session ID down" }),
-    );
-    expect(actionLabels()[1]).toBe("Copy session ID");
-    expect(copyHandle).toHaveFocus();
+      within(
+        screen.getByRole("list", { name: "Session action order" }),
+      ).getAllByRole("listitem")[1],
+    ).toHaveTextContent("Copy session ID");
   });
 
   it("retains the selected format on failure and downloads for the captured session on retry", async () => {

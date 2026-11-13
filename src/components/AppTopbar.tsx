@@ -12,10 +12,12 @@ import {
   type Ref,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   type ProjectionConflict,
   projectionConflictSeverity,
@@ -29,6 +31,7 @@ import { gitChangeCount, gitHeadLabel } from "../git-presentation";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { shallowEqual, store, useAppState } from "../store";
 import { useCopied } from "../use-copied";
+import { useModalFocus } from "../use-modal-focus";
 import { ExtensionStatus } from "./ExtensionDisplays";
 import { NavigationToggle } from "./NavigationToggle";
 import { PiLoader } from "./PiLoader";
@@ -157,6 +160,108 @@ function GitSummary() {
   );
 }
 
+function RenameSessionDialog({
+  sessionId,
+  initialName,
+  onClose,
+}: {
+  sessionId: string;
+  initialName: string;
+  onClose: () => void;
+}) {
+  const title = useId();
+  const ref = useModalFocus<HTMLFormElement>(true, sessionId, onClose);
+  const input = useRef<HTMLInputElement>(null);
+  const editRevision = useRef(0);
+  const [value, setValue] = useState(initialName);
+  const [saving, setSaving] = useState(false);
+
+  useLayoutEffect(() => {
+    input.current?.select();
+  }, []);
+
+  const submit = async () => {
+    const name = value.trim();
+    if (saving || !name || store.getState().sessionId !== sessionId) return;
+    if (name === store.getState().sessionName.trim()) {
+      onClose();
+      return;
+    }
+    const revision = editRevision.current;
+    setSaving(true);
+    try {
+      const saved = await store.renameSession(sessionId, name);
+      if (
+        saved &&
+        revision === editRevision.current &&
+        ref.current &&
+        store.getState().sessionId === sessionId
+      )
+        onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return createPortal(
+    <div className="overlay" role="presentation" onClick={onClose}>
+      <form
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title}
+        aria-busy={saving || undefined}
+        ref={ref}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            isComposingKeyboardEvent(event.nativeEvent)
+          )
+            event.preventDefault();
+        }}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <h2 className="dialog__title" id={title}>
+          Rename session
+        </h2>
+        <input
+          className="inline-rename-input"
+          ref={input}
+          data-modal-autofocus
+          aria-label="Session name"
+          value={value}
+          onChange={(event) => {
+            editRevision.current += 1;
+            setValue(event.target.value);
+          }}
+        />
+        <footer className="dialog__actions">
+          <button
+            type="button"
+            className="button button--quiet"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="button button--primary"
+            disabled={saving || !value.trim()}
+          >
+            Save session name
+          </button>
+        </footer>
+      </form>
+    </div>,
+    document.body,
+  );
+}
+
 const SessionIdent = memo(function SessionIdent({
   show,
   onExport,
@@ -196,113 +301,15 @@ const SessionIdent = memo(function SessionIdent({
     };
   }, shallowEqual);
   const [editing, setEditing] = useState(false);
-  const [restoredTitleFocus, setRestoredTitleFocus] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [value, setValue] = useState("");
-  const [renameWidth, setRenameWidth] = useState(240);
   const titleRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const restoreTitleFocus = useRef(false);
-  const editIncarnationRef = useRef(0);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
-  const closeEditor = useCallback(() => {
-    restoreTitleFocus.current = Boolean(
-      inputRef.current?.form?.contains(document.activeElement),
-    );
-    setRestoredTitleFocus(restoreTitleFocus.current);
-    editIncarnationRef.current += 1;
-    setEditing(false);
-  }, []);
   const { copied, copy } = useCopied({
     scope: cwd,
     onError: store.reportCopyError,
   });
 
-  useLayoutEffect(() => {
-    if (editing) inputRef.current?.select();
-    else if (restoreTitleFocus.current) {
-      restoreTitleFocus.current = false;
-      titleRef.current?.focus({ preventScroll: true });
-    }
-  }, [editing]);
-
-  const startRename = () => {
-    const width = (titleRef.current?.getBoundingClientRect().width ?? 192) + 48;
-    setRenameWidth(Math.max(240, Math.min(560, width)));
-    closeMenu();
-    setValue(sessionName);
-    editIncarnationRef.current += 1;
-    setEditing(true);
-  };
-
-  const saveRename = () => {
-    const name = value.trim();
-    const owner = sessionId;
-    if (
-      !name ||
-      name === sessionName.trim() ||
-      !owner ||
-      store.getState().sessionId !== owner
-    ) {
-      closeEditor();
-      return;
-    }
-    const incarnation = editIncarnationRef.current;
-    void store.renameSession(owner, name).then((ok) => {
-      if (
-        ok &&
-        editIncarnationRef.current === incarnation &&
-        store.getState().sessionId === owner
-      ) {
-        closeEditor();
-      }
-    });
-  };
-
   if (!show || !sessionId) return null;
-
-  if (editing && !readOnlyReason) {
-    return (
-      <form
-        className="topbar__rename"
-        onSubmit={(event) => {
-          event.preventDefault();
-          saveRename();
-        }}
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) saveRename();
-        }}
-      >
-        <input
-          className="inline-rename-input"
-          ref={inputRef}
-          style={{ width: renameWidth }}
-          value={value}
-          onChange={(event) => {
-            editIncarnationRef.current += 1;
-            setValue(event.target.value);
-          }}
-          aria-label="Session name"
-          autoFocus
-          onKeyDown={(event) => {
-            if (isComposingKeyboardEvent(event.nativeEvent)) return;
-            if (event.key === "Escape") {
-              event.preventDefault(); // leaving rename must not trigger the global Escape abort
-              closeEditor();
-            }
-          }}
-        />
-        <button
-          type="submit"
-          className="icon-button"
-          aria-label="Save session name"
-          disabled={!value.trim()}
-        >
-          <Check size={14} aria-hidden />
-        </button>
-      </form>
-    );
-  }
 
   return (
     <div className="topbar__ident">
@@ -312,15 +319,12 @@ const SessionIdent = memo(function SessionIdent({
             ref={titleRef}
             type="button"
             className="topbar__title-button"
-            data-restored-focus={restoredTitleFocus || undefined}
-            onBlur={() => setRestoredTitleFocus(false)}
             aria-label={`Session actions: ${heading}`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={heading}
             onClick={() => setMenuOpen((open) => !open)}
             onKeyDown={(event) => {
-              setRestoredTitleFocus(false);
               if (
                 event.key === "ArrowDown" &&
                 !isComposingKeyboardEvent(event.nativeEvent)
@@ -339,12 +343,20 @@ const SessionIdent = memo(function SessionIdent({
             anchorRef={titleRef}
             sessionId={sessionId}
             actionOrder={sessionActionOrder}
-            onOrderChange={store.setSessionActionOrder}
             onCopyError={store.reportCopyError}
             cloneDisabled={cloneDisabled}
             renameDisabled={Boolean(readOnlyReason)}
             onClose={closeMenu}
-            onRename={startRename}
+            onRename={() => {
+              titleRef.current?.focus({ preventScroll: true });
+              closeMenu();
+              setEditing(true);
+            }}
+            onSwitchBranch={() => {
+              closeMenu();
+              store.setResourcesOpen(true);
+              store.setContextMode("branches");
+            }}
             onClone={() => {
               const trigger = document.activeElement;
               void store.cloneCurrentBranch().then((cloned) => {
@@ -364,6 +376,13 @@ const SessionIdent = memo(function SessionIdent({
             }}
           />
         ) : null}
+        {editing && !readOnlyReason && (
+          <RenameSessionDialog
+            sessionId={sessionId}
+            initialName={sessionName}
+            onClose={() => setEditing(false)}
+          />
+        )}
       </div>
       <div className="topbar__workspace-meta">
         {cwd ? (

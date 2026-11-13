@@ -12,15 +12,7 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { createContext, useContext, useId, useMemo } from "react";
 import type { VisibilityPreference } from "../../shared/contracts";
 import {
   fileResourceReference,
@@ -39,7 +31,6 @@ import {
   toolResultText,
 } from "../events";
 import { formatCount } from "../format";
-import { prefersReducedMotion } from "../input-device";
 import { messageCopyLoader } from "../message-copy";
 import { usePresentationAdapters } from "../presentation-adapters";
 import { store } from "../store";
@@ -49,10 +40,7 @@ import type {
   ToolPresentationBlock,
   ToolPresentationSummary,
 } from "../tool-presentations/model";
-import {
-  toolPresentationSummaryText,
-  toolResultImage,
-} from "../tool-presentations/model";
+import { toolResultImage } from "../tool-presentations/model";
 import { codeModeResultBlocks } from "../tool-presentations/pi-native";
 import {
   thinkingPresentationRegistry,
@@ -73,22 +61,10 @@ import { PiStatus } from "./PiStatus";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
 import { ResourcePathLabel } from "./ResourcePathLabel";
 import {
-  CARD_TRANSITION_MS,
-  DYNAMIC_THINKING_CLOSE_DELAY_MS,
-  DYNAMIC_THINKING_EXPANDED_MIN_MS,
-  DYNAMIC_TOOL_CLOSE_DELAY_MS,
-  DYNAMIC_TOOL_EXPANDED_MIN_MS,
-  useDynamicCardOpen,
-} from "./transcript-activity";
-import {
   ActivityReadingBlock,
-  ActivityReadingOwner,
-  recoverOmittedActivityFocus,
   useActivityDisclosure,
   useActivityReaderExpanded,
   useActivityReaderScroll,
-  useActivityStripSelection,
-  useVisibleActivityItemIds,
 } from "./transcript-activity-visibility";
 
 export type StaticVisibility = Exclude<VisibilityPreference, "dynamic">;
@@ -178,8 +154,6 @@ interface CardProps {
   copyLabel?: string;
   getCopyContent?: CopyLoader;
   children: React.ReactNode;
-  forceClosed?: boolean;
-  onManualOpenChange?: (open: boolean) => void;
 }
 
 function CollapsibleCard({
@@ -195,8 +169,6 @@ function CollapsibleCard({
   copyLabel,
   getCopyContent,
   children,
-  forceClosed = false,
-  onManualOpenChange,
 }: CardProps) {
   // Per-card override is view-local only; it never mutates saved preferences.
   const [override, setOverride] = useActivityDisclosure();
@@ -204,40 +176,9 @@ function CollapsibleCard({
   const hidden = defaultVisibility === "hidden";
   const open =
     !hidden &&
-    !forceClosed &&
     (override !== null
       ? override === "open"
       : defaultVisibility === "expanded");
-  // Closing content stays mounted only for the height transition. Collapsed
-  // history therefore does not retain every tool payload in the DOM.
-  const [bodyMounted, setBodyMounted] = useState(open);
-  const [bodyOpen, setBodyOpen] = useState(open);
-
-  useEffect(() => {
-    if (open) {
-      if (!bodyMounted) setBodyMounted(true);
-      if (prefersReducedMotion()) {
-        setBodyOpen(true);
-        return;
-      }
-      let openFrame = 0;
-      const mountFrame = window.requestAnimationFrame(() => {
-        openFrame = window.requestAnimationFrame(() => setBodyOpen(true));
-      });
-      return () => {
-        window.cancelAnimationFrame(mountFrame);
-        if (openFrame) window.cancelAnimationFrame(openFrame);
-      };
-    }
-    setBodyOpen(false);
-    if (!bodyMounted) return;
-    const timer = window.setTimeout(
-      () => setBodyMounted(false),
-      prefersReducedMotion() ? 0 : CARD_TRANSITION_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [bodyMounted, open]);
-
   if (hidden) return null;
   return (
     <section className={`card ${className}`}>
@@ -249,7 +190,6 @@ function CollapsibleCard({
         onToggle={() => {
           const nextOpen = !open;
           setOverride(nextOpen ? "open" : "closed");
-          onManualOpenChange?.(nextOpen);
         }}
         summary={
           (!open || summaryVisibleWhenOpen) && summary ? (
@@ -266,29 +206,13 @@ function CollapsibleCard({
         getCopyContent={getCopyContent}
         controlsId={bodyId}
       />
-      {bodyMounted ? (
-        <div
-          id={bodyId}
-          className={`card__reveal ${bodyOpen ? "card__reveal--open" : ""}`}
-          aria-hidden={!open || !bodyOpen}
-          inert={!open || !bodyOpen}
-        >
-          <div className="card__reveal-inner">
-            <div className="card__body">
-              <CardInspectionContext
-                value={() => {
-                  if (override !== "open") {
-                    setOverride("open");
-                    onManualOpenChange?.(true);
-                  }
-                }}
-              >
-                {children}
-              </CardInspectionContext>
-            </div>
-          </div>
+      {open && (
+        <div id={bodyId} className="card__body">
+          <CardInspectionContext value={() => setOverride("open")}>
+            {children}
+          </CardInspectionContext>
         </div>
-      ) : null}
+      )}
     </section>
   );
 }
@@ -312,19 +236,11 @@ export function ThinkingCard({
     [clean, thinkingPresentationRegistry],
   );
   const hasContent = Boolean(clean.trim()) || presentation !== null;
-  const dynamicOpen = useDynamicCardOpen(
-    visibility === "dynamic" && hasContent,
-    dynamicActive,
-    !dynamicActive,
-    DYNAMIC_THINKING_EXPANDED_MIN_MS,
-    undefined,
-    DYNAMIC_THINKING_CLOSE_DELAY_MS,
-  );
   const resolvedVisibility: StaticVisibility =
     !hasContent && visibility !== "hidden"
       ? "collapsed"
       : visibility === "dynamic"
-        ? dynamicOpen
+        ? dynamicActive
           ? "expanded"
           : "collapsed"
         : visibility;
@@ -1649,9 +1565,6 @@ export function ToolCard({
   visibility,
   dynamic,
   dynamicActive,
-  forceClosed = false,
-  onDynamicClosed,
-  onManualOpenChange,
 }: {
   call: ToolCallContent;
   result: ChatMessage | undefined;
@@ -1660,22 +1573,11 @@ export function ToolCard({
   visibility: StaticVisibility;
   dynamic?: boolean;
   dynamicActive?: boolean;
-  forceClosed?: boolean;
-  onDynamicClosed?: () => void;
-  onManualOpenChange?: (open: boolean) => void;
 }) {
   usePresentationAdapters();
   const owner = useContext(TranscriptImageOwnerContext);
   const status = toolStatus(result, activity, live, call);
   const complete = toolComplete(result, activity) || dynamicActive === false;
-  const dynamicOpen = useDynamicCardOpen(
-    Boolean(dynamic),
-    Boolean(dynamicActive),
-    complete,
-    DYNAMIC_TOOL_EXPANDED_MIN_MS,
-    onDynamicClosed,
-    DYNAMIC_TOOL_CLOSE_DELAY_MS,
-  );
   const presentation = useMemo(
     () => toolPresentationRegistry.resolve({ call, result }),
     [call, result, toolPresentationRegistry],
@@ -1684,10 +1586,12 @@ export function ToolCard({
     <ToolArgumentPreviewContext value={call.__inspireToolCall}>
       <CollapsibleCard
         defaultVisibility={
-          dynamic ? (dynamicOpen ? "expanded" : "collapsed") : visibility
+          dynamic
+            ? dynamicActive && !complete
+              ? "expanded"
+              : "collapsed"
+            : visibility
         }
-        forceClosed={forceClosed}
-        onManualOpenChange={onManualOpenChange}
         className={`card--tool ${call.name === "codemode" ? "card--codemode" : ""} ${status === "failure" ? "card--failed" : ""}`}
         icon={toolIcon(call.name)}
         label={
@@ -1721,229 +1625,6 @@ export function ToolCard({
         />
       </CollapsibleCard>
     </ToolArgumentPreviewContext>
-  );
-}
-
-interface CollapsedActivity {
-  key: string;
-  call: ToolCallContent;
-  result: ChatMessage | undefined;
-  activity?: ActivityTool;
-}
-
-const TOOL_STATUS_LABEL: Record<ToolStatus, string> = {
-  generating: "generating arguments",
-  waiting: "waiting to execute",
-  interrupted: "not executed",
-  running: "running",
-  success: "finished",
-  failure: "failed",
-  unknown: "no result",
-};
-
-function collapsedActivityPresentation(
-  activity: CollapsedActivity,
-  live: boolean,
-) {
-  const status = toolStatus(
-    activity.result,
-    activity.activity,
-    live,
-    activity.call,
-  );
-  const resolved = toolPresentationRegistry.resolve({
-    call: activity.call,
-    result: activity.result,
-  });
-  const summary =
-    resolved?.ruleId === "inspire.pi.codemode"
-      ? childCallsSummary(
-          activity.result
-            ? activity.result.__inspireCalls
-            : activity.activity?.calls,
-        )
-      : resolved
-        ? toolPresentationSummaryText(resolved.summary)
-        : toolSummary(activity.call).slice(0, 90);
-  const name = toolDisplayName(activity.call.name);
-  return {
-    ...activity,
-    status,
-    resolved,
-    name,
-    label: `${name}: ${TOOL_STATUS_LABEL[status]}${summary ? ` — ${summary}` : ""}`,
-    title: `${name}${summary ? ` — ${summary}` : ""} · ${TOOL_STATUS_LABEL[status]}`,
-    content: (
-      <>
-        {toolIcon(activity.call.name)}
-        {statusIcon(status)}
-      </>
-    ),
-  };
-}
-
-/** Collapsed mode reduces an adjacent multi-activity run to status tiles.
- * Items wrap horizontally, while one selection reveals its ordinary details
- * below the strip without reordering transcript content. */
-export function CollapsedActivityStrip({
-  activities,
-  live,
-}: {
-  activities: CollapsedActivity[];
-  live: boolean;
-}) {
-  const owner = useContext(TranscriptImageOwnerContext);
-  const { configuration } = usePresentationAdapters();
-  const visibleActivityIds = useVisibleActivityItemIds();
-  const [selectedKey, setSelectedKey] = useActivityStripSelection(
-    activities[0]?.key ?? "empty-strip",
-  );
-  const [renderedKey, setRenderedKey] = useState(selectedKey);
-  const [origin, setOrigin] = useState(22);
-  const panelId = useId();
-  const itemsRef = useRef<HTMLDivElement>(null);
-  const visibleActivities = useMemo(
-    () =>
-      activities
-        .filter(
-          (activity) =>
-            !visibleActivityIds || visibleActivityIds.has(activity.key),
-        )
-        .map((activity) => collapsedActivityPresentation(activity, live)),
-    [activities, live, configuration, visibleActivityIds],
-  );
-  const rendered = visibleActivities.find(
-    (activity) => activity.key === renderedKey,
-  );
-  const selectionVisible = visibleActivities.some(
-    (activity) => activity.key === selectedKey,
-  );
-  const detail = rendered && {
-    ...rendered,
-    copyText: () =>
-      toolClipboardText(rendered.call, rendered.result, rendered.activity),
-  };
-
-  // Keep the last detail mounted for the brief grid-collapse transition; it is
-  // inert throughout closing and is removed once no pixels remain visible.
-  useEffect(() => {
-    if (selectedKey !== null || renderedKey === null) return;
-    const timer = window.setTimeout(
-      () => setRenderedKey(null),
-      CARD_TRANSITION_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [selectedKey, renderedKey]);
-
-  if (visibleActivities.length === 0) return null;
-
-  return (
-    <div
-      className="activity-strip"
-      style={
-        { "--activity-detail-origin": `${origin}px` } as React.CSSProperties
-      }
-    >
-      <div
-        ref={itemsRef}
-        className="activity-strip__items"
-        role="group"
-        aria-label="Activity"
-      >
-        {visibleActivities.map((activity) => {
-          const active = activity.key === selectedKey;
-          return (
-            <button
-              key={activity.key}
-              ref={recoverOmittedActivityFocus}
-              type="button"
-              className={`activity-strip__item ${active ? "activity-strip__item--active" : ""} ${activity.status === "failure" ? "activity-strip__item--failed" : ""}`}
-              aria-label={activity.label}
-              aria-expanded={active}
-              aria-controls={active ? panelId : undefined}
-              title={activity.title}
-              onClick={(event) => {
-                const itemsBounds = itemsRef.current?.getBoundingClientRect();
-                const itemBounds = event.currentTarget.getBoundingClientRect();
-                if (itemsBounds)
-                  setOrigin(
-                    itemBounds.left - itemsBounds.left + itemBounds.width / 2,
-                  );
-                if (active) {
-                  setSelectedKey(null);
-                } else {
-                  setRenderedKey(activity.key);
-                  setSelectedKey(activity.key);
-                }
-              }}
-            >
-              {activity.content}
-            </button>
-          );
-        })}
-      </div>
-      <div
-        className={`activity-strip__reveal ${selectionVisible ? "activity-strip__reveal--open" : ""}`}
-        aria-hidden={!selectionVisible}
-        inert={!selectionVisible}
-      >
-        <div className="activity-strip__reveal-inner">
-          {detail ? (
-            <ActivityReadingOwner id={detail.key}>
-              <ToolArgumentPreviewContext value={detail.call.__inspireToolCall}>
-                <section
-                  key={detail.key}
-                  ref={recoverOmittedActivityFocus}
-                  id={panelId}
-                  className={`card card--tool ${detail.call.name === "codemode" ? "card--codemode" : ""} activity-strip__detail ${detail.status === "failure" ? "card--failed" : ""}`}
-                >
-                  <CardHeader
-                    expanded
-                    icon={toolIcon(detail.call.name)}
-                    label={
-                      <code className="card__tool-name">{detail.name}</code>
-                    }
-                    toggleLabel={`${detail.name} tool details`}
-                    onToggle={() => setSelectedKey(null)}
-                    summary={
-                      detail.resolved?.ruleId === "inspire.pi.codemode" ? (
-                        <ToolCardSummary
-                          call={detail.call}
-                          result={detail.result}
-                          activity={detail.activity}
-                          presentation={detail.resolved}
-                        />
-                      ) : undefined
-                    }
-                    status={statusIcon(detail.status)}
-                    copyText={detail.copyText}
-                    getCopyContent={messageCopyLoader(
-                      detail.result,
-                      detail.copyText,
-                      owner,
-                    )}
-                    copyLabel={toolClipboardLabel(
-                      detail.call,
-                      detail.result,
-                      detail.activity,
-                    )}
-                  />
-                  <div className="card__body">
-                    <ToolDetails
-                      call={detail.call}
-                      result={detail.result}
-                      status={detail.status}
-                      presentation={detail.resolved}
-                      activity={detail.activity}
-                    />
-                  </div>
-                </section>
-              </ToolArgumentPreviewContext>
-            </ActivityReadingOwner>
-          ) : null}
-        </div>
-      </div>
-    </div>
   );
 }
 

@@ -26,26 +26,11 @@ independent project shells in [[terminal]].
 
 ## Responsive reading and pane geometry
 
-- The desktop layout provides stable regions for project/session navigation, conversation, and
-  contextual work. A Prompt Map may occupy the conversation's own left reading margin. It navigates
-  only the current branch's user turns; it is not part of project/session navigation and does not
-  duplicate contextual History. The desktop reading column always reserves the resting rail's
-  minimum gutter from the center pane's actual width. Window and side-pane resizing update gutter and
-  rail position before paint, so the rail never covers conversation content or keeps an
-  earlier-width position.
-
-  Search and navigation controls occupy the reading measure without reserving a toolbar row on
-  desktop or narrow screens. Desktop conversation search stays in the top-right reading rail
-  and sizes to the actual reader width. [[conversation]] owns search, Prompt Map and
-  floating `Jump to latest` behavior. The transcript scroll thumb is separate from Prompt Map: its
-  complete grab band fits the trailing reading gutter without covering content, and its travel stays
-  inside the scrollport even in short windows. Native reading width, wheel and keyboard scrolling
-  are unchanged.
-
-  On a narrow workbench, Search and Prompt Map have launchers at the top-right of the transcript.
-  The active tool uses that same zone without reserving layout height. The tools expand one at a
-  time. The rotated Prompt Map keeps its complete temporary directory.
-  [[conversation]] owns interaction details.
+- The desktop layout has stable regions for project/session navigation, conversation, and contextual
+  work. Conversation search and the prompt outline launcher occupy the reading surface without
+  reserving a toolbar row. The prompt outline opens as the same bounded dialog on desktop and
+  narrow screens. The transcript scrollbar fits the trailing reading gutter.
+  [[conversation]] owns search, prompt outline, and floating `Jump to latest` behavior.
 
 - The navigation and contextual regions can collapse so the conversation can use the available
   width. Desktop navigation owns its toggle: the expanded header's right-hand control collapses it,
@@ -193,8 +178,7 @@ completion behavior are unchanged.
   no space. The Git label's width cap follows the header's available width. Nonempty status keeps
   its existing budget. Extension text uses the available space at
   every width, with full statuses available by click, tap or keyboard when truncated. Secondary
-  project and Git details yield before the title and primary navigation. Trailing actions and
-  inline rename keep their own layout.
+  project and Git details yield before the title and primary navigation. Trailing actions keep their own space.
 
   Global controls stay on the right. Header actions are the command palette, Settings (desktop
   only) and the contextual pane toggle. Conversation search stays with its reading surface under
@@ -205,32 +189,16 @@ completion behavior are unchanged.
   The text-only title opens the session menu on desktop and phones, with no chevron or separate
   More control; hover feedback and a keyboard focus outline keep the interactive affordance. The
   menu sits below the title button with a compact 216px width, limited by available space rather
-  than title length. Rename opens the inline editor and is first in the default order. The inline
-  rename input shares the title's leading edge, not the menu's width: it starts at 240px, grows with
-  the displayed title up to 560px, and fits the available header space. On narrow bars it fills the
-  remaining width while auxiliary header controls yield. Enter, the save control, or moving focus
-  outside the editor saves the name; Escape cancels. Blank and unchanged edits exit without a write.
-  Saving after focus leaves does not take focus back. The session whose heading opened the editor
-  owns it: a session switch cancels it, the submit carries the explicit session id rather than
-  reading a newer visible selection, and a rejected rename leaves the current identity intact while
-  emitting a non-blocking warning notice.
+  than title length. Rename opens a dialog for the session that owns the heading. Enter or
+  Save commits the name, and Cancel or Escape dismisses the dialog. A session switch closes it.
+  A delayed result keeps newer text in the field. A rejected rename leaves the current identity
+  intact and reports the failure.
 
-  **Switch branch…** opens a submenu listing up to 30 most recent branch ends
-  as radio items (latest user-message excerpt, relative age, Default marker, check for the viewed
-  branch) behind a Back item, notes when History holds more, and is disabled with one branch.
-  Choosing one applies [[session-persistence]] admission to it. The reorderable actions default to
-  Rename, Copy session ID, Clone, Switch branch, and Export. Settings under Behavior edits the
-  same order. The compact menu shows the first three actions. More
-  actions reveals the rest in the same menu and Fewer actions collapses them; reopening starts
-  compact. The menu opens with its first enabled action focused, and expansion focuses the first
-  enabled newly revealed action. The full menu stays bounded and scrollable within the viewport.
-  Arrows, Home/End, Enter and Escape operate it, and keyboard dismissal returns focus to the title.
-
-  Each action, including one unavailable for execution, has a right-side drag handle. A mouse or
-  touch drag previews the order and automatically reveals overflow; dropping inside the menu saves
-  the same preference Settings uses. Escape, pointer cancellation or a drop outside the menu
-  discards the preview. Grabbing or moving a handle never runs its session action. Handles are
-  keyboard-reachable; Alt+Up/Down moves the focused action and keeps its focus.
+  **Switch branch…** opens History. Choosing a branch there applies [[session-persistence]]
+  admission. The title menu shows all actions in the order saved under Behavior settings. Its
+  default order is Rename, Copy session ID, Clone, Switch branch and Export. The menu focuses the
+  first enabled action and stays scrollable within the viewport. Arrows, Home/End, Enter and Escape
+  operate it, and keyboard dismissal returns focus to the title.
 
   Copy session ID writes the complete selected Pi session ID, including for read-only history.
   Success shows ID copied in place; failure uses the existing copy-error notice and allows retry.

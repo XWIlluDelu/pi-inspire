@@ -65,7 +65,6 @@ export const Transcript = memo(function Transcript({
   activityRanges = [],
   promptMapTurns = [],
   promptMapTotal = 0,
-  promptMapLoadedStarts = [],
   promptMapLoadingStarts = [],
   promptMapError = null,
   promptMapNavigatingOrdinal = null,
@@ -95,7 +94,6 @@ export const Transcript = memo(function Transcript({
   activityRanges?: TranscriptActivityRangeState[];
   promptMapTurns?: UserTurnAnchor[];
   promptMapTotal?: number;
-  promptMapLoadedStarts?: number[];
   promptMapLoadingStarts?: number[];
   promptMapError?: string | null;
   promptMapNavigatingOrdinal?: number | null;
@@ -285,6 +283,12 @@ export const Transcript = memo(function Transcript({
     },
     [mobileTranscriptTool, search],
   );
+  const closePromptMap = useCallback(() => {
+    setMobileTranscriptTool(null);
+    requestAnimationFrame(() =>
+      promptLauncherRef.current?.focus({ preventScroll: true }),
+    );
+  }, []);
   const searchQueryRef = useRef(search.query);
   searchQueryRef.current = search.query;
 
@@ -310,9 +314,10 @@ export const Transcript = memo(function Transcript({
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 900px)");
     const syncLayout = () => {
-      if (!narrow.matches) setMobileTranscriptTool(null);
-      else if (searchQueryRef.current) setMobileTranscriptTool("search");
-      else searchInputRef.current?.blur();
+      setMobileTranscriptTool((current) => {
+        if (current === "prompt") return current;
+        return narrow.matches && searchQueryRef.current ? "search" : null;
+      });
     };
     syncLayout();
     narrow.addEventListener("change", syncLayout);
@@ -321,7 +326,7 @@ export const Transcript = memo(function Transcript({
 
   useEffect(() => {
     if (
-      mobileTranscriptTool === null ||
+      mobileTranscriptTool !== "search" ||
       !window.matchMedia("(max-width: 900px)").matches
     )
       return;
@@ -623,21 +628,25 @@ export const Transcript = memo(function Transcript({
         onOpenMobile={setMobileTranscriptTool}
         onClose={closeMobileTranscriptTool}
       />
-      <PromptMap
-        key={`prompt-map:${sessionId}\u0000${projectionViewKey}`}
-        container={scrollport}
-        mobileActive={mobileTranscriptTool === "prompt"}
-        onDismissMobile={() => closeMobileTranscriptTool(true)}
-        turns={effectivePromptTurns}
-        total={effectivePromptTotal}
-        activeOrdinal={activePromptOrdinal}
-        loadedStarts={promptMapLoadedStarts}
-        loadingStarts={promptMapLoadingStarts}
-        navigatingOrdinal={promptMapNavigatingOrdinal}
-        error={promptMapError}
-        onLoad={onLoadPromptMapTurns}
-        onNavigate={navigatePromptOrdinal}
-      />
+      {mobileTranscriptTool === "prompt" && (
+        <PromptMap
+          key={projectionViewKey}
+          turns={effectivePromptTurns}
+          total={effectivePromptTotal}
+          activeOrdinal={activePromptOrdinal}
+          loadingStarts={promptMapLoadingStarts}
+          navigatingOrdinal={promptMapNavigatingOrdinal}
+          error={promptMapError}
+          onLoad={onLoadPromptMapTurns}
+          onNavigate={navigatePromptOrdinal}
+          onClose={() => {
+            viewport.viewportIntentRef.current += 1;
+            setPendingPromptOrdinal(null);
+            closePromptMap();
+          }}
+          onSelectComplete={closePromptMap}
+        />
+      )}
       <div
         className="transcript"
         role="log"

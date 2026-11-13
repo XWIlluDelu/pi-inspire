@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   type ToolPresentationConfiguration,
   toolPresentationConfigurationSchema,
@@ -21,7 +21,6 @@ function configureThinking(
 
 afterEach(() => {
   configureToolPresentationRegistry();
-  vi.useRealTimers();
 });
 
 describe("empty Thinking disclosure", () => {
@@ -54,28 +53,6 @@ describe("empty Thinking disclosure", () => {
       expect(disclosure).toHaveAttribute("aria-expanded", "false");
     },
   );
-
-  it("starts adaptive residency when content arrives, not while the body is empty", () => {
-    vi.useFakeTimers();
-    const card = (text: string, dynamicActive: boolean) => (
-      <ThinkingCard
-        text={text}
-        visibility="dynamic"
-        dynamicActive={dynamicActive}
-      />
-    );
-    const { rerender } = render(card("", true));
-    act(() => vi.advanceTimersByTime(5_000));
-    rerender(card("Visible thought", true));
-    const disclosure = screen.getByRole("button", {
-      name: "Collapse Thinking",
-    });
-    rerender(card("Visible thought", false));
-    act(() => vi.advanceTimersByTime(1_799));
-    expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    act(() => vi.advanceTimersByTime(1));
-    expect(disclosure).toHaveAttribute("aria-expanded", "false");
-  });
 });
 
 describe("custom Thinking presentations", () => {

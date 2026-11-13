@@ -10,12 +10,10 @@ import {
 } from "./support/text-baseline";
 
 async function expectActivityMarksCentered(control: Locator) {
-  // The nine cells span the matrix's complete box, including dim cells. Its
-  // center is compared with letter ink, not just with the control's line box.
   await control.page().evaluate(() => document.fonts.ready);
   const offsets = await control.evaluate(textMarkOffsets, {
-    label: ":scope > span:not(.activity-fold__matrix, .activity-fold__summary)",
-    marks: ":scope > svg, :scope > .activity-fold__matrix",
+    label: ":scope > span:not(.activity-fold__summary)",
+    marks: ":scope > svg",
   });
   expect(offsets.length).toBeGreaterThan(0);
   for (const offset of offsets) expect(Math.abs(offset)).toBeLessThan(0.5);
@@ -93,7 +91,7 @@ test("activity headers disclose across the row and keep Copy beside the label", 
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
 });
 
-test("activity kind cues stay local, respect reduced motion and disclose with keyboard focus", async ({
+test("activity summaries disclose with keyboard focus on a narrow screen", async ({
   page,
 }) => {
   await pairedPage(page);
@@ -104,35 +102,7 @@ test("activity kind cues stay local, respect reduced motion and disclose with ke
   });
   await expect(disclosure).toBeVisible();
   await expectActivityMarksCentered(disclosure);
-  const kind = fold.locator(".activity-fold__kind").first();
-  // Unit tests establish which kinds are live. Here isolate the CSS animation
-  // from the offline provider's timing and verify that it never moves the control.
-  await kind.evaluate((element) =>
-    element.classList.add("activity-fold__kind--live"),
-  );
-  await page.emulateMedia({ reducedMotion: "no-preference" });
-  const frames = await kind.evaluate((element) => {
-    return [0, 900].map((time) => {
-      for (const animation of element.getAnimations()) {
-        animation.pause();
-        animation.currentTime = time;
-      }
-      const style = getComputedStyle(element);
-      const box = element.getBoundingClientRect();
-      return {
-        opacity: Number(style.opacity),
-        width: box.width,
-        height: box.height,
-      };
-    });
-  });
-  expect(frames[1]!.opacity).toBeGreaterThan(frames[0]!.opacity);
-  expect(frames[0]!.width).toBe(frames[1]!.width);
-  expect(frames[0]!.height).toBe(frames[1]!.height);
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  expect(
-    await kind.evaluate((element) => getComputedStyle(element).animationName),
-  ).toBe("none");
+  await expect(fold.locator(".activity-fold__summary")).toContainText(/step/);
 
   await page.setViewportSize({ width: 320, height: 1000 });
   await disclosure.scrollIntoViewIfNeeded();

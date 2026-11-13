@@ -46,7 +46,7 @@ export function TranscriptUtilities({
   return (
     <>
       <div className="transcript-mobile-toolbar">
-        {mobileTool === null ? (
+        {mobileTool !== "search" ? (
           <div
             className="transcript-mobile-toolbar__launchers"
             role="toolbar"

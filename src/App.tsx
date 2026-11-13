@@ -332,7 +332,6 @@ const ConversationStage = memo(function ConversationStage({
       transcriptActivityRanges: source.transcriptActivityRanges,
       promptMapTurns: source.promptMapTurns,
       promptMapTotal: source.promptMapTotal,
-      promptMapLoadedStarts: source.promptMapLoadedStarts,
       promptMapLoadingStarts: source.promptMapLoadingStarts,
       promptMapError: source.promptMapError,
       promptMapNavigatingOrdinal: source.promptMapNavigatingOrdinal,
@@ -366,7 +365,6 @@ const ConversationStage = memo(function ConversationStage({
       activityRanges={state.transcriptActivityRanges}
       promptMapTurns={state.promptMapTurns}
       promptMapTotal={state.promptMapTotal}
-      promptMapLoadedStarts={state.promptMapLoadedStarts}
       promptMapLoadingStarts={state.promptMapLoadingStarts}
       promptMapError={state.promptMapError}
       promptMapNavigatingOrdinal={state.promptMapNavigatingOrdinal}

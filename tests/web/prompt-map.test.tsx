@@ -12,196 +12,39 @@ import { PromptMap } from "../../src/components/PromptMap";
 import { Transcript } from "../../src/components/Transcript";
 import { deferred, openTranscriptSearch } from "./helpers";
 
-const turns = [
-  { id: "u0", ordinal: 0, snippet: "First prompt", attachmentCount: 0 },
-  { id: "u1", ordinal: 1, snippet: "Second prompt", attachmentCount: 1 },
-  { id: "u2", ordinal: 2, snippet: "Third prompt", attachmentCount: 0 },
-];
-
-const longTurns = Array.from({ length: 21 }, (_, ordinal) => ({
-  id: `long-${ordinal}`,
-  ordinal,
-  snippet: `Prompt ${ordinal + 1}`,
-  attachmentCount: 0,
-}));
-
-describe("Prompt Map", () => {
-  it("keeps a stable 12-prompt local tick window", () => {
-    const onLoad = vi.fn(async () => longTurns);
-    const onNavigate = vi.fn(async () => true);
-    const props = {
-      turns: longTurns,
-      total: 20,
-      loadedStarts: [0],
-      loadingStarts: [] as number[],
-      navigatingOrdinal: null,
-      error: null,
-      onLoad,
-      onNavigate,
-    };
-    const { container, rerender } = render(
-      <PromptMap {...props} activeOrdinal={0} />,
-    );
-    const visibleOrdinals = () =>
-      [...container.querySelectorAll<HTMLElement>("[data-prompt-ordinal]")].map(
-        (tick) => Number(tick.dataset.promptOrdinal),
-      );
-
-    expect(visibleOrdinals()).toEqual(
-      Array.from({ length: 12 }, (_, ordinal) => ordinal),
-    );
-    for (let ordinal = 1; ordinal <= 11; ordinal += 1)
-      rerender(<PromptMap {...props} activeOrdinal={ordinal} />);
-    expect(visibleOrdinals()).toEqual(
-      Array.from({ length: 12 }, (_, ordinal) => ordinal),
-    );
-
-    rerender(<PromptMap {...props} activeOrdinal={12} />);
-    expect(visibleOrdinals()).toEqual(
-      Array.from({ length: 12 }, (_, index) => index + 1),
-    );
-
-    rerender(<PromptMap {...props} activeOrdinal={19} />);
-    expect(visibleOrdinals()).toEqual(
-      Array.from({ length: 12 }, (_, index) => index + 8),
-    );
-
-    rerender(<PromptMap {...props} total={21} activeOrdinal={19} />);
-    expect(visibleOrdinals()).toEqual(
-      Array.from({ length: 12 }, (_, index) => index + 8),
-    );
-    rerender(<PromptMap {...props} total={21} activeOrdinal={20} />);
-    expect(visibleOrdinals()).toEqual(
-      Array.from({ length: 12 }, (_, index) => index + 9),
-    );
-    expect(
-      container.querySelector<HTMLElement>(".prompt-map__tick--active")?.dataset
-        .promptOrdinal,
-    ).toBe("20");
-  });
-
-  it("locks duplicate navigation and retries the exact failed target", async () => {
-    let settleNavigation!: (loaded: boolean) => void;
-    const onNavigate = vi
-      .fn<(ordinal: number) => Promise<boolean>>()
-      .mockImplementationOnce(
-        () =>
-          new Promise<boolean>((resolve) => {
-            settleNavigation = resolve;
-          }),
-      )
-      .mockResolvedValueOnce(true);
-    const onLoad = vi.fn(async () => turns);
-    const props = {
-      turns,
-      total: turns.length,
-      activeOrdinal: 0,
-      loadedStarts: [0],
-      loadingStarts: [] as number[],
-      navigatingOrdinal: null,
-      error: null as string | null,
-      onLoad,
-      onNavigate,
-    };
-    render(<PromptMap {...props} />);
-    const next = screen.getByRole("button", { name: "Next user prompt" });
-
-    fireEvent.click(next);
-    fireEvent.click(next);
-    expect(onNavigate).toHaveBeenCalledTimes(1);
-    expect(next).toBeDisabled();
-
-    settleNavigation(false);
-    await waitFor(() => expect(next).toBeEnabled());
-    fireEvent.click(screen.getByRole("button", { name: "Open prompt map" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Retry prompt navigation" }),
-    );
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(2));
-    expect(onNavigate).toHaveBeenLastCalledWith(1);
-    expect(onLoad).toHaveBeenCalledTimes(1);
-  });
-
-  it("resets disclosure ownership when the branch view changes", async () => {
-    const props = {
-      sessionId: "branch-session",
-      messages: [
-        {
-          role: "user",
-          content: "Branch prompt",
-          timestamp: 1,
-          __inspireMessageId: "branch-user",
-          __inspireUserTurnId: "branch-user",
-          __inspireUserTurnIndex: 0,
-        },
-      ],
-      promptMapTurns: turns,
-      promptMapTotal: turns.length,
-      promptMapLoadedStarts: [0],
-      streaming: false,
-      thinkingVisibility: "collapsed" as const,
-      toolVisibility: "collapsed" as const,
-    };
-    const { rerender } = render(<Transcript {...props} viewId="branch-a" />);
-    fireEvent.click(screen.getByRole("button", { name: "Open prompt map" }));
-    expect(
-      await screen.findByRole("list", { name: "User prompts" }),
-    ).toBeVisible();
-
-    rerender(<Transcript {...props} viewId="branch-b" />);
-    expect(
-      screen.getByRole("button", { name: "Open prompt map" }),
-    ).toBeInTheDocument();
-  });
-
-  it("marks sparse transcript windows instead of presenting them as adjacent", () => {
-    render(
-      <Transcript
-        messages={[
-          {
-            role: "user",
-            content: "old turn",
-            timestamp: 1,
-            __inspireMessageId: "u0",
-            __inspireMessageIndex: 0,
-            __inspireUserTurnId: "u0",
-            __inspireUserTurnIndex: 0,
-          },
-          {
-            role: "assistant",
-            content: "old response",
-            timestamp: 2,
-            __inspireMessageId: "a0",
-            __inspireMessageIndex: 1,
-            __inspireUserTurnId: "u0",
-            __inspireUserTurnIndex: 0,
-          },
-          {
-            role: "user",
-            content: "new turn",
-            timestamp: 10,
-            __inspireMessageId: "u3",
-            __inspireMessageIndex: 10,
-            __inspireUserTurnId: "u3",
-            __inspireUserTurnIndex: 3,
-          },
-        ]}
-        promptMapTurns={turns}
-        promptMapTotal={4}
-        streaming={false}
-        thinkingVisibility="collapsed"
-        toolVisibility="collapsed"
-      />,
-    );
-
-    expect(screen.getByText("Conversation segment not loaded")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Previous user prompt" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Next user prompt" }),
-    ).toBeInTheDocument();
-  });
+it("loads bounded outline pages and selects a native turn", async () => {
+  const onLoad = vi.fn(async () => []);
+  const onNavigate = vi.fn(async () => true);
+  const onClose = vi.fn();
+  const turns = [0, 100].map((ordinal) => ({
+    id: String(ordinal),
+    ordinal,
+    snippet: `Prompt ${ordinal + 1}`,
+    attachmentCount: 0,
+  }));
+  render(
+    <PromptMap
+      turns={turns}
+      total={101}
+      activeOrdinal={100}
+      loadingStarts={[]}
+      navigatingOrdinal={null}
+      error={null}
+      onLoad={onLoad}
+      onNavigate={onNavigate}
+      onClose={onClose}
+    />,
+  );
+  expect(onLoad).toHaveBeenCalledExactlyOnceWith(100);
+  expect(screen.getByRole("button", { name: /Prompt 101/ })).toHaveAttribute(
+    "aria-current",
+    "location",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Earlier prompts" }));
+  expect(onLoad).toHaveBeenLastCalledWith(0);
+  fireEvent.click(screen.getByRole("button", { name: /Prompt 1$/ }));
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+  expect(onNavigate).toHaveBeenCalledExactlyOnceWith(0);
 });
 
 function delayedPromptSeek() {
@@ -255,7 +98,6 @@ function delayedPromptSeek() {
       messages={messages}
       promptMapTurns={turns}
       promptMapTotal={2}
-      promptMapLoadedStarts={[0]}
       onNavigatePromptMapTurn={navigate}
       streaming={false}
       thinkingVisibility="collapsed"
@@ -282,7 +124,10 @@ function delayedPromptSeek() {
   log.scrollTop = 400;
   fireEvent.scroll(log);
   act(flushFrames);
-  fireEvent.click(screen.getByRole("button", { name: "Previous user prompt" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Open prompt navigation" }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /earlier prompt/ }));
   expect(navigate).toHaveBeenCalledExactlyOnceWith(0);
   return {
     log,
@@ -343,6 +188,18 @@ describe("Transcript Prompt Map continuation", () => {
       }
     },
   );
+
+  it("keeps the current position when the prompt chooser is dismissed during a read", async () => {
+    const { log, scrolledTurns, flushFrames, releasePage } =
+      delayedPromptSeek();
+    const position = log.scrollTop;
+    fireEvent.click(screen.getByRole("button", { name: "Close user prompts" }));
+    await releasePage();
+    act(flushFrames);
+    expect(scrolledTurns).toEqual([]);
+    expect(log.scrollTop).toBe(position);
+    expect(screen.queryByRole("dialog", { name: "User prompts" })).toBeNull();
+  });
 
   it("scrolls to a delayed prompt when its reading intent is still current", async () => {
     const { scrolledTurns, flushFrames, releasePage } = delayedPromptSeek();

@@ -18,13 +18,7 @@ import type {
   ActivityMaterializationMode,
   TranscriptActivityRangeState,
 } from "../store";
-import { ActivityMatrix, summarizeActivityMatrix } from "./ActivityMatrix";
 import { PiLoader } from "./PiLoader";
-import {
-  DYNAMIC_FOLD_CLOSE_DELAY_MS,
-  DYNAMIC_FOLD_EXPANDED_MIN_MS,
-  useDynamicCardOpen,
-} from "./transcript-activity";
 import {
   ActivityItemVisibilityProvider,
   type ActivityReadingChoices,
@@ -85,16 +79,12 @@ function summarizeActivityText(telemetry: readonly ActivityTelemetryItem[]): {
 
 function ActivityFoldOmission({
   contentId,
-  active,
-  matrix,
   status,
   label,
   title,
   onClick,
 }: {
   contentId: string;
-  active: boolean;
-  matrix: ReturnType<typeof summarizeActivityMatrix>;
   status: "idle" | "loading" | "error";
   label: string;
   title: string;
@@ -124,7 +114,6 @@ function ActivityFoldOmission({
       aria-controls={contentId}
       aria-expanded="false"
       aria-label={label}
-      aria-description={matrix.description}
       aria-busy={status === "loading"}
       title={title}
       data-activity-fold-anchor="start"
@@ -145,7 +134,6 @@ function ActivityFoldOmission({
             ? "Retry earlier activity"
             : "Earlier activity"}
       </span>
-      <ActivityMatrix {...matrix} active={active} />
     </button>
   );
 }
@@ -191,18 +179,11 @@ export function ResponseActivityFold({
   const [manualPresentation, setManualPresentation] =
     useState<ActivityFoldPresentation | null>(initialManualPresentation);
   const [inspectionHeld, setInspectionHeld] = useState(false);
-  const dynamicVisible = useDynamicCardOpen(
-    visibility === "dynamic",
-    lifecycleActive,
-    closeRequested,
-    DYNAMIC_FOLD_EXPANDED_MIN_MS,
-    undefined,
-    DYNAMIC_FOLD_CLOSE_DELAY_MS,
-  );
   const defaultPresentation: ActivityFoldPresentation =
     visibility === "expanded"
       ? "expanded"
-      : visibility === "compact" || (visibility === "dynamic" && dynamicVisible)
+      : visibility === "compact" ||
+          (visibility === "dynamic" && lifecycleActive && !closeRequested)
         ? "compact"
         : "collapsed";
   const presentation: ActivityFoldPresentation =
@@ -236,10 +217,8 @@ export function ResponseActivityFold({
     (range) => range.status === "loading",
   );
 
-  const latestMatrix = summarizeActivityMatrix(telemetry, lifecycleActive);
   const textSummary = summarizeActivityText(telemetry);
-  // Expanded groups only: collapsed, the matrix already says enough.
-  const expandedSummary = textSummary.steps ? (
+  const summary = textSummary.steps ? (
     <span className="activity-fold__summary">
       {[textSummary.steps, textSummary.tools].filter(Boolean).join(" · ")}
       {textSummary.failed > 0 ? (
@@ -252,20 +231,6 @@ export function ResponseActivityFold({
       ) : null}
     </span>
   ) : null;
-  const matrixDescription = latestMatrix.description;
-  const kindIndicators = (
-    <ActivityMatrix {...latestMatrix} active={lifecycleActive} />
-  );
-  // The omission owns only the hidden prefix, never the already visible tail.
-  const earlierMatrix = summarizeActivityMatrix(
-    telemetry.filter(
-      (item) =>
-        item.deferred || (compactVisibleIds && !compactVisibleIds.has(item.id)),
-    ),
-    lifecycleActive,
-    "Earlier",
-  );
-
   const requestMaterialization = useCallback(
     (mode: ActivityMaterializationMode, automatic: boolean) => {
       if (!onMaterializeRanges) return;
@@ -358,7 +323,6 @@ export function ResponseActivityFold({
         aria-controls={contentId}
         aria-expanded="true"
         aria-label={`${action} assistant activity from the ${edge} boundary`}
-        aria-description={edge === "upper" ? matrixDescription : undefined}
         title={`${action} activity`}
         data-activity-fold-anchor={edge === "upper" ? "start" : "end"}
         onClick={() => choosePresentation(collapseTarget, edge)}
@@ -369,8 +333,7 @@ export function ResponseActivityFold({
           <ChevronUp size={14} aria-hidden />
         )}
         <span>{edge === "upper" ? "Activity" : `${action} activity`}</span>
-        {edge === "upper" ? kindIndicators : null}
-        {edge === "upper" ? expandedSummary : null}
+        {edge === "upper" ? summary : null}
       </button>
     );
   };
@@ -411,22 +374,19 @@ export function ResponseActivityFold({
           aria-controls={contentId}
           aria-expanded="false"
           aria-label="Expand assistant activity"
-          aria-description={matrixDescription}
           title={deferredError?.error ?? "Show recent assistant activity"}
           data-activity-fold-anchor="center"
           onClick={() => expandToCompact("upper", "center")}
         >
           <ChevronRight size={14} aria-hidden />
           <span>Activity</span>
-          {kindIndicators}
+          {summary}
         </button>
       )}
       <div id={contentId} className="activity-fold__content" hidden={!open}>
         {showOmission ? (
           <ActivityFoldOmission
             contentId={contentId}
-            active={lifecycleActive}
-            matrix={earlierMatrix}
             status={omissionStatus}
             label={omissionLabel}
             title={deferredError?.error ?? omissionLabel}

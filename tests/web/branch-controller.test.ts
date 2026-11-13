@@ -34,14 +34,14 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
   const navigateBranch = vi.fn();
   const forkBranch = vi.fn();
   const cloneBranch = vi.fn();
-  const branchEntry = vi.fn();
+  const sessionHistory = vi.fn();
   const branchImage = vi.fn();
   let api = {
     branchTree,
     navigateBranch,
     forkBranch,
     cloneBranch,
-    branchEntry,
+    sessionHistory,
     branchImage,
   } as unknown as Api;
   const applyNavigation = vi.fn();
@@ -84,7 +84,7 @@ function createHarness(initial: Partial<BranchControllerState> = {}) {
     navigateBranch,
     forkBranch,
     cloneBranch,
-    branchEntry,
+    sessionHistory,
     branchImage,
     applyNavigation,
     applyFork,
@@ -138,18 +138,30 @@ describe("BranchController", () => {
         kind === "entry"
           ? harness.controller.readEntry("retained-point")
           : harness.controller.readImage("retained-point", 1);
-      const endpoint = kind === "entry" ? "branchEntry" : "branchImage";
+      const endpoint = kind === "entry" ? "sessionHistory" : "branchImage";
       const result =
         kind === "entry" ? { text: "Retained content" } : new Blob(["image"]);
       const harness = createHarness();
       const pending = deferred<typeof result>();
       harness[endpoint].mockReturnValue(pending.promise);
       const reading = read(harness);
-      expect(harness[endpoint].mock.calls[0]?.[0]).toMatchObject({
-        sessionId: "s1",
-        viewId: "view-1",
-        targetId: "retained-point",
-      });
+      if (kind === "entry")
+        expect(harness.sessionHistory).toHaveBeenCalledWith(
+          "s1",
+          "view-1",
+          {
+            kind: "entry",
+            targetId: "retained-point",
+            offset: 0,
+          },
+          expect.any(AbortSignal),
+        );
+      else
+        expect(harness.branchImage.mock.calls[0]?.[0]).toMatchObject({
+          sessionId: "s1",
+          viewId: "view-1",
+          targetId: "retained-point",
+        });
       harness.patch({
         transcriptEffectiveLeafId: "appended",
         transcriptDurableLeafId: "appended",
@@ -179,7 +191,7 @@ describe("BranchController", () => {
     async (change) => {
       vi.useFakeTimers();
       const harness = createHarness();
-      harness.branchEntry.mockRejectedValue(
+      harness.sessionHistory.mockRejectedValue(
         new ApiError(503, "Temporary read failure"),
       );
       const caller = new AbortController();
@@ -191,7 +203,7 @@ describe("BranchController", () => {
       else harness.replaceTransport();
       await expect(reading).resolves.toBeNull();
       await vi.advanceTimersByTimeAsync(20_000);
-      expect(harness.branchEntry).toHaveBeenCalledOnce();
+      expect(harness.sessionHistory).toHaveBeenCalledOnce();
     },
   );
 
@@ -199,7 +211,7 @@ describe("BranchController", () => {
     vi.useFakeTimers();
     for (const status of [503, 403, 401]) {
       const harness = createHarness();
-      harness.branchEntry.mockRejectedValue(
+      harness.sessionHistory.mockRejectedValue(
         new ApiError(status, "Read failed"),
       );
       const reading = harness.controller.readEntry("point");
@@ -209,7 +221,9 @@ describe("BranchController", () => {
           : expect(reading).rejects.toMatchObject({ status });
       await vi.advanceTimersByTimeAsync(14_000);
       await outcome;
-      expect(harness.branchEntry).toHaveBeenCalledTimes(status === 503 ? 4 : 1);
+      expect(harness.sessionHistory).toHaveBeenCalledTimes(
+        status === 503 ? 4 : 1,
+      );
       expect(harness.handleAuthFailure).toHaveBeenCalledTimes(
         status === 401 ? 1 : 0,
       );

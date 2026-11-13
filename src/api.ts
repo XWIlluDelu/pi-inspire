@@ -5,7 +5,6 @@ import type {
   BranchForkRequest,
   BranchForkResponse,
   BranchImageRequest,
-  BranchLeavesResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeQuery,
@@ -712,10 +711,6 @@ export function createApi() {
       ),
     openSession: (id: string, signal?: AbortSignal) =>
       post<SessionOpenResponse>("/api/sessions/open", { id }, { signal }),
-    branchLeaves: (sessionId: string) =>
-      request<BranchLeavesResponse>(
-        `/api/branches/leaves?sessionId=${encodeURIComponent(sessionId)}`,
-      ),
     selectBranch: (sessionId: string, leafId: string) =>
       post<ActiveSnapshot>("/api/branches/select", {
         sessionId,

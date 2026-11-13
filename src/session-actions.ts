@@ -8,8 +8,6 @@ export const SESSION_ACTION_LABELS: Record<SessionActionId, string> = {
   export: "Export session…",
 };
 
-export const SESSION_ACTION_VISIBLE_COUNT = 3;
-
 export function moveSessionAction(
   order: readonly SessionActionId[],
   id: SessionActionId,

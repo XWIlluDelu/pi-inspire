@@ -973,20 +973,11 @@ describe("stock RPC branch bridge", () => {
           entry("alt-a", "alt", "assistant", "alternative answer", 6),
         ),
       );
-      const listed = await runtime.branchLeaves(SESSION_ID);
-      expect(listed.total).toBe(2);
-      expect(listed.leaves).toEqual([
-        expect.objectContaining({
-          id: "alt-a",
-          excerpt: "alternative",
-          isDefault: true,
-          isCurrent: false,
-        }),
-        expect.objectContaining({
-          id: "a2",
-          isDefault: false,
-          isCurrent: true,
-        }),
+      const tree = await runtime.branchTree(SESSION_ID, { parentId: "a1" });
+      expect(tree.effectiveLeafId).toBe("a2");
+      expect(tree.nodes.map((node) => node.routeLeafId)).toEqual([
+        "a2",
+        "alt-a",
       ]);
 
       // No Pi runs the other branch: it opens editable here.

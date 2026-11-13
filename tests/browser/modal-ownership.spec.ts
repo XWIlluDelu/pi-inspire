@@ -10,7 +10,18 @@ test("Escape closes the focused workbench surface before aborting an active run"
   page,
 }) => {
   const sessionId = "fixture-history";
-  const transport = await routeSnapshots(page, {});
+  const transport = await routeSnapshots(page, {
+    snapshot(snapshot) {
+      if (snapshot.active?.sessionId !== sessionId) return;
+      snapshot.active.isStreaming = true;
+      snapshot.runState = "running";
+      snapshot.sessionStatuses[sessionId] = { runState: "running" };
+    },
+    event(event) {
+      if (event.sessionId === sessionId && event.sessionStatus)
+        event.sessionStatus.runState = "running";
+    },
+  });
   let aborts = 0;
   await page.route("**/api/control/abort", (route) => {
     aborts++;
@@ -19,7 +30,6 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairAndOpen(page);
   await expect.poll(() => transport.ready(sessionId)).toBe(true);
-  transport.send({ type: "agent_start", sessionId });
   await expect(
     page.getByRole("button", { name: "Abort running task" }),
   ).toBeVisible();
@@ -33,7 +43,9 @@ test("Escape closes the focused workbench surface before aborting an active run"
   await page.keyboard.press("Escape");
   await expect(settings).toHaveCount(0);
   await openCommandPalette(page);
-  await palette.getByRole("option", { name: /^New session/ }).press("Escape");
+  await palette
+    .getByRole("option", { name: "New session", exact: true })
+    .press("Escape");
   await expect(palette).toHaveCount(0);
   const sessions = page.getByRole("searchbox", { name: "Search sessions" });
   await sessions.focus();
@@ -48,7 +60,7 @@ test("Escape closes the focused workbench surface before aborting an active run"
     ],
     [
       "Open prompt navigation",
-      page.getByRole("button", { name: "Open prompt map", exact: true }),
+      page.getByRole("button", { name: "Close user prompts", exact: true }),
     ],
   ] as const) {
     const launcher = page.getByRole("button", { name, exact: true });
@@ -87,7 +99,6 @@ test.describe("phone action dialogs", () => {
             await page
               .getByRole("button", { name: /^Session actions:/ })
               .click();
-            await page.getByRole("menuitem", { name: "More actions" }).click();
             await page
               .getByRole("menuitem", { name: "Export session…", exact: true })
               .click();

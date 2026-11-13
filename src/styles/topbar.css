@@ -19,8 +19,8 @@
 }
 
 /* An idle header has no status to reserve space for. Let identity use that
-   budget while keeping actions at the trailing edge and rename independent. */
-.topbar:has(> .topbar__status:empty):not(:has(.topbar__rename)) {
+   budget while keeping actions at the trailing edge. */
+.topbar:has(> .topbar__status:empty) {
   grid-template-columns: [identity] minmax(0, 1fr) [status] 0 [actions] auto;
 }
 
@@ -265,10 +265,6 @@
   outline-offset: -2px;
 }
 
-.topbar__title-button[data-restored-focus]:focus-visible {
-  outline: none;
-}
-
 .session-actions-menu {
   position: fixed;
   z-index: 45;
@@ -278,6 +274,10 @@
 }
 
 .session-actions-menu button {
+  flex-shrink: 0;
+  min-height: 32px;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -295,115 +295,19 @@
 .topbar__title-button,
 .session-actions-menu button { -webkit-tap-highlight-color: transparent; }
 
-.session-actions-menu__row {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  flex-shrink: 0;
-  position: relative;
-}
-
-.session-actions-menu__row > [data-session-action] {
-  flex: 1;
-  min-width: 0;
-  min-height: 32px;
-  padding: var(--space-1) var(--space-2);
-  font-weight: 400;
-  white-space: nowrap;
-}
-
-.session-actions-menu__row > [data-session-action] > svg,
-.session-actions-menu__row .copy-feedback {
+.session-actions-menu button > svg,
+.session-actions-menu .copy-feedback {
   flex: 0 0 auto;
   color: var(--muted);
 }
 
-.session-actions-menu__row .button-label {
+.session-actions-menu .button-label {
   min-width: 0;
-  text-align: left;
 }
-.session-actions-menu__row .button-label > span {
+
+.session-actions-menu .button-label > span {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.session-actions-menu .session-actions-menu__handle {
-  display: grid;
-  place-items: center;
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  color: var(--muted);
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-  transition:
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-@media (hover: hover) {
-  .session-actions-menu .session-actions-menu__handle:hover {
-    color: var(--ink);
-    background: var(--bg-control);
-  }
-}
-.session-actions-menu__row:has([data-session-action]:active):not([data-dragging]) {
-  background: var(--accent-tint);
-}
-
-.session-actions-menu__row[data-dragging] {
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-2), inset 0 0 0 1px var(--accent-focus);
-  z-index: 10;
-}
-.session-actions-menu__row[data-dragging] .session-actions-menu__handle {
-  color: var(--accent-deep);
-  cursor: grabbing;
-}
-
-.session-actions-menu > .session-actions-menu__overflow {
-  min-height: 32px;
-  flex-shrink: 0;
-  padding: var(--space-1) var(--space-2);
-  color: var(--muted);
-}
-.session-actions-menu__overflow > svg { flex: 0 0 auto; }
-
-/* Branch ends: excerpt above its age and Default marker, check for current. */
-.session-actions-menu > .session-actions-menu__branch {
-  flex-shrink: 0;
-  align-items: flex-start;
-  min-height: 40px;
-  max-width: 320px;
-  padding: var(--space-1) var(--space-2);
-}
-.session-actions-menu__branch-mark {
-  display: inline-flex;
-  flex: 0 0 14px;
-  height: 1lh;
-  align-items: center;
-  color: var(--accent-deep);
-}
-.session-actions-menu__branch-text {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-.session-actions-menu__branch-text > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.session-actions-menu__branch-meta {
-  color: var(--muted);
-  font-size: var(--text-xs);
-}
-.session-actions-menu__note {
-  margin: var(--space-1) var(--space-2);
-  color: var(--muted);
-  font-size: var(--text-xs);
 }
 
 .session-actions-menu button:disabled {
@@ -426,7 +330,7 @@
 
 /* Without session identity there is no text baseline to share. Center the
    connection state in the action row instead of baseline's start fallback. */
-.topbar:not(:has(> .topbar__ident, > .topbar__rename)) > .topbar__status {
+.topbar:not(:has(> .topbar__ident)) > .topbar__status {
   align-self: center;
 }
 
@@ -525,17 +429,8 @@
 @media (max-width: 600px), (pointer: coarse) {
   .topbar__title-button,
   .topbar__extension-status,
-  .session-actions-menu button,
-  .session-actions-menu__row,
-  .session-actions-menu__row > [data-session-action],
-  .session-actions-menu .session-actions-menu__handle,
-  .session-actions-menu > .session-actions-menu__overflow {
+  .session-actions-menu button {
     min-height: 44px;
-  }
-  .session-actions-menu .session-actions-menu__handle {
-    flex: 0 0 44px;
-    width: 44px;
-    height: 44px;
   }
   .topbar > .icon-button,
   .topbar__actions > .icon-button { min-width: 44px; height: 44px; }
@@ -563,51 +458,17 @@
   .topbar__actions { gap: var(--space-1); }
 }
 
-.topbar:has(.topbar__rename) {
-  grid-template-columns: [identity] minmax(0, max-content) [status] minmax(0, 1fr) [actions] auto;
-}
-
-.topbar__rename {
-  grid-column: identity;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.topbar__rename input {
-  flex: 1 1 auto;
-  font-size: var(--text-base);
-}
-
-@container (max-width: 600px) {
-  .topbar:has(.topbar__rename) .topbar__status,
-  .topbar:has(.topbar__rename) .topbar__actions {
-    display: none;
-  }
-
-  .topbar__rename {
-    grid-column: identity / -1;
-  }
-
-  .topbar__rename input {
-    min-height: 44px;
-  }
-}
-
 /* A hidden mobile drawer has no logo rail, so only narrow bars own a toggle. */
 @media (max-width: 900px) {
   .topbar {
     grid-template-columns: [navigation] auto [identity] fit-content(56%) [status] minmax(auto, 1fr) [actions] auto;
   }
 
-  .topbar:has(> .topbar__status:empty):not(:has(.topbar__rename)) {
+  .topbar:has(> .topbar__status:empty) {
     grid-template-columns: [navigation] auto [identity] minmax(0, 1fr) [status] 0 [actions] auto;
   }
 
-  .topbar:has(.topbar__rename) {
-    grid-template-columns: [navigation] auto [identity] minmax(0, max-content) [status] minmax(0, 1fr) [actions] auto;
-  }
+
 }
 
 @media (max-width: 360px) {

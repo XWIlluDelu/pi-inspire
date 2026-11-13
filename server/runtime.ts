@@ -30,7 +30,6 @@ import {
   type BranchForkRequest,
   type BranchForkResponse,
   type BranchImageRequest,
-  type BranchLeavesResponse,
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type BranchTreeQuery,
@@ -2496,17 +2495,6 @@ export class RuntimeController extends EventEmitter {
       return true;
     }
     this.rejectExternalWriter(slot);
-  }
-
-  async branchLeaves(sessionId: string): Promise<BranchLeavesResponse> {
-    this.assertMaintenanceAvailable();
-    const slot = this.requireSlot(sessionId);
-    return this.useSlot(slot, async () => {
-      await this.reconcileSlot(slot, false);
-      if (!slot.projection)
-        throw requestError("Session projection is not available", 503);
-      return slot.projection.branchLeaves(effectiveRuntimeLeaf(slot), 30);
-    });
   }
 
   async selectBranch(

@@ -175,46 +175,11 @@ boundaries in this contract.
   after virtualized message rows. The search row and narrow tool launchers precede messages in keyboard order;
   Latest follows them.
 
-- The Prompt Map is a read-only outline of every visible user turn on the current branch. Its
-  branch-bound, bounded index is independent of loaded Transcript pages and History's raw-entry
-  window. One shared projection derives its Unicode-safe snippets and image counts consistently for
-  loaded, preview, and indexed turns. Selecting an unloaded prompt seeks directly to that turn
-  without sequentially scanning older pages or materializing folded activity. At desktop rest it is
-  only a floating stack of at most 12 fixed-spacing theme-muted horizontal ticks with one accent
-  current mark: no full-height border, background, icon, or boundary buttons.
-
-  [[workspace-layout]] owns the reserved gutter and responsive rail positioning.
-  Up to 12 prompts map one-to-one; beyond that, the marks are a stable consecutive window that moves
-  only when sequential reading exits it and recenters after a distant seek. Hover or keyboard focus
-  expands the bounded, independently scrollable virtual prompt list and its fixed non-wrapping
-  Previous and Next controls. Ordinals and attachment counts use the shared small monospace scale
-  and readable secondary ink with no second opacity reduction; the current prompt keeps its accent
-  emphasis. The ordinal column fits the actual total's digit count and aligns right, so one- and
-  multi-digit labels share a text start. Metadata shares the prompt's first-line baseline without
-  enlarging its row. Keyboard focus contours stay inside the clipped scrolling rows. Leaving the
-  surface collapses it automatically; touch uses tap and outside dismissal. Native disabled
-  semantics and subdued token colors distinguish unavailable directions.
-
-  The expanded list initially follows a changed current turn, then yields scroll ownership while the
-  user browses it. Disclosure preserves keyboard focus, and only one seek may own navigation until
-  it succeeds or exposes an exact-target retry. At the authoritative Transcript latest boundary, the
-  current mark is the final prompt even when a tall viewport leaves that prompt below the ordinary
-  reading line.
-
-  On a narrow workbench the desktop vertical rail is removed. A 44px launcher sits in the
-  backdrop-free idle top-right control floating over Transcript. Activation replaces that launcher,
-  on a shared surface in the same floating zone, with the desktop navigator rotated 90
-  degrees: Previous at left, at most 12 fixed-spacing vertical prompt marks in the center, and Next
-  at right.
-
-  The same local-window and disabled-boundary semantics apply. Selecting the center marks opens the
-  complete independently scrollable virtual directory as a bounded sheet; outside dismissal restores
-  the Prompt Map launcher. Search and Prompt Map modes are mutually exclusive. While either local
-  tool owns focus or its narrow mode, Escape resolves that tool before the global run-abort shortcut.
-  Sparse seek windows stay explicitly separated in Transcript, while same-branch pagination, append
-  snapshots, branch rewrites, search ownership, and latest-follow keep their existing authorities.
-  Outline loading, conflict resync, turn reads and the eventual scroll share the original
-  session/view owner; crossing an await cannot recapture another session.
+- The user-prompt outline opens in the same keyboard-accessible dialog on desktop and narrow
+  screens. It pages through the current branch's bounded native turn index. A selected prompt
+  seeks directly to that turn, including unloaded history. Escape closes the dialog and restores
+  focus to its launcher. Only the originating session/view and current reading intent may apply
+  a delayed turn seek.
 
 ## Response streaming and message-owned outcomes
 

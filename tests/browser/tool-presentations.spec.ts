@@ -383,15 +383,15 @@ test("compact tool details put results before keyboard-accessible parameters", a
       },
     },
   );
-  const strip = page.locator(".activity-strip");
-  const controls = strip.locator(".activity-strip__item");
-  await expect(controls).toHaveCount(2);
-  await controls.first().click();
-  const control = controls.first();
+  const card = toolCard(page, fallback.name);
+  await expect(card).toHaveCount(1);
+  const control = card.getByRole("button", {
+    name: `Expand ${fallback.name} tool`,
+  });
   const identity = await resolvedColor(control, "activity-tool");
-  await expect(control.locator("svg").first()).toHaveCSS("color", identity);
-  await expect(control).toHaveAccessibleName(/: failed\b/);
-  const card = strip.locator(".activity-strip__detail");
+  await expect(control.locator(".card__icon")).toHaveCSS("color", identity);
+  await expect(card.getByLabel("failed")).toBeVisible();
+  await control.click();
   await expect(
     card.getByText("Preview unavailable: choose an existing directory.", {
       exact: true,
@@ -413,9 +413,10 @@ test("compact tool details put results before keyboard-accessible parameters", a
   ).toBeVisible();
   await page.keyboard.press("Enter");
   await expect(args).not.toHaveAttribute("open", "");
-  await controls.nth(1).click();
+  const codeCard = toolCard(page, "codemode");
+  await codeCard.getByRole("button", { name: "Expand codemode tool" }).click();
   await expect(
-    card.getByText("Workspace ready", { exact: true }),
+    codeCard.getByText("Workspace ready", { exact: true }),
   ).toBeVisible();
   await page.setViewportSize({ width: 320, height: 844 });
   const bounds = (await card.boundingBox())!;
@@ -804,8 +805,8 @@ test("saved tool images survive presentation changes and full logs open in the n
     fallback = true;
     await page.setViewportSize({ width: 390, height: 844 });
     await reloadSession(page, sessionId);
-    await page.getByRole("button", { name: /^read: finished/ }).click();
-    const detail = page.locator(".activity-strip__detail");
+    const detail = toolCard(page, "read");
+    await detail.getByRole("button", { name: "Expand read tool" }).click();
     await expect(detail).toContainText("Arguments");
     const thumbnail = detail.getByRole("button", {
       name: "Preview Tool result image 1",
@@ -836,8 +837,9 @@ test("saved tool images survive presentation changes and full logs open in the n
         text: expect.stringContaining(readArguments.path),
         imageWidth: 720,
       });
-    await page.getByRole("button", { name: /^bash: finished/ }).click();
-    await detail
+    const shell = toolCard(page, "bash");
+    await shell.getByRole("button", { name: "Expand bash tool" }).click();
+    await shell
       .getByRole("button", { name: "View full output" })
       .press("Enter");
     const output = page.getByRole("region", {

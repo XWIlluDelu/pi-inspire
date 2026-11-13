@@ -2,10 +2,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { toolPresentationConfigurationSchema } from "../../shared/tool-presentation-config";
-import {
-  CollapsedActivityStrip,
-  ToolCard,
-} from "../../src/components/transcript-cards";
+import { ToolCard } from "../../src/components/transcript-cards";
 import {
   type ChatMessage,
   type EventSlice,
@@ -149,29 +146,25 @@ describe("execution output previews", () => {
     expect(screen.queryByLabelText("finished")).not.toBeInTheDocument();
   });
 
-  it("shows and copies a bounded, clearly labelled preview from a collapsed strip", async () => {
+  it("shows and copies a bounded, clearly labelled preview from a collapsed tool", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
     let state = reduce(running(), update(`${"old".repeat(5_331)}latest`, true));
-    const strip = (result?: ChatMessage) => (
-      <CollapsedActivityStrip
+    const tool = (result?: ChatMessage) => (
+      <ToolCard
+        call={call}
+        result={result}
+        activity={state.tools[call.id]}
         live
-        activities={[
-          {
-            key: call.id,
-            call,
-            result,
-            activity: state.tools[call.id],
-          },
-        ]}
+        visibility="collapsed"
       />
     );
-    const { container, rerender } = render(strip());
+    const { container, rerender } = render(tool());
     expect(container.querySelector(".tool-terminal--live")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /bash: running/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand bash tool" }));
     expect(
       screen.getByText("Showing latest output · preview truncated"),
     ).toBeInTheDocument();
@@ -187,11 +180,9 @@ describe("execution output previews", () => {
       toolCallId: call.id,
       isError: true,
     });
-    rerender(strip({ role: "toolResult", content: "aborted", isError: true }));
+    rerender(tool({ role: "toolResult", content: "aborted", isError: true }));
     expect(container.querySelector(".tool-terminal--live")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /bash: failed/ }),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText("failed")).toBeInTheDocument();
     expect(screen.getByText("aborted")).toBeInTheDocument();
   });
 });

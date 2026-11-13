@@ -19,7 +19,6 @@ type ReaderValue = boolean | ReaderScrollPosition;
 
 type ActivityReadingChoice = {
   disclosure?: "open" | "closed";
-  stripSelection?: string | null;
   readers?: Map<string, ReaderValue>;
 };
 
@@ -29,18 +28,6 @@ export type ActivityReadingChoices = Map<string, ActivityReadingChoice>;
 const ReadingChoices = createContext<ActivityReadingChoices | null>(null);
 const ActivityItemId = createContext<string | null>(null);
 const ReadingBlock = createContext("");
-
-export function ActivityReadingOwner({
-  id,
-  children,
-}: {
-  id: string;
-  children: ReactNode;
-}) {
-  return (
-    <ActivityItemId.Provider value={id}>{children}</ActivityItemId.Provider>
-  );
-}
 
 /** Presentation blocks already have stable keys within their activity. */
 export function ActivityReadingBlock({
@@ -162,13 +149,8 @@ export function ActivityItemVisibilityProvider({
   );
 }
 
-export function useVisibleActivityItemIds(): ReadonlySet<string> | null {
+function useVisibleActivityItemIds(): ReadonlySet<string> | null {
   return useContext(VisibleActivityItems);
-}
-
-export function useActivityInspectionHeld(ids: readonly string[]): boolean {
-  const choices = useContext(ReadingChoices);
-  return ids.some((id) => choices?.get(id)?.disclosure === "open");
 }
 
 export function useActivityDisclosure() {
@@ -187,20 +169,6 @@ export function useActivityDisclosure() {
   ] as const;
 }
 
-export function useActivityStripSelection(id: string) {
-  const choices = useContext(ReadingChoices);
-  const [selected, setSelected] = useState<string | null>(
-    () => choices?.get(id)?.stripSelection ?? null,
-  );
-  return [
-    selected,
-    (next: string | null) => {
-      choices?.set(id, { ...choices.get(id), stripSelection: next });
-      setSelected(next);
-    },
-  ] as const;
-}
-
 function isVisible(
   visibleIds: ReadonlySet<string> | null,
   ids: readonly string[],
@@ -215,7 +183,7 @@ function isVisible(
 /** A rolling compact tail can retire a focused card, strip button or detail.
  * Ref cleanup observes focus before its DOM disappears; a later user choice
  * still wins over the deferred recovery. */
-export function recoverOmittedActivityFocus(element: HTMLElement | null) {
+function recoverOmittedActivityFocus(element: HTMLElement | null) {
   if (!element) return;
   return () => {
     const focused = document.activeElement;

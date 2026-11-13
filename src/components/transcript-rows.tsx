@@ -47,14 +47,8 @@ import { ImageGallery } from "./ImageGallery";
 import { ImagePreview, TranscriptImage } from "./ImagePreview";
 import { PiLoader } from "./PiLoader";
 import { ProgressiveRichText as RichText } from "./ProgressiveRichText";
-import { useDynamicActivityGroup } from "./transcript-activity";
+import { ActivityItemBoundary } from "./transcript-activity-visibility";
 import {
-  ActivityItemBoundary,
-  useActivityInspectionHeld,
-  useVisibleActivityItemIds,
-} from "./transcript-activity-visibility";
-import {
-  CollapsedActivityStrip,
   GenericCard,
   type StaticVisibility,
   ThinkingCard,
@@ -308,50 +302,8 @@ export function AssistantActivity({
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
 }) {
-  const dynamicTools = toolVisibility === "dynamic";
-  const visibleIds = useVisibleActivityItemIds();
-  const toolKeys = items.flatMap((item) =>
-    item.kind === "tool" && (!visibleIds || visibleIds.has(item.key))
-      ? [item.key]
-      : [],
-  );
-  const collapseEligible = items.some(
-    (item, index) => item.kind === "tool" && items[index + 1]?.kind === "tool",
-  );
-  const retainedInspectionHeld = useActivityInspectionHeld(toolKeys);
-  const dynamicBatch = useDynamicActivityGroup(
-    dynamicTools,
-    dynamicActive,
-    !dynamicActive,
-    toolKeys,
-    collapseEligible,
-    retainedInspectionHeld,
-  );
   const visibility = toolVisibility === "expanded" ? "expanded" : "collapsed";
-  const collapse =
-    toolVisibility === "collapsed" || (dynamicTools && dynamicBatch.collapsed);
-  const renderedItems: React.ReactNode[] = [];
-
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index]!;
-    if (collapse && item.kind === "tool" && items[index + 1]?.kind === "tool") {
-      const run = [item];
-      let next = items[index + 1];
-      while (next?.kind === "tool") {
-        run.push(next);
-        index++;
-        next = items[index + 1];
-      }
-      renderedItems.push(
-        <CollapsedActivityStrip
-          key={`tools:${item.key}`}
-          activities={run}
-          live={streaming}
-        />,
-      );
-      continue;
-    }
-
+  const renderedItems = items.map((item) => {
     const card =
       item.kind === "thinking" ? (
         <ThinkingCard
@@ -372,25 +324,16 @@ export function AssistantActivity({
           activity={item.activity}
           live={streaming}
           visibility={visibility}
-          dynamic={dynamicTools}
+          dynamic={toolVisibility === "dynamic"}
           dynamicActive={dynamicActive}
-          forceClosed={dynamicTools && dynamicBatch.closing}
-          onDynamicClosed={
-            dynamicTools ? () => dynamicBatch.markClosed(item.key) : undefined
-          }
-          onManualOpenChange={
-            dynamicTools
-              ? (open) => dynamicBatch.setInspectionHeld(item.key, open)
-              : undefined
-          }
         />
       );
-    renderedItems.push(
+    return (
       <ActivityItemBoundary key={item.key} id={item.key}>
         {card}
-      </ActivityItemBoundary>,
+      </ActivityItemBoundary>
     );
-  }
+  });
 
   return (
     <AssistantRow streaming={streaming}>
@@ -398,12 +341,6 @@ export function AssistantActivity({
         <div className="assistant-activity" role="status">
           <PiLoader size={14} aria-hidden />
           <span>Working…</span>
-        </div>
-      ) : dynamicTools && items.some((item) => item.kind === "tool") ? (
-        <div
-          className={`dynamic-activity-batch dynamic-activity-batch--${dynamicBatch.phase}`}
-        >
-          {renderedItems}
         </div>
       ) : (
         renderedItems

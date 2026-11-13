@@ -127,9 +127,6 @@ test("prompt outline metadata stays readable and shares the first-line text base
   await pairedPage(page);
   await openFixtureSession(page, /Prompt map long-session fixture/);
   await page.getByRole("button", { name: "Open prompt navigation" }).click();
-  await page
-    .getByRole("button", { name: "Open prompt map", exact: true })
-    .click();
   await page.evaluate(() => document.fonts.ready);
   const map = page.locator(".prompt-map");
   const rows = map.locator(".prompt-map__turn");
@@ -173,14 +170,6 @@ test("floating desktop reading controls preserve the viewport and keyboard order
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
 
   const viewport = (await log.boundingBox())!;
-  const map = (await page.locator(".prompt-map").boundingBox())!;
-  const column = (await log
-    .locator(".transcript__column")
-    .first()
-    .boundingBox())!;
-  expect(map.x).toBeGreaterThan(viewport.x);
-  expect(map.x + map.width).toBeLessThan(column.x);
-
   await log.hover();
   await page.mouse.wheel(0, -2000);
   await expect(latest).toBeVisible();
@@ -214,7 +203,9 @@ test("floating desktop reading controls preserve the viewport and keyboard order
     const focus = await page.evaluate(() => ({
       message: !!document.activeElement?.closest(".transcript"),
       latest: !!document.activeElement?.closest(".jump-to-latest"),
-      promptMap: !!document.activeElement?.closest("[data-prompt-map]"),
+      promptMap: !!document.activeElement?.closest(
+        ".transcript-mobile-toolbar__button--prompt",
+      ),
     }));
     expect(focus.latest).toBe(false);
     visitedPromptMap ||= focus.promptMap;
@@ -242,126 +233,35 @@ test("floating desktop reading controls preserve the viewport and keyboard order
   expect(await log.boundingBox()).toEqual(viewport);
 });
 
-test("prompt map navigates user turns and adapts to the narrow workbench", async ({
+test("the prompt outline jumps to saved turns and restores keyboard focus on narrow screens", async ({
   page,
 }) => {
   await pairedPage(page);
   await openFixtureSession(page, /Prompt map long-session fixture/);
-  await page.setViewportSize({ width: 1_280, height: 1_400 });
-  const transcript = page.locator(".transcript");
-  await transcript.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-    element.dispatchEvent(new Event("scroll", { bubbles: true }));
-  });
-
-  const map = page.getByRole("navigation", { name: "User prompt navigation" });
-  const previous = page.locator(".prompt-map__step--previous");
-  const next = page.locator(".prompt-map__step--next");
-  await expect(map).toBeVisible();
-  await expect(next).toBeDisabled();
-  const ticks = map.locator("[data-prompt-ordinal]");
-  await expect(ticks).toHaveCount(12);
-  await expect(map.locator(".prompt-map__tick--active")).toHaveAttribute(
-    "data-prompt-ordinal",
-    "12",
-  );
-  const toggle = map.getByRole("button", { name: "Open prompt map" });
-  const list = page.locator(".prompt-map__list");
-  await toggle.hover();
-  await expect(list).toBeVisible();
-  await page.locator(".topbar__title").hover();
-  await expect(list).toBeHidden();
-
-  await page.setViewportSize({ width: 1_280, height: 640 });
-  const mark = map.locator(".prompt-map__tick--active");
-  const readEarlier = await transcript.evaluate((element) => {
-    const prompt = element.querySelector('[data-user-turn-index="4"]')!;
-    const readingTop = element.getBoundingClientRect().top;
-    return prompt.getBoundingClientRect().top - readingTop - 100;
-  });
-  await transcript.hover();
-  await page.mouse.wheel(0, readEarlier);
-  await expect(mark).toHaveAttribute("data-prompt-ordinal", "4");
-  await next.click();
-  await expect(mark).toHaveAttribute("data-prompt-ordinal", "5");
-  await previous.click();
-  await expect(mark).toHaveAttribute("data-prompt-ordinal", "4");
-
-  await toggle.click();
-  const firstPrompt = list.getByRole("button", {
-    name: /^1\. Prompt map fixture turn 1/,
-  });
-  await firstPrompt.click();
-  await expect(previous).toBeDisabled();
-  await expect(next).toBeEnabled();
-  await next.click();
-  await expect(previous).toBeEnabled();
-  await previous.click();
-  await expect(previous).toBeDisabled();
-
-  await toggle.click();
-  await list
-    .getByRole("button", { name: /^13\. Prompt map fixture turn 13/ })
+  const open = page.getByRole("button", { name: "Open prompt navigation" });
+  const outline = page.getByRole("dialog", { name: "User prompts" });
+  const log = page.getByRole("log");
+  await open.click();
+  await expect(outline).toBeVisible();
+  await outline
+    .getByRole("button", { name: /1\. Prompt map fixture turn 1\b/ })
     .click();
-  await expect(next).toBeDisabled();
-  await expect(previous).toBeEnabled();
-
+  await expect(outline).toBeHidden();
+  await expect(
+    log.getByText("Prompt map fixture turn 1", { exact: true }),
+  ).toBeInViewport();
   await page.setViewportSize({ width: 390, height: 780 });
-  await expect(map).toBeHidden();
-  const searchLauncher = page.getByRole("button", {
-    name: "Open conversation search",
-    exact: true,
-  });
-  const promptLauncher = page.getByRole("button", {
-    name: "Open prompt navigation",
-  });
-  await expect(searchLauncher).toBeVisible();
-  await expect(promptLauncher).toBeVisible();
-  const launcherBoxes = await Promise.all([
-    searchLauncher.boundingBox(),
-    promptLauncher.boundingBox(),
-  ]);
-  expect(
-    launcherBoxes.every(
-      (box) => box !== null && box.width >= 44 && box.height >= 44,
-    ),
-  ).toBe(true);
-
-  const wrap = page.locator(".transcript-wrap");
-  await wrap.focus();
-  await page.keyboard.press("Tab");
-  await expect(promptLauncher).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(searchLauncher).toBeFocused();
-
-  const beforeMap = await transcript.evaluate((el) => el.scrollTop);
-  await promptLauncher.click();
-  await expect(map).toBeVisible();
-  expect(await transcript.evaluate((el) => el.scrollTop)).toBe(beforeMap);
-  await expect(list).toBeHidden();
-  const mobileControls = await map
-    .locator(".prompt-map__step")
-    .evaluateAll((elements) =>
-      elements.map((element) => {
-        const bounds = element.getBoundingClientRect();
-        return { width: bounds.width, height: bounds.height };
-      }),
-    );
-  expect(
-    mobileControls.every(
-      (control) => control.width >= 44 && control.height >= 44,
-    ),
-  ).toBe(true);
-
-  await page.getByRole("button", { name: "Open prompt map" }).click();
-  await expect(list).toBeVisible();
-  const overflow = await page
-    .locator("html")
-    .evaluate((element) => element.scrollWidth - element.clientWidth);
-  expect(overflow).toBeLessThanOrEqual(1);
-  await page.getByRole("textbox", { name: "Message", exact: true }).click();
-  await expect(map).toBeHidden();
-  await expect(promptLauncher).toBeVisible();
+  await open.press("Enter");
+  await expect(outline).toBeVisible();
+  await outline
+    .getByRole("button", { name: /13\. Prompt map fixture turn 13\b/ })
+    .click();
+  await expect(
+    log.getByText("Prompt map fixture turn 13", { exact: true }),
+  ).toBeInViewport();
+  await open.press("Enter");
+  await page.keyboard.press("Escape");
+  await expect(open).toBeFocused();
 });
 
 test("the reading scrollbar stays in the narrow gutter and responds to drag and wheel", async ({

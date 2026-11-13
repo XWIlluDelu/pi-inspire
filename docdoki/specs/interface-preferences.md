@@ -75,17 +75,9 @@ values show Unavailable, not a confirmed state.
 
 ## Session action order
 
-Behavior includes an ordered list of the session title menu's actions, with a drag handle on
-the right of each row. Mouse and touch dragging and Alt+Up/Down shortcuts keep focus on the
-action while it moves. Clicking or keyboard-activating a Settings handle opens move options
-(up and down); Escape closes those options and restores focus to the handle without closing
-Settings. Starting a drag dismisses the move options.
-
-A disclosure boundary separates the first three actions, shown immediately in the compact menu,
-from the remainder revealed by More actions. Behavior settings use quiet, unboxed ordinal numbers
-and a sentence-case boundary hint between thin rules, without a shaded strip or stacked row borders.
-Row and drag-handle targets keep their existing sizes. Both surfaces edit the same saved order.
-Ordering changes only presentation, not action eligibility or execution.
+Behavior shows the session title actions in order. Each row has Move up and Move down controls.
+Moving an action keeps focus on that row and announces its new position. The title menu uses the
+saved order and each action retains its eligibility rules.
 
 The order is a Host-persisted interface preference, saved through the existing field-owned write
 path and included in Reset preferences. An older saved order keeps its relative order and gains

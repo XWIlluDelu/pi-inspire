@@ -1103,23 +1103,6 @@ export interface BranchTreeNode {
   routeLeafId?: string;
 }
 
-/** One selectable branch end for the title menu. */
-export interface BranchLeaf {
-  id: string;
-  /** The branch's latest user message, shortened. */
-  excerpt: string;
-  /** Timestamp of the leaf entry. */
-  updatedAt: string;
-  isDefault: boolean;
-  isCurrent: boolean;
-}
-
-export interface BranchLeavesResponse {
-  leaves: BranchLeaf[];
-  /** All leaves in the tree; `leaves` lists the most recent ones. */
-  total: number;
-}
-
 export interface BranchTreeQuery {
   before?: string;
   query?: string;

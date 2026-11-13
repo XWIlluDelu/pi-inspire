@@ -143,8 +143,7 @@ With attach-control installed:
   It does not claim a task failed: a Pi that moved or stopped answering may still be working, and
   a task interrupted by an exit is reported as ended with an unknown outcome.
 - A read-only view follows the branch it opened on, even when another branch becomes the default.
-  **Switch branch…** under **More actions** in the default title menu, or History, shows another
-  branch by the same rule. Appends from other Pi processes are ordinary session use. A session you
+  **Switch branch…** in the title menu opens History to choose another branch. Appends from other Pi processes are ordinary session use. A session you
   are working on in Inspire keeps its branch.
 
 Limits of attaching to another Pi:
