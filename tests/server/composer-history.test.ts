@@ -333,13 +333,13 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     id: header.id,
     cwd,
     viewId: "view-original",
-    navigationLease: null,
+    workerView: null,
     projection,
   } as unknown as RuntimeSlot;
   const page = () =>
     projection.historyPage(
       { kind: "composer", start: 0 },
-      slot.navigationLease?.effectiveLeafId ?? projection.leafId,
+      slot.viewLeafId ?? projection.leafId,
       slot.viewId,
       cwd,
     );
@@ -349,8 +349,7 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     historyArtifacts: {
       viewId: slot.viewId,
       incarnation: projection.incarnation,
-      effectiveLeafId:
-        slot.navigationLease?.effectiveLeafId ?? projection.leafId,
+      effectiveLeafId: slot.viewLeafId ?? projection.leafId,
       imageReferences: entry.images.map((image) => image.reference),
       fileReferences: entry.files.map((file) => file.reference),
     },
@@ -473,9 +472,7 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
         ownsPromptFile: () => true,
       }),
     ).rejects.toMatchObject({ status: 409 });
-    slot.navigationLease = {
-      effectiveLeafId: "u2",
-    } as RuntimeSlot["navigationLease"];
+    slot.viewLeafId = "u2";
     slot.viewId = "view-earlier";
     expect(page().entries.map((entry) => entry.text)).toEqual([
       "later",

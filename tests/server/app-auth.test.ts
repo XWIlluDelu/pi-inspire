@@ -85,11 +85,11 @@ describe("Host browser authentication", () => {
     try {
       await new Promise<void>((resolve) => socket.once("open", resolve));
       await vi.waitFor(() => expect(received[0]?.type).toBe("snapshot"));
-      runtime.emit("event", { type: "agent_start", sessionId: "background" });
-      runtime.emit("event", {
-        type: "agent_settled",
+      runtime.emit("task_outcome", {
+        id: "background-outcome",
         sessionId: "background",
-        sessionStatus: { runState: "failed" },
+        createdAt: Date.now(),
+        outcome: "failed",
       });
       await vi.waitFor(() =>
         expect(received.some((item) => item.type === "task_notification")).toBe(

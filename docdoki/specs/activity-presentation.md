@@ -90,7 +90,7 @@ The PWA titlebar needles keep the paired-track motif independently of the transc
 the active theme's Tool/Thinking identity roles. [[design-system]] owns their presentation.
 
 Fold-local choice overrides the default and survives pagination, virtualization, pairing changes,
-and deferred materialization within the branch view. Manual disclosure stops automatic collapse.
+within the Live page. Older activity remains readable in Turn history. Manual disclosure stops automatic collapse.
 
 ### Deferred history
 

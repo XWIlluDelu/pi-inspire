@@ -623,7 +623,6 @@ describe("multi-session event routing", () => {
               revision: 3,
               messages: [{ role: "user", content: "earlier", timestamp: 1 }],
               hasOlder: false,
-              olderCursor: null,
             },
           };
         if (!url.startsWith("/api/snapshot")) return;
@@ -639,7 +638,6 @@ describe("multi-session event routing", () => {
                 appendFromRevision: 3,
                 messages: [{ role: "user", content: "latest", timestamp: 2 }],
                 hasOlder: true,
-                olderCursor: "older",
               },
             }),
             runState: "conflict",
@@ -680,11 +678,9 @@ describe("multi-session event routing", () => {
         runState: "conflict",
         error: conflict.message,
         errorSeverity: severity,
-        olderMessagesCursor: "older",
       });
-      await expect(store.loadOlderMessages()).resolves.toBe(true);
       expect(store.getState()).toMatchObject({
-        messages: [{ content: "earlier" }, { content: "latest" }],
+        messages: [{ content: "latest" }],
         projectionError: conflict.message,
         error: conflict.message,
       });

@@ -44,14 +44,10 @@ completions. Preserve confirmed data while revalidating the same scope, and clea
 error only when that read succeeds. Authentication, invalid configuration and persistent
 unavailability keep their actual user-facing boundary.
 
-Awaitable backoff preserves the initiating read promise. Older-message paging therefore keeps its
-viewport anchor and loading owner across transient failures instead of prepending later through an
-unrelated callback. Abort/reset settles a waiting promise so retired reads cannot hold UI ownership.
-Directory/model previews, workspace directory/search reads, transcript paging and resource reads
-share this loop. Resource resolution and content transfer consume one retry budget; a caller resets
-it only when beginning a new recovery scope. No read recovery replays session creation, messages or
-other writes. See `src/recovery-backoff.ts`,
-`src/controllers/{transcript-data,workspace}-controller.ts` and `src/components/Welcome.tsx`.
+The saved document owns file integrity, while an owned Pi supplies the native leaf and its
+checkpointed entries. Browser History owns one pinned page and its page/body navigation intent.
+Live updates never mutate that History page. Directory/model previews, workspace and resource
+reads share bounded read recovery; no read recovery replays messages or other writes.
 
 ## Durable operations and catalogs
 

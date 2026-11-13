@@ -33,7 +33,7 @@ describe("composer-history artifacts", () => {
     const composerHistoryMessages = vi.fn(() => []);
     const slot = {
       viewId: "root-view",
-      navigationLease: { effectiveLeafId: null },
+      viewLeafId: null,
       projection: {
         incarnation: "source-a",
         leafId: "durable-leaf",
@@ -83,7 +83,7 @@ describe("composer-history artifacts", () => {
       const slot = {
         cwd: root,
         viewId: "view-a",
-        navigationLease: null,
+        workerView: null,
         projection: {
           incarnation: "incarnation-a",
           leafId: null,
@@ -156,7 +156,7 @@ describe("prompt project-file revalidation", () => {
     const slot = {
       cwd: root,
       viewId: "view-a",
-      navigationLease: null,
+      workerView: null,
       projection: {
         incarnation: "incarnation-a",
         leafId: null,

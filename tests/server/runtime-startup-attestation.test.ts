@@ -112,7 +112,7 @@ describe("writer startup attestation", () => {
         // Reconciliation cannot revive admission while actual stop is pending.
         expect(slot.ready).toBe(false);
         expect(slot.stopping).not.toBeNull();
-        expect(slot.writerBaseline.revision).toBeNull();
+        expect(slot.workerView).toBeNull();
         expect(events.some((event) => event.type === "runtime_ready")).toBe(
           false,
         );
@@ -121,7 +121,7 @@ describe("writer startup attestation", () => {
         expect(slot.ready).toBe(false);
         expect(slot.startupPhase).toBe("idle");
         expect(slot.runState).toBe("failed");
-        expect(slot.writerBaseline.revision).toBeNull();
+        expect(slot.workerView).toBeNull();
         expect(events.some((event) => event.type === "runtime_ready")).toBe(
           false,
         );

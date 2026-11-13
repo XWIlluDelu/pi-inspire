@@ -7,8 +7,12 @@ import type {
 import { lastAssistantText } from "./assistant-text.js";
 import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
-import { effectiveRuntimeLeaf, type RuntimeSlot } from "./runtime-slot.js";
-import type { SessionProjectionView } from "./session-projection.js";
+import {
+  effectiveRuntimeLeaf,
+  runtimeHistory,
+  type RuntimeSlot,
+} from "./runtime-slot.js";
+type RuntimeHistory = NonNullable<ReturnType<typeof runtimeHistory>>;
 
 interface RuntimeReadControllerHost {
   assertAvailable(): void;
@@ -26,7 +30,7 @@ interface RuntimeReadControllerHost {
 function requireProjection(slot: RuntimeSlot) {
   if (!slot.projection)
     throw requestError("Session projection is not available", 503);
-  return slot.projection;
+  return runtimeHistory(slot)!;
 }
 
 /** Owns consistent, read-only projections of one selected branch view. */
@@ -63,7 +67,7 @@ export class RuntimeReadController {
   private projectionRead<T>(
     sessionId: string,
     read: (
-      projection: SessionProjectionView,
+      projection: RuntimeHistory,
       slot: RuntimeSlot,
       effectiveLeafId: string | null,
     ) => T,
@@ -90,9 +94,27 @@ export class RuntimeReadController {
         if (query.kind === "entry") this.host.throwIfConflicted(slot);
         if (slot.viewId !== viewId)
           throw requestError("The branch changed; reopen History", 409);
-        const page = projection.historyPage(
+        const explicitLeaf =
+          query.kind === "page" || query.kind === "search"
+            ? query.leafId
+            : undefined;
+        const saved = slot.projection!;
+        let history = projection;
+        let leaf = effectiveLeafId;
+        if (query.kind === "page" || query.kind === "search") {
+          history = saved;
+          // Do not switch to the file's most recent physical leaf if another
+          // Pi wrote a branch, or if the native leaf has not reached disk yet.
+          while (leaf !== null && !saved.entry(leaf)) {
+            leaf = projection.entry(leaf)?.parentId ?? null;
+          }
+          leaf = explicitLeaf ?? leaf;
+        } else if (query.kind === "entry" && saved.entry(query.targetId)) {
+          history = saved;
+        }
+        const page = history.historyPage(
           query,
-          effectiveLeafId,
+          leaf,
           slot.viewId,
           slot.cwd,
           (path) => this.host.promptFileName(path),
@@ -135,7 +157,7 @@ export class RuntimeReadController {
         );
       }
       const viewId = slot.viewId;
-      const revision = slot.projection.revision;
+      const revision = requireProjection(slot).revision;
       return {
         sessionId: slot.id,
         viewId,
@@ -170,8 +192,8 @@ export class RuntimeReadController {
     slot: RuntimeSlot,
     viewId: string,
     revision: number,
-  ): SessionProjectionView {
-    const projection = slot.projection;
+  ): RuntimeHistory {
+    const projection = runtimeHistory(slot);
     if (
       this.host.requireSlot(slot.id) !== slot ||
       slot.viewId !== viewId ||

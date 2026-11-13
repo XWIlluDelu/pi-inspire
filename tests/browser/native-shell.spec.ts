@@ -152,13 +152,16 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
     page.getByRole("button", { name: "Abort running task", exact: true }),
   ).toHaveCount(0);
   expect(stopped).toBe(1);
-  await input.press("ArrowUp");
-  await expect(input).toHaveValue("Explicit model input during shell.");
-  await input.press("ArrowUp");
+  await input.fill("Unsent draft");
+  await input.press("Alt+ArrowUp");
+  const history = page.getByRole("dialog", { name: "Input history" });
+  await history
+    .getByRole("radio", { name: "Explicit model input during shell." })
+    .check();
+  await expect(input).toHaveValue("Unsent draft");
+  await history.getByRole("radio", { name: "!!printf browser" }).check();
+  await history.getByRole("button", { name: "Use this input" }).click();
   await expect(input).toHaveValue("!!printf browser");
-  await input.press("ArrowDown");
-  await input.press("ArrowDown");
-  await expect(input).toHaveValue("");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(card).toBeVisible();
   expect(

@@ -34,8 +34,8 @@ migrate old Pi entries in memory, and share the native entry index with History.
 a prefix mismatch uses the same open file. Search still runs off-thread.
 
 Opening a session reads its saved entries and projects the active branch with Pi's context
-builder, without writing JSONL or waiting for extensions. Transcript virtualization bounds mounted
-history. Auxiliary project-discovery writes and upload-retention registration are not prerequisites
+builder, without writing JSONL or waiting for extensions. The Live tail and native History page each
+bound the mounted rows. Auxiliary project-discovery writes and upload-retention registration are not prerequisites
 for history reads or writer admission.
 
 Valid retained history remains readable when its project directory is missing, is not a directory,
@@ -57,10 +57,9 @@ resolve one immutable physical workspace root for Pi,
 project files, attachment context, resources and Git inspection. Later symlink retargeting must not
 split those operations across roots, and the browser does not register a second workspace path.
 
-Live messages acquire durable identity through exact native persistence claims or worker
-witnesses. Bind the live lifecycle ID to the verified entry ID before retiring its overlay;
-timestamps, roles and even equal content are not message identity. Browser projections may be
-lossy, so do not infer that two messages are the same from their rendered content.
+A running owned worker supplies its native leaf and finalized entries. The saved document
+supplies disk health and saved routes; its latest physical append does not choose the worker's
+branch. Attached Pi instances keep their own lifetime and capabilities.
 
 ## New-session materialization
 
@@ -73,8 +72,8 @@ Only `newSession` may open a healthy empty projection for an absent path. Read t
 bounded contiguous `get_entries` once, covering a file appearing during setup, then attest each
 observed complete-line prefix against that state. Header version, session ID, cwd, root parent,
 entry chain and physical append lineage must agree. Header-only and multi-write flushes keep this
-transition open until disk catches up. Disk-before-event entries keep correlation and consume
-their exact matching event once. Mismatch stops the worker; existing-session open treats absent
+transition open until disk catches up. The live presentation remains under native checkpoint
+control throughout materialization. Mismatch stops the worker; existing-session open treats absent
 JSONL as an error. Once materialized, normal inode/version/append rules apply.
 
 An unselected, idle, never-materialized session has no catalog identity and may be abandoned by LRU;
@@ -86,11 +85,15 @@ Capture a trusted projection tail or empty baseline before constructing the proc
 before `rpc.start()`, reconcile again and require unchanged file identity/stat version, revision,
 tail, fingerprint and committed bytes. Projection readers remain serialized behind this boundary.
 
+At startup the bridge reports a digest of the previously admitted number of normalized native
+entries, before later extension hooks can change that context. Pi may have added its own missing
+settings; compare those with the post-start suffix instead of the old prefix.
+
 After start, Pi and its extensions may persist entries. Require a complete, direct, contiguous
 append within the existing RPC transport limit, without an extra startup size/count cap or entry-type
 whitelist. `get_entries`, `get_state`, and disk must agree on every entry, parent, final leaf, session,
 path, thinking level and append lineage. After the final filesystem observation, the same worker must
-still own the slot and remain RPC-available before readiness or a new writer baseline is published.
+still own the slot and remain RPC-available before readiness and its native index are published.
 A retired worker cannot reset failure to idle or emit `runtime_ready`.
 
 RPC/disk disagreement, incorrect lineage or values, identity/path changes, incomplete entries and
@@ -102,76 +105,31 @@ A response-bearing `extension_ui_request` before RPC startup completes is unsupp
 clean the child immediately and return `PI_STARTUP_RESPONSE_UI_UNSUPPORTED` instead of exposing an
 unanswerable dialog or waiting for timeout. One-way startup UI remains allowed.
 
-## Persistence ownership
+## Saved-file integrity and native checkpoints
 
-### Complete appends
+The saved document checks identity, committed bytes, UTF-8/JSONL framing and unfinished tails.
+Structurally valid appends extending the verified prefix are accepted regardless of which Pi
+wrote them. While an unresolved tail exists, Host writer admission fails. Completing that same
+tail preserves the existing file generation; replacing or truncating it retires an owned worker.
+Source replacement invalidates saved cursors even when bytes are unchanged.
 
-The writer baseline includes exact file identity/source version and observed physical bytes.
-Every Pi `message_end`, `compaction_end`, and `entry_appended` persistence event enters one expectation
-ledger; match each entry's exact persisted-JSON content, not merely its id or type. If disk appends arrive
-first, request the owning worker's bounded `get_entries` delta from its trusted leaf. Accept only
-an exact persisted-JSON prefix of that contiguous worker chain.
+The Host bridge reads the public session manager at turn start and agent settlement. Its checkpoint
+names the worker, native context generation, session, previous cursor, last entry and actual leaf.
+Ordered bounded frames carry only the new native entries. A completed batch updates the worker
+index, after confirming that it continues the admitted cursor. Idle custom messages, commands,
+Bash, compaction and file changes can request a coalesced native checkpoint. An in-progress
+checkpoint does not finalize live presentation.
 
-A worker may be ahead of the observed disk prefix. Accept its suffix only after later reconciliation
-observes and proves it. Claims arriving during witness lookup are consumed only through the observed
-prefix; later claims remain queued. Retire matched claims by identity, because an earlier claim may
-be cancelled while a later receipt is pending. Within a fully witnessed prefix, interleaved metadata
-must not block matching ordinary message claims and binding their live IDs. Retain witnessed
-ordinary messages whose completion events have not arrived, so those events adopt the existing
-durable entries instead of creating duplicate overlays or future claims. Legitimately repeated
-messages keep their distinct entry identities. The verified entry identity must also reach a completion event whose presentation is queued behind
-earlier reconciliation; consuming its persistence claim must not lose that association before the
-live overlay exists.
-
-Explicit reconciliation, filesystem/poll hints and watch-health observations share one FIFO through
-reading, asynchronous ownership verification and baseline commit. Coalesce hints while a consumer
-is pending. Retired projections/workers cannot commit late witnesses or deferred receipts. Startup
-attestation uses its separate suspended-reader boundary.
-
-### Partial writes
-
-Owned partial persistence preserves exact prefix/tail continuity and requires exact final-entry
-provenance. Retain the last complete history and report persistence as pending until the write
-completes. Elapsed observation time does not establish corruption or justify stopping the writer;
-operations requiring complete persistence wait or refuse without restarting it.
-
-Direct native Bash may hold this pending state while its worker remains current, even when idle
-and without a persistence event. Its final entry still requires an exact worker/claim witness.
-With an exact pending append claim from the sole worker, the projection may extend its verified
-SHA-256 state and immutable normalized entry/message prefix. Otherwise it rereads and verifies the
-committed bytes before parsing a suffix.
-
-### Unchanged sources and read reuse
-
-Ordinary snapshots, History pages and lazy resource-message reads may reuse a healthy verified
-projection after a fresh non-following check of the regular file's device, inode, size, mtime and
-ctime. Changed or unhealthy sources undergo byte validation in the same FIFO. Forced startup,
-writer admission, Fork and explicit recovery keep their full validation. Lazy resource reads
-recheck slot, view and revision before and after reconciliation.
-
-A metadata-only observation may refresh the same worker's source version only after stable
-full-byte revalidation of the same filesystem object, with healthy complete contents, no unresolved
-tail or conflict, and the exact prior writer baseline still current. An owned hash prefix alone
-is insufficient. This admits no entry, consumes no claim, and changes neither history revision nor
-browser view. An identical-byte in-place rewrite is indistinguishable from timestamp-only movement
-and is treated as unchanged state, not attributed to a writer. Startup source-version checks and
-incomplete-tail continuation rules, including bounded new-file materialization, remain unchanged.
-
-### Appends from other Pi processes
-
-Other Pi processes may append to the same session at any time. Growth of the same file object, with
-the verified prefix intact, is valid session use even when the entries are not the worker's: the
-baseline advances and the worker keeps running. Diagnostics record the ownership decision without
-entry content. A worker whose actual leaf then differs from the saved default records it as its
-navigation lease, so its view, prompts and model context stay on its own branch. Query that worker
-from a cursor it has already seen, not another process's new file tail. A failed leaf read retains
-the last known worker position instead of silently adopting the saved default. Another process's
-incomplete line is not a conflict, but nothing is written after it until it completes.
+At a sealed boundary, compare ordered occurrences in that native suffix. Saved rows use native
+entry IDs; transient rows keep their own stream identity. Matching the same content twice requires
+two native occurrences. If Pi cannot confirm a finished row, Live retains it as unconfirmed.
+A native Bash result may be deferred beyond the agent boundary and stays independently visible
+until its own result is checkpointed. No complete disk append is used to claim a live event.
 
 ### Conflicts and uncertain writes
 
 Duplicate identities, missing/forward parents, content or incomplete-tail rewrites, replacements
-even with identical bytes, and an owned partial line that is overwritten keep the last-good
+even with identical bytes, and overwritten partial lines keep the last-good
 projection and block writing.
 
 After an RPC mutation frame is written, stream failure or child loss leaves acceptance unknown.

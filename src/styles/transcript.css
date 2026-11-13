@@ -240,147 +240,14 @@
   gap: var(--space-4);
 }
 
-.transcript__column--virtual {
-  display: block;
-  position: relative;
-  width: 100%;
-}
-
-.transcript__virtual-row {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  padding-bottom: var(--space-4);
-}
-
-/* Compact consecutive activity/checkpoint groups, keeping prose and prompt
-   boundaries on their existing rhythm in both measured and ordinary lists. */
 @media (min-width: 901px) and (pointer: fine) {
-  .transcript__column:not(.transcript__column--virtual)
-    > [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint))
+  .transcript__column > [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint))
     + [data-transcript-row]:has(> :is(.activity-fold, .turn--checkpoint)) {
     margin-top: calc(var(--space-2) - var(--space-4));
   }
-
-  .transcript__virtual-row:has(> :is(.activity-fold, .turn--checkpoint)):has(
-    + [data-transcript-row] > :is(.activity-fold, .turn--checkpoint)
-  ) {
-    padding-bottom: var(--space-2);
-  }
 }
 
-.prompt-map {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: min(34rem, 100%);
-  max-height: min(75dvh, 38rem);
-}
 
-.prompt-map__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.prompt-map__list {
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  min-height: 0;
-}
-
-.prompt-map__turn {
-  width: 100%;
-  min-height: 36px;
-  display: grid;
-  grid-template-columns: 4ch minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--body);
-  text-align: left;
-  cursor: pointer;
-}
-
-.prompt-map__turn:hover,
-.prompt-map__turn:focus-visible {
-  background: var(--bg-inset);
-}
-
-.prompt-map__turn[aria-current] {
-  background: var(--accent-tint);
-  color: var(--accent-deep);
-}
-
-.prompt-map__ordinal,
-.prompt-map__attachments {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-.prompt-map__ordinal {
-  text-align: right;
-}
-
-.prompt-map__attachments {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.prompt-map__attachments > svg {
-  align-self: center;
-}
-
-@media (min-width: 901px) {
-  .transcript-mobile-toolbar {
-    position: absolute;
-    z-index: 4;
-    top: var(--space-3);
-    left: var(--space-3);
-    display: flex;
-  }
-
-  .transcript-mobile-toolbar__button {
-    display: inline-grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-control);
-    background: var(--bg-surface);
-    color: var(--muted);
-    cursor: pointer;
-  }
-
-  .transcript-mobile-toolbar__launchers > :not(.transcript-mobile-toolbar__button--prompt) {
-    display: none;
-  }
-}
-
-.transcript-gap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--faint);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-
-.transcript-gap::before,
-.transcript-gap::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  background: var(--hairline);
-}
 
 /* Lightweight activity groups. */
 .activity-fold,
@@ -524,10 +391,7 @@
 }
 
 /* Keep the error role through the generic hover, pressed and focus ink treatment. */
-.activity-fold__omission.activity-fold__omission--error,
-.activity-fold__disclosure.activity-fold__disclosure--error {
-  color: var(--error-ink);
-}
+
 
 @media (pointer: coarse) {
   .activity-fold__disclosure,
@@ -1164,51 +1028,7 @@
   font-size: var(--text-sm);
 }
 
-.transcript__older-sentinel {
-  min-height: 32px;
-  max-width: var(--content-max);
-  margin: 0 auto var(--space-2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
-.transcript__older-status {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--faint);
-}
-
-.transcript__older-retry {
-  min-height: 32px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--bg-surface);
-  color: var(--muted);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-micro) var(--ease-standard),
-    color var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.transcript__older-retry:hover,
-.transcript__older-retry:focus-visible {
-  color: var(--ink);
-  background: var(--bg-inset);
-}
-
-.transcript__older-retry:hover {
-  border-color: var(--accent-deep);
-}
-
-.transcript__older-retry:focus-visible {
-  border-color: var(--accent-focus);
-}
 
 .jump-to-latest {
   position: absolute;
@@ -1653,3 +1473,36 @@
   color: var(--muted);
   max-width: 46ch;
 }
+
+.transcript-live { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.transcript-live[hidden] { display: none; }
+.native-history-launcher { position: absolute; z-index: 3; inset: 8px auto auto 8px; }
+.native-history {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+  gap: var(--space-2);
+}
+.native-history__controls,
+.native-history__entry,
+.native-history__controls form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.native-history__page {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2);
+}
+.native-history__page article {
+  border-bottom: 1px solid var(--hairline);
+  padding-block: var(--space-2);
+}
+.native-history__page pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (max-width: 900px) { .native-history-launcher { display: none; } }

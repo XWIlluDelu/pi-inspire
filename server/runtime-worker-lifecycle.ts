@@ -4,23 +4,26 @@ import {
   emptyPendingQueues,
   type ProjectionConflict,
 } from "../shared/contracts.js";
+import type { TaskOutcome } from "../shared/notifications.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
+import { nativeEntryDigest } from "./native-entry-digest.js";
 import { samePersistedJson } from "./persisted-json.js";
 import {
   MAX_RPC_LINE_BYTES,
   type PiRpcOptions,
-  type PiRpcProcess,
+  PiRpcProcess,
 } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import type { RuntimeBashController } from "./runtime-bash.js";
 import { newBridgeIdentity } from "./runtime-branch-bridge.js";
 import { parseRpcEntryChain } from "./runtime-entry-chain.js";
 import type { RuntimeExtensionUiController } from "./runtime-extension-ui.js";
-import type { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
+import { createWorkerView } from "./runtime-worker-view.js";
 import {
   type BranchBridgeIdentity,
   clearWorkerPresentation,
   type RuntimeSlot,
+  workerOnSeparateBranch,
 } from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
@@ -59,6 +62,8 @@ function captureStartupProjection(
 
 interface RuntimeWorkerLifecycleHost {
   selectedSessionId(): string | null;
+  finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void;
+  promptFileName(path: string): string | null;
   assertNotClosing(): void;
   createProcess(options: PiRpcOptions): PiRpcProcess | Promise<PiRpcProcess>;
   assertWriterAvailable(slot: RuntimeSlot): Promise<void>;
@@ -78,6 +83,7 @@ interface RuntimeWorkerLifecycleHost {
     message: string,
     diagnosticFields?: Record<string, unknown>,
   ): ProjectionConflict;
+  markLiveUnconfirmed(slot: RuntimeSlot): void;
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
   dispatchProcessEvent(
@@ -97,7 +103,6 @@ export class RuntimeWorkerLifecycle {
     private readonly host: RuntimeWorkerLifecycleHost,
     private readonly diagnostics: DiagnosticLogger,
     private readonly collaborators: {
-      projectionCoordinator: RuntimeProjectionCoordinator;
       extensionUi: RuntimeExtensionUiController;
       bash: RuntimeBashController;
     },
@@ -150,6 +155,7 @@ export class RuntimeWorkerLifecycle {
   }
 
   private workerExited(slot: RuntimeSlot, error: Error): void {
+    this.host.finishTask(slot, "failed");
     // RPC exit retires availability. The stop promise still owns the writer fence.
     void this.stop(slot).catch(() => undefined);
     slot.retry = null;
@@ -211,35 +217,37 @@ export class RuntimeWorkerLifecycle {
       conflictKind: slot.conflict?.kind,
       incidentId: slot.conflict?.incidentId,
     });
-    if (slot.pendingPartialPersistence) {
-      this.collaborators.projectionCoordinator.clearPartialPersistence(slot);
-      if (!slot.conflict) {
-        const conflict = this.host.setProjectionConflict(
-          slot,
-          "incomplete-persistence",
-          "Pi stopped before an incomplete JSONL persistence frame was verified",
-        );
-        this.host.emitSlotEvent(slot, {
-          type: "session_projection_conflict",
-          conflict,
-        });
-      }
+    if (
+      slot.ready &&
+      slot.projection?.health.status === "pending" &&
+      !slot.conflict
+    ) {
+      const conflict = this.host.setProjectionConflict(
+        slot,
+        "incomplete-persistence",
+        "Pi stopped before an incomplete JSONL persistence frame was verified",
+      );
+      this.host.emitSlotEvent(slot, {
+        type: "session_projection_conflict",
+        conflict,
+      });
     }
     this.host.rejectDeferredPrompts(slot, rpc);
     this.collaborators.bash.retire(slot, rpc);
     void slot.pendingImages?.dispose();
     slot.pendingImages = null;
+    this.host.markLiveUnconfirmed(slot);
     slot.process = null;
     slot.pendingPromptCount = 0;
     slot.nativeBash = null;
     slot.ready = false;
+    if (cancelledCommand !== "compact") slot.activeTask = null;
     slot.compactionReturnState = null;
-    this.collaborators.projectionCoordinator.clearWriterBaseline(slot);
+    if (workerOnSeparateBranch(slot)) slot.branchRevision += 1;
+    slot.workerView = null;
     slot.bridge = null;
     // Pre-start preparation has not acquired a Pi view to retire.
     if (slot.startupPhase !== "idle") this.host.renewView(slot);
-    if (slot.navigationLease) slot.branchRevision += 1;
-    slot.navigationLease = null;
     if (slot.pendingBranchBridge) {
       slot.pendingBranchBridge.reject(
         new Error("Branch bridge worker stopped"),
@@ -297,32 +305,9 @@ export class RuntimeWorkerLifecycle {
     if (slot.process && slot.ready && !slot.process.available) {
       await this.stop(slot);
     }
-    if (
-      slot.process &&
-      slot.ready &&
-      !this.collaborators.projectionCoordinator.writerBaselineMatches(slot)
-    ) {
-      if (
-        this.collaborators.projectionCoordinator.writerOwnershipActive(slot)
-      ) {
-        const conflict = this.host.setProjectionConflict(
-          slot,
-          "external-change",
-          "INSΠRE could not verify ownership of a session change. Recover before writing again",
-        );
-        await this.stop(slot);
-        this.host.emitSlotEvent(slot, {
-          type: "session_projection_conflict",
-          conflict,
-        });
-        throw requestError(conflict.message, 409);
-      }
-      await this.stop(slot);
-    }
     if (!slot.process || !slot.ready) await this.start(slot);
     if (!slot.process || !slot.ready)
       throw requestError("Pi runtime failed to start", 503);
-    this.collaborators.projectionCoordinator.captureWriterBaseline(slot);
     return slot as RuntimeSlot & { process: PiRpcProcess };
   }
 
@@ -342,12 +327,19 @@ export class RuntimeWorkerLifecycle {
     const bridge = newBridgeIdentity();
     let rpc: PiRpcProcess | undefined;
     try {
+      const options = this.host.workerOptions(
+        slot.cwd,
+        ["--session", slot.sessionPath],
+        bridge,
+      );
       rpc = await this.host.createProcess({
-        ...this.host.workerOptions(
-          slot.cwd,
-          ["--session", slot.sessionPath],
-          bridge,
-        ),
+        ...options,
+        env: {
+          ...options.env,
+          INSPIRE_NATIVE_START_COUNT: String(
+            projection.entriesAfter(null).length,
+          ),
+        },
         sessionId: slot.id,
       });
       this.host.assertNotClosing();
@@ -359,6 +351,7 @@ export class RuntimeWorkerLifecycle {
     slot.process = rpc;
     slot.startupPhase = "idle";
     slot.startupError = null;
+    slot.nativeStart = null;
     slot.bridge = bridge;
     slot.ready = false;
     const released = this.releaseWorkerView(slot, "replaced");
@@ -398,7 +391,6 @@ export class RuntimeWorkerLifecycle {
       slot.startupPhase = "complete";
       if (slot.runState === "failed" || slot.runState === "aborted")
         slot.runState = "idle";
-      this.collaborators.projectionCoordinator.captureWriterBaseline(slot);
       this.publishReady(slot, rpc);
       this.host.scheduleIdleWorkerEviction();
       return slot;
@@ -485,6 +477,32 @@ export class RuntimeWorkerLifecycle {
       baseline.uncommittedBytes > 0
     )
       fail();
+    // The early native startup hook precedes later extensions' writes. Tail
+    // identity alone would miss a same-ID prefix rewrite racing Pi's open.
+    if (rpc instanceof PiRpcProcess || slot.nativeStart !== null) {
+      const proof = slot.nativeStart as Record<string, unknown> | null;
+      const entries = slot.projection?.entriesAfter(null) ?? [];
+      const expected = nativeEntryDigest(entries);
+      if (
+        !proof ||
+        proof.workerId !== slot.bridge?.workerId ||
+        proof.sessionId !== slot.id ||
+        typeof proof.sessionFile !== "string" ||
+        resolve(slot.cwd, proof.sessionFile) !== resolve(slot.sessionPath!) ||
+        proof.count !== entries.length ||
+        proof.digest !== expected
+      ) {
+        this.diagnostics.record("warning", "worker_start_prefix_mismatch", {
+          sessionId: slot.id,
+          proofPresent: proof !== null,
+          reportedCount:
+            typeof proof?.count === "number" ? proof.count : undefined,
+          expectedCount: entries.length,
+          digestMatched: proof?.digest === expected,
+        });
+        fail();
+      }
+    }
     const rpcEntries = await rpc.request<{
       entries?: unknown;
       leafId?: unknown;
@@ -535,41 +553,47 @@ export class RuntimeWorkerLifecycle {
         projection.leafId !== baseline.leafId
       )
         fail();
-      return;
-    }
+    } else {
+      const appendedEntries = reconciled.appendedEntries;
+      // Pi and its extensions own session_start persistence. Verify the worker's
+      // complete append against disk, without imposing an entry-type policy.
+      if (
+        reconciled.kind !== "append" ||
+        reconciled.healthChanged ||
+        reconciled.previousRevision !== baseline.revision ||
+        reconciled.previousFingerprint !== baseline.fingerprint ||
+        reconciled.previousLeafId !== baseline.leafId ||
+        projection.revision !== baseline.revision + 1 ||
+        projection.committedBytes <= baseline.committedBytes ||
+        !Array.isArray(appendedEntries) ||
+        appendedEntries.length !== delta.length ||
+        delta.length === 0
+      )
+        fail();
 
-    const appendedEntries = reconciled.appendedEntries;
-    // Pi and its extensions own session_start persistence. Verify the worker's
-    // complete append against disk, without imposing an entry-type policy.
-    if (
-      reconciled.kind !== "append" ||
-      reconciled.healthChanged ||
-      reconciled.previousRevision !== baseline.revision ||
-      reconciled.previousFingerprint !== baseline.fingerprint ||
-      reconciled.previousLeafId !== baseline.leafId ||
-      projection.revision !== baseline.revision + 1 ||
-      projection.committedBytes <= baseline.committedBytes ||
-      !Array.isArray(appendedEntries) ||
-      appendedEntries.length !== delta.length ||
-      delta.length === 0
-    )
-      fail();
+      for (let index = 0; index < delta.length; index += 1) {
+        const rpcEntry = delta[index]!;
+        const projectedEntry = (appendedEntries as readonly SessionEntry[])[
+          index
+        ];
+        if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry))
+          fail();
+      }
 
-    for (let index = 0; index < delta.length; index += 1) {
-      const rpcEntry = delta[index]!;
-      const projectedEntry = (appendedEntries as readonly SessionEntry[])[
-        index
-      ];
-      if (!projectedEntry || !samePersistedJson(projectedEntry, rpcEntry))
+      if (
+        projection.leafId !== parsedRpcEntries.leafId ||
+        projection.tailEntryId !== parsedRpcEntries.leafId ||
+        projection.thinkingLevel !== state.thinkingLevel
+      )
         fail();
     }
-
-    if (
-      projection.leafId !== parsedRpcEntries.leafId ||
-      projection.tailEntryId !== parsedRpcEntries.leafId ||
-      projection.thinkingLevel !== state.thinkingLevel
-    )
-      fail();
+    if (slot.process !== rpc || !rpc.available) return;
+    slot.workerView = createWorkerView(
+      slot,
+      projection.entriesAfter(null),
+      parsedRpcEntries.leafId,
+      (path) => this.host.promptFileName(path),
+    );
   }
 
   async readNewSessionEntries(

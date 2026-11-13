@@ -9,7 +9,6 @@ import {
   type PiRpcProcess,
 } from "../../../server/pi-rpc.js";
 import { RuntimeController } from "../../../server/runtime.js";
-import type { RuntimePersistenceOwnershipController } from "../../../server/runtime-persistence-ownership.js";
 import type { RuntimeSlot } from "../../../server/runtime-slot.js";
 import type { SessionRecord } from "../../../server/session-catalog.js";
 import { RETRY_STATE_SUFFIX } from "../../../shared/branch-bridge-protocol.js";
@@ -25,13 +24,11 @@ export function runtimeProjection(runtime: RuntimeController) {
   const internals = runtime as unknown as {
     slots: Map<string, RuntimeSlot>;
     reconcileSlot(slot: RuntimeSlot, force: boolean): Promise<unknown>;
-    persistenceOwnership: RuntimePersistenceOwnershipController;
   };
   const slot = internals.slots.get("session-a")!;
   return {
     slot,
     reconcile: () => internals.reconcileSlot(slot, true),
-    ownership: internals.persistenceOwnership,
   };
 }
 
@@ -48,6 +45,7 @@ export class ProjectionRpc extends FakeRpc {
     private readonly sequence: string[],
   ) {
     super(options);
+    this.sessionId = "session-a";
     this.responseOverrides.set("get_state", () => ({
       sessionId: "session-a",
       sessionFile: this.sessionPath,
@@ -132,6 +130,7 @@ export class NewSessionRpc extends FakeRpc {
   }
 
   override async request<T>(command: Record<string, unknown>): Promise<T> {
+    if (this.isCheckpoint(command)) return { disposition: "handled" } as T;
     if (
       !["get_state", "get_entries", "set_session_name", "prompt"].includes(
         String(command.type),
@@ -212,7 +211,7 @@ export class NewSessionRpc extends FakeRpc {
         },
       ];
       this.entries.push(...promptEntries);
-      if (this.emitEventsBeforeWrite) this.emitPromptEvents();
+      if (this.emitEventsBeforeWrite) this.emitPromptEvents(false);
       if (this.materialized) {
         await appendFile(
           this.sessionPath,
@@ -245,17 +244,27 @@ export class NewSessionRpc extends FakeRpc {
           await appendFile(this.sessionPath, remainder);
         this.materialized = true;
       }
+      if (this.emitEventsBeforeWrite) this.publishPendingCheckpoint();
       return {} as T;
     }
     return {} as T;
   }
-  emitPromptEvents() {
+  private publishedCount = 0;
+  private publishPendingCheckpoint() {
+    this.publishCheckpoint(this.entries.slice(this.publishedCount), {
+      sealed: "settled",
+    });
+    this.publishedCount = this.entries.length;
+    this.emit("event", { type: "agent_settled" });
+  }
+  emitPromptEvents(settle = true) {
     if (!this.promptMessages) return;
     const messages = this.promptMessages;
     this.promptMessages = null;
     this.emit("event", { type: "agent_start" });
     this.emit("event", { type: "message_end", message: messages.user });
     this.emit("event", { type: "message_end", message: messages.assistant });
+    if (settle) this.publishPendingCheckpoint();
   }
 }
 

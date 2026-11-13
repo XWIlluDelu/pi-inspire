@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DiagnosticLogger } from "../../server/diagnostics.js";
 import type { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeEventController } from "../../server/runtime-events.js";
-import { RuntimePersistenceOwnershipController } from "../../server/runtime-persistence-ownership.js";
+import { RuntimeLiveTail } from "../../server/runtime-live-tail.js";
 import { createRuntimeSlot } from "../../server/runtime-slot.js";
 import {
   boundedTranscriptProjection,
@@ -27,16 +26,15 @@ function setup(incremental = true) {
     viewId: "view",
   });
   slot.ready = true;
-  const ownership = new RuntimePersistenceOwnershipController(
-    { promptFileName: () => null, readNewSessionEntries: async () => [] },
-    {} as DiagnosticLogger,
-  );
+  const ownership = new RuntimeLiveTail(() => null);
   let forwarded: Record<string, unknown> = {};
   const forwardedEvents: Record<string, unknown>[] = [];
   const events = new RuntimeEventController({
     updateBash: () => false,
     selectedSessionId: () => slot.id,
-    recordPersistenceEvent: () => undefined,
+    finishTask: () => {},
+    checkpoint: () => false,
+    refreshCheckpoint: () => undefined,
     activeAssistantOverlayMessage: (owner) =>
       ownership.activeAssistantOverlayMessage(owner),
     updateOverlay: (owner, message, phase, delta) =>

@@ -21,21 +21,16 @@ import {
   type BranchTreeResponse,
   type ComposerHistoryPage,
   type ModelOption,
+  type NativeTurnPage,
+  type HistoryMatch,
   type ProjectionHealth,
   type SessionHistoryPages,
   type SessionHistoryQuery,
-  type TranscriptActivityKind,
-  type TranscriptActivityPage,
-  type TranscriptActivityRange,
   type TranscriptPage,
-  type UserTurnAnchor,
-  type UserTurnIndexPage,
-  type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { jsonRecord } from "../shared/json-record.js";
 import { resultChildCalls } from "../shared/tool-activity.js";
 import { userMessageContent } from "../shared/user-message.js";
-import { userTurnSummary } from "../shared/user-turns.js";
 import {
   type ComposerHistoryFileNameResolver,
   type ComposerHistoryMessage,
@@ -82,8 +77,6 @@ export { MAX_PERSISTED_ENTRY_BYTES } from "./session-jsonl.js";
 /** Includes the complete JSON representation of a TranscriptPage. */
 export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
 export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
-const USER_TURN_INDEX_PAGE_SIZE = 100;
-const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
 export const TRANSIENT_OVERLAY_MAX_BYTES = 512 * 1024;
 export const TRANSCRIPT_ITEM_MAX_BYTES = 256 * 1024;
@@ -101,7 +94,6 @@ interface Candidate {
   /** Fingerprints observed from this same read, never a later filesystem pass. */
   previousPrefixFingerprint: string | null;
   /** This read hashed the old committed bytes instead of reusing an owned prefix. */
-  prefixRevalidated: boolean;
   previousTailFingerprint: string | null;
   header: SessionHeader | null;
   entries: SessionEntry[];
@@ -198,9 +190,6 @@ export interface SessionProjectionView {
   resumeReconciliation(): void;
   /** The Host consumes each observation inside the read FIFO, before the next read. */
   setReconcileHandler(handler: ProjectionReconcileHandler): void;
-  /** Reuse the verified content-hash prefix only while the Host has an exact
-   * append claim from the sole writer for this projection. */
-  setOwnedAppendWindow?(isOpen: () => boolean): void;
   latestPage(
     overlay?: readonly unknown[],
     effectiveLeafId?: string | null,
@@ -495,6 +484,9 @@ function boundedTranscriptItem(
         ...(typeof sourceRecord.__inspireLiveId === "string"
           ? { __inspireLiveId: sourceRecord.__inspireLiveId }
           : {}),
+        ...(sourceRecord.__inspireUnconfirmed === true
+          ? { __inspireUnconfirmed: true }
+          : {}),
         ...(typeof sourceRecord.__inspireSettled === "boolean"
           ? { __inspireSettled: sourceRecord.__inspireSettled }
           : {}),
@@ -615,19 +607,13 @@ function withinTranscriptPageBudget<T>(page: T): T {
   return page;
 }
 
-/** Account for each row and lazy range once. The shell includes the cursor for
- * the candidate boundary, so its encoded length can change between rows. */
+/** Charge each projected row and its actual page shell against the wire budget. */
 class TranscriptPageBuilder<Page> {
   private readonly messages: unknown[] = [];
-  private readonly ranges: TranscriptActivityRange[] = [];
   private bytes = 0;
 
   constructor(
-    private readonly shell: (
-      boundary: number,
-      messages: unknown[],
-      ranges: TranscriptActivityRange[],
-    ) => Page,
+    private readonly shell: (boundary: number, messages: unknown[]) => Page,
   ) {}
 
   get length(): number {
@@ -636,36 +622,25 @@ class TranscriptPageBuilder<Page> {
 
   add(
     boundary: number,
-    item: ReturnType<typeof boundedTranscriptItem> | null,
-    range: TranscriptActivityRange | null = null,
+    item: ReturnType<typeof boundedTranscriptItem>,
   ): boolean {
-    const itemBytes = item
-      ? Buffer.byteLength(item.serialized) + Number(this.messages.length > 0)
-      : 0;
-    const rangeBytes = range
-      ? Buffer.byteLength(JSON.stringify(range)) +
-        (this.ranges.length ? 1 : ',"activityRanges":[]'.length)
-      : 0;
-    const bytes = this.bytes + itemBytes + rangeBytes;
+    const bytes =
+      this.bytes +
+      Buffer.byteLength(item.serialized) +
+      Number(this.messages.length > 0);
     if (
-      bytes + Buffer.byteLength(JSON.stringify(this.shell(boundary, [], []))) >
+      bytes + Buffer.byteLength(JSON.stringify(this.shell(boundary, []))) >
       TRANSCRIPT_PAGE_MAX_BYTES
     )
       return false;
-    if (item) this.messages.push(item.value);
-    if (range) this.ranges.push(range);
+    this.messages.push(item.value);
     this.bytes = bytes;
     return true;
   }
 
   page(boundary: number, reverse = false): Page {
-    if (reverse) {
-      this.messages.reverse();
-      this.ranges.reverse();
-    }
-    return withinTranscriptPageBudget(
-      this.shell(boundary, this.messages, this.ranges),
-    );
+    if (reverse) this.messages.reverse();
+    return withinTranscriptPageBudget(this.shell(boundary, this.messages));
   }
 }
 
@@ -707,57 +682,6 @@ function isVisibleTranscriptBoundary(value: unknown): boolean {
   );
 }
 
-function projectedTimestamp(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return;
-  const raw = (value as Record<string, unknown>).timestamp;
-  if (typeof raw !== "string" && typeof raw !== "number") return;
-  const date = new Date(raw);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-}
-
-/** Bounded chronological hints retain one/many per kind, including when a
- * reader hides the other kind. Paired results do not create extra tools. */
-function deferredActivityKinds(
-  source: readonly unknown[],
-  start: number,
-  end: number,
-): TranscriptActivityKind[] {
-  const cues: TranscriptActivityKind[] = [];
-  const calls = new Set<string>();
-  const add = (kind: TranscriptActivityKind) => {
-    if (cues.filter((cue) => cue === kind).length < 2) cues.push(kind);
-  };
-  for (let index = start; index < end; index += 1) {
-    const value = source[index];
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const record = value as Record<string, unknown>;
-    if (record.role === "assistant") {
-      if (!Array.isArray(record.content)) continue;
-      for (const part of record.content) {
-        if (!part || typeof part !== "object" || Array.isArray(part)) continue;
-        const item = part as Record<string, unknown>;
-        if (item.type === "text") continue;
-        if (
-          item.type === "toolCall" &&
-          typeof item.id === "string" &&
-          calls.size < 2
-        )
-          calls.add(item.id);
-        add(item.type === "thinking" ? "thinking" : "tool");
-      }
-    } else if (
-      !(record.role === "custom" && record.display === false) &&
-      !(
-        record.role === "toolResult" &&
-        typeof record.toolCallId === "string" &&
-        calls.has(record.toolCallId)
-      )
-    )
-      add("tool");
-  }
-  return cues;
-}
-
 function signedCursor(payloadValue: Record<string, unknown>): string {
   const payload = Buffer.from(JSON.stringify(payloadValue)).toString(
     "base64url",
@@ -769,12 +693,11 @@ function signedCursor(payloadValue: Record<string, unknown>): string {
 }
 
 interface ParsedCursor {
-  kind: "page" | "activity" | "user-turn";
+  kind: "native-before" | "native-after";
   sessionId: string;
   incarnation: string;
   sourceGeneration: number;
   revision: number;
-  start: number;
   before: number;
   effectiveLeafId: string | null;
   viewId: string;
@@ -809,12 +732,7 @@ function parseCursor(cursor: string): ParsedCursor {
         typeof parsed.effectiveLeafId !== "string") ||
       typeof parsed.viewId !== "string" ||
       !parsed.viewId ||
-      (parsed.kind !== "page" &&
-        parsed.kind !== "activity" &&
-        parsed.kind !== "user-turn") ||
-      !Number.isSafeInteger(parsed.start) ||
-      Number(parsed.start) < 0 ||
-      Number(parsed.start) > Number(parsed.before)
+      (parsed.kind !== "native-before" && parsed.kind !== "native-after")
     )
       throw new Error("invalid");
     return {
@@ -823,7 +741,6 @@ function parseCursor(cursor: string): ParsedCursor {
       incarnation: parsed.incarnation,
       sourceGeneration: Number(parsed.sourceGeneration),
       revision: Number(parsed.revision),
-      start: Number(parsed.start),
       before: Number(parsed.before),
       effectiveLeafId: parsed.effectiveLeafId,
       viewId: parsed.viewId,
@@ -842,147 +759,45 @@ export interface SessionProjectionReadHooks {
   afterFullReadChunk?(): Promise<void> | void;
 }
 
-export class SessionProjection
-  extends EventEmitter
-  implements SessionProjectionView
-{
+/** Read queries over native entries, independent of any filesystem source. */
+class SessionEntryIndex extends EventEmitter {
   readonly sessionId: string;
   readonly path: string;
-  private currentRevision = 0;
+  protected currentRevision = 0;
   readonly incarnation = randomBytes(18).toString("base64url");
-  private appendFromRevision = 0;
-  private currentHealth: ProjectionHealth = { status: "ok" };
-  private currentFailureStatus: number | null = null;
-  private currentFailureCode: string | undefined;
-  private currentMessages: unknown[] = [];
-  private currentModelSelection: BranchModelSelection = {
+  protected appendFromRevision = 0;
+  protected currentMessages: unknown[] = [];
+  protected currentModelSelection: BranchModelSelection = {
     change: null,
     fallback: null,
   };
-  private currentThinkingLevel = "off";
-  private currentLeafId: string | null = null;
-  private currentEntries: SessionEntry[] = [];
-  private currentEntriesById = new Map<string, SessionEntry>();
-  private currentHistoryAnchor: string | null = null;
-  private historyReplacementRevision = 0;
-  private historySourceGeneration = 0;
-  private readonly userTurnIndexes = new Map<
-    string | null,
-    { positions: number[]; byId: Map<string, number> }
-  >();
-  private currentHeader: SessionHeader | null = null;
-  private currentIdentity: SessionSourceIdentity | null = null;
-  private currentFingerprint = "";
-  private currentHashState: Hash | null = null;
-  private currentCommittedBytes = 0;
-  private currentUncommittedBytes = 0;
-  private currentUncommittedFingerprint: string | null = null;
-  private reconcileTail: Promise<void> = Promise.resolve();
-  private reconcileHandler: ProjectionReconcileHandler | null = null;
-  private watcher: FSWatcher | null = null;
-  private watchTimer: ReturnType<typeof setTimeout> | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private hintReading = false;
-  private hintDirty = false;
-  private reconciliationResume: Promise<void> | null = null;
-  private resolveReconciliationResume: (() => void) | null = null;
-  private closed = false;
-  private ownedAppendWindow: () => boolean = () => false;
-  /** Pi reserves a path for a new session but delays creating the JSONL.
-   * Only new-session ownership may enter this state; it remains active across
-   * complete-line prefixes until disk catches the creating worker's entries. */
-  private initialMaterializationPending: boolean;
-  private readonly initialSourceIdentity: { dev: bigint; ino: bigint } | null;
-  private readonly initialCwd: string;
-
-  private constructor(
-    session: SessionRecord,
-    private readonly readHooks?: SessionProjectionReadHooks,
-    initialMaterializationPending = false,
+  protected currentThinkingLevel = "off";
+  protected currentLeafId: string | null = null;
+  protected currentEntries: SessionEntry[] = [];
+  protected currentEntriesById = new Map<string, SessionEntry>();
+  protected currentHistoryAnchor: string | null = null;
+  protected historyReplacementRevision = 0;
+  protected historySourceGeneration = 0;
+  private historyCache?: {
+    leafId: string | null;
+    revision: number;
+    messages: unknown[];
+    entries: Map<string, number>;
+    turns: number[];
+  };
+  constructor(
+    session: Pick<SessionRecord, "id" | "path">,
     private readonly fileNameForPath?: ComposerHistoryFileNameResolver,
   ) {
     super();
     this.sessionId = session.id;
     this.path = resolve(session.path);
-    this.initialCwd = session.cwd;
-    this.initialMaterializationPending = initialMaterializationPending;
-    this.initialSourceIdentity =
-      initialMaterializationPending || !session.source
-        ? null
-        : { dev: session.source.dev, ino: session.source.ino };
-    if (initialMaterializationPending) {
-      this.currentRevision = 1;
-      this.appendFromRevision = 1;
-    }
-  }
-
-  private static async openMode(
-    session: SessionRecord,
-    readHooks: SessionProjectionReadHooks | undefined,
-    initialMaterializationPending: boolean,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): Promise<SessionProjection> {
-    const projection = new SessionProjection(
-      session,
-      readHooks,
-      initialMaterializationPending,
-      fileNameForPath,
-    );
-    const result = await projection.reconcile(true);
-    const loaded = initialMaterializationPending
-      ? projection.health.status !== "error"
-      : projection.revision > 0;
-    if (!loaded) {
-      await projection.close();
-      throw requestError(
-        projection.health.message ?? "Session projection could not be loaded",
-        projection.currentFailureStatus ?? 422,
-        projection.currentFailureCode
-          ? { code: projection.currentFailureCode }
-          : undefined,
-      );
-    }
-    projection.startWatching();
-    if (result.changed) projection.emit("update", result);
-    return projection;
-  }
-
-  static open(
-    session: SessionRecord,
-    readHooks?: SessionProjectionReadHooks,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): Promise<SessionProjection> {
-    return SessionProjection.openMode(
-      session,
-      readHooks,
-      false,
-      fileNameForPath,
-    );
-  }
-
-  /** Create the sole projection for a Pi-owned new session whose reported
-   * path may not exist until Pi flushes its first assistant message. */
-  static openPending(
-    session: SessionRecord,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): Promise<SessionProjection> {
-    return SessionProjection.openMode(
-      session,
-      undefined,
-      true,
-      fileNameForPath,
-    );
   }
 
   get revision(): number {
     return this.currentRevision;
   }
-  get fingerprint(): string {
-    return this.currentFingerprint;
-  }
-  get health(): ProjectionHealth {
-    return this.currentHealth;
-  }
+
   get messages(): readonly unknown[] {
     return this.currentMessages;
   }
@@ -1001,55 +816,6 @@ export class SessionProjection
   get tailEntryId(): string | null {
     return this.currentEntries.at(-1)?.id ?? null;
   }
-  get sourceIdentity(): string | null {
-    return this.currentIdentity
-      ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}`
-      : null;
-  }
-  get sourceVersion(): string | null {
-    const value = this.currentIdentity;
-    return value ? sessionSourceVersion(value) : null;
-  }
-  attestInitialMaterialization(
-    workerEntries: readonly SessionEntry[],
-  ): InitialMaterializationAttestation {
-    if (!this.initialMaterializationPending) return "mismatch";
-    const header = this.currentHeader;
-    if (!header) {
-      return this.currentEntries.length === 0 &&
-        this.currentCommittedBytes === 0 &&
-        this.currentUncommittedBytes > 0
-        ? "partial"
-        : "mismatch";
-    }
-    if (
-      header.version !== CURRENT_SESSION_VERSION ||
-      header.parentSession !== undefined ||
-      this.currentEntries.length > workerEntries.length ||
-      !samePersistedJson(
-        this.currentEntries,
-        workerEntries.slice(0, this.currentEntries.length),
-      )
-    )
-      return "mismatch";
-    if (
-      this.currentEntries.length < workerEntries.length ||
-      this.currentUncommittedBytes > 0
-    )
-      return "partial";
-    this.initialMaterializationPending = false;
-    return "complete";
-  }
-  get committedBytes(): number {
-    return this.currentCommittedBytes;
-  }
-  get uncommittedBytes(): number {
-    return this.currentUncommittedBytes;
-  }
-  get uncommittedFingerprint(): string | null {
-    return this.currentUncommittedFingerprint;
-  }
-
   latestContinuation(leafId: string | null): string | null {
     if (leafId === null) return this.tailEntryId;
     if (leafId === this.tailEntryId || !this.currentEntriesById.has(leafId))
@@ -1093,36 +859,6 @@ export class SessionProjection
       id = entry.parentId;
     }
     return false;
-  }
-
-  async suspendReconciliation(): Promise<void> {
-    if (!this.reconciliationResume) {
-      this.reconciliationResume = new Promise<void>((resolveResume) => {
-        this.resolveReconciliationResume = resolveResume;
-      });
-    }
-    if (this.watchTimer) clearTimeout(this.watchTimer);
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.watchTimer = null;
-    this.pollTimer = null;
-    this.watcher?.close();
-    this.watcher = null;
-    await this.reconcileTail;
-  }
-
-  resumeReconciliation(): void {
-    this.resolveReconciliationResume?.();
-    this.resolveReconciliationResume = null;
-    this.reconciliationResume = null;
-    if (!this.closed && !this.watcher && !this.pollTimer) this.startWatching();
-  }
-
-  setOwnedAppendWindow(isOpen: () => boolean): void {
-    this.ownedAppendWindow = isOpen;
-  }
-
-  setReconcileHandler(handler: ProjectionReconcileHandler): void {
-    this.reconcileHandler = handler;
   }
 
   entry(id: string): ProjectionEntryTarget | null {
@@ -1222,6 +958,10 @@ export class SessionProjection
     };
   }
 
+  protected historyHealth(): ProjectionHealth {
+    return { status: "ok" };
+  }
+
   branchTree(
     effectiveLeafId: string | null = this.currentLeafId,
     query: BranchTreeQuery = {},
@@ -1251,7 +991,7 @@ export class SessionProjection
       nextBefore: tree.nextBefore,
       routeLeafId: tree.routeLeafId,
       rootCount: tree.rootCount,
-      health: this.health,
+      health: this.historyHealth(),
     };
     if (Buffer.byteLength(JSON.stringify(response)) > BRANCH_TREE_MAX_BYTES) {
       throw requestError(
@@ -1304,6 +1044,556 @@ export class SessionProjection
       id = entry.parentId;
     }
     return messages.reverse();
+  }
+
+  latestPage(
+    overlay: readonly unknown[] = [],
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+  ): TranscriptPage {
+    const persisted = this.viewMessages(effectiveLeafId);
+    const messages = overlay.length ? [...persisted, ...overlay] : persisted;
+    return this.buildPage(messages, persisted.length, effectiveLeafId, viewId);
+  }
+
+  private historyCursor(
+    kind: ParsedCursor["kind"],
+    before: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): string {
+    return signedCursor({
+      kind,
+      sessionId: this.sessionId,
+      incarnation: this.incarnation,
+      sourceGeneration: this.historySourceGeneration,
+      revision: this.revision,
+      effectiveLeafId,
+      viewId,
+      before,
+    });
+  }
+
+  private validatedCursor(
+    cursor: string,
+    expectedKind: ParsedCursor["kind"],
+    effectiveLeafId: string | null,
+    viewId: string,
+    length: number,
+  ): ParsedCursor {
+    const decoded = parseCursor(cursor);
+    if (decoded.kind !== expectedKind) {
+      throw requestError("Transcript cursor has the wrong purpose", 400);
+    }
+    if (decoded.sessionId !== this.sessionId) {
+      throw requestError("Transcript cursor belongs to another session", 409);
+    }
+    if (decoded.incarnation !== this.incarnation) {
+      throw requestError(
+        "Transcript cursor belongs to an expired projection incarnation",
+        409,
+      );
+    }
+    if (decoded.viewId !== viewId) {
+      throw requestError(
+        "Transcript cursor belongs to another branch view",
+        409,
+      );
+    }
+    if (!this.continues(effectiveLeafId, decoded.effectiveLeafId))
+      throw requestError(
+        "Transcript cursor is stale or belongs to another branch view",
+        409,
+      );
+    if (
+      decoded.sourceGeneration !== this.historySourceGeneration ||
+      decoded.revision > this.revision
+    ) {
+      throw requestError(
+        "Transcript cursor is stale; refresh the session",
+        409,
+      );
+    }
+    if (decoded.before > length) {
+      throw requestError("Transcript cursor is invalid", 400);
+    }
+    return decoded;
+  }
+
+  historyPage<Q extends SessionHistoryQuery>(
+    query: Q,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): SessionHistoryPages[Q["kind"]];
+  historyPage(
+    query: SessionHistoryQuery,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): SessionHistoryPages[keyof SessionHistoryPages] {
+    switch (query.kind) {
+      case "page":
+        return this.nativeTurnPage(
+          query,
+          query.leafId ?? effectiveLeafId,
+          viewId,
+        );
+      case "search":
+        return this.findHistory(query.text, query.leafId ?? effectiveLeafId);
+
+      case "entry":
+        return this.branchEntry(
+          query.targetId,
+          query.offset ?? 0,
+          effectiveLeafId,
+          query.format,
+        );
+      case "composer":
+        return this.composerHistoryPage(
+          query.start,
+          effectiveLeafId,
+          viewId,
+          cwd,
+          fileNameForPath,
+        );
+    }
+  }
+
+  private nativeHistory(leafId: string | null) {
+    if (
+      this.historyCache?.leafId === leafId &&
+      this.historyCache.revision === this.revision
+    )
+      return this.historyCache;
+    const path: SessionEntry[] = [];
+    for (let id = leafId; id !== null; ) {
+      const entry = this.currentEntriesById.get(id);
+      if (!entry)
+        throw requestError("The selected branch no longer exists", 409);
+      path.push(entry);
+      id = entry.parentId;
+    }
+    const messages = appendContextMessages([], path.reverse());
+    const entries = new Map<string, number>();
+    const turns: number[] = [];
+    messages.forEach((message, index) => {
+      const record = message as Record<string, unknown>;
+      const id = record.__inspireEntryId;
+      if (typeof id === "string" && !entries.has(id)) entries.set(id, index);
+      if (record.role === "user") turns.push(index);
+    });
+    return (this.historyCache = {
+      leafId,
+      revision: this.revision,
+      messages,
+      entries,
+      turns,
+    });
+  }
+
+  private nativeTurnPage(
+    query: Extract<SessionHistoryQuery, { kind: "page" }>,
+    leafId: string | null,
+    viewId: string,
+  ): NativeTurnPage {
+    const cursor = query.cursor ? parseCursor(query.cursor) : null;
+    // Cursor positions belong to a fixed leaf, even while Pi continues it.
+    const pinnedLeaf = cursor ? cursor.effectiveLeafId : leafId;
+    if (cursor && !this.continues(leafId, pinnedLeaf))
+      throw requestError("History is no longer on the selected branch", 409);
+    const { messages, entries, turns } = this.nativeHistory(pinnedLeaf);
+    const boundary = (at: number, direction: "before" | "after") =>
+      this.historyCursor(
+        direction === "before" ? "native-before" : "native-after",
+        at,
+        pinnedLeaf,
+        viewId,
+      );
+    const turnOf = (index: number) =>
+      Number(jsonRecord(messages[index])?.__inspireUserTurnIndex ?? -1) + 1;
+    const shell = (
+      start: number,
+      end: number,
+      rows: unknown[],
+    ): NativeTurnPage => ({
+      sessionId: this.sessionId,
+      viewId,
+      incarnation: this.incarnation,
+      revision: this.revision,
+      leafId: pinnedLeaf,
+      messages: rows,
+      firstTurn: turnOf(start),
+      lastTurn: turnOf(end - 1),
+      totalTurns: turns.length,
+      earlier: start > 0 ? boundary(start, "before") : null,
+      later: end < messages.length ? boundary(end, "after") : null,
+    });
+    if (cursor) {
+      if (cursor.kind !== "native-before" && cursor.kind !== "native-after")
+        throw requestError("History cursor has the wrong purpose", 400);
+      this.validatedCursor(
+        query.cursor!,
+        cursor.kind,
+        leafId,
+        viewId,
+        messages.length,
+      );
+    }
+    const anchor =
+      query.entryId === undefined ? undefined : entries.get(query.entryId);
+    if (query.entryId !== undefined && anchor === undefined)
+      throw requestError("The entry is not on this branch", 404);
+    const reverse =
+      cursor?.kind === "native-before" || (!cursor && anchor === undefined);
+    const pivot = cursor?.before ?? anchor ?? messages.length;
+    const index = (i: number) => (reverse ? i - 1 : i);
+    const advance = reverse ? -1 : 1;
+    const builder = new TranscriptPageBuilder((end, rows) =>
+      reverse ? shell(end, pivot, rows) : shell(pivot, end, rows),
+    );
+    let edge = pivot;
+    while (
+      index(edge) >= 0 &&
+      index(edge) < messages.length &&
+      builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES
+    ) {
+      const row = index(edge);
+      if (builder.length && Math.abs(turnOf(row) - turnOf(index(pivot))) >= 8)
+        break;
+      const item = boundedTranscriptItem(
+        messages[row],
+        row,
+        this.fileNameForPath,
+      );
+      if (!builder.add(edge + advance, item)) break;
+      edge += advance;
+    }
+    return builder.page(edge, reverse);
+  }
+
+  private findHistory(text: string, leafId: string | null) {
+    const needle = text.toLowerCase();
+    const { entries, messages } = this.nativeHistory(leafId);
+    const matches: HistoryMatch[] = [];
+    for (const [entryId, index] of entries) {
+      const entry = this.currentEntriesById.get(entryId)!;
+      const body = branchEntryText(entry, "separate");
+      const offset = body.toLowerCase().indexOf(needle);
+      if (offset < 0) continue;
+      if (matches.length >= 40) return { matches, more: true };
+      matches.push({
+        entryId,
+        turn:
+          Number(jsonRecord(messages[index])?.__inspireUserTurnIndex ?? -1) + 1,
+        snippet: body.slice(
+          Math.max(0, offset - 45),
+          offset + needle.length + 90,
+        ),
+      });
+    }
+    return { matches, more: false };
+  }
+
+  private composerHistoryVersion(effectiveLeafId: string | null): string {
+    const anchor =
+      effectiveLeafId === this.currentLeafId
+        ? this.currentHistoryAnchor
+        : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
+    // Entry ancestry is immutable during append. A rewrite may reuse IDs with
+    // changed content, so it starts a new history epoch even at the same leaf.
+    return JSON.stringify([this.historyReplacementRevision, anchor]);
+  }
+
+  private composerHistoryPage(
+    start: number | undefined,
+    effectiveLeafId: string | null = this.currentLeafId,
+    viewId = this.incarnation,
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): ComposerHistoryPage {
+    return projectComposerHistoryPage(
+      this.composerHistoryMessages(effectiveLeafId),
+      {
+        sessionId: this.sessionId,
+        revision: this.revision,
+        viewId,
+        incarnation: this.incarnation,
+        effectiveLeafId,
+        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+      },
+      start,
+      cwd,
+      fileNameForPath,
+    );
+  }
+
+  private buildPage(
+    source: readonly unknown[],
+    persistedLength: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+  ): TranscriptPage {
+    const identity = {
+      sessionId: this.sessionId,
+      revision: this.revision,
+      viewId,
+      incarnation: this.incarnation,
+      appendFromRevision: this.appendFromRevision,
+      effectiveLeafId,
+      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
+    };
+    const builder = new TranscriptPageBuilder((start, messages) => ({
+      ...identity,
+      messages,
+      hasOlder: start > 0,
+    }));
+    let start = source.length;
+    while (start > 0 && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+      const index = start - 1;
+      const item = boundedTranscriptItem(
+        source[index],
+        index < persistedLength ? index : undefined,
+        this.fileNameForPath,
+      );
+      if (!builder.add(index, item)) break;
+      start = index;
+    }
+    if (builder.length === 0 && source.length > 0) oversizedTranscriptItem();
+    return builder.page(start, true);
+  }
+}
+
+export class WorkerEntryIndex extends SessionEntryIndex {
+  appendWorkerEntries(
+    entries: readonly SessionEntry[],
+    leafId: string | null,
+  ): boolean {
+    if (entries.length === 0 && leafId === this.currentLeafId) return false;
+    const byId = indexSessionEntries(entries, this.currentEntriesById);
+    if (leafId !== null && !byId.has(leafId))
+      throw requestError("The Pi checkpoint refers to an unknown leaf", 409);
+    const all = [...this.currentEntries, ...entries];
+    const linear =
+      isLinearAppend(this.currentLeafId, entries) &&
+      (entries.at(-1)?.id ?? this.currentLeafId) === leafId;
+    const previousMessages = this.currentMessages;
+    this.currentMessages = linear
+      ? appendContextMessages(this.currentMessages, entries)
+      : contextMessages(all, leafId, byId);
+    this.currentEntriesById = byId;
+    this.currentEntries = all;
+    this.currentLeafId = leafId;
+    this.currentRevision += 1;
+    if (
+      projectedMessageChange(
+        "append",
+        previousMessages,
+        this.currentMessages,
+      ) === "replace"
+    )
+      this.appendFromRevision = this.currentRevision;
+    if (linear) {
+      for (const entry of entries)
+        if (changesComposerHistory(entry)) this.currentHistoryAnchor = entry.id;
+    } else this.currentHistoryAnchor = composerHistoryAnchor(byId, leafId);
+    return true;
+  }
+}
+
+export class SessionProjection
+  extends SessionEntryIndex
+  implements SessionProjectionView
+{
+  private currentHealth: ProjectionHealth = { status: "ok" };
+  private currentFailureStatus: number | null = null;
+  private currentFailureCode: string | undefined;
+  private currentHeader: SessionHeader | null = null;
+  private currentIdentity: SessionSourceIdentity | null = null;
+  private currentFingerprint = "";
+  private currentHashState: Hash | null = null;
+  private currentCommittedBytes = 0;
+  private currentUncommittedBytes = 0;
+  private currentUncommittedFingerprint: string | null = null;
+  private reconcileTail: Promise<void> = Promise.resolve();
+  private reconcileHandler: ProjectionReconcileHandler | null = null;
+  private watcher: FSWatcher | null = null;
+  private watchTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private hintReading = false;
+  private hintDirty = false;
+  private reconciliationResume: Promise<void> | null = null;
+  private resolveReconciliationResume: (() => void) | null = null;
+  private closed = false;
+  /** Pi reserves a path for a new session but delays creating the JSONL.
+   * Only new-session ownership may enter this state; it remains active across
+   * complete-line prefixes until disk catches the creating worker's entries. */
+  private initialMaterializationPending: boolean;
+  private readonly initialSourceIdentity: { dev: bigint; ino: bigint } | null;
+  private readonly initialCwd: string;
+
+  private constructor(
+    session: Pick<SessionRecord, "id" | "path" | "cwd" | "source">,
+    private readonly readHooks?: SessionProjectionReadHooks,
+    initialMaterializationPending = false,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ) {
+    super(session, fileNameForPath);
+    this.initialCwd = session.cwd;
+    this.initialMaterializationPending = initialMaterializationPending;
+    this.initialSourceIdentity =
+      initialMaterializationPending || !session.source
+        ? null
+        : { dev: session.source.dev, ino: session.source.ino };
+    if (initialMaterializationPending) {
+      this.currentRevision = 1;
+      this.appendFromRevision = 1;
+    }
+  }
+
+  private static async openMode(
+    session: SessionRecord,
+    readHooks: SessionProjectionReadHooks | undefined,
+    initialMaterializationPending: boolean,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): Promise<SessionProjection> {
+    const projection = new SessionProjection(
+      session,
+      readHooks,
+      initialMaterializationPending,
+      fileNameForPath,
+    );
+    const result = await projection.reconcile(true);
+    const loaded = initialMaterializationPending
+      ? projection.health.status !== "error"
+      : projection.revision > 0;
+    if (!loaded) {
+      await projection.close();
+      throw requestError(
+        projection.health.message ?? "Session projection could not be loaded",
+        projection.currentFailureStatus ?? 422,
+        projection.currentFailureCode
+          ? { code: projection.currentFailureCode }
+          : undefined,
+      );
+    }
+    projection.startWatching();
+    if (result.changed) projection.emit("update", result);
+    return projection;
+  }
+
+  static open(
+    session: SessionRecord,
+    readHooks?: SessionProjectionReadHooks,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): Promise<SessionProjection> {
+    return SessionProjection.openMode(
+      session,
+      readHooks,
+      false,
+      fileNameForPath,
+    );
+  }
+
+  /** Create the sole projection for a Pi-owned new session whose reported
+   * path may not exist until Pi flushes its first assistant message. */
+  static openPending(
+    session: SessionRecord,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): Promise<SessionProjection> {
+    return SessionProjection.openMode(
+      session,
+      undefined,
+      true,
+      fileNameForPath,
+    );
+  }
+
+  get fingerprint(): string {
+    return this.currentFingerprint;
+  }
+  protected override historyHealth(): ProjectionHealth {
+    return this.health;
+  }
+
+  get health(): ProjectionHealth {
+    return this.currentHealth;
+  }
+  get sourceIdentity(): string | null {
+    return this.currentIdentity
+      ? `${this.currentIdentity.dev}:${this.currentIdentity.ino}`
+      : null;
+  }
+  get sourceVersion(): string | null {
+    const value = this.currentIdentity;
+    return value ? sessionSourceVersion(value) : null;
+  }
+  attestInitialMaterialization(
+    workerEntries: readonly SessionEntry[],
+  ): InitialMaterializationAttestation {
+    if (!this.initialMaterializationPending) return "mismatch";
+    const header = this.currentHeader;
+    if (!header) {
+      return this.currentEntries.length === 0 &&
+        this.currentCommittedBytes === 0 &&
+        this.currentUncommittedBytes > 0
+        ? "partial"
+        : "mismatch";
+    }
+    if (
+      header.version !== CURRENT_SESSION_VERSION ||
+      header.parentSession !== undefined ||
+      this.currentEntries.length > workerEntries.length ||
+      !samePersistedJson(
+        this.currentEntries,
+        workerEntries.slice(0, this.currentEntries.length),
+      )
+    )
+      return "mismatch";
+    if (
+      this.currentEntries.length < workerEntries.length ||
+      this.currentUncommittedBytes > 0
+    )
+      return "partial";
+    this.initialMaterializationPending = false;
+    return "complete";
+  }
+  get committedBytes(): number {
+    return this.currentCommittedBytes;
+  }
+  get uncommittedBytes(): number {
+    return this.currentUncommittedBytes;
+  }
+  get uncommittedFingerprint(): string | null {
+    return this.currentUncommittedFingerprint;
+  }
+
+  async suspendReconciliation(): Promise<void> {
+    if (!this.reconciliationResume) {
+      this.reconciliationResume = new Promise<void>((resolveResume) => {
+        this.resolveReconciliationResume = resolveResume;
+      });
+    }
+    if (this.watchTimer) clearTimeout(this.watchTimer);
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.watchTimer = null;
+    this.pollTimer = null;
+    this.watcher?.close();
+    this.watcher = null;
+    await this.reconcileTail;
+  }
+
+  resumeReconciliation(): void {
+    this.resolveReconciliationResume?.();
+    this.resolveReconciliationResume = null;
+    this.reconciliationResume = null;
+    if (!this.closed && !this.watcher && !this.pollTimer) this.startWatching();
+  }
+
+  setReconcileHandler(handler: ProjectionReconcileHandler): void {
+    this.reconcileHandler = handler;
   }
 
   private resultObservation(): Pick<
@@ -1501,7 +1791,6 @@ export class SessionProjection
         !sameSessionObject(candidate.identity, this.currentIdentity);
       const verifiedUnchangedContent =
         !changed &&
-        candidate.prefixRevalidated &&
         this.currentIdentity !== null &&
         sameSessionObject(candidate.identity, this.currentIdentity) &&
         previousUncommittedBytes === 0 &&
@@ -1514,7 +1803,10 @@ export class SessionProjection
       let kind: ProjectionReconcileResult["kind"] = "none";
       let messageChange: ProjectionMessageChange = "none";
       let appendedEntries: SessionEntry[] | undefined;
-      if (replaced) this.historySourceGeneration += 1;
+      if (replaced) {
+        this.historySourceGeneration += 1;
+        if (!changed) kind = "rewrite";
+      }
       if (changed) {
         const prefixVerified =
           this.currentCommittedBytes === 0 ||
@@ -1548,7 +1840,6 @@ export class SessionProjection
           candidate.messages,
         );
         this.currentRevision += 1;
-        this.userTurnIndexes.clear();
         if (messageChange === "replace")
           this.appendFromRevision = this.currentRevision;
         if (kind !== "append")
@@ -1681,7 +1972,7 @@ export class SessionProjection
     }
   }
 
-  /** Reconcile newly appended frames, reusing an owned prefix when provenance allows. */
+  /** Verify the old bytes before accepting appended frames. */
   private async verifiedPrefix(document: SessionDocumentReader) {
     if (
       !this.currentIdentity ||
@@ -1691,14 +1982,6 @@ export class SessionProjection
       document.source.size < BigInt(this.currentCommittedBytes)
     )
       return null;
-
-    // An exact pending Pi claim supplies the provenance for the one-writer
-    // append path. For other writes verify the old bytes before extending them.
-    if (
-      document.source.size > this.currentIdentity.size &&
-      this.ownedAppendWindow()
-    )
-      return { hash: this.currentHashState.copy(), revalidated: false };
 
     const hash = createHash("sha256");
     const bytes = await document.readBytes(
@@ -1710,7 +1993,7 @@ export class SessionProjection
     );
     return bytes === this.currentCommittedBytes &&
       hash.copy().digest("hex") === this.currentFingerprint
-      ? { hash, revalidated: true }
+      ? { hash }
       : null;
   }
 
@@ -1820,7 +2103,6 @@ export class SessionProjection
           previousPrefixFingerprint: prefix
             ? this.currentFingerprint
             : fingerprintOfSpan(prefixHash, committed, scan.end),
-          prefixRevalidated: prefix?.revalidated ?? true,
           previousTailFingerprint: fingerprintOfSpan(
             tailHash,
             this.currentUncommittedBytes,
@@ -1845,557 +2127,6 @@ export class SessionProjection
       }
     }
     throw new Error("Session file changed while it was being reconciled");
-  }
-
-  latestPage(
-    overlay: readonly unknown[] = [],
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-  ): TranscriptPage {
-    const persisted = this.viewMessages(effectiveLeafId);
-    if (overlay.length === 0) {
-      return this.buildPage(
-        persisted,
-        persisted.length,
-        effectiveLeafId,
-        viewId,
-      );
-    }
-    const persistedIndexByEntryId = new Map(
-      persisted.flatMap((value, index) => {
-        if (!value || typeof value !== "object" || Array.isArray(value))
-          return [];
-        const entryId = (value as Record<string, unknown>).__inspireEntryId;
-        return typeof entryId === "string" ? [[entryId, index] as const] : [];
-      }),
-    );
-    const combined = [...persisted];
-    for (const item of overlay) {
-      if (item && typeof item === "object" && !Array.isArray(item)) {
-        const overlayRecord = item as Record<string, unknown>;
-        const entryId =
-          typeof overlayRecord.__inspireEntryId === "string"
-            ? overlayRecord.__inspireEntryId
-            : null;
-        const persistedIndex = entryId
-          ? persistedIndexByEntryId.get(entryId)
-          : undefined;
-        if (persistedIndex !== undefined) {
-          const durable = persisted[persistedIndex] as Record<string, unknown>;
-          combined[persistedIndex] = {
-            ...overlayRecord,
-            __inspireMessageId: durable.__inspireMessageId,
-            __inspireEntryId: entryId,
-            ...(durable.__inspireMessageIndex !== undefined
-              ? { __inspireMessageIndex: durable.__inspireMessageIndex }
-              : {}),
-            ...(durable.__inspireUserTurnId !== undefined
-              ? { __inspireUserTurnId: durable.__inspireUserTurnId }
-              : {}),
-            ...(durable.__inspireUserTurnIndex !== undefined
-              ? { __inspireUserTurnIndex: durable.__inspireUserTurnIndex }
-              : {}),
-          };
-          continue;
-        }
-      }
-      // Correlation and even equal content cannot establish durable identity.
-      combined.push(item);
-    }
-    return this.buildPage(combined, persisted.length, effectiveLeafId, viewId);
-  }
-
-  private historyCursor(
-    kind: ParsedCursor["kind"],
-    before: number,
-    effectiveLeafId: string | null,
-    viewId: string,
-    start = 0,
-  ): string {
-    return signedCursor({
-      kind,
-      sessionId: this.sessionId,
-      incarnation: this.incarnation,
-      sourceGeneration: this.historySourceGeneration,
-      revision: this.revision,
-      effectiveLeafId,
-      viewId,
-      start,
-      before,
-    });
-  }
-
-  private validatedCursor(
-    cursor: string,
-    expectedKind: ParsedCursor["kind"],
-    effectiveLeafId: string | null,
-    viewId: string,
-    length: number,
-  ): ParsedCursor {
-    const decoded = parseCursor(cursor);
-    if (decoded.kind !== expectedKind) {
-      throw requestError("Transcript cursor has the wrong purpose", 400);
-    }
-    if (decoded.sessionId !== this.sessionId) {
-      throw requestError("Transcript cursor belongs to another session", 409);
-    }
-    if (decoded.incarnation !== this.incarnation) {
-      throw requestError(
-        "Transcript cursor belongs to an expired projection incarnation",
-        409,
-      );
-    }
-    if (decoded.viewId !== viewId) {
-      throw requestError(
-        "Transcript cursor belongs to another branch view",
-        409,
-      );
-    }
-    if (!this.continues(effectiveLeafId, decoded.effectiveLeafId))
-      throw requestError(
-        "Transcript cursor is stale or belongs to another branch view",
-        409,
-      );
-    if (
-      decoded.sourceGeneration !== this.historySourceGeneration ||
-      decoded.revision > this.revision ||
-      decoded.revision < this.appendFromRevision
-    ) {
-      throw requestError(
-        "Transcript cursor is stale; refresh the session",
-        409,
-      );
-    }
-    if (decoded.before > length) {
-      throw requestError("Transcript cursor is invalid", 400);
-    }
-    return decoded;
-  }
-
-  historyPage<Q extends SessionHistoryQuery>(
-    query: Q,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-    cwd?: string,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): SessionHistoryPages[Q["kind"]];
-  historyPage(
-    query: SessionHistoryQuery,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-    cwd?: string,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): SessionHistoryPages[keyof SessionHistoryPages] {
-    switch (query.kind) {
-      case "entry":
-        return this.branchEntry(
-          query.targetId,
-          query.offset ?? 0,
-          effectiveLeafId,
-          query.format,
-        );
-      case "composer":
-        return this.composerHistoryPage(
-          query.start,
-          effectiveLeafId,
-          viewId,
-          cwd,
-          fileNameForPath,
-        );
-      case "turns":
-        return this.userTurnIndexPage(query.start, effectiveLeafId, viewId);
-      case "older":
-      case "activity": {
-        const source = this.viewMessages(effectiveLeafId);
-        const cursor = this.validatedCursor(
-          query.cursor,
-          query.kind === "older" ? "page" : "activity",
-          effectiveLeafId,
-          viewId,
-          source.length,
-        );
-        return query.kind === "older"
-          ? this.buildBackwardPage(
-              source,
-              0,
-              cursor.before,
-              source.length,
-              this.transcriptPageShell(effectiveLeafId, viewId),
-              (start, end, after) =>
-                this.activityRange(
-                  start,
-                  end,
-                  after,
-                  source,
-                  effectiveLeafId,
-                  viewId,
-                ),
-            )
-          : this.buildActivityPage(
-              source,
-              cursor.start,
-              cursor.before,
-              effectiveLeafId,
-              viewId,
-            );
-      }
-      case "turn":
-        return this.userTurnTranscriptPage(
-          query.id,
-          effectiveLeafId,
-          viewId,
-          query.cursor,
-        );
-    }
-  }
-
-  private userTurnIndexPage(
-    start: number | undefined,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-  ): UserTurnIndexPage {
-    const source = this.viewMessages(effectiveLeafId);
-    const { positions } = this.userTurnIndex(source, effectiveLeafId);
-    if (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
-      throw requestError("User-turn index offset is invalid", 400);
-    const pageStart =
-      start === undefined
-        ? Math.max(0, positions.length - USER_TURN_INDEX_PAGE_SIZE)
-        : Math.min(start, positions.length);
-    const page: UserTurnIndexPage = {
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      appendFromRevision: this.appendFromRevision,
-      effectiveLeafId,
-      total: positions.length,
-      start: pageStart,
-      turns: positions
-        .slice(pageStart, pageStart + USER_TURN_INDEX_PAGE_SIZE)
-        .map(
-          (position, index): UserTurnAnchor => ({
-            id: projectedMessageId(source[position])!,
-            ordinal: pageStart + index,
-            timestamp: projectedTimestamp(source[position]),
-            ...userTurnSummary(source[position]),
-          }),
-        ),
-    };
-    if (Buffer.byteLength(JSON.stringify(page)) > USER_TURN_INDEX_MAX_BYTES) {
-      throw new Error("User-turn index page exceeded its declared byte bound");
-    }
-    return page;
-  }
-
-  private composerHistoryVersion(effectiveLeafId: string | null): string {
-    const anchor =
-      effectiveLeafId === this.currentLeafId
-        ? this.currentHistoryAnchor
-        : composerHistoryAnchor(this.currentEntriesById, effectiveLeafId);
-    // Entry ancestry is immutable during append. A rewrite may reuse IDs with
-    // changed content, so it starts a new history epoch even at the same leaf.
-    return JSON.stringify([this.historyReplacementRevision, anchor]);
-  }
-
-  private composerHistoryPage(
-    start = 0,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-    cwd?: string,
-    fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): ComposerHistoryPage {
-    return projectComposerHistoryPage(
-      this.composerHistoryMessages(effectiveLeafId),
-      {
-        sessionId: this.sessionId,
-        revision: this.revision,
-        viewId,
-        incarnation: this.incarnation,
-        effectiveLeafId,
-        composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-      },
-      start,
-      cwd,
-      fileNameForPath,
-    );
-  }
-
-  private userTurnIndex(source: readonly unknown[], leaf: string | null) {
-    const cached = this.userTurnIndexes.get(leaf);
-    if (cached) return cached;
-    const positions: number[] = [];
-    const byId = new Map<string, number>();
-    for (let position = 0; position < source.length; position += 1) {
-      const value = source[position];
-      if (jsonRecord(value)?.role !== "user") continue;
-      const id = projectedMessageId(value);
-      if (id === null) continue;
-      byId.set(id, positions.length);
-      positions.push(position);
-    }
-    const index = { positions, byId };
-    if (this.userTurnIndexes.size >= 16) this.userTurnIndexes.clear();
-    this.userTurnIndexes.set(leaf, index);
-    return index;
-  }
-
-  private activityRange(
-    rangeStart: number,
-    rangeEnd: number,
-    afterMessageId: string | null,
-    source: readonly unknown[],
-    effectiveLeafId: string | null,
-    viewId: string,
-  ): TranscriptActivityRange | null {
-    const kinds = deferredActivityKinds(source, rangeStart, rangeEnd);
-    return kinds.length > 0
-      ? {
-          cursor: this.historyCursor(
-            "activity",
-            rangeEnd,
-            effectiveLeafId,
-            viewId,
-            rangeStart,
-          ),
-          afterMessageId,
-          messageCount: rangeEnd - rangeStart,
-          kinds,
-        }
-      : null;
-  }
-
-  private userTurnTranscriptPage(
-    targetMessageId: string,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-    continuationCursor?: string,
-  ): UserTurnTranscriptPage {
-    const source = this.viewMessages(effectiveLeafId);
-    const { positions, byId } = this.userTurnIndex(source, effectiveLeafId);
-    const ordinal = byId.get(targetMessageId);
-    if (ordinal === undefined)
-      throw requestError("User turn does not exist in this branch", 404);
-    const target = positions[ordinal]!;
-    const turnEnd = positions[ordinal + 1] ?? source.length;
-
-    let cursor = target;
-    if (continuationCursor) {
-      const validated = this.validatedCursor(
-        continuationCursor,
-        "user-turn",
-        effectiveLeafId,
-        viewId,
-        source.length,
-      );
-      if (
-        validated.start !== target ||
-        validated.before <= target ||
-        validated.before >= turnEnd
-      )
-        throw requestError("User-turn cursor is invalid", 400);
-      cursor = validated.before;
-    }
-
-    let committedEnd = cursor;
-    let previousVisibleId: string | null = null;
-    for (let index = cursor - 1; index >= target; index -= 1) {
-      if (!isVisibleTranscriptBoundary(source[index])) continue;
-      previousVisibleId = projectedMessageId(source[index]);
-      break;
-    }
-    let pendingStart: number | null = null;
-    const page = this.transcriptPageShell(effectiveLeafId, viewId);
-    const builder = new TranscriptPageBuilder(
-      (rangeEnd, nextMessages, nextRanges): UserTurnTranscriptPage => ({
-        ...page(target, nextMessages, nextRanges),
-        targetMessageId,
-        rangeStart: target,
-        rangeEnd,
-        continuationCursor:
-          rangeEnd < turnEnd
-            ? this.historyCursor(
-                "user-turn",
-                rangeEnd,
-                effectiveLeafId,
-                viewId,
-                target,
-              )
-            : null,
-      }),
-    );
-
-    while (cursor < turnEnd && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
-      const value = source[cursor];
-      if (!isVisibleTranscriptBoundary(value)) {
-        if (pendingStart === null) pendingStart = cursor;
-        cursor += 1;
-        continue;
-      }
-      const item = boundedTranscriptItem(value, cursor, this.fileNameForPath);
-      const range =
-        pendingStart === null
-          ? null
-          : this.activityRange(
-              pendingStart,
-              cursor,
-              previousVisibleId,
-              source,
-              effectiveLeafId,
-              viewId,
-            );
-      if (!builder.add(cursor + 1, item, range)) {
-        if (builder.length === 0) oversizedTranscriptItem();
-        break;
-      }
-      previousVisibleId = projectedMessageId(value);
-      pendingStart = null;
-      cursor += 1;
-      committedEnd = cursor;
-    }
-
-    if (cursor === turnEnd && pendingStart !== null) {
-      const trailing = this.activityRange(
-        pendingStart,
-        turnEnd,
-        previousVisibleId,
-        source,
-        effectiveLeafId,
-        viewId,
-      );
-      if (builder.add(turnEnd, null, trailing)) committedEnd = turnEnd;
-    }
-    return builder.page(committedEnd);
-  }
-
-  private transcriptPageShell(effectiveLeafId: string | null, viewId: string) {
-    const identity = {
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      appendFromRevision: this.appendFromRevision,
-      effectiveLeafId,
-      composerHistoryVersion: this.composerHistoryVersion(effectiveLeafId),
-    };
-    return (
-      start: number,
-      messages: unknown[],
-      activityRanges: TranscriptActivityRange[] = [],
-    ): TranscriptPage => ({
-      ...identity,
-      messages,
-      ...(activityRanges.length ? { activityRanges } : {}),
-      hasOlder: start > 0,
-      olderCursor:
-        start > 0
-          ? this.historyCursor("page", start, effectiveLeafId, viewId)
-          : null,
-    });
-  }
-
-  private buildPage(
-    source: readonly unknown[],
-    persistedLength: number,
-    effectiveLeafId: string | null,
-    viewId: string,
-  ): TranscriptPage {
-    const shell = this.transcriptPageShell(effectiveLeafId, viewId);
-    return this.buildBackwardPage(
-      source,
-      0,
-      source.length,
-      persistedLength,
-      (start, messages) => shell(Math.min(start, persistedLength), messages),
-    );
-  }
-
-  private buildBackwardPage<Page>(
-    source: readonly unknown[],
-    floor: number,
-    before: number,
-    persistedLength: number,
-    shell: (
-      start: number,
-      messages: unknown[],
-      ranges: TranscriptActivityRange[],
-    ) => Page,
-    defer?: (
-      start: number,
-      end: number,
-      after: string | null,
-    ) => TranscriptActivityRange | null,
-  ): Page {
-    const builder = new TranscriptPageBuilder(shell);
-    let start = before;
-    let pendingEnd: number | null = null;
-    while (start > floor && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
-      const index = start - 1;
-      const value = source[index];
-      if (defer && !isVisibleTranscriptBoundary(value)) {
-        pendingEnd ??= start;
-        start = index;
-        continue;
-      }
-      const item = boundedTranscriptItem(
-        value,
-        index < persistedLength ? index : undefined,
-        this.fileNameForPath,
-      );
-      const range =
-        pendingEnd === null
-          ? null
-          : defer!(index + 1, pendingEnd, projectedMessageId(value));
-      if (!builder.add(index, item, range)) {
-        // A deferred range and its preceding row must stay together.
-        start = pendingEnd ?? start;
-        break;
-      }
-      start = index;
-      pendingEnd = null;
-    }
-    if (
-      start === floor &&
-      pendingEnd !== null &&
-      !builder.add(floor, null, defer!(floor, pendingEnd, null))
-    ) {
-      start = pendingEnd;
-    }
-    if (builder.length === 0 && start === before && before > floor)
-      oversizedTranscriptItem();
-    return builder.page(start, true);
-  }
-
-  private buildActivityPage(
-    source: readonly unknown[],
-    floor: number,
-    before: number,
-    effectiveLeafId: string | null,
-    viewId: string,
-  ): TranscriptActivityPage {
-    const shell = (
-      candidateStart: number,
-      messages: unknown[],
-    ): TranscriptActivityPage => ({
-      sessionId: this.sessionId,
-      revision: this.revision,
-      viewId,
-      incarnation: this.incarnation,
-      effectiveLeafId,
-      messages,
-      hasMore: candidateStart > floor,
-      cursor:
-        candidateStart > floor
-          ? this.historyCursor(
-              "activity",
-              candidateStart,
-              effectiveLeafId,
-              viewId,
-              floor,
-            )
-          : null,
-    });
-    return this.buildBackwardPage(source, floor, before, source.length, shell);
   }
 
   async close(): Promise<void> {

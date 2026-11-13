@@ -47,9 +47,9 @@ describe("worker and projection retention", () => {
       const initialView = initial.active!.transcriptPage.viewId;
       await runtime.sessionHistory("a", initialView, { kind: "composer" });
       await expect(
-        runtime.sessionHistory("b", otherView, { kind: "turns" }),
+        runtime.sessionHistory("b", otherView, { kind: "page" }),
       ).resolves.toMatchObject({
-        turns: [expect.objectContaining({ snippet: "persisted:b" })],
+        messages: [expect.objectContaining({ content: "persisted:b" })],
       });
       expect(runtime.activeSessionId).toBeNull();
       expect(spawn).not.toHaveBeenCalled();

@@ -18,11 +18,11 @@ covers:
   - src/remark-math-boundaries.ts
   - tests/web/rich-text*.{ts,tsx}
   - tests/browser/rich-text-delimiters.spec.ts
-  - src/components/ScrollRail.tsx
   - src/components/Transcript.tsx
   - src/components/TranscriptUtilities.tsx
   - tests/browser/reading-navigation.spec.ts
-  - src/components/PromptMap.tsx
+  - src/components/NativeTurnReader.tsx
+  - tests/server/native-turn-history.test.ts
   - src/components/transcript-activity.ts
   - src/components/transcript-cards.tsx
   - src/components/transcript-fold.tsx
@@ -71,7 +71,7 @@ Make the browser a complete, calm, and truthful presentation of an active Pi con
 ## Contract map
 
 [[activity-presentation]] owns activity bands, independent Thinking/tool density,
-deferred materialization, and Adaptive lifecycle. [[rich-rendering]] owns Markdown, mathematics
+activity detail, and Adaptive lifecycle. [[rich-rendering]] owns Markdown, mathematics
 and code rendering. Assistant outcomes and displayed custom messages remain independent readable
 boundaries in this contract.
 
@@ -108,7 +108,7 @@ boundaries in this contract.
   file references wrap only when needed and stay inside the reading measure at narrow widths.
 
   Image-bearing user messages omit Pi's exact appended image-dimension/coordinate-mapping suffix
-  from their bubble, view-local search, Prompt Map and catalog/title projections. Thumbnails and
+  from their bubble, view-local search and catalog/title projections. Thumbnails and
   image counts remain visible; image-only prompts keep their attachment label. Quoted examples,
   non-suffix text and image omission diagnostics are not filtered. Stored messages, model context
   and complete-source Copy are unchanged; [[composer]] applies the same omission to recall.
@@ -118,7 +118,7 @@ boundaries in this contract.
   consistent spacing between attachment groups and prose and no extra gap on attachment-only turns.
   Each tag keeps its full path in a hover title but grants no file access. Default private-upload
   identifiers are omitted from the label; ordinary project filenames stay intact. File-only turns
-  stay visible, file names participate in view-local search, and Prompt Map includes file references
+  stay visible, file names participate in view-local search, and History includes file references
   in attachment counts. Mixed image/file prompts remove the image hint before splitting file
   context. Malformed blocks and quoted examples remain ordinary message text; stored/model text and
   complete-source Copy are unchanged.
@@ -126,7 +126,7 @@ boundaries in this contract.
 - Project references and artifact handoff follow [[composer]]; preview authorization follows
   [[resource-preview]]. Transcript paths are presentation, not filesystem authority.
 
-## View-local search and Prompt Map
+## Search in Live and History
 
 - View-local search covers already-loaded settled messages, not the whole branch. Its input tooltip
   states that limit; there is no persistent scope disclaimer or second History-search action.
@@ -135,15 +135,15 @@ boundaries in this contract.
 
   Search performs case-insensitive literal matching over settled conversation text and can scope
   results to all searchable turns, user input only, or model output only. Previous/next navigation
-  wraps and jumps by transcript row through virtualization. The streaming tail and hidden
+  wraps and jumps by transcript row within the bounded Live page. The streaming tail and hidden
   thinking/tool payloads are excluded. An active selected match locks out geometric latest-follow
-  across prepends and live appends until search is cleared or the user explicitly jumps to latest.
+  across Live updates until search is cleared or the user explicitly jumps to latest.
   Deliberate search navigation opens the matching context-summary row so its matched body is
   visible; unrelated rows and ordinary rendering do not expand it.
 
   Rendered occurrences receive theme-aware highlights without changing message markup, source copy
   or geometry. The current occurrence is stronger and is brought into view within a long message or
-  local horizontal reader. Virtual rows and deferred rich text acquire highlights when mounted;
+  local horizontal reader. Deferred rich text acquire highlights when mounted;
   clearing search or leaving the transcript removes them. Source-only Markdown matches still
   navigate to their row, without assigning an ambiguous source hit to unrelated visible text. Shell
   output and context summaries use the same display normalization for search and rendering, so
@@ -162,7 +162,7 @@ boundaries in this contract.
   active query visible in the corresponding desktop or narrow tool; neither layout keeps an
   invisible active search.
 
-  On a narrow workbench, adjacent 44px Search and Prompt Map launchers live in the conversation
+  On a narrow workbench, adjacent 44px Search and Turn history launchers live in the conversation
   tool row. Search replaces that row in place with an input across the reading width, focusing
   and selecting its text. Close or Escape clears the query and match ownership, closes the row,
   and restores focus to its local launcher. An outside press dismisses either narrow tool; the
@@ -172,14 +172,12 @@ boundaries in this contract.
   A bottom-centered floating text button, `Jump to latest`, appears only when the scrollport is
   actually away from its latest boundary, independently of automatic-follow or search ownership.
   It restores follow at the complete Transcript bottom, including Pending and extension content
-  after virtualized message rows. The search row and narrow tool launchers precede messages in keyboard order;
+  after message rows. The search row and narrow tool launchers precede messages in keyboard order;
   Latest follows them.
 
-- The user-prompt outline opens in the same keyboard-accessible dialog on desktop and narrow
-  screens. It pages through the current branch's bounded native turn index. A selected prompt
-  seeks directly to that turn, including unloaded history. Escape closes the dialog and restores
-  focus to its launcher. Only the originating session/view and current reading intent may apply
-  a delayed turn seek.
+- Turn history is a separate reading destination. Its search covers the complete selected branch
+  and opens the page around a matching native entry. Live keeps its own local search and follow
+  position.
 
 ## Response streaming and message-owned outcomes
 
@@ -205,7 +203,7 @@ boundaries in this contract.
   disclosure keeps the center anchor; open upper/lower controls keep their respective anchors
   through ordinary and virtualized history. The gesture keeps latest-follow afterward only when the
   anchored result is at the exact latest boundary. Input owns the viewport before its deferred
-  scroll event. Once follow is released, Markdown reflow, virtual-row measurement, scrollport resize,
+  scroll event. Once follow is released, Markdown reflow, scrollport resize,
   and other programmatic scroll events cannot silently reacquire it; only the user reaching the
   latest boundary or choosing Jump to latest does. Transcript search keeps its separate viewport
   lock.
@@ -277,8 +275,8 @@ boundaries in this contract.
   `custom_message` entry. Because Pi gives those forms separate timestamps, the host pairs their
   exact persisted payloads one-to-one in event order, keeps legitimately repeated equal payloads as
   separate entries, and replaces (does not append) the linked overlay during snapshots. Timestamp
-  adoption and prepends preserve the message's Details state. Older-history and Prompt Map paging
-  treat displayed custom messages as visible content boundaries, never deferred tool activity.
+  A live custom message remains inspectable through its checkpoint. Its saved native row keeps
+  the complete content accessible through History.
   Settled content is searchable in All without being attributed to User or Model.
   `display:false` custom context stays absent from the browser.
 
@@ -360,32 +358,16 @@ history keep one result per native execution. [[pi-integration]] owns execution 
 
 ## Pagination and presentation ownership
 
-- When earlier history exists, each upward return to the transcript's near-top boundary
-  automatically requests the next signed, view-bound cursor page. Pagination counts visible
-  user/response boundaries and represents intervening activity-only message ranges with lazy
-  descriptors, so a collapsed run cannot force repeated background pages or transfer its hidden
-  body. A short visible page that leaves the viewport inside that boundary keeps filling until the
-  boundary moves away or history ends. The existing scroll surface owns this single proximity check,
-  so loading-state rerenders cannot consume the next trigger, and one automatic fill shows one
-  continuous loading state across its bounded page requests.
-
-  Coalesce an in-flight request. Prepend only while the session generation, view, incarnation,
-  revision, and effective leaf remain on the cursor's append-compatible branch lineage, then restore
-  the same visible message at the same viewport offset through virtualization. Same-view append
-  snapshots preserve loaded pages, pending ranges, and an in-flight older load behind a changed
-  older cursor; a rewrite or view change cancels and replaces them.
-
-  Transient page-read failure keeps the same load promise, continuous loading state, confirmed
-  messages and viewport anchor through bounded automatic backoff. Each retry rechecks its cursor and
-  append-compatible owner; navigation or transport replacement retires it. Only persistent or
-  non-transient failures expose local retry, and successful loading clears that error. A stale
-  cursor still resyncs from the authoritative snapshot. Deferred range pages keep the same
-  per-message and per-page transport bounds and accept an append-only continuation of their owning
-  branch, never a sibling view.
-
-- Refresh reconstructs settled conversation state from Pi, then resumes live updates. Activity timing,
-  viewport geometry and view-local search share one canonical message projection; they do not retain
-  competing transcript copies or change Host pagination authority.
+- History shows one bounded page, with Earlier and Later controls. A page is pinned to the
+  native leaf it was read from; new Live output does not insert, remove or scroll historical
+  rows. Returning to Live resumes following the latest output.
+- Page, search, and full-entry reads replace the prior navigation intent. A delayed response
+  cannot move a newer destination. A failed replacement keeps the confirmed page and offers
+  retry of the requested target. Native entry ID and reading offset restore the position when
+  History is reopened; long bodies use explicit previous/next sections.
+- Live uses the bounded tail and native checkpoint updates. Manual scrolling or inspecting
+  content pauses follow. If a checkpoint cannot confirm a live row, keep the output visible
+  with an unconfirmed indication.
 
 ## Non-goals
 

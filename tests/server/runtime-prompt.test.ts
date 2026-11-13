@@ -445,7 +445,10 @@ describe("prompt admission and artifact ownership", () => {
       if (command.type === "prompt") {
         if (failure === "receipt projection") failProjection();
         if (failure === "history" && command.message === "accepted once")
-          vi.spyOn(projection, "historyPage").mockImplementationOnce(fail);
+          vi.spyOn(
+            slots.get("a")!.workerView!.index,
+            "historyPage",
+          ).mockImplementationOnce(fail);
       }
       return result;
     };

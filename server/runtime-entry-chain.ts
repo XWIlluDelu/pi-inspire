@@ -5,7 +5,7 @@ interface RpcEntryChain {
   leafId: string | null;
 }
 
-export function isCanonicalIsoTimestamp(value: unknown): value is string {
+function isCanonicalIsoTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
   try {
     return new Date(value).toISOString() === value;

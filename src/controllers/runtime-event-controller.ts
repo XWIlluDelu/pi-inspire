@@ -179,10 +179,6 @@ export class RuntimeEventController {
     );
   }
 
-  markSettled(key: string): void {
-    this.settledKeys.add(key);
-  }
-
   private eventSlice(): EventSlice {
     const s = this.host.state();
     return {

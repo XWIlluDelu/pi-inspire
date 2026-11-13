@@ -1,24 +1,6 @@
-import {
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-} from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ActivityFoldVisibilityPreference } from "../../shared/contracts";
-import type {
-  ActivityMaterializationMode,
-  TranscriptActivityRangeState,
-} from "../store";
-import { PiLoader } from "./PiLoader";
 import {
   ActivityItemVisibilityProvider,
   type ActivityReadingChoices,
@@ -35,9 +17,6 @@ export type ActivityTelemetryItem = {
   /** A settled tool result reported an error. */
   failed?: boolean;
   live?: boolean;
-  /** Deferred ranges describe omitted activity but do not correspond to a
-   * mounted card until a bounded tail page has materialized. */
-  deferred?: boolean;
 };
 
 export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
@@ -46,7 +25,6 @@ export type ActivityFoldPresentation = "expanded" | "compact" | "collapsed";
  * A collapsed group names what it did in words: the step count, the first
  * distinct tools (with repeat counts) and any failures, so a reader does not
  * have to expand a group just to learn whether something went wrong.
- * Deferred ranges contribute presence only; their tools are not yet known.
  */
 function summarizeActivityText(telemetry: readonly ActivityTelemetryItem[]): {
   steps: string;
@@ -59,7 +37,6 @@ function summarizeActivityText(telemetry: readonly ActivityTelemetryItem[]): {
   let failed = 0;
   for (const item of telemetry) {
     if (item.failed) failed += 1;
-    if (item.deferred) continue;
     if (item.kind === "thinking") thinking += 1;
     else if (item.name) counts.set(item.name, (counts.get(item.name) ?? 0) + 1);
   }
@@ -79,61 +56,23 @@ function summarizeActivityText(telemetry: readonly ActivityTelemetryItem[]): {
 
 function ActivityFoldOmission({
   contentId,
-  status,
-  label,
-  title,
   onClick,
 }: {
   contentId: string;
-  status: "idle" | "loading" | "error";
-  label: string;
-  title: string;
   onClick: () => void;
 }) {
-  const controlRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const control = controlRef.current;
-    const fold = control?.closest<HTMLElement>("[data-activity-fold]");
-    return () => {
-      if (!control?.contains(document.activeElement) || !fold) return;
-      queueMicrotask(() =>
-        fold
-          .querySelector<HTMLButtonElement>(
-            '[data-activity-fold-anchor="start"]',
-          )
-          ?.focus({ preventScroll: true }),
-      );
-    };
-  }, []);
-
   return (
     <button
-      ref={controlRef}
       type="button"
-      className={`activity-fold__omission activity-fold__omission--${status}`}
+      className="activity-fold__omission"
       aria-controls={contentId}
       aria-expanded="false"
-      aria-label={label}
-      aria-busy={status === "loading"}
-      title={title}
+      aria-label="Show all earlier assistant activity"
       data-activity-fold-anchor="start"
-      data-activity-range={status}
       onClick={onClick}
     >
-      {status === "loading" ? (
-        <PiLoader size={14} aria-hidden />
-      ) : status === "error" ? (
-        <AlertCircle size={14} aria-hidden />
-      ) : (
-        <ChevronRight size={14} aria-hidden />
-      )}
-      <span>
-        {status === "loading"
-          ? "Loading earlier activity…"
-          : status === "error"
-            ? "Retry earlier activity"
-            : "Earlier activity"}
-      </span>
+      <ChevronRight size={14} aria-hidden />
+      <span>Earlier activity</span>
     </button>
   );
 }
@@ -145,10 +84,7 @@ export function ResponseActivityFold({
   initialManualPresentation = null,
   onManualPresentationChange,
   readingChoices,
-  deferredRanges = [],
   telemetry = [],
-  onMaterializeRanges,
-  onPreserveAnchor,
   children,
 }: {
   visibility: ActivityFoldVisibilityPreference;
@@ -157,25 +93,13 @@ export function ResponseActivityFold({
   initialManualPresentation?: ActivityFoldPresentation | null;
   onManualPresentationChange?: (presentation: ActivityFoldPresentation) => void;
   readingChoices?: ActivityReadingChoices;
-  deferredRanges?: readonly TranscriptActivityRangeState[];
   telemetry?: readonly ActivityTelemetryItem[];
-  onMaterializeRanges?: (
-    cursors: readonly string[],
-    beforeCommit: () => void,
-    mode?: ActivityMaterializationMode,
-  ) => Promise<void>;
-  onPreserveAnchor?: (
-    element: HTMLElement,
-    alignment: "start" | "center" | "end",
-  ) => void;
   children: React.ReactNode;
 }) {
   const contentId = useId();
-  const foldRef = useRef<HTMLElement>(null);
   const topControlRef = useRef<HTMLButtonElement>(null);
   const lowerControlRef = useRef<HTMLButtonElement>(null);
   const focusAfterToggle = useRef<"upper" | "lower" | null>(null);
-  const materializationAnchor = useRef<"start" | "center" | "end">("start");
   const [manualPresentation, setManualPresentation] =
     useState<ActivityFoldPresentation | null>(initialManualPresentation);
   const [inspectionHeld, setInspectionHeld] = useState(false);
@@ -194,28 +118,13 @@ export function ResponseActivityFold({
   const open = presentation !== "collapsed";
   const localReadingChoices = useRef<ActivityReadingChoices>(new Map());
 
-  const cardTelemetry = useMemo(
-    () => telemetry.filter((item) => !item.deferred),
-    [telemetry],
-  );
-  const compactVisibleIds = useMemo(() => {
-    if (presentation !== "compact") return null;
-    return new Set(
-      cardTelemetry.slice(-COMPACT_ACTIVITY_CARD_LIMIT).map((item) => item.id),
-    );
-  }, [cardTelemetry, presentation]);
-  const hasDeferredPrefix = deferredRanges.length > 0;
-  const hasLoadedPrefix = cardTelemetry.length > COMPACT_ACTIVITY_CARD_LIMIT;
-  const compactEquivalentToExpanded = !hasDeferredPrefix && !hasLoadedPrefix;
-  const showOmission =
-    (presentation === "compact" && (hasDeferredPrefix || hasLoadedPrefix)) ||
-    (presentation === "expanded" && hasDeferredPrefix);
-  const deferredError = deferredRanges.find(
-    (range) => range.status === "error",
-  );
-  const deferredLoading = deferredRanges.some(
-    (range) => range.status === "loading",
-  );
+  const compactVisibleIds =
+    presentation === "compact"
+      ? new Set(
+          telemetry.slice(-COMPACT_ACTIVITY_CARD_LIMIT).map((item) => item.id),
+        )
+      : null;
+  const hasEarlier = telemetry.length > COMPACT_ACTIVITY_CARD_LIMIT;
 
   const textSummary = summarizeActivityText(telemetry);
   const summary = textSummary.steps ? (
@@ -231,50 +140,6 @@ export function ResponseActivityFold({
       ) : null}
     </span>
   ) : null;
-  const requestMaterialization = useCallback(
-    (mode: ActivityMaterializationMode, automatic: boolean) => {
-      if (!onMaterializeRanges) return;
-      if (
-        mode === "tail" &&
-        cardTelemetry.length >= COMPACT_ACTIVITY_CARD_LIMIT
-      )
-        return;
-      const candidates =
-        mode === "all"
-          ? deferredRanges
-          : deferredRanges.length > 0
-            ? [deferredRanges[deferredRanges.length - 1]!]
-            : [];
-      const cursors = candidates
-        .filter(
-          (range) =>
-            range.status !== "loading" &&
-            (!automatic || range.status === "idle"),
-        )
-        .map((range) => range.cursor);
-      if (cursors.length === 0) return;
-      void onMaterializeRanges(
-        cursors,
-        () => {
-          if (foldRef.current)
-            onPreserveAnchor?.(foldRef.current, materializationAnchor.current);
-        },
-        mode,
-      );
-    },
-    [
-      cardTelemetry.length,
-      deferredRanges,
-      onMaterializeRanges,
-      onPreserveAnchor,
-    ],
-  );
-
-  useEffect(() => {
-    if (presentation === "collapsed") return;
-    requestMaterialization(presentation === "expanded" ? "all" : "tail", true);
-  }, [presentation, requestMaterialization]);
-
   useEffect(() => {
     const target = focusAfterToggle.current;
     if (!target) return;
@@ -289,29 +154,14 @@ export function ResponseActivityFold({
   const choosePresentation = (
     next: ActivityFoldPresentation,
     focusTarget: "upper" | "lower",
-    anchor: "start" | "center" | "end" = focusTarget === "upper"
-      ? "start"
-      : "end",
   ) => {
     focusAfterToggle.current = focusTarget;
-    materializationAnchor.current = anchor;
     setManualPresentation(next);
     onManualPresentationChange?.(next);
   };
 
-  const expandToCompact = (
-    focusTarget: "upper" | "lower",
-    anchor: "start" | "center" | "end",
-  ) => {
-    choosePresentation("compact", focusTarget, anchor);
-    if (deferredRanges.at(-1)?.status === "error")
-      requestMaterialization("tail", false);
-  };
-
   const collapseTarget: ActivityFoldPresentation =
-    presentation === "expanded" && !compactEquivalentToExpanded
-      ? "compact"
-      : "collapsed";
+    presentation === "expanded" && hasEarlier ? "compact" : "collapsed";
 
   const boundary = (edge: "upper" | "lower") => {
     const action = collapseTarget === "compact" ? "Compact" : "Collapse";
@@ -338,20 +188,8 @@ export function ResponseActivityFold({
     );
   };
 
-  const omissionStatus = deferredError
-    ? "error"
-    : deferredLoading
-      ? "loading"
-      : "idle";
-  const omissionLabel = deferredError
-    ? "Retry loading all earlier assistant activity"
-    : deferredLoading
-      ? "Loading earlier assistant activity"
-      : "Show all earlier assistant activity";
-
   return (
     <section
-      ref={foldRef}
       className={`activity-fold activity-fold--${presentation}`}
       aria-label="Assistant activity"
       data-activity-fold={open ? "open" : "closed"}
@@ -370,13 +208,13 @@ export function ResponseActivityFold({
         <button
           ref={topControlRef}
           type="button"
-          className={`activity-fold__disclosure ${deferredError ? "activity-fold__disclosure--error" : ""}`}
+          className="activity-fold__disclosure"
           aria-controls={contentId}
           aria-expanded="false"
           aria-label="Expand assistant activity"
-          title={deferredError?.error ?? "Show recent assistant activity"}
+          title="Show recent assistant activity"
           data-activity-fold-anchor="center"
-          onClick={() => expandToCompact("upper", "center")}
+          onClick={() => choosePresentation("compact", "upper")}
         >
           <ChevronRight size={14} aria-hidden />
           <span>Activity</span>
@@ -384,19 +222,10 @@ export function ResponseActivityFold({
         </button>
       )}
       <div id={contentId} className="activity-fold__content" hidden={!open}>
-        {showOmission ? (
+        {presentation === "compact" && hasEarlier ? (
           <ActivityFoldOmission
             contentId={contentId}
-            status={omissionStatus}
-            label={omissionLabel}
-            title={deferredError?.error ?? omissionLabel}
-            onClick={() => {
-              materializationAnchor.current = "start";
-              if (presentation === "compact")
-                choosePresentation("expanded", "upper", "start");
-              if (deferredError || presentation === "expanded")
-                requestMaterialization("all", false);
-            }}
+            onClick={() => choosePresentation("expanded", "upper")}
           />
         ) : null}
         <ActivityItemVisibilityProvider

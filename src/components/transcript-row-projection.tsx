@@ -1,11 +1,4 @@
-import {
-  Fragment,
-  type ReactNode,
-  type RefObject,
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-} from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useMemo } from "react";
 import { assistantOutcome } from "../../shared/assistant-outcome";
 import {
   type ActivityFoldVisibilityPreference,
@@ -31,10 +24,6 @@ import {
   checkpointPresentation,
   usePresentationAdapters,
 } from "../presentation-adapters";
-import type {
-  ActivityMaterializationMode,
-  TranscriptActivityRangeState,
-} from "../store";
 import { AssistantError, AssistantStopped } from "./AssistantError";
 import { BashExecution } from "./BashExecution";
 import { CustomMessage } from "./CustomMessage";
@@ -69,29 +58,6 @@ type ProjectionIdentityClaim = {
   members: string[];
 };
 
-interface DeferredActivityMarker extends ChatMessage {
-  role: "__inspireDeferredActivity";
-  __inspireActivityRange: TranscriptActivityRangeState;
-}
-
-interface TranscriptGapMarker extends ChatMessage {
-  role: "__inspireTranscriptGap";
-  __inspireGapAfterTurn: number;
-  __inspireGapBeforeTurn: number;
-}
-
-function isDeferredActivityMarker(
-  message: ChatMessage,
-): message is DeferredActivityMarker {
-  return message.role === "__inspireDeferredActivity";
-}
-
-function isTranscriptGapMarker(
-  message: ChatMessage,
-): message is TranscriptGapMarker {
-  return message.role === "__inspireTranscriptGap";
-}
-
 function claimProjectionIdentity(
   registry: ProjectionIdentityRegistry,
   claimedKeys: Set<string>,
@@ -112,14 +78,8 @@ function claimProjectionIdentity(
   return key;
 }
 
-type PreserveActivityAnchor = (
-  element: HTMLElement,
-  alignment: "start" | "center" | "end",
-) => void;
-
 interface TranscriptRowProjectionOptions {
   messages: ChatMessage[];
-  activityRanges: TranscriptActivityRangeState[];
   sessionId: string;
   viewId: string;
   projectionViewKey: string;
@@ -130,17 +90,10 @@ interface TranscriptRowProjectionOptions {
   thinkingVisibility: VisibilityPreference;
   toolVisibility: ToolVisibilityPreference;
   activityFoldVisibility: ActivityFoldVisibilityPreference;
-  onMaterializeActivityRanges: (
-    cursors: readonly string[],
-    beforeCommit?: () => void,
-    mode?: ActivityMaterializationMode,
-  ) => Promise<void>;
-  preserveActivityAnchorRef: RefObject<PreserveActivityAnchor>;
 }
 
 export function useTranscriptRows({
   messages,
-  activityRanges,
   sessionId,
   viewId,
   projectionViewKey,
@@ -151,8 +104,6 @@ export function useTranscriptRows({
   thinkingVisibility,
   toolVisibility,
   activityFoldVisibility,
-  onMaterializeActivityRanges,
-  preserveActivityAnchorRef,
 }: TranscriptRowProjectionOptions) {
   const { configuration: presentationConfiguration } =
     usePresentationAdapters();
@@ -170,60 +121,6 @@ export function useTranscriptRows({
     }),
     [projectionViewKey, sessionId],
   );
-
-  const projectionMessages = useMemo(() => {
-    const rangesByAnchor = new Map<
-      string | null,
-      TranscriptActivityRangeState[]
-    >();
-    for (const range of activityRanges) {
-      const anchored = rangesByAnchor.get(range.afterMessageId) ?? [];
-      anchored.push(range);
-      rangesByAnchor.set(range.afterMessageId, anchored);
-    }
-    const projected: ChatMessage[] = [];
-    const appendRanges = (anchor: string | null) => {
-      for (const range of rangesByAnchor.get(anchor) ?? []) {
-        projected.push({
-          role: "__inspireDeferredActivity",
-          __inspireActivityRange: range,
-        } as DeferredActivityMarker);
-      }
-      rangesByAnchor.delete(anchor);
-    };
-    appendRanges(null);
-    let previousTurnIndex: number | null = null;
-    for (const message of messages) {
-      const turnIndex = Number.isSafeInteger(message.__inspireUserTurnIndex)
-        ? (message.__inspireUserTurnIndex as number)
-        : null;
-      if (
-        previousTurnIndex !== null &&
-        turnIndex !== null &&
-        turnIndex > previousTurnIndex + 1
-      ) {
-        projected.push({
-          role: "__inspireTranscriptGap",
-          __inspireGapAfterTurn: previousTurnIndex,
-          __inspireGapBeforeTurn: turnIndex,
-        } as TranscriptGapMarker);
-      }
-      projected.push(message);
-      appendRanges(message.__inspireMessageId ?? null);
-      if (turnIndex !== null) previousTurnIndex = turnIndex;
-    }
-    // A stale anchor should remain visible as a recoverable range instead of
-    // silently losing transcript content. Materialization will report the
-    // missing boundary and an authoritative refresh can repair it.
-    for (const ranges of rangesByAnchor.values()) {
-      for (const range of ranges)
-        projected.unshift({
-          role: "__inspireDeferredActivity",
-          __inspireActivityRange: range,
-        } as DeferredActivityMarker);
-    }
-    return projected;
-  }, [activityRanges, messages]);
 
   // Tool-call pairing is derived data: recompute only when the message list changes.
   const { toolResults, toolCallIds } = useMemo(() => {
@@ -268,12 +165,6 @@ export function useTranscriptRows({
       activeStreamingMessage = tail;
   }
 
-  const preserveActivityAnchor = useCallback(
-    (element: HTMLElement, alignment: "start" | "center" | "end") =>
-      preserveActivityAnchorRef.current(element, alignment),
-    [preserveActivityAnchorRef],
-  );
-
   // Project visible response passages and the maximal activity between them
   // into separate rows. Activity cards keep their existing renderers and local
   // state; only the outer band changes their collective visibility.
@@ -283,18 +174,12 @@ export function useTranscriptRows({
       node: ReactNode;
       searchText: string;
       searchScope: Exclude<TranscriptSearchScope, "all"> | null;
-      turnOrdinal: number | null;
-      turnId: string | null;
-      turnStart: boolean;
     };
     type ActivityRun = {
       memberKeys: string[];
       nodes: { key: string; node: ReactNode }[];
-      deferredRanges: TranscriptActivityRangeState[];
       telemetry: ActivityTelemetryItem[];
       live: boolean;
-      turnOrdinal: number | null;
-      turnId: string | null;
     };
     type AssistantSegment =
       | { kind: "response"; start: number; passages: string[] }
@@ -308,10 +193,6 @@ export function useTranscriptRows({
     // messages keep their timestamp correlation; displayed custom messages can
     // change timestamps and instead carry their host-paired durable entry ids.
     const projectionKeyOccurrences = new Map<string, number>();
-    const deferredRangeAlias = (message: ChatMessage): string[] =>
-      typeof message.__inspireActivityRangeCursor === "string"
-        ? [`deferred:${message.__inspireActivityRangeCursor}`]
-        : [];
     const projectionKey = (message: ChatMessage, fallback: string): string => {
       const customEntryId =
         message.role === "custom" &&
@@ -323,42 +204,23 @@ export function useTranscriptRows({
       projectionKeyOccurrences.set(base, occurrence + 1);
       return `${base}:${occurrence}`;
     };
-    let currentTurnOrdinal: number | null = null;
-    let currentTurnId: string | null = null;
     let activityRun: ActivityRun | null = null;
-    const adoptTurnOwner = (message: ChatMessage) => {
-      if (Number.isSafeInteger(message.__inspireUserTurnIndex))
-        currentTurnOrdinal = message.__inspireUserTurnIndex as number;
-      if (typeof message.__inspireUserTurnId === "string")
-        currentTurnId = message.__inspireUserTurnId;
-      if (message.role === "user") {
-        if (!Number.isSafeInteger(message.__inspireUserTurnIndex))
-          currentTurnOrdinal = (currentTurnOrdinal ?? -1) + 1;
-        if (typeof message.__inspireUserTurnId !== "string")
-          currentTurnId = message.__inspireMessageId ?? messageKey(message);
-      }
-    };
     const appendActivity = (
       key: string,
       node: ReactNode,
       live: boolean,
       aliases: string[] = [],
-      deferredRange?: TranscriptActivityRangeState,
       telemetryItems: ActivityTelemetryItem[] = [],
     ) => {
       if (!activityRun)
         activityRun = {
           memberKeys: [],
           nodes: [],
-          deferredRanges: [],
           telemetry: [],
           live: false,
-          turnOrdinal: currentTurnOrdinal,
-          turnId: currentTurnId,
         };
       activityRun.memberKeys.push(key, ...aliases);
       activityRun.nodes.push({ key, node });
-      if (deferredRange) activityRun.deferredRanges.push(deferredRange);
       if (telemetryItems.length > 0) {
         activityRun.telemetry.push(...telemetryItems);
         for (const item of telemetryItems) activityItemKeys.add(item.id);
@@ -395,10 +257,7 @@ export function useTranscriptRows({
               )
             }
             readingChoices={activityProjectionIdentities.readingChoices}
-            deferredRanges={run.deferredRanges}
             telemetry={run.telemetry}
-            onMaterializeRanges={onMaterializeActivityRanges}
-            onPreserveAnchor={preserveActivityAnchor}
           >
             {run.nodes.map(({ key, node }) => (
               <Fragment key={key}>{node}</Fragment>
@@ -407,63 +266,12 @@ export function useTranscriptRows({
         ),
         searchText: "",
         searchScope: null,
-        turnOrdinal: run.turnOrdinal,
-        turnId: run.turnId,
-        turnStart: false,
       });
       activityRun = null;
     };
 
-    for (let index = 0; index < projectionMessages.length; ) {
-      const message = asMessage(projectionMessages[index]);
-
-      if (isTranscriptGapMarker(message)) {
-        flushActivity(true);
-        built.push({
-          key: `transcript-gap:${message.__inspireGapAfterTurn}:${message.__inspireGapBeforeTurn}`,
-          node: (
-            <div className="transcript-gap" role="separator">
-              <span>Conversation segment not loaded</span>
-            </div>
-          ),
-          searchText: "",
-          searchScope: null,
-          turnOrdinal: null,
-          turnId: null,
-          turnStart: false,
-        });
-        currentTurnOrdinal = null;
-        currentTurnId = null;
-        index += 1;
-        continue;
-      }
-
-      adoptTurnOwner(message);
-      if (isDeferredActivityMarker(message)) {
-        const range = message.__inspireActivityRange;
-        const visible =
-          (range.kinds.includes("thinking") &&
-            thinkingVisibility !== "hidden") ||
-          (range.kinds.includes("tool") && toolVisibility !== "hidden");
-        if (visible) {
-          const memberKey = `deferred:${range.cursor}`;
-          const deferredTelemetry: ActivityTelemetryItem[] = range.kinds
-            .filter((kind) =>
-              kind === "thinking"
-                ? thinkingVisibility !== "hidden"
-                : toolVisibility !== "hidden",
-            )
-            .map((k, index) => ({
-              id: `${memberKey}:${k}:${index}`,
-              kind: k === "thinking" ? "thinking" : "tool",
-              label: k === "thinking" ? "Thinking" : "Tool call",
-              deferred: true,
-            }));
-          appendActivity(memberKey, null, false, [], range, deferredTelemetry);
-        }
-        index += 1;
-        continue;
-      }
+    for (let index = 0; index < messages.length; ) {
+      const message = asMessage(messages[index]);
 
       if (message.role === "custom") {
         if (message.display !== false) {
@@ -489,9 +297,6 @@ export function useTranscriptRows({
                 : "",
             // Searchable in All, without pretending the extension is the user or model.
             searchScope: null,
-            turnOrdinal: currentTurnOrdinal,
-            turnId: currentTurnId,
-            turnStart: false,
           });
         }
         index += 1;
@@ -512,9 +317,6 @@ export function useTranscriptRows({
             ? `${message.command ?? ""}\n${stripTerminalSequences(message.output ?? "")}`
             : "",
           searchScope: null,
-          turnOrdinal: currentTurnOrdinal,
-          turnId: currentTurnId,
-          turnStart: false,
         });
         index += 1;
         continue;
@@ -533,9 +335,6 @@ export function useTranscriptRows({
           ),
           searchText: settled ? userMessageSearchText(message) : "",
           searchScope: "user",
-          turnOrdinal: currentTurnOrdinal,
-          turnId: currentTurnId,
-          turnStart: true,
         });
         index += 1;
         continue;
@@ -552,9 +351,6 @@ export function useTranscriptRows({
           node: <ContextCheckpointRow message={message} />,
           searchText: settled ? displaySummary : "",
           searchScope: "model",
-          turnOrdinal: currentTurnOrdinal,
-          turnId: currentTurnId,
-          turnStart: false,
         });
         index += 1;
         continue;
@@ -573,8 +369,8 @@ export function useTranscriptRows({
                 : [],
             ),
           );
-          while (activityEnd < projectionMessages.length) {
-            const candidate = asMessage(projectionMessages[activityEnd]);
+          while (activityEnd < messages.length) {
+            const candidate = asMessage(messages[activityEnd]);
             if (
               candidate.role === "toolResult" &&
               typeof candidate.toolCallId === "string" &&
@@ -585,7 +381,6 @@ export function useTranscriptRows({
                   candidate,
                   messageKey(candidate) ?? `toolResult:${activityEnd}`,
                 ),
-                ...deferredRangeAlias(candidate),
               );
               activityEnd += 1;
               continue;
@@ -701,9 +496,6 @@ export function useTranscriptRows({
                   ? segment.passages.join("\n\n")
                   : "",
               searchScope: "model",
-              turnOrdinal: currentTurnOrdinal,
-              turnId: currentTurnId,
-              turnStart: false,
             });
             return;
           }
@@ -760,10 +552,7 @@ export function useTranscriptRows({
               />
             </ActivitySegmentBoundary>,
             assistantDynamicActive || segmentStreaming,
-            segmentIndex === lastActivity
-              ? [...trailingActivityKeys, ...deferredRangeAlias(message)]
-              : deferredRangeAlias(message),
-            undefined,
+            segmentIndex === lastActivity ? trailingActivityKeys : [],
             telemetry,
           );
         });
@@ -789,9 +578,6 @@ export function useTranscriptRows({
               ),
             searchText: outcome === "stopped" ? "Stopped" : detail,
             searchScope: "model",
-            turnOrdinal: currentTurnOrdinal,
-            turnId: currentTurnId,
-            turnStart: false,
           });
         }
 
@@ -836,8 +622,7 @@ export function useTranscriptRows({
               />
             </ActivitySegmentBoundary>,
             false,
-            deferredRangeAlias(message),
-            undefined,
+            [],
             toolTelemetry,
           );
         }
@@ -863,8 +648,7 @@ export function useTranscriptRows({
             />
           </ActivitySegmentBoundary>,
           false,
-          deferredRangeAlias(message),
-          undefined,
+          [],
           unknownTelemetry,
         );
       }
@@ -875,7 +659,7 @@ export function useTranscriptRows({
     return { rows: built, foldIdentityClaims, activityItemKeys };
   }, [
     presentationConfiguration,
-    projectionMessages,
+    messages,
     activeAssistantMessageKey,
     activeStreamingMessage,
     streaming,
@@ -887,8 +671,6 @@ export function useTranscriptRows({
     toolResults,
     toolCallIds,
     toolActivity,
-    onMaterializeActivityRanges,
-    preserveActivityAnchor,
     sessionId,
     viewId,
     projectionViewKey,

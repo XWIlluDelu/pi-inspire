@@ -25,7 +25,7 @@ const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
 interface RuntimeEventSocketOptions {
   runtime: Pick<
     RuntimeController,
-    "on" | "off" | "snapshot" | "retainSessionView"
+    "on" | "off" | "snapshot" | "eventSnapshotCut" | "retainSessionView"
   >;
   updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
@@ -284,6 +284,7 @@ export function createRuntimeEventSockets({
     return JSON.stringify({
       type: lifecycle ? record.type : "session_status",
       sessionId,
+      runtimeSequence: record.runtimeSequence,
       ...(status ? { sessionStatus: status } : {}),
       ...(record.type === "compaction_start"
         ? { reason: record.reason === "manual" ? "manual" : "auto" }
@@ -509,10 +510,17 @@ export function createRuntimeEventSockets({
               peer.principal,
               (event) => sendBounded(socket, JSON.stringify(event)),
             );
+          const cut = runtime.eventSnapshotCut(snapshot);
           for (const message of queued.messages) {
             // A superseded read may have queued detail for the previous owner.
             // Retain its global lifecycle evidence, never replay its body.
             const record = JSON.parse(message) as Record<string, unknown>;
+            if (
+              cut !== undefined &&
+              typeof record.runtimeSequence === "number" &&
+              record.runtimeSequence <= cut
+            )
+              continue;
             const id =
               typeof record.sessionId === "string" ? record.sessionId : null;
             const projected =

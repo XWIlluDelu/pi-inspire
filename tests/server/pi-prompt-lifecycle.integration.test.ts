@@ -71,7 +71,6 @@ describe("native prompt admission and extension dialogs", () => {
       await settled(f, 1);
       await vi.waitFor(() => {
         expect(slot.overlay).toEqual([]);
-        expect(slot.persistenceExpectations).toEqual([]);
       });
       const checkHistory = async (turns: number) => {
         const snapshot = await f.runtime.snapshot();

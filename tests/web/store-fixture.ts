@@ -1,4 +1,3 @@
-import type { ActiveSnapshot } from "../../shared/contracts";
 import { AppStore } from "../../src/store";
 import { sessionPage } from "./fixtures/session-catalog";
 import {
@@ -23,17 +22,6 @@ export function installStoreRoutes(route: RouteHandler) {
   return installFetch(
     async (url, init) => (await route(url, init)) ?? baseRoutes(url, init),
   );
-}
-
-export function installStoreSnapshot(
-  snapshot: ActiveSnapshot,
-  route: RouteHandler,
-) {
-  return installStoreRoutes((url, init) => {
-    if (url.startsWith("/api/bootstrap"))
-      return { body: bootstrapPayload({ snapshot }) };
-    return route(url, init);
-  });
 }
 
 export async function initStore(): Promise<{

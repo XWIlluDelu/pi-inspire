@@ -60,6 +60,7 @@ import {
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { ModelCatalogResponse } from "../shared/model-settings.js";
+import type { TaskNotification, TaskOutcome } from "../shared/notifications.js";
 import {
   PROVIDER_AUTH_SUFFIX,
   type ProviderAuthOperation,
@@ -119,12 +120,12 @@ import {
   type PendingImageDelivery,
   PendingImageRecovery,
 } from "./runtime-pending-images.js";
+import { RuntimeLiveTail } from "./runtime-live-tail.js";
 import {
-  compactionMatcher,
-  deferredExpectation,
-  knownExpectation,
-} from "./runtime-persistence.js";
-import { RuntimePersistenceOwnershipController } from "./runtime-persistence-ownership.js";
+  createWorkerView,
+  WorkerCheckpointReader,
+} from "./runtime-worker-view.js";
+import { CHECKPOINT_SUFFIX } from "../shared/worker-checkpoint.js";
 import { RuntimeProjectionCoordinator } from "./runtime-projection-coordinator.js";
 import { RuntimeReadController } from "./runtime-reads.js";
 import { readWorkerRetryState } from "./runtime-retry-state.js";
@@ -148,10 +149,6 @@ import {
   type StageSessionFork,
   stageSessionFork,
 } from "./session-fork.js";
-import {
-  type ActiveSessionSnapshot,
-  sessionProjectionSnapshot,
-} from "./session-preview.js";
 
 export { MAX_IDLE_WORKERS } from "./runtime-worker-pool.js";
 
@@ -160,9 +157,9 @@ import {
   type BranchBridgeIdentity,
   createRuntimeSlot,
   effectiveRuntimeLeaf,
-  emptyCustomActivityOwnership,
+  runtimeHistory,
+  workerOnSeparateBranch,
   type PendingBranchBridge,
-  type PersistenceExpectation,
   type RuntimeOperationQueue,
   type RuntimeSlot,
 } from "./runtime-slot.js";
@@ -239,17 +236,12 @@ function runtimeResourceOwnsCommand(
 
 function assertPublicPrompt(slot: RuntimeSlot, entered: string): void {
   if (!slot.bridge) return;
-  const reserved = `/${slot.bridge.command}`;
+  const name = /^\/([^\s]+)/u.exec(entered)?.[1];
   if (
-    entered === reserved ||
-    (entered.startsWith(reserved) &&
-      /^\s/u.test(entered.slice(reserved.length)))
-  ) {
-    throw requestError(
-      "That command is reserved for internal branch navigation",
-      403,
-    );
-  }
+    name === slot.bridge.command ||
+    name?.startsWith(`${slot.bridge.command}_`)
+  )
+    throw requestError("That command is reserved for Inspire", 403);
 }
 
 /** Full child diagnostics remain host-only; browser errors use safe messages
@@ -384,6 +376,8 @@ export class RuntimeController extends EventEmitter {
       {
         current: (slot) => !this.closing && this.slots.get(slot.id) === slot,
         emit: (slot, event) => this.emitSlotEvent(slot, event),
+        taskOutcome: (slot, outcome, id) =>
+          this.publishTaskOutcome(slot, outcome, id),
         reconcile: (slot, force) => this.reconcileSlot(slot, force),
         released: (slot) => {
           // Recover the viewed position after checking who still owns it.
@@ -434,7 +428,8 @@ export class RuntimeController extends EventEmitter {
   private selectionSequence = 0;
   private provisionalSequence = 0;
   private useSequence = 0;
-  private readonly persistenceOwnership: RuntimePersistenceOwnershipController;
+  private readonly liveTail: RuntimeLiveTail;
+  private readonly checkpoints: WorkerCheckpointReader;
   private readonly extensionUi: RuntimeExtensionUiController;
   private readonly events: RuntimeEventController;
   private readonly bash: RuntimeBashController;
@@ -494,14 +489,63 @@ export class RuntimeController extends EventEmitter {
     this.deleteSessionRecord = options.deleteSessionRecord ?? deleteSessionFile;
     this.diagnostics = options.diagnostics ?? nullDiagnosticLogger();
     this.stageFork = options.stageFork ?? stageSessionFork;
-    this.persistenceOwnership = new RuntimePersistenceOwnershipController(
-      {
-        promptFileName: (path) => this.attachments.promptFileName(path),
-        readNewSessionEntries: (slot, rpc) =>
-          this.workerLifecycle.readNewSessionEntries(slot, rpc),
-      },
-      this.diagnostics,
+    this.liveTail = new RuntimeLiveTail((path) =>
+      this.attachments.promptFileName(path),
     );
+    this.checkpoints = new WorkerCheckpointReader({
+      commit: (slot, rpc, { marker, entries }) =>
+        this.events.publishCheckpoint(slot, () => {
+          const view = slot.workerView;
+          if (slot.process !== rpc || !view) return;
+          if (marker.contextGeneration !== view.contextGeneration) {
+            if (marker.contextGeneration < view.contextGeneration) return;
+            view.contextGeneration = marker.contextGeneration;
+            view.sealedCursor = view.index.tailEntryId;
+            this.renewView(slot);
+          }
+          // The startup attestor or branch command can already have installed
+          // the beginning of this native batch while its RPC receipt was pending.
+          const unseen = view.index.entriesAfter(marker.from);
+          const overlap = Math.min(unseen.length, entries.length);
+          for (let i = 0; i < overlap; i += 1)
+            if (unseen[i]?.id !== entries[i]?.id)
+              throw new Error(
+                "Pi checkpoint does not continue the admitted native index",
+              );
+          if (unseen.length > overlap) return;
+          const fresh = entries.slice(overlap);
+          const previousLeaf = view.index.leafId;
+          // The branch command also verifies its own result and publishes its epoch.
+          if (slot.pendingBranchBridge) return;
+          const changed = view.index.appendWorkerEntries(fresh, marker.leaf);
+          const sealed =
+            marker.sealed !== null &&
+            this.liveTail.seal(
+              slot,
+              view.index.entriesAfter(view.sealedCursor),
+            );
+          if (marker.sealed !== null) view.sealedCursor = marker.tail;
+          if (changed)
+            this.recordViewChange(slot, view.index, previousLeaf, marker.leaf);
+          if (changed || sealed)
+            this.emitSlotEvent(slot, {
+              type: "session_projection_changed",
+              health: slot.projection?.health,
+              conflict: slot.conflict,
+            });
+        }),
+      report: (slot, error) => {
+        this.logRuntimeError(slot.id, error, "worker_checkpoint");
+        if (slot.overlay.length) {
+          this.liveTail.markUnconfirmed(slot);
+          this.emitSlotEvent(slot, {
+            type: "session_projection_changed",
+            health: slot.projection?.health,
+            conflict: slot.conflict,
+          });
+        }
+      },
+    });
     this.deletions = new RuntimeSessionDeletionController({
       assertNotClosing: () => this.assertNotClosing(),
       withMaintenance: (operation) => this.withMaintenanceOperation(operation),
@@ -590,7 +634,7 @@ export class RuntimeController extends EventEmitter {
       request: (slot, worker, command, fence) =>
         this.requestPersistence(slot, worker, command, null, fence),
       updateOverlay: (slot, message, phase) =>
-        this.persistenceOwnership.updateOverlay(slot, message, phase),
+        this.liveTail.updateOverlay(slot, message, phase),
       emit: (slot, event) => this.emitSlotEvent(slot, event),
       reconcile: (slot) =>
         this.reconcileAcceptedPersistence(slot, "shell command", true),
@@ -598,12 +642,14 @@ export class RuntimeController extends EventEmitter {
     this.events = new RuntimeEventController({
       updateBash: (slot, event) => this.bash.update(slot, event),
       selectedSessionId: () => this.selectedSessionId,
-      recordPersistenceEvent: (slot, event) =>
-        this.persistenceOwnership.recordPersistenceEvent(slot, event),
+      finishTask: (slot, outcome) => this.finishTask(slot, outcome),
+      checkpoint: (slot, rpc, event) =>
+        this.checkpoints.observe(slot, rpc, event),
+      refreshCheckpoint: (slot) => this.checkpoints.refresh(slot),
       activeAssistantOverlayMessage: (slot) =>
-        this.persistenceOwnership.activeAssistantOverlayMessage(slot),
+        this.liveTail.activeAssistantOverlayMessage(slot),
       updateOverlay: (slot, message, phase, delta) =>
-        this.persistenceOwnership.updateOverlay(slot, message, phase, delta),
+        this.liveTail.updateOverlay(slot, message, phase, delta),
       addPendingExtensionUi: (slot, event, rpc) =>
         this.extensionUi.add(slot, event, rpc),
       invalidateCatalog: () => this.catalog.invalidate(),
@@ -634,15 +680,24 @@ export class RuntimeController extends EventEmitter {
     this.projectionCoordinator = new RuntimeProjectionCoordinator(
       {
         isClosing: () => this.closing,
-        reconcileOverlay: (slot, appendedEntries) =>
-          this.persistenceOwnership.reconcileOverlay(slot, appendedEntries),
-        appendedEntriesOwnership: (slot, result) =>
-          this.persistenceOwnership.appendedEntriesOwnership(slot, result),
-        setProjectionConflict: (slot, kind, message, diagnosticFields) =>
-          this.setProjectionConflict(slot, kind, message, diagnosticFields),
+        attestNewFile: async (slot) => {
+          const { process: rpc, projection } = slot;
+          if (!rpc || !projection) return false;
+          const native = await this.workerLifecycle.readNewSessionEntries(
+            slot,
+            rpc,
+          );
+          return (
+            slot.process === rpc &&
+            slot.projection === projection &&
+            projection.attestInitialMaterialization(native) !== "mismatch"
+          );
+        },
+        setProjectionConflict: (slot, kind, message) =>
+          this.setProjectionConflict(slot, kind, message),
         stopWriter: (slot) => this.stopWriter(slot),
-        projectionSettled: (slot, external, previousLeafId) =>
-          this.followView(slot, external, previousLeafId),
+        projectionSettled: (slot, result) =>
+          this.followView(slot, result.previousLeafId),
         renewView: (slot) => this.renewView(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
         logRuntimeError: (sessionId, error, event) =>
@@ -653,6 +708,8 @@ export class RuntimeController extends EventEmitter {
     this.workerLifecycle = new RuntimeWorkerLifecycle(
       {
         selectedSessionId: () => this.selectedSessionId,
+        finishTask: (slot, outcome) => this.finishTask(slot, outcome),
+        promptFileName: (path) => this.attachments.promptFileName(path),
         assertNotClosing: () => this.assertNotClosing(),
         createProcess: (options) => this.createProcess(options),
         assertWriterAvailable: async (slot) => {
@@ -665,8 +722,9 @@ export class RuntimeController extends EventEmitter {
           this.workerOptions(cwd, args, bridge),
         reconcile: (slot, force, startupAttestation) =>
           this.reconcileSlot(slot, force, startupAttestation),
-        setProjectionConflict: (slot, kind, message, diagnosticFields) =>
-          this.setProjectionConflict(slot, kind, message, diagnosticFields),
+        setProjectionConflict: (slot, kind, message) =>
+          this.setProjectionConflict(slot, kind, message),
+        markLiveUnconfirmed: (slot) => this.liveTail.markUnconfirmed(slot),
         renewView: (slot) => this.renewView(slot),
         emitSlotEvent: (slot, event) => this.emitSlotEvent(slot, event),
         dispatchProcessEvent: (slot, rpc, event) =>
@@ -680,7 +738,6 @@ export class RuntimeController extends EventEmitter {
       },
       this.diagnostics,
       {
-        projectionCoordinator: this.projectionCoordinator,
         extensionUi: this.extensionUi,
         bash: this.bash,
       },
@@ -900,8 +957,7 @@ export class RuntimeController extends EventEmitter {
         slot.stopping !== null ||
         slot.startupPhase === "starting" ||
         slot.pendingBranchBridge !== null ||
-        slot.pendingPartialPersistence !== null ||
-        slot.persistenceExpectations.length > 0,
+        slot.projection?.health.status === "pending",
     );
   }
 
@@ -1006,51 +1062,15 @@ export class RuntimeController extends EventEmitter {
   /** Keep each view on its own branch as the saved tree grows: a worker's
    * actual leaf, an attached Pi's reported leaf, or else the latest
    * continuation of the branch being viewed. */
-  private async followView(
-    slot: RuntimeSlot,
-    external: boolean,
-    previousLeafId: string | null | undefined,
-  ): Promise<void> {
+  private followView(slot: RuntimeSlot, previousLeafId?: string | null): void {
     const projection = slot.projection;
     if (!projection) return;
-    const before = effectiveRuntimeLeaf(slot);
-    const rpc = slot.process;
-    if (rpc && slot.ready) {
-      if (!external || slot.pendingBranchBridge) return;
-      // Only use a cursor that this worker has seen. The new file tail may
-      // belong to another Pi and is absent from this worker's in-memory tree.
-      const cursor = slot.navigationLease
-        ? slot.navigationLease.effectiveLeafId
-        : previousLeafId;
-      const leaf = await rpc
-        .request<{ leafId?: unknown }>({
-          type: "get_entries",
-          ...(cursor ? { since: cursor } : {}),
-        })
-        .then(
-          (response) =>
-            typeof response.leafId === "string" || response.leafId === null
-              ? response.leafId
-              : cursor,
-          (error) => {
-            this.logRuntimeError(slot.id, error, "worker_branch_read");
-            return cursor;
-          },
-        );
-      if (
-        leaf === undefined ||
-        slot.process !== rpc ||
-        slot.projection !== projection ||
-        !slot.bridge
-      )
-        return;
-      slot.navigationLease =
-        leaf === projection.leafId
-          ? null
-          : {
-              effectiveLeafId: leaf,
-            };
-    } else if (!rpc && slot.viewLeafId !== undefined) {
+    if (slot.process) {
+      if (!slot.pendingBranchBridge) this.checkpoints.refresh(slot);
+      return;
+    }
+    const before = slot.viewLeafId ?? previousLeafId ?? null;
+    if (slot.viewLeafId !== undefined) {
       const reported = this.externalSessions?.reportedLeaf(slot);
       slot.viewLeafId =
         reported !== undefined &&
@@ -1058,8 +1078,7 @@ export class RuntimeController extends EventEmitter {
           ? reported
           : projection.latestContinuation(slot.viewLeafId);
     }
-    const after = effectiveRuntimeLeaf(slot);
-    this.recordViewChange(slot, projection, before, after);
+    this.recordViewChange(slot, projection, before, effectiveRuntimeLeaf(slot));
   }
 
   private followAttachedLeaf(slot: RuntimeSlot, leafId: string | null): void {
@@ -1081,7 +1100,7 @@ export class RuntimeController extends EventEmitter {
 
   private recordViewChange(
     slot: RuntimeSlot,
-    projection: SessionProjectionView,
+    projection: Pick<SessionProjectionView, "entry">,
     before: string | null,
     after: string | null,
   ): void {
@@ -1104,7 +1123,6 @@ export class RuntimeController extends EventEmitter {
 
   private renewView(slot: RuntimeSlot): void {
     slot.viewId = bridgeToken("view");
-    slot.customActivities = emptyCustomActivityOwnership();
   }
 
   private reserveForkDestination(id: string, path: string): ForkReservation {
@@ -1249,7 +1267,6 @@ export class RuntimeController extends EventEmitter {
       this.slots.get(slot.id) === slot &&
         !this.deletions.isDeleting(slot.id) &&
         !slot.conflict &&
-        !slot.navigationLease &&
         rpc &&
         slot.ready &&
         rpc.available,
@@ -1599,8 +1616,6 @@ export class RuntimeController extends EventEmitter {
           outcomeUnknown: true,
         },
       );
-    for (const expectation of slot.persistenceExpectations)
-      expectation.settle(null);
     try {
       await Promise.all([this.stopWriter(slot), error.stopped]);
     } catch {
@@ -1634,6 +1649,7 @@ export class RuntimeController extends EventEmitter {
     try {
       await this.reconcileSlot(slot, true);
       this.throwIfConflicted(slot);
+      this.checkpoints.refresh(slot);
       return true;
     } catch (error) {
       this.logRuntimeError(
@@ -1717,45 +1733,6 @@ export class RuntimeController extends EventEmitter {
     }
   }
 
-  private async withExpectedPersistence<T>(
-    slot: RuntimeSlot,
-    expectations: readonly PersistenceExpectation[],
-    operation: () => Promise<T>,
-  ): Promise<T> {
-    const operationId = `op_${randomBytes(8).toString("base64url")}`;
-    slot.persistenceExpectations.push(...expectations);
-    this.diagnostics.record("debug", "persistence_expectations_added", {
-      operationId,
-      sessionId: slot.id,
-      slotIncarnation: slot.incarnationId,
-      workerId: slot.bridge?.workerId,
-      childPid: slot.process?.pid,
-      count: expectations.length,
-    });
-    try {
-      return await operation();
-    } finally {
-      let released = 0;
-      for (const expectation of expectations) {
-        const index = slot.persistenceExpectations.indexOf(expectation);
-        if (index >= 0) {
-          slot.persistenceExpectations.splice(index, 1);
-          released += 1;
-        }
-        expectation.settle(null);
-      }
-      this.diagnostics.record("debug", "persistence_expectations_settled", {
-        operationId,
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: slot.bridge?.workerId,
-        childPid: slot.process?.pid,
-        consumed: expectations.length - released,
-        released,
-      });
-    }
-  }
-
   private scheduleIdleWorkerEviction(): void {
     this.workerPool.schedule();
   }
@@ -1812,6 +1789,42 @@ export class RuntimeController extends EventEmitter {
     );
   }
 
+  private eventSequence = 0;
+  private readonly snapshotCuts = new WeakMap<ActiveSnapshot, number>();
+  private lastTaskCreatedAt = 0;
+
+  private finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void {
+    if (!slot.activeTask) return;
+    slot.activeTask = null;
+    if (outcome) this.publishTaskOutcome(slot, outcome);
+  }
+
+  private publishTaskOutcome(
+    slot: RuntimeSlot,
+    outcome: TaskOutcome,
+    id: string = randomUUID(),
+  ): void {
+    if (this.slots.get(slot.id) !== slot) return;
+    this.lastTaskCreatedAt = Math.max(Date.now(), this.lastTaskCreatedAt + 1);
+    this.emit("task_outcome", {
+      id,
+      sessionId: slot.id,
+      outcome,
+      createdAt: this.lastTaskCreatedAt,
+      project: basename(slot.cwd).slice(0, 160),
+      sessionName: slot.preview?.sessionName
+        ?.replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 160),
+    } satisfies TaskNotification);
+  }
+
+  /** Metadata and the event boundary are captured in the same synchronous
+   * projection, after any asynchronous Pi and file reads finish. */
+  eventSnapshotCut(snapshot: ActiveSnapshot): number | undefined {
+    return this.snapshotCuts.get(snapshot);
+  }
+
   private emitSlotEvent(slot: RuntimeSlot, event: unknown): void {
     // A slot enters the registry only under its final Pi session id. Before
     // that (newSession's provisional phase) its events would broadcast an
@@ -1844,9 +1857,9 @@ export class RuntimeController extends EventEmitter {
     if (body.type === "runtime_ready") this.scheduleExternalSessionRecovery();
     this.emit("event", {
       ...body,
+      runtimeSequence: ++this.eventSequence,
       sessionId: slot.id,
       sessionStatus,
-      taskProject: basename(slot.cwd),
     });
   }
 
@@ -1914,6 +1927,7 @@ export class RuntimeController extends EventEmitter {
                 `${reserved}${PROVIDER_AUTH_SUFFIX}`,
                 `${reserved}${RETRY_STATE_SUFFIX}`,
                 `${reserved}${PENDING_IMAGE_SUFFIX}`,
+                `${reserved}${CHECKPOINT_SUFFIX}`,
                 // Used by attached clients, not typed by people.
                 "attach-control",
               ]
@@ -1939,10 +1953,9 @@ export class RuntimeController extends EventEmitter {
     rpc: PiRpcProcess,
   ): Promise<{
     stats: unknown;
-    models: unknown[] | undefined;
     commands: unknown[];
   }> {
-    const [stats, models, commands] = await Promise.all([
+    const [stats, commands] = await Promise.all([
       rpc.request({ type: "get_session_stats" }).catch((error) => {
         this.runtimeCapabilityUnavailable(
           slot,
@@ -1952,15 +1965,18 @@ export class RuntimeController extends EventEmitter {
         );
         return undefined;
       }),
+      this.readRuntimeCommands(slot, rpc),
       slot.availableModels
         ? Promise.resolve(slot.availableModels)
         : rpc
             .request<{ models: unknown[] }>({ type: "get_available_models" })
             .then(
-              (result) =>
-                (slot.availableModels = result.models.map((model) =>
-                  modelOption(model as ModelOption),
-                )),
+              (result) => {
+                if (slot.process === rpc)
+                  slot.availableModels = result.models.map((model) =>
+                    modelOption(model as ModelOption),
+                  );
+              },
               (error) => {
                 this.runtimeCapabilityUnavailable(
                   slot,
@@ -1971,9 +1987,8 @@ export class RuntimeController extends EventEmitter {
                 return undefined;
               },
             ),
-      this.readRuntimeCommands(slot, rpc),
     ]);
-    return { stats, models, commands };
+    return { stats, commands };
   }
 
   /** Pi delays writing a new session's startup thinking selection to JSONL.
@@ -2057,17 +2072,18 @@ export class RuntimeController extends EventEmitter {
     return operation;
   }
 
-  private previewSnapshot(
+  private snapshotView(
     slot: RuntimeSlot,
     sessionStatuses: Record<
       string,
       SessionRuntimeStatus
     > = this.sessionStatuses(),
+    native?: { isStreaming: boolean; isCompacting: boolean },
   ): ActiveSnapshot {
     if (!slot.preview || !slot.projection)
       throw new Error("Session projection is not available");
     const effectiveLeafId = effectiveRuntimeLeaf(slot);
-    const page = slot.projection.latestPage(
+    const page = runtimeHistory(slot)!.latestPage(
       slot.overlay,
       effectiveLeafId,
       slot.viewId,
@@ -2086,9 +2102,12 @@ export class RuntimeController extends EventEmitter {
       !slot.readOnlyReason &&
       this.modelMetadata &&
       metadata === undefined;
-    return safeProjection({
+    const snapshot = safeProjection({
       active: {
         ...slot.preview,
+        sessionId: slot.id,
+        sessionFile: slot.sessionPath ?? undefined,
+        cwd: slot.cwd,
         readOnlyReason: slot.readOnlyReason ?? undefined,
         model: external
           ? (nativeSelection?.model ?? null)
@@ -2121,15 +2140,14 @@ export class RuntimeController extends EventEmitter {
         projectionConflict: slot.conflict,
         durableLeafId: slot.projection.leafId,
         effectiveLeafId,
-        navigationLeased: Boolean(slot.navigationLease),
-        isStreaming: isBusyRunState(slot.runState),
-        activeAssistantMessageKey:
-          this.persistenceOwnership.activeAssistantSnapshotKey(
-            slot,
-            page.messages,
-          ),
+        navigationLeased: workerOnSeparateBranch(slot),
+        isStreaming: native?.isStreaming ?? isBusyRunState(slot.runState),
+        activeAssistantMessageKey: this.liveTail.activeAssistantSnapshotKey(
+          slot,
+          page.messages,
+        ),
         toolActivity: slot.toolActivity,
-        isCompacting: slot.runState === "compacting",
+        isCompacting: native?.isCompacting ?? slot.runState === "compacting",
       },
       runState: slot.runState,
       bashRunning: Boolean(slot.nativeBash),
@@ -2143,6 +2161,8 @@ export class RuntimeController extends EventEmitter {
       extensionDisplays: slot.extensionDisplays,
       extensionStatuses: slot.extensionStatuses,
     }) as ActiveSnapshot;
+    this.snapshotCuts.set(snapshot, this.eventSequence);
+    return snapshot;
   }
 
   private async resolveWorkspaceRoot(cwd: string): Promise<string | null> {
@@ -2158,20 +2178,6 @@ export class RuntimeController extends EventEmitter {
         return null;
       throw error;
     }
-  }
-
-  private async openProjection(
-    session: SessionRecord,
-    workspaceRoot: string,
-  ): Promise<{
-    projection: SessionProjectionView;
-    preview: ActiveSessionSnapshot;
-  }> {
-    const projection = await this.openSessionProjection(session);
-    return {
-      projection,
-      preview: sessionProjectionSnapshot(session, projection, workspaceRoot),
-    };
   }
 
   private attachProjection(
@@ -2238,7 +2244,6 @@ export class RuntimeController extends EventEmitter {
           if (!root || !slot.readOnlyReason) return;
           slot.cwd = root;
           slot.readOnlyReason = null;
-          if (slot.preview) slot.preview = { ...slot.preview, cwd: root };
           this.renewView(slot);
         });
       }
@@ -2271,7 +2276,13 @@ export class RuntimeController extends EventEmitter {
       const workspaceRoot = await this.resolveWorkspaceRoot(session.cwd);
       const cwd = workspaceRoot ?? session.cwd;
       const readOnlyReason = !workspaceRoot ? "workspace-unavailable" : null;
-      const { projection, preview } = await this.openProjection(session, cwd);
+      const projection = await this.openSessionProjection(session);
+      const preview = {
+        sessionName: session.name,
+        model: projection.model,
+        thinkingLevel: projection.thinkingLevel,
+        commands: [],
+      };
       if (this.closing) {
         await projection.close();
         this.assertNotClosing();
@@ -2290,15 +2301,12 @@ export class RuntimeController extends EventEmitter {
         current.preview = preview;
         current.cwd = cwd;
         current.readOnlyReason = readOnlyReason;
-        current.sessionPath = preview.sessionFile
-          ? resolve(preview.sessionFile)
-          : resolve(session.path);
+        current.sessionPath = resolve(projection.path);
         current.runState = retainedConflict ? "conflict" : retainedRunState;
         current.compactionReturnState = null;
         current.summarizationRetry = null;
         await this.workerLifecycle.releaseWorkerView(current, "replaced");
-        this.projectionCoordinator.clearWriterBaseline(current);
-        this.persistenceOwnership.clearOverlay(current);
+        this.liveTail.clearOverlay(current);
         current.conflict = retainedConflict;
         current.branchRevision = projection.revision;
         this.renewView(current);
@@ -2309,9 +2317,7 @@ export class RuntimeController extends EventEmitter {
         id: session.id,
         cwd,
         readOnlyReason,
-        sessionPath: preview.sessionFile
-          ? resolve(preview.sessionFile)
-          : resolve(session.path),
+        sessionPath: resolve(projection.path),
         process: null,
         preview,
         projection,
@@ -2530,7 +2536,6 @@ export class RuntimeController extends EventEmitter {
           // A live Pi is running the chosen branch: watch it, as on entry.
           if (slot.process) await this.stopWriter(slot);
           this.workingSessions.delete(slot.id);
-          slot.navigationLease = null;
           this.moveView(slot, leafId);
           this.markExternalActive(slot);
           return false;
@@ -2599,7 +2604,9 @@ export class RuntimeController extends EventEmitter {
     if (
       slot.process &&
       slot.ready &&
-      this.projectionCoordinator.writerBaselineMatches(slot)
+      slot.process.available &&
+      !slot.conflict &&
+      slot.projection?.health.status === "ok"
     )
       return slot;
     const pending = this.opening.get(slot.id);
@@ -2671,7 +2678,7 @@ export class RuntimeController extends EventEmitter {
         slot.process &&
         slot.ready &&
         !isBusyRunState(slot.runState) &&
-        !slot.navigationLease
+        !workerOnSeparateBranch(slot)
       )
         void this.mutateSlot(slot, async () => {
           if (this.workingSessions.has(slot.id) || !slot.process) return;
@@ -2905,6 +2912,12 @@ export class RuntimeController extends EventEmitter {
               409,
             );
           }
+          slot.workerView = createWorkerView(
+            slot,
+            initialEntries,
+            initialEntries.at(-1)?.id ?? null,
+            (path) => this.attachments.promptFileName(path),
+          );
           projection = pendingProjection;
         } catch (error) {
           await pendingProjection.close();
@@ -2914,21 +2927,12 @@ export class RuntimeController extends EventEmitter {
         throw new Error("Pi did not report a session file");
       }
       slot.projection = projection;
-      const page = projection.latestPage();
       slot.preview = {
-        sessionId,
-        ...(slot.sessionPath ? { sessionFile: slot.sessionPath } : {}),
         sessionName: name,
-        cwd,
         model: state.model ? modelOption(state.model as ModelOption) : null,
         thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
-        isStreaming: false,
-        isCompacting: false,
-        transcriptPage: page,
-        projectionHealth: projection.health,
         commands: [],
       };
-      this.projectionCoordinator.captureWriterBaseline(slot);
       this.attachProjection(slot, projection);
       projection.resumeReconciliation();
       // Extensions may have asked for input while the slot still carried its
@@ -2949,10 +2953,9 @@ export class RuntimeController extends EventEmitter {
           ? { sessionName: state.sessionName }
           : {}),
         stats: extras.stats,
-        availableModels: extras.models,
         commands: extras.commands,
       };
-      committedSnapshot = this.previewSnapshot(slot, {
+      committedSnapshot = this.snapshotView(slot, {
         ...this.sessionStatuses(
           selection === this.selectionSequence
             ? sessionId
@@ -3367,6 +3370,15 @@ export class RuntimeController extends EventEmitter {
               history.images,
             );
           }
+          if (directDelivery) {
+            await this.reconcileSlot(slot, false);
+            this.throwIfConflicted(slot);
+            if (slot.projection?.health.status === "pending")
+              throw requestError(
+                "The session file has an incomplete JSONL entry",
+                409,
+              );
+          }
           assertDeliveryOwner();
           if (expected) {
             slot.deferredPrompts.splice(
@@ -3452,7 +3464,7 @@ export class RuntimeController extends EventEmitter {
               await this.reconcileAcceptedPersistence(slot, "the prompt", true)
             ) {
               try {
-                const newest = slot.projection?.historyPage(
+                const newest = runtimeHistory(slot)?.historyPage(
                   { kind: "composer" },
                   effectiveRuntimeLeaf(slot),
                   slot.viewId,
@@ -3601,8 +3613,14 @@ export class RuntimeController extends EventEmitter {
       this.throwIfConflicted(slot);
       if (!slot.projection)
         throw requestError("Session projection is not available", 503);
+      const effective = effectiveRuntimeLeaf(slot);
+      const history =
+        effective === null || slot.projection.entry(effective)
+          ? slot.projection
+          : runtimeHistory(slot)!;
       return {
-        ...slot.projection.branchTree(effectiveRuntimeLeaf(slot), query),
+        ...history.branchTree(effective, query),
+        durableLeafId: slot.projection.leafId,
         revision: slot.branchRevision,
         skipSummaryPrompt:
           SettingsManager.create(
@@ -3624,7 +3642,10 @@ export class RuntimeController extends EventEmitter {
       this.requireHistoryView(slot, request.viewId);
       if (!slot.projection)
         throw requestError("History image is unavailable", 503);
-      return slot.projection.branchImage(request.targetId, index);
+      const current = runtimeHistory(slot)!;
+      return (
+        current.entry(request.targetId) ? current : slot.projection
+      ).branchImage(request.targetId, index);
     });
   }
 
@@ -3766,16 +3787,13 @@ export class RuntimeController extends EventEmitter {
         snapshot: await this.snapshotSlot(slot),
         ...(editorText ? { editorText } : {}),
       };
-    const tail = projection.tailEntryId;
-    const sourceProjectionRevision = projection.revision;
-    const sourceProjectionFingerprint = projection.fingerprint;
+    const tail = slot.workerView?.index.tailEntryId ?? projection.tailEntryId;
     if (!tail)
       throw requestError("An empty session cannot change branches", 409);
     if (slot.pendingBranchBridge)
       throw requestError("A branch operation is already pending", 409);
 
     const pending = this.makePendingBranch(slot, bridge);
-    pending.navigationParentId = navigationTarget;
     pending.summarize = request.summarize ?? false;
     const bridgeRequest: BranchBridgeRequest = {
       v: BRANCH_BRIDGE_VERSION,
@@ -3882,11 +3900,7 @@ export class RuntimeController extends EventEmitter {
     await this.reconcileSlot(slot, true);
     if (
       slot.conflict ||
-      (delta.length === 0
-        ? projection.revision !== sourceProjectionRevision ||
-          projection.fingerprint !== sourceProjectionFingerprint
-        : !validDelta ||
-          !delta.every((entry) => projection.persistedEntryMatches(entry))) ||
+      !delta.every((entry) => projection.persistedEntryMatches(entry)) ||
       verified.leafId !== result.effectiveLeaf ||
       result.beforeLeaf !== beforeLeaf
     )
@@ -3931,10 +3945,9 @@ export class RuntimeController extends EventEmitter {
     slot.branchRevision += 1;
     if (!restoringView) slot.deliveryNavigationEpoch += 1;
     this.renewView(slot);
-    slot.navigationLease =
-      result.effectiveLeaf === projection.leafId
-        ? null
-        : { effectiveLeafId: result.effectiveLeaf };
+    slot.workerView?.index.appendWorkerEntries(delta, result.effectiveLeaf);
+    slot.workerView?.finishedMessages.clear();
+    this.checkpoints.refresh(slot);
     this.emitSlotEvent(slot, {
       type: "branch_changed",
       revision: slot.branchRevision,
@@ -4151,27 +4164,15 @@ export class RuntimeController extends EventEmitter {
         }
 
         const destinationViewId = bridgeToken("view");
-        const page = destinationProjection.latestPage(
-          [],
-          destinationProjection.leafId,
-          destinationViewId,
-        );
         const destination = createRuntimeSlot({
           id: destinationId,
           cwd: source.cwd,
           sessionPath: destinationPath,
           process: null,
           preview: {
-            sessionId: destinationId,
-            sessionFile: destinationPath,
             ...(staged.sessionName ? { sessionName: staged.sessionName } : {}),
-            cwd: source.cwd,
             model: destinationProjection.model,
             thinkingLevel: destinationProjection.thinkingLevel || "off",
-            isStreaming: false,
-            isCompacting: false,
-            transcriptPage: page,
-            projectionHealth: destinationProjection.health,
             commands: [],
           },
           projection: destinationProjection,
@@ -4508,9 +4509,6 @@ export class RuntimeController extends EventEmitter {
           await this.stopWriter(slot);
           await this.workerLifecycle.releaseWorkerView(slot, "aborted");
           this.refreshPendingQueues(slot);
-          for (const expectation of slot.persistenceExpectations)
-            expectation.settle(null);
-          slot.persistenceExpectations = [];
           await this.reconcileSlot(slot, true);
           if (slot.projection?.health.status === "ok") {
             this.diagnostics.record("info", "projection_conflict_recovered", {
@@ -4631,10 +4629,6 @@ export class RuntimeController extends EventEmitter {
           } catch {
             // Only explicit cancellation has a grace budget. An unresponsive
             // hook retires through the existing actual-stop/writer fence.
-            if (slot.process === rpc) {
-              for (const expectation of slot.persistenceExpectations)
-                expectation.settle((entry) => entry.type === "compaction");
-            }
             if (!slot.process || slot.process === rpc)
               await this.stopWriter(slot, "compact");
           } finally {
@@ -4876,17 +4870,9 @@ export class RuntimeController extends EventEmitter {
             let leafId = effectiveRuntimeLeaf(slot);
             // A saved branch is independently readable, even without its cwd
             // or a writable Pi. Never launch a worker merely to export it.
-            if (slot.process) {
-              const ready = direct
-                ? slot
-                : await this.ensureFreshWriterInsideGate(slot);
-              const tail = entries.at(-1)?.id;
-              const branch = await ready.process!.request<{
-                entries: SessionEntry[];
-                leafId: string | null;
-              }>({ type: "get_entries", ...(tail ? { since: tail } : {}) });
-              entries = [...entries, ...branch.entries];
-              leafId = branch.leafId;
+            if (slot.workerView) {
+              entries = slot.workerView.index.entriesAfter(null);
+              leafId = slot.workerView.index.leafId;
             }
             const content = serializeBranchExport(slot.id, slot.cwd, {
               entries,
@@ -4967,29 +4953,19 @@ export class RuntimeController extends EventEmitter {
     const compaction = { worker: ready.process, finished, aborted: false };
     slot.manualCompaction = compaction;
     try {
-      const expectation = deferredExpectation();
-      return await this.withExpectedPersistence(
-        slot,
-        [expectation],
-        async () => {
-          let result: unknown;
-          try {
-            result = await this.requestPersistence<unknown>(
-              slot,
-              ready.process,
-              { type: "compact", customInstructions },
-              null,
-            );
-          } finally {
-            finish();
-          }
-          expectation.settle(compactionMatcher(result));
-          await this.reconcileAcceptedPersistence(slot, "compaction", true);
-          if (slot.runState === "compacting") slot.runState = "idle";
-          slot.compactionReturnState = null;
-          return result;
-        },
-      );
+      let result: unknown;
+      try {
+        result = await this.requestPersistence(slot, ready.process, {
+          type: "compact",
+          customInstructions,
+        });
+      } finally {
+        finish();
+      }
+      await this.reconcileAcceptedPersistence(slot, "compaction", true);
+      if (slot.runState === "compacting") slot.runState = "idle";
+      slot.compactionReturnState = null;
+      return result;
     } catch (error) {
       const retired =
         error instanceof PiRpcCancelledError && error.command === "compact";
@@ -5027,12 +5003,15 @@ export class RuntimeController extends EventEmitter {
             ? "idle"
             : "aborted";
         slot.compactionReturnState = null;
-        if (retired || racedCompletion)
+        if (retired || racedCompletion) {
+          if (slot.activeTask === "compaction")
+            this.finishTask(slot, racedCompletion ? "completed" : null);
           this.emitSlotEvent(slot, {
             type: "compaction_end",
             reason: "manual",
             ...(racedCompletion ? { result: {} } : { aborted: true }),
           });
+        }
         return racedCompletion ? {} : { aborted: true };
       }
       if (slot.runState === "compacting") slot.runState = previousRunState;
@@ -5066,22 +5045,11 @@ export class RuntimeController extends EventEmitter {
     }
     await this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
-      await this.withExpectedPersistence(
-        slot,
-        [
-          knownExpectation(
-            (entry) =>
-              entry.type === "session_info" && entry.name === persistedName,
-          ),
-        ],
-        async () => {
-          await this.requestPersistence(slot, ready.process, {
-            type: "set_session_name",
-            name: persistedName,
-          });
-          await this.reconcileAcceptedPersistence(slot, "the session rename");
-        },
-      );
+      await this.requestPersistence(slot, ready.process, {
+        type: "set_session_name",
+        name: persistedName,
+      });
+      await this.reconcileAcceptedPersistence(slot, "the session rename");
       this.catalog.invalidate();
     });
   }
@@ -5091,13 +5059,11 @@ export class RuntimeController extends EventEmitter {
       const slot = this.requireSlot(sessionId);
       return this.mutateSlot(slot, async () => {
         const ready = await this.ensureFreshWriterInsideGate(slot);
-        return this.withExpectedPersistence(slot, [], async () => {
-          const result = await this.requestPersistence(slot, ready.process, {
-            type: "cycle_model",
-          });
-          await this.reconcileAcceptedPersistence(slot, "the model cycle");
-          return result;
+        const result = await this.requestPersistence(slot, ready.process, {
+          type: "cycle_model",
         });
+        await this.reconcileAcceptedPersistence(slot, "the model cycle");
+        return result;
       });
     });
   }
@@ -5129,26 +5095,13 @@ export class RuntimeController extends EventEmitter {
     }
     return this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
-      return this.withExpectedPersistence(
-        slot,
-        [
-          knownExpectation(
-            (entry) =>
-              entry.type === "model_change" &&
-              entry.provider === provider &&
-              entry.modelId === modelId,
-          ),
-        ],
-        async () => {
-          await this.requestPersistence(slot, ready.process, {
-            type: "set_model",
-            provider,
-            modelId,
-          });
-          await this.reconcileAcceptedPersistence(slot, "the model change");
-          return this.readModelSelection(ready.process);
-        },
-      );
+      await this.requestPersistence(slot, ready.process, {
+        type: "set_model",
+        provider,
+        modelId,
+      });
+      await this.reconcileAcceptedPersistence(slot, "the model change");
+      return this.readModelSelection(ready.process);
     });
   }
 
@@ -5338,27 +5291,15 @@ export class RuntimeController extends EventEmitter {
     }
     return this.mutateSlot(slot, async () => {
       const ready = await this.ensureFreshWriterInsideGate(slot);
-      return this.withExpectedPersistence(
+      await this.requestPersistence(slot, ready.process, {
+        type: "set_thinking_level",
+        level,
+      });
+      await this.reconcileAcceptedPersistence(
         slot,
-        [
-          knownExpectation(
-            (entry) =>
-              entry.type === "thinking_level_change" &&
-              entry.thinkingLevel === level,
-          ),
-        ],
-        async () => {
-          await this.requestPersistence(slot, ready.process, {
-            type: "set_thinking_level",
-            level,
-          });
-          await this.reconcileAcceptedPersistence(
-            slot,
-            "the thinking-level change",
-          );
-          return this.readModelSelection(ready.process);
-        },
+        "the thinking-level change",
       );
+      return this.readModelSelection(ready.process);
     });
   }
 
@@ -5424,7 +5365,7 @@ export class RuntimeController extends EventEmitter {
       const rpc = slot.process;
       if (!rpc || !slot.ready) {
         void this.readPreviewModels(slot);
-        return this.previewSnapshot(slot);
+        return this.snapshotView(slot);
       }
       const [state, extras, autoRetryEnabled] = await Promise.all([
         rpc.request<Record<string, unknown>>({ type: "get_state" }),
@@ -5454,84 +5395,39 @@ export class RuntimeController extends EventEmitter {
           slot.sessionPath !== null &&
           runtimeSessionPath !== resolve(slot.sessionPath))
       )
-        return this.previewSnapshot(slot);
-      const { stats, models, commands } = extras;
+        return this.snapshotView(slot);
+      const { stats, commands } = extras;
       if (slot.sessionPath === null && runtimeSessionPath !== null)
         slot.sessionPath = runtimeSessionPath;
-      if (!slot.projection)
-        throw new Error("Session projection is not available");
-      const effectiveLeafId = effectiveRuntimeLeaf(slot);
-      const page = slot.projection.latestPage(
-        slot.overlay,
-        effectiveLeafId,
-        slot.viewId,
-      );
-      const snapshot = safeProjection({
-        active: {
-          sessionId: slot.id,
-          sessionFile: slot.sessionPath ?? undefined,
-          sessionName:
-            typeof state.sessionName === "string"
-              ? state.sessionName
-              : undefined,
-          cwd: slot.cwd,
-          model: state.model ? modelOption(state.model as ModelOption) : null,
-          thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
-          isStreaming: Boolean(state.isStreaming),
-          activeAssistantMessageKey:
-            this.persistenceOwnership.activeAssistantSnapshotKey(
-              slot,
-              page.messages,
-            ),
-          toolActivity: slot.toolActivity,
-          isCompacting: Boolean(state.isCompacting),
-          transcriptPage: page,
-          projectionHealth: slot.projection.health,
-          projectionConflict: slot.conflict,
-          durableLeafId: slot.projection.leafId,
-          effectiveLeafId,
-          navigationLeased: Boolean(slot.navigationLease),
-          stats,
-          runtimeSettings: {
-            autoCompactionEnabled:
-              typeof state.autoCompactionEnabled === "boolean"
-                ? state.autoCompactionEnabled
-                : null,
-            autoRetryEnabled,
-            steeringMode:
-              state.steeringMode === "all" ||
-              state.steeringMode === "one-at-a-time"
-                ? state.steeringMode
-                : null,
-            followUpMode:
-              state.followUpMode === "all" ||
-              state.followUpMode === "one-at-a-time"
-                ? state.followUpMode
-                : null,
-          },
-          availableModels: slot.availableModels ?? models,
-          commands,
+      slot.preview = {
+        sessionName:
+          typeof state.sessionName === "string" ? state.sessionName : undefined,
+        model: state.model ? modelOption(state.model as ModelOption) : null,
+        thinkingLevel: this.effectiveThinkingLevel(slot, state.thinkingLevel),
+        stats,
+        runtimeSettings: {
+          autoCompactionEnabled:
+            typeof state.autoCompactionEnabled === "boolean"
+              ? state.autoCompactionEnabled
+              : null,
+          autoRetryEnabled,
+          steeringMode:
+            state.steeringMode === "all" ||
+            state.steeringMode === "one-at-a-time"
+              ? state.steeringMode
+              : null,
+          followUpMode:
+            state.followUpMode === "all" ||
+            state.followUpMode === "one-at-a-time"
+              ? state.followUpMode
+              : null,
         },
-        runState: slot.runState,
-        bashRunning: Boolean(slot.nativeBash),
-        retry: slot.runState === "retrying" ? slot.retry : null,
-        summarizationRetry: isBusyRunState(slot.runState)
-          ? slot.summarizationRetry
-          : null,
-        sessionStatuses: this.sessionStatuses(),
-        pendingExtensionUiRequests: this.extensionUi.pendingRequests(slot),
-        pendingQueues: slot.pendingQueues,
-        extensionDisplays: slot.extensionDisplays,
-        extensionStatuses: slot.extensionStatuses,
-      }) as ActiveSnapshot;
-      if (snapshot.active) {
-        slot.preview = {
-          ...snapshot.active,
-          isStreaming: false,
-          isCompacting: false,
-        };
-      }
-      return snapshot;
+        commands,
+      };
+      return this.snapshotView(slot, this.sessionStatuses(), {
+        isStreaming: Boolean(state.isStreaming),
+        isCompacting: Boolean(state.isCompacting),
+      });
     });
   }
 
@@ -5636,10 +5532,6 @@ export class RuntimeController extends EventEmitter {
     const stopping: Promise<unknown>[] = [];
     for (const slot of slots) {
       this.extensionUi.clear(slot, "closed");
-      for (const expectation of slot.persistenceExpectations)
-        expectation.settle(null);
-      slot.persistenceExpectations = [];
-      this.projectionCoordinator.clearPartialPersistence(slot);
       if (slot.pendingBranchBridge) {
         slot.pendingBranchBridge.reject(new Error("Runtime is closing"));
         slot.pendingBranchBridge = null;

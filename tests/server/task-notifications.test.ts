@@ -6,7 +6,6 @@ import type webPush from "web-push";
 import {
   pushSubscriptionSchema,
   TaskNotifications,
-  TaskOutcomeTracker,
 } from "../../server/task-notifications.js";
 import type { TaskNotification } from "../../shared/notifications.js";
 
@@ -44,16 +43,20 @@ async function fixture(
   services.push(service);
   return { path, service, send };
 }
+const lastCreatedAt = new WeakMap<TaskNotifications, number>();
 function run(service: TaskNotifications, id = "s1", failed = false) {
-  service.observe({ type: "agent_start", sessionId: id });
-  service.observe({
-    type: "agent_settled",
+  const createdAt = Math.max(Date.now(), (lastCreatedAt.get(service) ?? 0) + 1);
+  lastCreatedAt.set(service, createdAt);
+  const outcome: TaskNotification = {
+    id: `outcome:${createdAt}`,
     sessionId: id,
-    taskProject: "research",
-    taskSessionName: "Review results",
-    sessionStatus: { runState: failed ? "failed" : "idle" },
-    title: "PRIVATE PROMPT",
-  });
+    project: "research",
+    sessionName: "Review results",
+    outcome: failed ? "failed" : "completed",
+    createdAt,
+  };
+  service.observe(outcome);
+  return outcome;
 }
 
 function listen(service: TaskNotifications, device = principal) {
@@ -70,94 +73,6 @@ function listen(service: TaskNotifications, device = principal) {
     ready: () => vi.waitFor(() => expect(settings).toHaveBeenCalled()),
   };
 }
-
-describe("Host task outcome ownership", () => {
-  it("owns one result across retry and nested compaction, ignores history and explicit cancellation", () => {
-    const tracker = new TaskOutcomeTracker();
-    const observe = (type: string, extra = {}) =>
-      tracker.observe({ type, sessionId: "s", ...extra });
-    expect(observe("agent_settled")).toBeNull();
-    expect(observe("agent_start")).toBeNull();
-    expect(observe("auto_retry_start")).toBeNull();
-    expect(observe("compaction_start", { reason: "auto" })).toBeNull();
-    expect(observe("compaction_end", { result: {} })).toBeNull();
-    const result = observe("agent_settled", {
-      sessionStatus: { runState: "failed" },
-      taskProject: "project",
-      taskSessionName: "  Review\n results  ",
-      title: "PRIVATE",
-    });
-    expect(result).toMatchObject({
-      outcome: "failed",
-      project: "project",
-      sessionName: "Review results",
-      sessionId: "s",
-    });
-    expect(JSON.stringify(result)).not.toContain("PRIVATE");
-    expect(observe("agent_settled")).toBeNull();
-    observe("agent_start");
-    expect(
-      observe("agent_settled", {
-        aborted: true,
-        sessionStatus: { runState: "aborted" },
-      }),
-    ).toBeNull();
-    observe("compaction_start", { reason: "manual" });
-    expect(
-      observe("compaction_end", { errorMessage: "Timed out" })?.outcome,
-    ).toBe("failed");
-    observe("agent_start");
-    expect(observe("runtime_error")?.outcome).toBe("failed");
-  });
-
-  it("retains unknown native endings and deduplicates explicit reporter evidence", () => {
-    const tracker = new TaskOutcomeTracker();
-    tracker.observe({ type: "agent_start", sessionId: "s" });
-    expect(
-      tracker.observe({
-        type: "agent_settled",
-        sessionId: "s",
-        outcomeUnknown: true,
-        sessionStatus: { runState: "failed" },
-      })?.outcome,
-    ).toBe("ended");
-    const event = {
-      type: "native_task_outcome",
-      sessionId: "s",
-      outcomeId: "receiver:run",
-      outcome: "failed",
-    };
-    expect(tracker.observe(event)?.outcome).toBe("failed");
-    expect(tracker.observe(event)).toBeNull();
-  });
-
-  it.each([
-    ["exited", true, "ended"],
-    ["exited", false, null],
-    ["left-session", true, null],
-    ["left-branch", true, null],
-    ["unreachable", true, null],
-  ] as const)(
-    "reports a released attachment that %s (during work: %s) as %s, never as failed",
-    (reason, duringWork, outcome) => {
-      const tracker = new TaskOutcomeTracker();
-      tracker.observe({ type: "agent_start", sessionId: "s" });
-      expect(
-        tracker.observe({
-          type: "external_attachment_ended",
-          sessionId: "s",
-          reason,
-          duringWork,
-          sessionStatus: { runState: "idle" },
-        })?.outcome ?? null,
-      ).toBe(outcome);
-      // The run is closed either way; a later settlement is not attributed to it.
-      expect(
-        tracker.observe({ type: "agent_settled", sessionId: "s" }),
-      ).toBeNull();
-    },
-  );
-});
 
 describe("installation-owned notification delivery", () => {
   it("replays outcomes with the current device grouping and opaque project identities", async () => {
@@ -228,11 +143,13 @@ describe("installation-owned notification delivery", () => {
       if (event.type === "task_notification") received.push(event.notification);
       return true;
     });
-    run(service);
+    const firstOutcome = run(service);
     await vi.waitFor(() => expect(received).toHaveLength(1));
     await service.acknowledge(principal, received[0]!.id);
+    service.observe(firstOutcome);
     run(service, "s2", true);
     await vi.waitFor(() => expect(received).toHaveLength(2));
+    expect(received[1]?.sessionId).toBe("s2");
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce(), {
       timeout: 4_000,
     });

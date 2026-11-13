@@ -46,6 +46,10 @@ Standalone manual compaction keeps its own operation identity. Terminal alerts f
 [[terminal]]; they share browser permission handling but keep separate delivery intent.
 Waiting-for-input alerts are outside this design.
 
+The owned Pi lifecycle and the attached Pi receiver publish task outcomes at their settlement
+boundaries. The Host supplies one increasing outcome order, including results within a clock tick.
+The delivery service consumes those outcomes; snapshots and browser event replay do not trigger it.
+
 ## Viewing and delivery
 
 - A focused, visible window displaying the owning conversation at settlement consumes the outcome

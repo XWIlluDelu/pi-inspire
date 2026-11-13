@@ -133,6 +133,7 @@ async function directAttachment(
     {
       current: () => true,
       emit: vi.fn(),
+      taskOutcome: vi.fn(),
       assertUsable: vi.fn(),
       released: vi.fn(),
       corresponds: () => true,
@@ -536,15 +537,11 @@ describe("continue an externally owned Pi", () => {
     const runs = { instanceId: "receiver", settled: [old] };
     f.setState({ activity: "idle", taskRuns: runs });
     const runtime = attachedRuntime(async () => f.native);
-    const events: Record<string, unknown>[] = [];
-    runtime.on("event", (event) =>
-      events.push(event as Record<string, unknown>),
-    );
+    const outcomes = vi.fn();
+    runtime.on("task_outcome", outcomes);
     trackRuntime(runtime);
     await openAttached(runtime, "a");
-    expect(
-      events.filter((event) => event.type === "native_task_outcome"),
-    ).toEqual([]);
+    expect(outcomes).not.toHaveBeenCalled();
     const failed = {
       id: "new",
       outcome: "failed" as const,
@@ -556,14 +553,9 @@ describe("continue an externally owned Pi", () => {
     });
     await vi.waitFor(
       () =>
-        expect(
-          events.filter((event) => event.type === "native_task_outcome"),
-        ).toEqual([
-          expect.objectContaining({
-            outcome: "failed",
-            outcomeId: "receiver:new",
-          }),
-        ]),
+        expect(outcomes).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ id: "receiver:new", outcome: "failed" }),
+        ),
       { timeout: 2_000 },
     );
     expect((await runtime.snapshot("a")).sessionStatuses.a?.runState).toBe(
@@ -1322,6 +1314,7 @@ describe("continue an externally owned Pi", () => {
   });
 
   it.each([
+    ["exited", { ended: "exited" }, true],
     ["unreachable", { ended: "unreachable" }, true],
     ["left-branch", { activity: "working", leafId: "elsewhere" }, false],
   ] as const)(
@@ -1329,12 +1322,14 @@ describe("continue an externally owned Pi", () => {
     async (reason, observed, stillOnBranch) => {
       const f = nativeFixture();
       const emit = vi.fn();
+      const taskOutcome = vi.fn();
       let onBranch = true;
       const released = vi.fn();
       const { slot, external } = await directAttachment(
         async () => f.native,
         {
           emit,
+          taskOutcome,
           released,
           corresponds: () => onBranch,
         },
@@ -1360,6 +1355,9 @@ describe("continue an externally owned Pi", () => {
           expect.objectContaining({ type: "runtime_error" }),
         );
         expect(released).toHaveBeenCalledWith(slot);
+        if (reason === "exited")
+          expect(taskOutcome).toHaveBeenCalledExactlyOnceWith(slot, "ended");
+        else expect(taskOutcome).not.toHaveBeenCalled();
       } finally {
         external.close();
         vi.useRealTimers();

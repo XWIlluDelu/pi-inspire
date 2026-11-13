@@ -332,19 +332,16 @@ const historyStart = z.coerce
 const historyQuerySchema = z.discriminatedUnion("kind", [
   z.strictObject({
     ...historyAddress,
-    kind: z.enum(["older", "activity"]),
-    cursor: historyCursor,
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("turns"),
-    start: historyStart,
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("turn"),
-    id: z.string().min(1).max(512),
+    kind: z.literal("page"),
     cursor: historyCursor.optional(),
+    entryId: z.string().min(1).max(200).optional(),
+    leafId: z.string().min(1).max(200).optional(),
+  }),
+  z.strictObject({
+    ...historyAddress,
+    kind: z.literal("search"),
+    text: z.string().trim().min(1).max(200),
+    leafId: z.string().min(1).max(200).optional(),
   }),
   z.strictObject({
     ...historyAddress,
@@ -702,7 +699,7 @@ export function createInspireServer(deps: AppDependencies): {
     undefined,
     (id) => deps.catalog.get(id, { refresh: true }),
   );
-  deps.runtime.on("event", taskNotifications.observe);
+  deps.runtime.on("task_outcome", taskNotifications.observe);
   const launchUrl = (origin: string): string =>
     `${origin}/#inspire-bootstrap=${browserAuth.bootstrap(origin)}`;
   app.get("/html-preview/:id/*path", (request, response) =>
@@ -1993,7 +1990,7 @@ export function createInspireServer(deps: AppDependencies): {
           })
         : Promise.resolve();
       runtimeEvents.close();
-      deps.runtime.off("event", taskNotifications.observe);
+      deps.runtime.off("task_outcome", taskNotifications.observe);
       await taskNotifications.close();
       terminalGateway.close();
       const runtimeResult = await deps.runtime.close().then(

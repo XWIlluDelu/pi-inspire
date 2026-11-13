@@ -1,379 +1,132 @@
 import { expect, test } from "@playwright/test";
-import type { TranscriptPage } from "../../shared/contracts";
-import { renderedColors } from "./support/colors";
+import type { NativeTurnPage } from "../../shared/contracts";
 import { routeSnapshots } from "./support/host-events";
 import { openFixtureSession, pairedPage } from "./support/navigation";
-import { firstTextBaseline } from "./support/text-baseline";
 
-// These suites own mocked Host responses, not Service Worker fetch handling.
 test.use({ serviceWorkers: "block" });
 
-test("earlier conversation pages retry explicitly and preserve the reading position", async ({
+test("searches a real saved branch and reads an old response in bounded sections", async ({
   page,
 }) => {
-  const sessionId = "fixture-history";
-  const rows = (label: string, start: number) =>
-    Array.from({ length: 14 }, (_, index) => ({
-      role: "user",
-      content: `${label} ${index + 1}`,
-      timestamp: start + index,
-      __inspireMessageId: `paging-${start + index}`,
-    }));
-  let latestPage: TranscriptPage;
-  const transport = await routeSnapshots(page, {
-    snapshot(snapshot) {
-      if (snapshot.active?.sessionId !== sessionId) return;
-      latestPage = {
-        ...snapshot.active.transcriptPage,
-        messages: rows("Current page", 30),
-        hasOlder: true,
-        olderCursor: "page-one",
-      };
-      snapshot.active.transcriptPage = latestPage;
-    },
-  });
-  const cursors: string[] = [];
-  await page.route("**/api/history?kind=older&**", (route) => {
-    const params = new URL(route.request().url()).searchParams;
-    expect(params.get("sessionId")).toBe(sessionId);
-    const cursor = params.get("cursor")!;
-    cursors.push(cursor);
-    if (cursors.length === 1)
+  await pairedPage(page);
+  await openFixtureSession(
+    page,
+    /Calibration history fixture/,
+    "fixture-calibration-history",
+  );
+  await page.getByRole("button", { name: "Turn history" }).click();
+  const history = page.getByRole("region", { name: "Turn history" });
+  await expect(history.getByText(/of 600/)).toBeVisible();
+  await history
+    .getByRole("textbox", { name: "Search this branch" })
+    .fill("cobalt baseline");
+  await history.getByRole("button", { name: "Search", exact: true }).click();
+  await history
+    .getByRole("button", { name: /Turn 1:.*cobalt baseline/ })
+    .click();
+  const oldAnswer = history.locator('[data-history-entry="history-a-0"]');
+  await oldAnswer.getByRole("button", { name: "Read full entry" }).click();
+  const next = oldAnswer.getByRole("button", { name: "Next section" });
+  await next.click();
+  await next.click();
+  await expect(oldAnswer.locator("pre")).toContainText("完整测量记录。");
+  await expect(next).toBeDisabled();
+  await page.reload();
+  await page.getByRole("button", { name: "Turn history" }).click();
+  await expect(oldAnswer.locator("pre")).toContainText("完整测量记录。");
+});
+
+test("@cross-browser history reads one page, retries it, and stays still as Live updates", async ({
+  page,
+}) => {
+  const transport = await routeSnapshots(page, {});
+  let fail = true;
+  let hits = 0;
+  await page.route("**/api/history?kind=page&**", async (route) => {
+    const { searchParams } = new URL(route.request().url());
+    const cursor = searchParams.get("cursor");
+    if (hits > 0) expect(searchParams.get("leafId")).toBe("current-entry");
+    if (cursor === "older" && fail) {
+      fail = false;
       return route.fulfill({
-        status: 403,
-        json: { error: "Earlier messages unavailable" },
+        status: 503,
+        json: { error: "History unavailable" },
       });
-    const first = cursor === "page-one";
+    }
+    hits++;
+    const older =
+      cursor === "older" || searchParams.get("entryId") === "older-entry";
     return route.fulfill({
       json: {
-        ...latestPage,
-        messages: rows(first ? "Earlier page" : "Oldest page", first ? 15 : 0),
-        hasOlder: first,
-        olderCursor: first ? "page-two" : null,
+        sessionId: searchParams.get("sessionId")!,
+        viewId: searchParams.get("viewId")!,
+        incarnation: "source",
+        revision: 1,
+        leafId: "current-entry",
+        firstTurn: older ? 1 : 2,
+        lastTurn: older ? 1 : 2,
+        totalTurns: 2,
+        messages: [
+          {
+            role: "user",
+            __inspireEntryId: older ? "older-entry" : "current-entry",
+            content: older ? "Earlier saved prompt" : "Current saved prompt",
+          },
+        ],
+        earlier: older ? null : "older",
+        later: older ? "newer" : null,
+      } satisfies NativeTurnPage,
+    });
+  });
+  await page.route("**/api/history?kind=search&**", (route) => {
+    expect(new URL(route.request().url()).searchParams.get("leafId")).toBe(
+      "current-entry",
+    );
+    return route.fulfill({
+      json: {
+        matches: [
+          { entryId: "older-entry", turn: 1, snippet: "Earlier saved prompt" },
+        ],
+        more: false,
       },
     });
   });
-
   await pairedPage(page);
   await openFixtureSession(page, /Review extension event lifecycle/);
-  await expect.poll(() => transport.ready(sessionId)).toBe(true);
-  const log = page.getByRole("log");
-  const anchor = log.getByText("Current page 1", { exact: true });
-  const readEarlier = async () => {
-    await log.hover();
-    await page.mouse.wheel(0, -10_000);
-  };
-  await expect(
-    log.getByText("Current page 14", { exact: true }),
-  ).toBeInViewport();
-  expect(cursors).toEqual([]);
-  await readEarlier();
-  const retry = log.getByRole("button", {
-    name: "Retry loading earlier messages",
-  });
-  await expect(retry).toHaveAttribute("title", "Earlier messages unavailable");
-  await readEarlier();
-  expect(cursors).toEqual(["page-one"]);
-  await retry.click();
-  await expect(log.getByText("Earlier page 1", { exact: true })).toBeAttached();
-  await expect(anchor).toBeInViewport();
-
+  await expect.poll(() => transport.ready("fixture-history")).toBe(true);
+  await page.getByRole("button", { name: "Turn history" }).click();
+  const history = page.getByRole("region", { name: "Turn history" });
+  await expect(history.getByText("Current saved prompt")).toBeVisible();
+  await history.getByRole("button", { name: "Earlier" }).click();
+  await expect(history.getByRole("alert")).toContainText("History unavailable");
+  await expect(history.getByText("Current saved prompt")).toBeVisible();
+  await history.getByRole("button", { name: "Retry" }).click();
+  await expect(history.getByText("Earlier saved prompt")).toBeVisible();
+  await expect(history.getByText("Current saved prompt")).toHaveCount(0);
   transport.send({
+    sessionId: "fixture-history",
     type: "message_end",
-    sessionId,
-    message: { role: "user", content: "Live append", timestamp: 50 },
+    message: { role: "assistant", content: "New live output", timestamp: 888 },
   });
-  await expect(log.getByText("Live append", { exact: true })).toBeAttached();
-  await expect(anchor).toBeInViewport();
-  await readEarlier();
-  await expect(log.getByText("Oldest page 1", { exact: true })).toBeAttached();
-  await expect(retry).toHaveCount(0);
-  expect(cursors).toEqual(["page-one", "page-one", "page-two"]);
-});
-
-test("prompt outline metadata stays readable and shares the first-line text baseline", {
-  tag: "@platform-ui",
-}, async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  const pixel =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
-  const count = (ordinal: number) =>
-    ordinal % 3 === 2 ? 12 : (ordinal % 3) + 1;
-  await routeSnapshots(page, {
-    snapshot(snapshot) {
-      let ordinal = 0;
-      for (const record of snapshot.active?.transcriptPage.messages ?? []) {
-        const message = record as { role?: string; content: unknown };
-        if (message.role !== "user" || typeof message.content !== "string")
-          continue;
-        message.content = [
-          { type: "text", text: message.content },
-          ...Array.from({ length: count(ordinal++) }, () => ({
-            type: "image",
-            mimeType: "image/png",
-            data: pixel,
-          })),
-        ];
-      }
-    },
-  });
-  await page.route("**/api/history?kind=turns&**", async (route) => {
-    const response = await route.fetch();
-    const data = await response.json();
-    for (const turn of data.turns) turn.attachmentCount = count(turn.ordinal);
-    await route.fulfill({ response, json: data });
-  });
-  await page.setViewportSize({ width: 320, height: 900 });
-  await pairedPage(page);
-  await openFixtureSession(page, /Prompt map long-session fixture/);
-  await page.getByRole("button", { name: "Open prompt navigation" }).click();
-  await page.evaluate(() => document.fonts.ready);
-  const map = page.locator(".prompt-map");
-  const rows = map.locator(".prompt-map__turn");
+  await expect(history.getByText("Earlier saved prompt")).toBeVisible();
+  await expect(history.getByText("New live output")).toHaveCount(0);
+  await history.getByRole("button", { name: "Later" }).click();
+  await expect(history.getByText("Current saved prompt")).toBeVisible();
+  await history
+    .getByRole("textbox", { name: "Search this branch" })
+    .fill("Earlier saved");
+  await history.getByRole("button", { name: "Search", exact: true }).click();
+  await history
+    .getByRole("button", { name: "Turn 1: Earlier saved prompt" })
+    .click();
+  await expect(history.getByText("Earlier saved prompt")).toBeVisible();
+  expect(hits).toBe(4);
+  await history.getByRole("button", { name: "Live", exact: true }).click();
+  await expect(history).toHaveCount(0);
   await expect(
-    rows.filter({ hasText: /12 attachments/ }).first(),
-  ).toBeAttached();
-  const row = rows.filter({ hasText: /12 attachments/ }).first();
-  const snippet = await row
-    .locator(".prompt-map__snippet")
-    .evaluate(firstTextBaseline, ".prompt-map__turn");
-  for (const selector of [".prompt-map__ordinal", ".prompt-map__attachments"]) {
-    const metadata = await row
-      .locator(selector)
-      .evaluate(firstTextBaseline, ".prompt-map__turn");
-    expect(Math.abs(metadata! - snippet!)).toBeLessThanOrEqual(0.5);
-    expect(
-      (await renderedColors(row.locator(selector))).contrast,
-    ).toBeGreaterThanOrEqual(4.5);
-  }
-  expect(
-    await row.evaluate((el) => el.scrollWidth - el.clientWidth),
-  ).toBeLessThanOrEqual(1);
-  await row.focus();
-  await expect(row).toBeFocused();
-  await expect(row).toBeInViewport();
-});
-
-test("floating desktop reading controls preserve the viewport and keyboard order", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1440, height: 960 });
-  await pairedPage(page);
-  await openFixtureSession(page, /Formula rendering and spectral analysis/);
-  const log = page.getByRole("log");
-  const wrap = page.locator(".transcript-wrap");
-  const latest = page.getByRole("button", { name: "Jump to latest" });
-  const search = page.getByRole("searchbox", { name: "Search conversation" });
-  await expect(
-    page.getByRole("heading", { name: "A compact result" }),
+    page.getByRole("log").getByText("New live output"),
   ).toBeVisible();
-  await page.evaluate(() => document.fonts.ready.then(() => undefined));
-
-  const viewport = (await log.boundingBox())!;
-  await log.hover();
-  await page.mouse.wheel(0, -2000);
-  await expect(latest).toBeVisible();
-  const button = (await latest.boundingBox())!;
-  expect(
-    Math.abs(button.x + button.width / 2 - viewport.x - viewport.width / 2),
-  ).toBeLessThan(1);
-  expect(button.y).toBeGreaterThan(viewport.y + viewport.height / 2);
-  expect(button.y + button.height).toBeLessThan(viewport.y + viewport.height);
-  const beforeSearch = await log.evaluate((el) => el.scrollTop);
-  await wrap.press("Control+f");
-  await expect(search).toBeFocused();
-  expect(await log.evaluate((el) => el.scrollTop)).toBe(beforeSearch);
-  expect(await log.boundingBox()).toEqual(viewport);
-  await search.press("Escape");
-
-  await log
-    .getByRole("button", { name: "Expand assistant activity", exact: true })
-    .first()
-    .click();
-  await expect(latest).toBeVisible();
-
-  await wrap.focus();
-  let reachedMessages = false;
-  let visitedPromptMap = false;
-  const tabStops = await wrap
-    .locator("button, input, a[href], [tabindex='0']")
-    .count();
-  for (let step = 0; step <= tabStops; step++) {
-    await page.keyboard.press("Tab");
-    const focus = await page.evaluate(() => ({
-      message: !!document.activeElement?.closest(".transcript"),
-      latest: !!document.activeElement?.closest(".jump-to-latest"),
-      promptMap: !!document.activeElement?.closest(
-        ".transcript-mobile-toolbar__button--prompt",
-      ),
-    }));
-    expect(focus.latest).toBe(false);
-    visitedPromptMap ||= focus.promptMap;
-    if (focus.message) {
-      reachedMessages = true;
-      break;
-    }
-  }
-  expect(reachedMessages).toBe(true);
-  expect(visitedPromptMap).toBe(true);
-  await log
-    .locator("button, a[href]")
-    .last()
-    .evaluate((el: HTMLElement) => el.focus({ preventScroll: true }));
-  await page.keyboard.press("Tab");
-  await expect(latest).toBeFocused();
-
-  await latest.click();
-  await expect(latest).toBeHidden();
-  await expect
-    .poll(() =>
-      log.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
-    )
-    .toBeLessThanOrEqual(1);
-  expect(await log.boundingBox()).toEqual(viewport);
-});
-
-test("the prompt outline jumps to saved turns and restores keyboard focus on narrow screens", async ({
-  page,
-}) => {
-  await pairedPage(page);
-  await openFixtureSession(page, /Prompt map long-session fixture/);
-  const open = page.getByRole("button", { name: "Open prompt navigation" });
-  const outline = page.getByRole("dialog", { name: "User prompts" });
-  const log = page.getByRole("log");
-  await open.click();
-  await expect(outline).toBeVisible();
-  await outline
-    .getByRole("button", { name: /1\. Prompt map fixture turn 1\b/ })
-    .click();
-  await expect(outline).toBeHidden();
-  await expect(
-    log.getByText("Prompt map fixture turn 1", { exact: true }),
-  ).toBeInViewport();
-  await page.setViewportSize({ width: 390, height: 780 });
-  await open.press("Enter");
-  await expect(outline).toBeVisible();
-  await outline
-    .getByRole("button", { name: /13\. Prompt map fixture turn 13\b/ })
-    .click();
-  await expect(
-    log.getByText("Prompt map fixture turn 13", { exact: true }),
-  ).toBeInViewport();
-  await open.press("Enter");
-  await page.keyboard.press("Escape");
-  await expect(open).toBeFocused();
-});
-
-test("the reading scrollbar stays in the narrow gutter and responds to drag and wheel", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await pairedPage(page);
-  await openFixtureSession(page, /Formula rendering and spectral analysis/);
-  const log = page.getByRole("log");
-  const rail = page.locator(".transcript-wrap > .srail");
-  const thumb = rail.locator(".srail__thumb");
-  await log.locator("pre").waitFor();
-  await page.evaluate(() => document.fonts.ready);
-  await expect(rail).toBeVisible();
-
-  for (const fraction of [0, 1]) {
-    await log.evaluate((el, value) => {
-      el.scrollTop = (el.scrollHeight - el.clientHeight) * value;
-    }, fraction);
-    await expect
-      .poll(() =>
-        page.locator(".transcript-wrap").evaluate((wrap) => {
-          const viewport = wrap
-            .querySelector(".transcript")!
-            .getBoundingClientRect();
-          const column = wrap
-            .querySelector(".transcript__column")!
-            .getBoundingClientRect();
-          const rail = wrap.querySelector(".srail")!.getBoundingClientRect();
-          const thumb = wrap
-            .querySelector(".srail__thumb")!
-            .getBoundingClientRect();
-          return {
-            clearOfContent: thumb.left >= column.right + 1,
-            insideHorizontalGutter: thumb.right <= viewport.right - 1,
-            insideVerticalScrollport:
-              rail.top >= viewport.top &&
-              rail.bottom <= viewport.bottom &&
-              thumb.top >= viewport.top &&
-              thumb.bottom <= viewport.bottom,
-          };
-        }),
-      )
-      .toEqual({
-        clearOfContent: true,
-        insideHorizontalGutter: true,
-        insideVerticalScrollport: true,
-      });
-  }
-
-  // Align the code with the thumb explicitly: previous conversations and font
-  // metrics must not decide whether this hit-testing scenario is exercised.
-  // Its trailing text must receive input, not the invisible grab band.
-  // Leave Follow latest through real input before positioning earlier text.
-  const bottom = await log.evaluate((el) => el.scrollTop);
-  await log.hover();
-  await page.mouse.wheel(0, -120);
-  await expect
-    .poll(() => log.evaluate((el) => el.scrollTop))
-    .toBeLessThan(bottom);
-  await log.evaluate((el) => {
-    const code = el.querySelector("pre")!.getBoundingClientRect();
-    const rail = el.parentElement!.querySelector(".srail")!;
-    const railBounds = rail.getBoundingClientRect();
-    const thumb = rail.querySelector(".srail__thumb")!.getBoundingClientRect();
-    const viewport = el.getBoundingClientRect();
-    const range = el.scrollHeight - el.clientHeight;
-    const codeCenter = el.scrollTop + code.top - viewport.top + code.height / 2;
-    const thumbOrigin = railBounds.top - viewport.top + thumb.height / 2;
-    const thumbTravel = railBounds.height - thumb.height;
-    el.scrollTop = (codeCenter - thumbOrigin) / (1 + thumbTravel / range);
-  });
-  await expect
-    .poll(() =>
-      log.evaluate((el) => {
-        const code = el.querySelector("pre")!;
-        const bounds = code.getBoundingClientRect();
-        const thumb = el
-          .parentElement!.querySelector(".srail__thumb")!
-          .getBoundingClientRect();
-        const top = Math.max(bounds.top, thumb.top);
-        const bottom = Math.min(bounds.bottom, thumb.bottom);
-        return {
-          overlaps: bottom > top,
-          receivesPointer: code.contains(
-            document.elementFromPoint(bounds.right - 2, (top + bottom) / 2),
-          ),
-        };
-      }),
-    )
-    .toEqual({ overlaps: true, receivesPointer: true });
-
-  const beforeDrag = await log.evaluate((el) => el.scrollTop);
-  const box = (await thumb.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 32, {
-    steps: 4,
-  });
-  await page.mouse.up();
-  await expect
-    .poll(() => log.evaluate((el) => el.scrollTop))
-    .toBeLessThan(beforeDrag);
-
-  const beforeWheel = await log.evaluate((el) => {
-    el.scrollTop = (el.scrollHeight - el.clientHeight) / 2;
-    return el.scrollTop;
-  });
-  await thumb.hover();
-  await page.mouse.wheel(0, 48);
-  await expect
-    .poll(() => log.evaluate((el) => el.scrollTop))
-    .toBeGreaterThan(beforeWheel);
+  await page.reload();
+  await page.getByRole("button", { name: "Turn history" }).click();
+  await expect(history.getByText("Earlier saved prompt")).toBeVisible();
 });

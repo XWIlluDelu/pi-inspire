@@ -64,7 +64,6 @@ describe("Files pane", () => {
                 transcriptPage: {
                   revision: transcriptRevision,
                   hasOlder: true,
-                  olderCursor: "older-s1",
                 },
               }),
             }),
@@ -311,7 +310,6 @@ describe("Files pane", () => {
                 transcriptPage: {
                   revision: 2,
                   hasOlder: true,
-                  olderCursor: "older-s1",
                 },
               }),
             });

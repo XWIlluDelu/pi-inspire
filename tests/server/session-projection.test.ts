@@ -26,7 +26,6 @@ import {
   TRANSCRIPT_PAGE_MAX_MESSAGES,
 } from "../../server/session-projection.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
-import type { TranscriptActivityPage } from "../../shared/contracts.js";
 import { collectSessionResourceReferences } from "../../shared/resource-references.js";
 import { deferredSignal } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
@@ -684,7 +683,7 @@ describe("SessionProjection framing and last-good state", () => {
 });
 
 describe("SessionProjection replacement and Pi context semantics", () => {
-  it("keeps owned linear suffix projection equivalent to a fresh Pi context build", async () => {
+  it("keeps the verified linear suffix projection equivalent to a fresh Pi context build", async () => {
     const { path, record, projection } = await fixture([
       message("s1", null, "system", "host-only startup", 0),
       message("u1", "s1", "user", "one", 1),
@@ -693,7 +692,6 @@ describe("SessionProjection replacement and Pi context semantics", () => {
     let fresh: SessionProjection | null = null;
     try {
       expect(projection.viewMessages("s1")).toEqual([]);
-      projection.setOwnedAppendWindow(() => true);
       const appended = [
         {
           type: "session_info",
@@ -934,21 +932,18 @@ describe("SessionProjection bounded paging", () => {
       parent = id;
     }
     const { projection } = await fixture(lines);
-    let page = projection.latestPage();
+    let page = projection.historyPage({ kind: "page" });
     const firstRevision = page.revision;
     const received: unknown[] = [];
-    expect(page.hasOlder).toBe(true);
+    expect(page.earlier).not.toBeNull();
     for (;;) {
       expect(page.revision).toBe(firstRevision);
       expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(
         TRANSCRIPT_PAGE_MAX_BYTES,
       );
       received.unshift(...page.messages);
-      if (!page.hasOlder) break;
-      page = projection.historyPage({
-        kind: "older",
-        cursor: page.olderCursor!,
-      });
+      if (!page.earlier) break;
+      page = projection.historyPage({ kind: "page", cursor: page.earlier });
     }
     expect(received).toMatchObject(
       Array.from({ length: 24 }, (_, index) => ({
@@ -957,7 +952,7 @@ describe("SessionProjection bounded paging", () => {
     );
   }, 30_000);
 
-  it("defers only activity in reopened history and materializes paired calls once", async () => {
+  it("keeps saved outcomes, extension review, and paired calls reachable", async () => {
     const call = {
       type: "toolCall",
       id: "read-call",
@@ -1020,400 +1015,98 @@ describe("SessionProjection bounded paging", () => {
     await projection.close();
     const reopened = await SessionProjection.open(record);
     try {
-      const older = reopened.historyPage({
-        kind: "older",
-        cursor: reopened.latestPage().olderCursor!,
-      });
-      const visible = [
-        { content: "inspect activity" },
-        { content: "old response" },
-        { stopReason: "error", errorMessage: "fetch failed" },
-        { stopReason: "aborted", errorMessage: "interrupted" },
-        {
-          role: "custom",
-          content: "Visible extension review",
-          details: { source: "extension" },
-        },
-      ];
-      const range = {
-        afterMessageId: "a1:0",
-        messageCount: 3,
-        kinds: ["tool", "thinking"],
-      };
-      expect(older.messages).toMatchObject(visible);
-      expect(older.activityRanges).toMatchObject([range]);
-
-      const turnId = reopened.historyPage({ kind: "turns", start: 0 }).turns[0]!
-        .id;
-      const turn = reopened.historyPage({ kind: "turn", id: turnId });
-      expect(turn.messages.slice(0, visible.length)).toMatchObject(visible);
-      expect(turn.activityRanges).toMatchObject([range]);
-      expect(JSON.stringify(turn.messages)).not.toContain("private context");
-
-      const cursor = older.activityRanges![0]!.cursor;
-      expect(
-        reopened.historyPage({ kind: "activity", cursor: cursor }).messages,
-      ).toMatchObject(
-        ["tool", "result", "thought"].map((id) => ({ __inspireEntryId: id })),
+      const page = reopened.historyPage({ kind: "page", entryId: "u1" });
+      expect(page.messages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            role: "toolResult",
+            toolCallId: "read-call",
+          }),
+          expect.objectContaining({
+            stopReason: "error",
+            errorMessage: "fetch failed",
+          }),
+          expect.objectContaining({
+            stopReason: "aborted",
+            errorMessage: "interrupted",
+          }),
+          expect.objectContaining({
+            role: "custom",
+            content: "Visible extension review",
+          }),
+        ]),
       );
-      expect(() =>
-        reopened.historyPage({ kind: "older", cursor: cursor }),
-      ).toThrow(/wrong purpose/);
     } finally {
       await reopened.close();
     }
   });
 
-  it("indexes current-branch user turns and seeks directly to a response-oriented target window", async () => {
-    const lines: unknown[] = [];
-    let parent: string | null = null;
-    for (let turn = 0; turn < 140; turn += 1) {
-      const userId = `u${turn}`;
-      const assistantId = `a${turn}`;
-      lines.push(
-        message(userId, parent, "user", `prompt ${turn}`, turn * 10 + 1),
-      );
-      lines.push(
-        message(
-          assistantId,
-          userId,
-          "assistant",
-          [{ type: "text", text: `response ${turn}` }],
-          turn * 10 + 2,
-        ),
-      );
-      parent = assistantId;
-      if (turn === 3) {
-        for (let activity = 0; activity < 80; activity += 1) {
-          const id = `activity-${activity}`;
-          lines.push(
-            message(
-              id,
-              parent,
-              "assistant",
-              [{ type: "thinking", thinking: `hidden ${activity}` }],
-              turn * 10 + 3 + activity,
-            ),
-          );
-          parent = id;
-        }
-        for (let response = 0; response < 170; response += 1) {
-          const id = `continued-response-${response}`;
-          lines.push(
-            message(
-              id,
-              parent,
-              "assistant",
-              [{ type: "text", text: `continued ${response}` }],
-              turn * 10 + 100 + response,
-            ),
-          );
-          parent = id;
-        }
-      }
-    }
-    const { path, projection } = await fixture(lines);
-    const latestTurns = projection.historyPage(
-      { kind: "turns" },
-      projection.leafId,
-      "view-a",
-    );
-    expect(latestTurns.total).toBe(140);
-    expect(latestTurns.start).toBe(40);
-    expect(latestTurns.turns[0]).toMatchObject({
-      ordinal: 40,
-      snippet: "prompt 40",
-    });
-    expect(latestTurns.turns.at(-1)).toMatchObject({ ordinal: 139 });
-
-    await appendFile(
-      path,
-      `${JSON.stringify(
-        message("user-140", parent, "user", "prompt 140", 9_000),
-      )}\n`,
-    );
-    await expect(projection.reconcile(true)).resolves.toMatchObject({
-      messageChange: "append",
-    });
-    expect(
-      projection.historyPage({ kind: "turns" }, projection.leafId, "view-a"),
-    ).toMatchObject({
-      total: 141,
-      turns: expect.arrayContaining([
-        expect.objectContaining({ ordinal: 140, snippet: "prompt 140" }),
-      ]),
-    });
-
-    const firstTurns = projection.historyPage(
-      { kind: "turns", start: 0 },
-      projection.leafId,
-      "view-a",
-    );
-    const target = firstTurns.turns[3]!;
-    const page = projection.historyPage(
-      { kind: "turn", id: target.id },
-      projection.leafId,
-      "view-a",
-    );
-    expect(page.targetMessageId).toBe(target.id);
-    expect(page.hasOlder).toBe(true);
-    expect(page.olderCursor).toBeTruthy();
-    expect(
-      projection.historyPage(
-        { kind: "older", cursor: page.olderCursor! },
-        projection.leafId,
-        "view-a",
-      ).messages.length,
-    ).toBeGreaterThan(0);
-    expect(
-      page.messages.some((value) => JSON.stringify(value).includes("hidden 0")),
-    ).toBe(false);
-    expect(page.activityRanges?.length).toBeGreaterThan(0);
-    expect(page.continuationCursor).toBeTruthy();
-    const continuation = projection.historyPage(
-      { kind: "turn", id: target.id, cursor: page.continuationCursor! },
-      projection.leafId,
-      "view-a",
-    );
-    expect(continuation.rangeStart).toBe(page.rangeStart);
-    expect(continuation.rangeEnd).toBeGreaterThan(page.rangeEnd);
-    expect(() =>
-      projection.historyPage({
-        kind: "older",
-        cursor: page.continuationCursor!,
-      }),
-    ).toThrow(/wrong purpose/);
-    const annotatedUser = page.messages.find(
-      (value) =>
-        (value as { __inspireMessageId?: string }).__inspireMessageId ===
-        target.id,
-    ) as { __inspireUserTurnIndex?: number; __inspireUserTurnId?: string };
-    expect(annotatedUser).toMatchObject({
-      __inspireUserTurnIndex: 3,
-      __inspireUserTurnId: target.id,
-    });
-    expect(() =>
-      projection.historyPage(
-        { kind: "turn", id: "not-a-turn" },
-        projection.leafId,
-        "view-a",
-      ),
-    ).toThrow(/does not exist/);
-  });
-
-  it("binds the prompt outline and direct seek to the selected branch view", async () => {
-    const { projection } = await fixture([
-      message("u-root", null, "user", "root prompt", 1),
-      message("a-root", "u-root", "assistant", "root response", 2),
-      message("u-main", "a-root", "user", "main prompt", 3),
-      message("a-main", "u-main", "assistant", "main response", 4),
-      message("u-alt", "a-root", "user", "alternate prompt", 5),
-      message("a-alt", "u-alt", "assistant", "alternate response", 6),
-    ]);
-    const mainTurns = projection.historyPage(
-      { kind: "turns", start: 0 },
-      "a-main",
-      "view-main",
-    ).turns;
-    expect(mainTurns.map((turn) => turn.snippet)).toEqual([
-      "root prompt",
-      "main prompt",
-    ]);
-    expect(
-      projection
-        .historyPage({ kind: "turns", start: 0 }, "a-alt", "view-alt")
-        .turns.map((turn) => turn.snippet),
-    ).toEqual(["root prompt", "alternate prompt"]);
-
-    const mainTurnId = mainTurns[1]!.id;
-    const main = projection.historyPage(
-      { kind: "turn", id: mainTurnId },
-      "a-main",
-      "view-main",
-    );
-    expect(JSON.stringify(main.messages)).toContain("main response");
-    expect(JSON.stringify(main.messages)).not.toContain("alternate prompt");
-    expect(() =>
-      projection.historyPage(
-        { kind: "turn", id: mainTurnId },
-        "a-alt",
-        "view-alt",
-      ),
-    ).toThrow(/does not exist/);
-  });
-
-  it("keeps equal-timestamp tool results distinct across page boundaries", async () => {
-    const lines = Array.from({ length: 120 }, (_, index) => ({
-      ...message(
+  it("keeps equal-timestamp tool results distinct across native pages", async () => {
+    const lines = Array.from({ length: 120 }, (_, index) =>
+      message(
         `tr${index}`,
         index ? `tr${index - 1}` : null,
         "toolResult",
         `result-${index}`,
         1,
+        { toolCallId: `call-${index}`, toolName: "read" },
       ),
-      message: {
-        role: "toolResult",
-        content: `result-${index}`,
-        timestamp: 1,
-        toolCallId: `call-${index}`,
-        toolName: "read",
-      },
-    }));
+    );
     const { projection } = await fixture(lines);
-    const ids: unknown[] = [];
-    const entryIds: unknown[] = [];
-    let page = projection.latestPage();
-    while (true) {
-      const messages = [...page.messages];
-      for (const range of page.activityRanges ?? []) {
-        let cursor: string | null = range.cursor;
-        while (cursor) {
-          const activity: TranscriptActivityPage = projection.historyPage({
-            kind: "activity",
-            cursor: cursor,
-          });
-          messages.push(...activity.messages);
-          cursor = activity.cursor;
-        }
-      }
-      ids.push(
-        ...messages.map(
-          (value) => (value as Record<string, unknown>).__inspireMessageId,
-        ),
-      );
-      entryIds.push(
-        ...messages.map(
-          (value) => (value as Record<string, unknown>).__inspireEntryId,
-        ),
-      );
-      if (!page.hasOlder) break;
-      page = projection.historyPage({
-        kind: "older",
-        cursor: page.olderCursor!,
-      });
-    }
-    expect(ids).toHaveLength(120);
-    expect(ids.every((id) => typeof id === "string")).toBe(true);
-    expect(new Set(ids).size).toBe(120);
-    expect(new Set(entryIds)).toEqual(new Set(lines.map(({ id }) => id)));
+    const first = projection.historyPage({ kind: "page" });
+    const second = projection.historyPage({
+      kind: "page",
+      cursor: first.earlier!,
+    });
+    const ids = [...second.messages, ...first.messages].map(
+      (row) => (row as { __inspireEntryId: string }).__inspireEntryId,
+    );
+    expect(ids).toEqual(lines.map(({ id }) => id));
   });
 
-  it("keeps paging cursors through an ordinary append and retires them when their authority changes", async () => {
-    const many = Array.from({ length: 120 }, (_, index) =>
+  it("keeps a native cursor pinned through appends and compaction, then rejects replaced sources", async () => {
+    const lines = Array.from({ length: 22 }, (_, index) =>
       message(
-        `m${index}`,
-        index ? `m${index - 1}` : null,
+        `u${index}`,
+        index ? `u${index - 1}` : null,
         "user",
-        index === 0
-          ? [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }]
-          : `m${index}`,
+        `Prompt ${index}`,
         index + 1,
       ),
     );
-    const { directory, path, projection, record } = await fixture(many);
-    const latest = projection.latestPage();
-    expect(latest.hasOlder).toBe(true);
-    expect(latest.messages.length).toBeLessThanOrEqual(
-      TRANSCRIPT_PAGE_MAX_MESSAGES,
+    const { directory, path, projection } = await fixture(lines);
+    const latest = projection.historyPage(
+      { kind: "page" },
+      projection.leafId,
+      "view-a",
     );
-    const cursor = latest.olderCursor!;
-    const viewBound = projection.latestPage([], projection.leafId, "view-a")
-      .olderCursor!;
+    const query = { kind: "page", cursor: latest.earlier! } as const;
+    const older = projection.historyPage(query, projection.leafId, "view-a");
     expect(() =>
-      projection.historyPage(
-        { kind: "older", cursor: viewBound },
-        projection.leafId,
-        "view-b",
-      ),
+      projection.historyPage(query, projection.leafId, "view-b"),
     ).toThrow(/another branch view/);
-    let oldest = latest;
-    while (oldest.hasOlder)
-      oldest = projection.historyPage({
-        kind: "older",
-        cursor: oldest.olderCursor!,
-      });
-    expect(
-      collectSessionResourceReferences(oldest.messages)[0]?.reference,
-    ).toBe("pi-embedded://0/0");
-    const updated = vi.fn();
-    projection.on("update", updated);
-    await appendFile(
-      path,
-      `${JSON.stringify(message("last", "m119", "assistant", "watched", 200))}\n`,
-    );
-    await vi.waitFor(() => expect(updated).toHaveBeenCalled(), {
-      timeout: 2_000,
-    });
-    expect(projection.messages.at(-1)).toMatchObject({ content: "watched" });
-    expect(
-      projection.historyPage({ kind: "older", cursor: cursor }).revision,
-    ).toBeGreaterThan(latest.revision);
-    expect(
-      projection.historyPage({ kind: "composer" }).composerHistoryVersion,
-    ).toBe(latest.composerHistoryVersion);
-
-    await projection.suspendReconciliation();
-    try {
-      let parent = "last";
-      for (let index = 0; index < 257; index += 1) {
-        const id = `later-${index}`;
-        await appendFile(
-          path,
-          jsonl(message(id, parent, "assistant", "later", 201 + index)),
-        );
-        await projection.reconcileSuspended(true);
-        parent = id;
-      }
-      expect(projection.revision - latest.revision).toBeGreaterThan(256);
-      expect(
-        projection.historyPage({ kind: "older", cursor: cursor }).messages,
-      ).toEqual(oldest.messages);
-    } finally {
-      projection.resumeReconciliation();
-    }
-
-    const reopened = await SessionProjection.open(record);
-    try {
-      expect(() =>
-        reopened.historyPage({ kind: "older", cursor: cursor }),
-      ).toThrow(/expired projection incarnation/);
-    } finally {
-      await reopened.close();
-    }
-
     await appendFile(
       path,
       jsonl({
         type: "compaction",
         id: "compact",
-        parentId: "later-256",
+        parentId: "u21",
+        firstKeptEntryId: "u18",
+        summary: "Summary",
+        tokensBefore: 1000,
         timestamp: "2026-08-01T00:03:00.000Z",
-        summary: "compacted history",
-        firstKeptEntryId: "m2",
-        tokensBefore: 1_000,
       }),
     );
     await projection.reconcile(true);
-    expect(() =>
-      projection.historyPage({ kind: "older", cursor: cursor }),
-    ).toThrow(/stale/);
-    const compacted = projection.latestPage();
-    expect(compacted.composerHistoryVersion).toBe(
-      latest.composerHistoryVersion,
-    );
-    expect(compacted.olderCursor).toBeTruthy();
-    expect(
-      projection.historyPage({ kind: "older", cursor: compacted.olderCursor! })
-        .messages.length,
-    ).toBeGreaterThan(0);
-
+    const after = projection.historyPage(query, projection.leafId, "view-a");
+    expect(after.messages).toEqual(older.messages);
+    expect(after.leafId).toBe(latest.leafId);
     const replacement = join(directory, "replacement.jsonl");
     await writeFile(replacement, await readFile(path));
     await rename(replacement, path);
     await projection.reconcile(true);
-    expect(projection.revision).toBe(compacted.revision);
     expect(() =>
-      projection.historyPage({ kind: "older", cursor: compacted.olderCursor! }),
+      projection.historyPage(query, projection.leafId, "view-a"),
     ).toThrow(/stale/);
   });
 });

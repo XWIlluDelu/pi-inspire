@@ -32,6 +32,10 @@ import {
   PENDING_IMAGE_SUFFIX,
   RETRY_STATE_SUFFIX,
 } from "../../../shared/branch-bridge-protocol.js";
+import {
+  CHECKPOINT_CHUNK_CHARS,
+  CHECKPOINT_SUFFIX,
+} from "../../../shared/worker-checkpoint.js";
 import { jsonl, messageEntry } from "./session-jsonl.js";
 
 export class FakeRpc extends EventEmitter {
@@ -48,6 +52,69 @@ export class FakeRpc extends EventEmitter {
   startGate: Promise<void> | null = null;
   sessionPath: string | null;
   sessionId: string;
+
+  private checkpointTail: string | null = null;
+  private checkpointSeeded = false;
+
+  isCheckpoint(command: Record<string, unknown>): boolean {
+    return (
+      command.type === "prompt" &&
+      command.message ===
+        `/${this.options.env?.INSPIRE_BRANCH_COMMAND}${CHECKPOINT_SUFFIX}`
+    );
+  }
+
+  publishCheckpoint(
+    entries: readonly Record<string, unknown>[] = [],
+    options: {
+      leaf?: string | null;
+      sealed?: "turn" | "settled" | "idle" | null;
+    } = {},
+  ): void {
+    const statusKey = `${this.options.env?.INSPIRE_BRANCH_STATUS_KEY}${CHECKPOINT_SUFFIX}`;
+    const frame = (statusText: string) =>
+      this.emit("event", {
+        type: "extension_ui_request",
+        method: "setStatus",
+        statusKey,
+        statusText,
+      });
+    const from = this.checkpointTail;
+    const tail =
+      typeof entries.at(-1)?.id === "string"
+        ? (entries.at(-1)!.id as string)
+        : from;
+    frame(
+      JSON.stringify({
+        workerId: this.options.env?.INSPIRE_BRANCH_WORKER_ID,
+        sessionId: this.sessionId,
+        sessionFile: this.sessionPath,
+        contextGeneration: 1,
+        from,
+        tail,
+        leaf: options.leaf === undefined ? tail : options.leaf,
+        run: 0,
+        sealed: options.sealed === undefined ? "idle" : options.sealed,
+        entries: entries.length,
+      }),
+    );
+    for (const entry of entries) {
+      const value = JSON.stringify(entry);
+      for (let i = 0; i < value.length; i += CHECKPOINT_CHUNK_CHARS)
+        frame(
+          (i + CHECKPOINT_CHUNK_CHARS >= value.length ? "!" : "+") +
+            value.slice(i, i + CHECKPOINT_CHUNK_CHARS),
+        );
+    }
+    this.checkpointTail = tail;
+  }
+
+  protected checkpointEntries(): readonly Record<string, unknown>[] {
+    return [];
+  }
+  protected checkpointLeaf(): string | null | undefined {
+    return undefined;
+  }
 
   get available(): boolean {
     return true;
@@ -84,6 +151,23 @@ export class FakeRpc extends EventEmitter {
     _timeout?: number | null,
     fence?: PiRpcResponseFence,
   ): Promise<T> {
+    if (this.isCheckpoint(command)) {
+      const entries = this.checkpointEntries();
+      const after =
+        this.checkpointTail === null
+          ? -1
+          : entries.findIndex((item) => item.id === this.checkpointTail);
+      this.publishCheckpoint(entries.slice(after + 1), {
+        leaf: this.checkpointLeaf(),
+        sealed: null,
+      });
+      return { disposition: "handled" } as T;
+    }
+    if (command.type === "get_entries" && !this.checkpointSeeded) {
+      this.checkpointSeeded = true;
+      this.checkpointTail =
+        typeof command.since === "string" ? command.since : null;
+    }
     if (
       command.type === "prompt" &&
       String(command.message).startsWith(

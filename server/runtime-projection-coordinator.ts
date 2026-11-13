@@ -1,109 +1,43 @@
-import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   isBusyRunState,
   type ProjectionConflict,
 } from "../shared/contracts.js";
 import type { DiagnosticLogger } from "./diagnostics.js";
 import { requestError } from "./request-error.js";
-import { describeSessionEntry } from "./runtime-entry-descriptor.js";
-import {
-  emptyWriterBaseline,
-  type OwnershipDecision,
-  type RuntimeSlot,
-} from "./runtime-slot.js";
+import { type RuntimeSlot, workerOnSeparateBranch } from "./runtime-slot.js";
 import type {
   ProjectionReconcileResult,
   SessionProjectionView,
 } from "./session-projection.js";
 
-/**
- * RuntimeController remains the owner of the slot registry, writer commands,
- * and browser event authority. This narrow host surface lets the coordinator
- * own only projection reconciliation and its persistence provenance checks.
- */
-interface RuntimeProjectionCoordinatorHost {
+interface RuntimeProjectionHost {
   isClosing(): boolean;
-  reconcileOverlay(
-    slot: RuntimeSlot,
-    appendedEntries?: readonly SessionEntry[],
-  ): void;
-  appendedEntriesOwnership(
-    slot: RuntimeSlot,
-    result: ProjectionReconcileResult,
-  ): Promise<OwnershipDecision>;
+  attestNewFile(slot: RuntimeSlot): Promise<boolean>;
   setProjectionConflict(
     slot: RuntimeSlot,
     kind: ProjectionConflict["kind"],
     message: string,
-    diagnosticFields?: Record<string, unknown>,
   ): ProjectionConflict;
   stopWriter(slot: RuntimeSlot): Promise<void>;
-  /** After each change; `external` when another Pi appended meanwhile. */
-  projectionSettled(
-    slot: RuntimeSlot,
-    external: boolean,
-    previousLeafId: string | null | undefined,
-  ): Promise<void>;
+  projectionSettled(slot: RuntimeSlot, result: ProjectionReconcileResult): void;
   renewView(slot: RuntimeSlot): void;
   emitSlotEvent(slot: RuntimeSlot, event: unknown): void;
-  logRuntimeError(sessionId: string, error: unknown, event?: string): void;
+  logRuntimeError(sessionId: string, error: unknown, source: string): void;
 }
 
+/** File integrity belongs to the saved document, independent of the Pi branch. */
 export class RuntimeProjectionCoordinator {
   constructor(
-    private readonly host: RuntimeProjectionCoordinatorHost,
+    private readonly host: RuntimeProjectionHost,
     private readonly diagnostics: DiagnosticLogger,
   ) {}
 
-  private recordOwnershipDecision(
-    slot: RuntimeSlot,
-    decision: OwnershipDecision,
-    fields: Record<string, unknown>,
-  ): void {
-    this.diagnostics.record(
-      decision.owned ? "debug" : "warning",
-      "persistence_ownership_decision",
-      {
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: slot.bridge?.workerId,
-        childPid: slot.process?.pid,
-        owned: decision.owned,
-        ...fields,
-      },
-    );
-  }
-
   attach(slot: RuntimeSlot, projection: SessionProjectionView): void {
-    projection.setOwnedAppendWindow?.(
-      () =>
-        slot.projection === projection &&
-        Boolean(slot.process) &&
-        this.writerBaselineMatches(slot) &&
-        (slot.persistenceExpectations.some(
-          (expectation) => expectation.matcher !== null,
-        ) ||
-          Boolean(slot.pendingPartialPersistence)),
-    );
-    if (
-      slot.process &&
-      projection.uncommittedBytes > 0 &&
-      projection.uncommittedFingerprint
-    ) {
-      this.trackPartialPersistence(slot, {
-        committedBytes: projection.committedBytes,
-        uncommittedBytes: projection.uncommittedBytes,
-        uncommittedFingerprint: projection.uncommittedFingerprint,
-        sourceIdentity: projection.sourceIdentity,
-        sourceVersion: projection.sourceVersion,
-      });
-    }
     projection.setReconcileHandler(async (result) => {
       if (slot.projection !== projection || this.host.isClosing()) return;
-      // The projection holds its read FIFO until this consumer settles. Merely
-      // queueing handlers after reads would allow a later observation to change
-      // the projection while an earlier ownership witness is still pending.
-      const handling = this.consume(slot, projection, result);
+      if (!result.changed && !result.healthChanged && !result.sourceChanged)
+        return;
+      const handling = this.observe(slot, projection, result);
       slot.projectionTail = handling.catch((error) => {
         if (!this.host.isClosing())
           this.host.logRuntimeError(slot.id, error, "projection_update_failed");
@@ -112,387 +46,82 @@ export class RuntimeProjectionCoordinator {
     });
   }
 
-  captureWriterBaseline(slot: RuntimeSlot): void {
-    const projection = slot.projection;
-    slot.writerBaseline = projection
-      ? {
-          revision: projection.revision,
-          fingerprint: projection.fingerprint,
-          sourceIdentity: projection.sourceIdentity,
-          sourceVersion: projection.sourceVersion,
-          observedBytes:
-            projection.committedBytes + projection.uncommittedBytes,
-        }
-      : emptyWriterBaseline();
-  }
-
-  captureWriterResult(
-    slot: RuntimeSlot,
-    result: ProjectionReconcileResult,
-  ): void {
-    slot.writerBaseline = {
-      revision: result.revision,
-      fingerprint: result.fingerprint,
-      sourceIdentity:
-        slot.writerBaseline.sourceIdentity ?? result.sourceIdentity,
-      sourceVersion: result.sourceVersion,
-      observedBytes: result.committedBytes + result.uncommittedBytes,
-    };
-  }
-
-  clearWriterBaseline(slot: RuntimeSlot): void {
-    slot.writerBaseline = emptyWriterBaseline();
-    slot.absorbedPersistenceEntries.clear();
-  }
-
-  writerBaselineMatches(slot: RuntimeSlot): boolean {
-    const projection = slot.projection;
-    const baseline = slot.writerBaseline;
-    if (!projection) return false;
-    return (
-      baseline.revision === projection.revision &&
-      baseline.fingerprint === projection.fingerprint &&
-      baseline.sourceIdentity === projection.sourceIdentity &&
-      baseline.sourceVersion === projection.sourceVersion &&
-      baseline.observedBytes ===
-        projection.committedBytes + projection.uncommittedBytes
-    );
-  }
-
-  writerOwnershipActive(slot: RuntimeSlot): boolean {
-    return (
-      isBusyRunState(slot.runState) ||
-      Boolean(slot.nativeBash) ||
-      slot.pendingExtensionDialogs.size > 0 ||
-      slot.persistenceExpectations.length > 0 ||
-      Boolean(slot.pendingPartialPersistence) ||
-      Boolean(slot.navigationLease) ||
-      Boolean(slot.pendingBranchBridge)
-    );
-  }
-
-  clearPartialPersistence(slot: RuntimeSlot): void {
-    slot.pendingPartialPersistence = null;
-  }
-
-  private failPartialPersistence(
-    slot: RuntimeSlot,
-    message: string,
-    emit = true,
-    kind: ProjectionConflict["kind"] = "incomplete-persistence",
-    diagnosticFields: Record<string, unknown> = {},
-  ): Promise<void> {
-    this.clearPartialPersistence(slot);
-    const newlyConflicted = !slot.conflict;
-    const conflict = this.host.setProjectionConflict(
-      slot,
-      kind,
-      message,
-      diagnosticFields,
-    );
-    if (emit && newlyConflicted)
-      this.host.emitSlotEvent(slot, {
-        type: "session_projection_conflict",
-        conflict,
-      });
-    return this.host.stopWriter(slot);
-  }
-
-  private trackPartialPersistence(
-    slot: RuntimeSlot,
-    result: Pick<
-      ProjectionReconcileResult,
-      | "committedBytes"
-      | "uncommittedBytes"
-      | "uncommittedFingerprint"
-      | "sourceIdentity"
-      | "sourceVersion"
-    >,
-  ): void {
-    if (result.uncommittedBytes <= 0 || !result.uncommittedFingerprint) return;
-    // This records provenance, not a lease on how quickly Pi must persist.
-    slot.pendingPartialPersistence = {
-      committedBytes: result.committedBytes,
-      bytes: result.uncommittedBytes,
-      fingerprint: result.uncommittedFingerprint,
-      sourceIdentity: result.sourceIdentity,
-      sourceVersion: result.sourceVersion,
-      observedBytes: result.committedBytes + result.uncommittedBytes,
-    };
-  }
-
-  private async handle(
+  private async observe(
     slot: RuntimeSlot,
     projection: SessionProjectionView,
     result: ProjectionReconcileResult,
-  ): Promise<void> {
-    if (slot.projection !== projection || this.host.isClosing()) return;
-    const writer = slot.process;
-    const writerStillCurrent = () =>
-      slot.projection === projection &&
-      slot.process === writer &&
-      !this.host.isClosing();
-    if (result.changed) slot.branchRevision += 1;
-    if (result.messageChange === "replace") this.host.renewView(slot);
-    let external = false;
-    const previousConflict = slot.conflict;
-    const priorPartial = slot.pendingPartialPersistence;
-    const expectedSourceVersion =
-      priorPartial?.sourceVersion ?? slot.writerBaseline.sourceVersion;
-    const expectedObservedBytes =
-      priorPartial?.observedBytes ?? slot.writerBaseline.observedBytes;
-    const observedBytes = result.committedBytes + result.uncommittedBytes;
-    const initialMaterialization = result.initialMaterialization;
-    const strictPhysicalProgress =
-      expectedObservedBytes !== null &&
-      result.previousSourceVersion === expectedSourceVersion &&
-      (initialMaterialization ||
-        result.sourceIdentity ===
-          (priorPartial?.sourceIdentity ??
-            slot.writerBaseline.sourceIdentity)) &&
-      result.previousTailVerified &&
-      observedBytes > expectedObservedBytes;
-    let lastOwnership: OwnershipDecision | null = null;
-    const ownershipFields = (): Record<string, unknown> => ({
-      ownershipSource: lastOwnership?.source,
-      ownershipRejection: lastOwnership?.reason,
-      workerWitness: lastOwnership?.workerWitness,
-      appendedEntries: (result.appendedEntries ?? []).map((entry) =>
-        describeSessionEntry(entry),
-      ),
-      previousRevision: result.previousRevision,
+  ) {
+    this.diagnostics.record("debug", "projection_reconcile", {
+      sessionId: slot.id,
       revision: result.revision,
-      previousFingerprint: result.previousFingerprint,
-      fingerprint: result.fingerprint,
-      previousSourceVersion: result.previousSourceVersion,
-      sourceVersion: result.sourceVersion,
-      previousLeafId: result.previousLeafId,
+      changeKind: result.kind,
+      health: result.health.status,
+      committedBytes: result.committedBytes,
+      uncommittedBytes: result.uncommittedBytes,
     });
-    const acceptOwnedAppend = async (): Promise<boolean | null> => {
-      if (!strictPhysicalProgress) {
-        lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
-      } else if (!result.changed) {
-        lastOwnership = { owned: true, source: "expectation" };
-      } else if (result.kind !== "append") {
-        lastOwnership = { owned: false, reason: "not-append" };
-      } else {
-        lastOwnership = await this.host.appendedEntriesOwnership(slot, result);
-      }
-      if (!writerStillCurrent()) return null;
-      this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
-      if (!lastOwnership.owned) return false;
-      this.captureWriterResult(slot, result);
-      return true;
-    };
-
-    const metadataContinuation =
-      slot.process !== null &&
-      slot.conflict === null &&
-      result.health.status !== "error" &&
-      !result.changed &&
-      result.sourceChanged &&
-      result.previousRevision === slot.writerBaseline.revision &&
-      result.revision === slot.writerBaseline.revision &&
-      result.previousFingerprint === slot.writerBaseline.fingerprint &&
-      result.fingerprint === slot.writerBaseline.fingerprint &&
-      result.previousSourceVersion === slot.writerBaseline.sourceVersion &&
-      result.sourceIdentity === slot.writerBaseline.sourceIdentity &&
-      result.committedBytes + result.uncommittedBytes ===
-        slot.writerBaseline.observedBytes &&
-      result.previousTailVerified;
-    const completeMetadataContinuation =
-      metadataContinuation &&
-      result.verifiedUnchangedContent === true &&
-      priorPartial === null &&
-      result.previousUncommittedBytes === 0 &&
-      result.uncommittedBytes === 0;
-
-    if (
-      completeMetadataContinuation ||
-      (metadataContinuation && initialMaterialization)
-    ) {
-      // This proves unchanged state, not who changed the timestamps. It admits
-      // no entry, consumes no append claim, and cannot extend an incomplete tail
-      // outside the existing new-file materialization boundary.
-      this.captureWriterResult(slot, result);
-      if (completeMetadataContinuation)
-        this.diagnostics.record("debug", "projection_metadata_revalidated", {
-          sessionId: slot.id,
-          slotIncarnation: slot.incarnationId,
-          workerId: slot.bridge?.workerId,
-          revision: result.revision,
-          previousSourceVersion: result.previousSourceVersion,
-          sourceVersion: result.sourceVersion,
-          committedBytes: result.committedBytes,
-        });
-      if (result.uncommittedBytes > 0)
-        this.trackPartialPersistence(slot, result);
-    } else if (slot.process && result.uncommittedBytes > 0) {
-      const initiallyOwned =
-        priorPartial !== null ||
+    const writer = slot.process;
+    const before = slot.conflict;
+    if (result.changed) slot.branchRevision += 1;
+    if (!writer && result.messageChange === "replace")
+      this.host.renewView(slot);
+    if (writer) {
+      const live =
         isBusyRunState(slot.runState) ||
-        // Direct Bash can run idle and Pi persists it without an append event.
-        // It still requires exact byte continuity and a final entry witness.
-        slot.nativeBash?.worker === writer ||
-        slot.persistenceExpectations.length > 0;
-      const exactPrior =
-        !priorPartial || result.previousUncommittedBytes === priorPartial.bytes;
-      let owned: boolean | null = false;
-      if (!initiallyOwned) {
-        lastOwnership = { owned: false, reason: "missing-claim" };
-      } else if (!exactPrior) {
-        lastOwnership = { owned: false, reason: "source-version-mismatch" };
-      } else {
-        owned = await acceptOwnedAppend();
-      }
-      if (owned === null) return;
-      if (owned) {
-        this.trackPartialPersistence(slot, result);
-      } else if (!initiallyOwned && strictPhysicalProgress) {
-        // Another Pi is mid-write; its complete entry arrives later.
-        this.clearPartialPersistence(slot);
-      } else {
-        await this.failPartialPersistence(
+        slot.nativeBash ||
+        slot.pendingExtensionDialogs.size > 0 ||
+        slot.pendingBranchBridge ||
+        slot.activeOperations > 0 ||
+        workerOnSeparateBranch(slot);
+      if (result.previousUncommittedBytes > 0 && !result.previousTailVerified) {
+        this.host.setProjectionConflict(
           slot,
-          "Session changed with an overwritten incomplete JSONL entry; the worker was stopped",
-          false,
           "incomplete-persistence",
-          { initiallyOwned, exactPrior, ...ownershipFields() },
+          "The session’s incomplete JSONL entry was replaced; the Pi worker was stopped",
         );
-      }
-    } else if (priorPartial) {
-      const exactPrior =
-        result.previousUncommittedBytes === priorPartial.bytes &&
-        result.uncommittedBytes === 0 &&
-        result.changed;
-      const exactCompletion = exactPrior && (await acceptOwnedAppend());
-      if (exactCompletion === null) return;
-      if (!exactPrior)
-        lastOwnership = { owned: false, reason: "physical-progress-mismatch" };
-      if (exactCompletion) this.clearPartialPersistence(slot);
-      else if (strictPhysicalProgress && result.kind === "append") {
-        // Another Pi's entries completed the growth: valid, not ours.
-        this.clearPartialPersistence(slot);
-        this.captureWriterResult(slot, result);
-        external = true;
-      } else
-        await this.failPartialPersistence(
-          slot,
-          "Incomplete session persistence did not complete with its exact owned provenance; the worker was stopped",
-          false,
-          "incomplete-persistence",
-          ownershipFields(),
-        );
-    } else if (
-      result.health.status === "error" &&
-      slot.process &&
-      (this.writerOwnershipActive(slot) ||
-        slot.writerBaseline.sourceIdentity === null)
-    ) {
-      this.host.setProjectionConflict(
-        slot,
-        "projection-failure",
-        `Session projection failed while the Pi runtime was active: ${result.health.message ?? "unknown error"}`,
-      );
-      await this.host.stopWriter(slot);
-    } else if (
-      slot.process &&
-      (result.sourceChanged || result.changed) &&
-      !this.writerBaselineMatches(slot)
-    ) {
-      // Growth of the same file is another Pi appending, which is valid
-      // session use. Rewrites and replacements remain concrete failures.
-      const growth = strictPhysicalProgress && result.kind === "append";
-      if (initialMaterialization || this.writerOwnershipActive(slot)) {
-        lastOwnership = result.changed
-          ? await this.host.appendedEntriesOwnership(slot, result)
-          : { owned: false, reason: "not-append" };
-        if (!writerStillCurrent()) return;
-        this.recordOwnershipDecision(slot, lastOwnership, ownershipFields());
-        if (lastOwnership.owned) {
-          this.captureWriterResult(slot, result);
-        } else if (growth && !initialMaterialization) {
-          this.captureWriterResult(slot, result);
-          external = true;
-        } else {
+        await this.host.stopWriter(slot);
+      } else if (
+        result.initialMaterialization &&
+        (result.changed || result.sourceChanged) &&
+        result.health.status !== "error" &&
+        !(await this.host.attestNewFile(slot))
+      ) {
+        if (slot.process === writer && slot.projection === projection) {
           this.host.setProjectionConflict(
             slot,
             "external-change",
-            "INSΠRE could not verify a session change. Recover before writing again",
-            ownershipFields(),
+            "The new session file did not match its Pi worker",
           );
           await this.host.stopWriter(slot);
         }
-      } else if (growth) {
-        // The idle worker keeps its own branch alongside the other Pi.
-        this.captureWriterResult(slot, result);
-        external = true;
-      } else {
-        // A rewritten or replaced file: the next write starts fresh from it.
+      } else if (
+        result.health.status === "error" ||
+        result.kind === "rewrite"
+      ) {
+        if (live || result.initialMaterialization)
+          this.host.setProjectionConflict(
+            slot,
+            result.health.status === "error"
+              ? "projection-failure"
+              : "external-change",
+            result.health.message ??
+              "The session file was rewritten while Pi was using it",
+          );
         await this.host.stopWriter(slot);
       }
     }
     if (slot.projection !== projection || this.host.isClosing()) return;
-    await this.host.projectionSettled(slot, external, result.previousLeafId);
-    if (slot.projection !== projection || this.host.isClosing()) return;
-    this.host.reconcileOverlay(slot, result.appendedEntries);
-    if (!previousConflict && slot.conflict) {
+    this.host.projectionSettled(slot, result);
+    if (!before && slot.conflict)
       this.host.emitSlotEvent(slot, {
         type: "session_projection_conflict",
         conflict: slot.conflict,
       });
-    }
     this.host.emitSlotEvent(slot, {
       type: "session_projection_changed",
-      revision: result.revision,
+      revision: slot.workerView?.index.revision ?? result.revision,
       health: result.health,
       conflict: slot.conflict,
     });
-  }
-
-  private recordReconcile(
-    slot: RuntimeSlot,
-    result: ProjectionReconcileResult,
-    startupAttestation = false,
-  ): void {
-    if (
-      startupAttestation ||
-      result.changed ||
-      result.healthChanged ||
-      result.sourceChanged
-    ) {
-      this.diagnostics.record("debug", "projection_reconcile", {
-        sessionId: slot.id,
-        slotIncarnation: slot.incarnationId,
-        workerId: slot.bridge?.workerId,
-        childPid: slot.process?.pid,
-        startupAttestation,
-        changed: result.changed,
-        changeKind: result.kind,
-        messageChange: result.messageChange,
-        healthChanged: result.healthChanged,
-        sourceChanged: result.sourceChanged,
-        previousRevision: result.previousRevision,
-        revision: result.revision,
-        previousFingerprint: result.previousFingerprint,
-        fingerprint: result.fingerprint,
-        previousSourceVersion: result.previousSourceVersion,
-        sourceVersion: result.sourceVersion,
-        committedBytes: result.committedBytes,
-        uncommittedBytes: result.uncommittedBytes,
-      });
-    }
-  }
-
-  private async consume(
-    slot: RuntimeSlot,
-    projection: SessionProjectionView,
-    result: ProjectionReconcileResult,
-  ): Promise<void> {
-    this.recordReconcile(slot, result);
-    if (result.changed || result.healthChanged || result.sourceChanged)
-      await this.handle(slot, projection, result);
-    else this.host.reconcileOverlay(slot, result.appendedEntries);
   }
 
   async reconcile(
@@ -508,12 +137,8 @@ export class RuntimeProjectionCoordinator {
       : await projection.reconcile(force);
     if (slot.projection !== projection)
       throw requestError("Session projection changed while reconciling", 409);
-    if (startupAttestation) {
-      this.recordReconcile(slot, result, true);
-      // Source replacement invalidates reading views even before Pi starts.
-      if (result.messageChange === "replace") this.host.renewView(slot);
-      this.host.reconcileOverlay(slot, result.appendedEntries);
-    }
+    if (startupAttestation && result.messageChange === "replace")
+      this.host.renewView(slot);
     return result;
   }
 }

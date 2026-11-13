@@ -71,6 +71,8 @@ class BranchRpc extends FakeRpc {
     | "persist" = "ok";
   autoRetryGate: Promise<void> | null = null;
   private readonly knownEntries: Set<string>;
+  private readonly nativeEntries: Record<string, unknown>[];
+  private promptSequence = 0;
 
   override get available(): boolean {
     return this.stops === 0;
@@ -87,6 +89,7 @@ class BranchRpc extends FakeRpc {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as Record<string, unknown>);
+    this.nativeEntries = persisted.slice(1);
     this.knownEntries = new Set(
       persisted.slice(1).map((item) => String(item.id)),
     );
@@ -111,7 +114,16 @@ class BranchRpc extends FakeRpc {
           !this.knownEntries.has(String(command.since))
         )
           throw new Error(`Entry not found: ${command.since}`);
-        return { entries: [], leafId: this.leafId };
+        const index =
+          command.since === undefined
+            ? -1
+            : this.nativeEntries.findIndex(
+                (entry) => entry.id === command.since,
+              );
+        return {
+          entries: this.nativeEntries.slice(index + 1),
+          leafId: this.leafId,
+        };
       },
     );
     this.responseOverrides.set(
@@ -125,18 +137,35 @@ class BranchRpc extends FakeRpc {
         if (text.startsWith(`/${this.bridgeCommand} `)) {
           await this.emitBridge(text);
         } else {
-          const persisted = entry("next-user", this.leafId, "user", text, 50);
+          const id =
+            this.promptSequence++ === 0 && !this.knownEntries.has("next-user")
+              ? "next-user"
+              : `next-user-${this.nativeEntries.length}`;
+          const persisted = entry(id, this.leafId, "user", text, 50);
           await appendFile(this.path, jsonl(persisted));
           this.leafId = persisted.id;
           this.knownEntries.add(persisted.id);
+          this.nativeEntries.push(persisted);
           this.emit("event", {
             type: "message_end",
             message: persisted.message,
           });
+          this.publishCheckpoint([persisted], { sealed: "settled" });
         }
         return {};
       },
     );
+  }
+
+  publishSaved(entry: Record<string, unknown>) {
+    this.nativeEntries.push(entry);
+    this.knownEntries.add(String(entry.id));
+    this.leafId = String(entry.id);
+    this.publishCheckpoint([entry], { sealed: "idle" });
+  }
+
+  protected override checkpointLeaf() {
+    return this.leafId;
   }
 
   private async emitBridge(message: string): Promise<void> {
@@ -172,12 +201,16 @@ class BranchRpc extends FakeRpc {
       navigationLeaf: this.leafId,
     };
     if (this.resultMode === "persist") {
-      await appendFile(
-        this.path,
-        jsonl(
-          entry("unexpected", this.leafId, "assistant", "unexpected write", 60),
-        ),
+      const unexpected = entry(
+        "unexpected",
+        this.leafId,
+        "assistant",
+        "unexpected write",
+        60,
       );
+      this.leafId = unexpected.id;
+      this.nativeEntries.push(unexpected);
+      await appendFile(this.path, jsonl(unexpected));
     }
     if (this.resultMode === "missing") return;
     const event = {
@@ -344,8 +377,8 @@ describe("stock RPC branch bridge", () => {
       },
     };
     await appendFile(path, jsonl(saved));
-    worker.leafId = saved.id;
     worker.emit("event", { type: "message_end", message: saved.message });
+    worker.publishSaved(saved);
     const snapshot = await runtime.snapshot();
     const request = {
       sessionId: SESSION_ID,
@@ -480,7 +513,7 @@ describe("stock RPC branch bridge", () => {
           expect(
             JSON.stringify(snapshot.active?.transcriptPage.messages),
           ).toContain("second answer");
-          expect(slot.navigationLease).toBeNull();
+          expect(slot.workerView).toBeNull();
         }
         expect(await readFile(path, "utf8")).toBe(source);
         expect(workers).toHaveLength(1);

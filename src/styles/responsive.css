@@ -273,6 +273,11 @@ body.srail-dragging {
       background var(--dur-micro) var(--ease-standard);
   }
 
+  .transcript-mobile-toolbar__button--history {
+    width: auto;
+    padding-inline: var(--space-2);
+  }
+
   .transcript-mobile-toolbar__button:hover,
   .transcript-mobile-toolbar__button:focus-visible {
     border-color: var(--line-strong);

@@ -1,5 +1,5 @@
 import { isBusyRunState } from "../shared/contracts.js";
-import type { RuntimeSlot } from "./runtime-slot.js";
+import { type RuntimeSlot, workerOnSeparateBranch } from "./runtime-slot.js";
 
 /** Keep a small warm cache, but never stop selected, busy, in-use, or
  * extension-blocked workers. Busy sessions may temporarily exceed the cap. */
@@ -98,8 +98,7 @@ export class RuntimeWorkerPool {
       slot.id !== this.host.selectedSessionId() &&
       !this.host.isObserved(slot.id) &&
       slot.activeOperations === 0 &&
-      slot.persistenceExpectations.length === 0 &&
-      !slot.pendingPartialPersistence &&
+      slot.projection?.health.status !== "pending" &&
       !this.host.isOpening(slot.id) &&
       !this.host.isLoading(slot.id) &&
       !this.host.hasSelectionReservation(slot.id) &&
@@ -143,7 +142,7 @@ export class RuntimeWorkerPool {
       slot.pendingExtensionDialogs.size === 0 &&
       slot.pendingQueues.totalCount === 0 &&
       !slot.conflict &&
-      !slot.navigationLease &&
+      !workerOnSeparateBranch(slot) &&
       !slot.pendingBranchBridge
     );
   }
@@ -164,7 +163,7 @@ export class RuntimeWorkerPool {
         slot.pendingExtensionDialogs.size === 0 &&
         slot.pendingQueues.totalCount === 0 &&
         !slot.conflict &&
-        !slot.navigationLease &&
+        !workerOnSeparateBranch(slot) &&
         !slot.pendingBranchBridge &&
         this.unclaimed(slot),
     );

@@ -407,6 +407,54 @@ describe("WebSocket observation and transport limits", () => {
     }
   });
 
+  it("replays only events newer than the runtime snapshot cut", async () => {
+    const id = "fixture-active";
+    await runtime.openSession(id);
+    const snapshot = runtime.snapshot.bind(runtime);
+    const entered = deferredSignal();
+    const resume = deferredSignal();
+    const captured = deferredSignal();
+    const publish = deferredSignal();
+    const { slots, emitSlotEvent } = runtime as unknown as {
+      slots: Map<string, unknown>;
+      emitSlotEvent(slot: unknown, event: unknown): void;
+    };
+    vi.spyOn(runtime, "snapshot").mockImplementation(async (sessionId) => {
+      entered.resolve();
+      await resume.promise;
+      const view = await snapshot(sessionId);
+      captured.resolve();
+      await publish.promise;
+      return view;
+    });
+    const { socket, frames } = observeEventSocket(
+      `${baseUrl.replace("http", "ws")}/events?detail=${id}`,
+    );
+    const event = (name: string) =>
+      emitSlotEvent.call(runtime, slots.get(id), {
+        type: "test_snapshot_cut",
+        name,
+      });
+    try {
+      await entered.promise;
+      event("included in the snapshot");
+      resume.resolve();
+      await captured.promise;
+      event("after the snapshot");
+      publish.resolve();
+      await vi.waitFor(() => expect(frames).toHaveLength(2));
+      expect(frames[0]).toMatchObject({ type: "snapshot" });
+      expect(frames[1]).toMatchObject({
+        type: "test_snapshot_cut",
+        name: "after the snapshot",
+      });
+    } finally {
+      resume.resolve();
+      publish.resolve();
+      socket.close();
+    }
+  });
+
   it("streams a large write as compact bounded argument batches only to detail viewers", async () => {
     await runtime.openSession("fixture-active");
     const { socket: detail, frames } = await connect("detail=fixture-active");

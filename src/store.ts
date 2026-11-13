@@ -36,7 +36,6 @@ import {
   type ThemePreference,
   type ThinkingLevel,
   type ToolVisibilityPreference,
-  type UserTurnAnchor,
   type VisibilityPreference,
 } from "../shared/contracts";
 import { jsonRecord } from "../shared/json-record";
@@ -59,7 +58,6 @@ import {
   type ProjectFileSearchResult,
 } from "./api";
 import {
-  type ActivityMaterializationMode,
   type AppState,
   contextUsage,
   createInitialAppState,
@@ -115,7 +113,6 @@ import {
 import {
   deriveSnapshotTransition,
   type ResyncOptions,
-  type SnapshotMode,
   snapshotLifecyclePatch,
 } from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
@@ -128,11 +125,6 @@ import {
   saveWorkbench,
   workbenchSessionKey,
 } from "./workbench-session";
-
-export type {
-  ActivityMaterializationMode,
-  TranscriptActivityRangeState,
-} from "./app-state";
 
 const MAX_COMMAND_ACTIVITIES = 4;
 const ACCEPTED_NATIVE_COMMAND: PromptAcceptedResponse = {
@@ -397,12 +389,8 @@ export class AppStore {
   });
   private readonly transcriptData = new TranscriptDataController({
     state: () => this.state,
-    patch: (patch) => this.set(patch),
     api: () => this.api,
     selectionGeneration: () => this.selectionGeneration,
-    markSettled: (key) => this.runtimeEvents.markSettled(key),
-    resync: (sessionId, generation, options) =>
-      this.resync(sessionId, generation, options),
     handleAuthFailure: () => this.handleAuthFailure(),
     notify: (kind, message) => this.notify(kind, message),
   });
@@ -645,7 +633,6 @@ export class AppStore {
     this.resyncRecovery.reset();
     this.resyncRequest += 1;
     this.pausedSessionReads = null;
-    this.transcriptData.invalidate();
     this.pendingActionRequest += 1;
     this.hostCommandRuns.clear();
     const commandActivities = Object.fromEntries(
@@ -670,15 +657,6 @@ export class AppStore {
     );
     this.set({
       commandActivities,
-      loadingOlderMessages: false,
-      transcriptActivityRanges: this.state.transcriptActivityRanges.map(
-        (range) =>
-          range.status === "loading"
-            ? { ...range, status: "idle", error: null }
-            : range,
-      ),
-      promptMapLoadingStarts: [],
-      promptMapNavigatingOrdinal: null,
       deletingSessionId: null,
       clearingHidden: false,
       pendingAction: null,
@@ -933,7 +911,6 @@ export class AppStore {
   private applySnapshot(
     snapshot: ActiveSnapshot &
       Partial<import("../shared/contracts").SnapshotWitness>,
-    mode: SnapshotMode = "preserve",
   ): void {
     const pendingQueues =
       snapshot.pendingQueues === undefined
@@ -952,7 +929,7 @@ export class AppStore {
         ? snapshot.snapshotDigest
         : null;
     const active = snapshot.active;
-    const transition = deriveSnapshotTransition(this.state, snapshot, mode);
+    const transition = deriveSnapshotTransition(this.state, snapshot);
     const {
       page,
       nextSessionId,
@@ -962,8 +939,6 @@ export class AppStore {
       nextDurableLeafId,
       nextEffectiveLeafId,
       revisionChanged,
-      projectionLineageCompatible,
-      historyCompatible,
       messages,
     } = transition;
     const sessionChanged = transition.kind === "session-changed";
@@ -987,7 +962,6 @@ export class AppStore {
       // The lifecycle patch separately retains named-file selection intent
       // so compaction/rewrite can reauthorize it instead of returning to Browse.
       this.resources.invalidate();
-      this.transcriptData.invalidate();
       if (sessionChanged) this.git.invalidateForTransportReplacement();
       else this.git.clearComparison();
     } else if (revisionChanged) {
@@ -1063,43 +1037,7 @@ export class AppStore {
       transcriptEffectiveLeafId: nextEffectiveLeafId,
       transcriptNavigationLeased: active?.navigationLeased === true,
       composerHistoryVersion: page?.composerHistoryVersion ?? null,
-      hasOlderMessages: historyCompatible
-        ? this.state.hasOlderMessages
-        : Boolean(page?.hasOlder),
-      olderMessagesCursor: historyCompatible
-        ? this.state.olderMessagesCursor
-        : (page?.olderCursor ?? null),
-      loadingOlderMessages: projectionLineageCompatible
-        ? this.state.loadingOlderMessages
-        : false,
-      olderMessagesError: historyCompatible
-        ? this.state.olderMessagesError
-        : null,
-      transcriptActivityRanges: historyCompatible
-        ? this.state.transcriptActivityRanges
-        : (page?.activityRanges ?? []).map((range) => ({
-            ...range,
-            status: "idle" as const,
-            error: null,
-          })),
-      promptMapTurns: projectionLineageCompatible
-        ? this.state.promptMapTurns
-        : [],
-      promptMapTotal: projectionLineageCompatible
-        ? this.state.promptMapTotal
-        : 0,
-      promptMapLoadedStarts: projectionLineageCompatible
-        ? this.state.promptMapLoadedStarts
-        : [],
-      promptMapLoadingStarts: projectionLineageCompatible
-        ? this.state.promptMapLoadingStarts
-        : [],
-      promptMapError: projectionLineageCompatible
-        ? this.state.promptMapError
-        : null,
-      promptMapNavigatingOrdinal: projectionLineageCompatible
-        ? this.state.promptMapNavigatingOrdinal
-        : null,
+      hasOlderMessages: Boolean(page?.hasOlder),
       projectionHealth,
       projectionConflict,
       projectionError,
@@ -1191,11 +1129,7 @@ export class AppStore {
   private async resync(
     expectedSessionId = this.state.sessionId,
     expectedGeneration = this.selectionGeneration,
-    {
-      minimumRevision,
-      history = "preserve",
-      explicit = false,
-    }: ResyncOptions = {},
+    { minimumRevision, explicit = false }: ResyncOptions = {},
   ): Promise<void> {
     const api = this.api;
     if (
@@ -1226,7 +1160,7 @@ export class AppStore {
           page.revision < this.state.transcriptRevision)
       )
         return;
-      this.applySnapshot(snapshot, history);
+      this.applySnapshot(snapshot);
     } catch (error) {
       if (!ownsTransport()) return;
       if (error instanceof ApiError && error.status === 401) {
@@ -1246,7 +1180,6 @@ export class AppStore {
               if (request === this.resyncRequest && ownsTransport())
                 void this.resync(expectedSessionId, expectedGeneration, {
                   minimumRevision,
-                  history,
                 });
             })
           )
@@ -1271,8 +1204,64 @@ export class AppStore {
     }
   }
 
-  loadOlderMessages = (): Promise<boolean> =>
-    this.transcriptData.loadOlderMessages();
+  readNativeHistory = async (
+    sessionId: string,
+    viewId: string,
+    query: Extract<
+      import("../shared/contracts").SessionHistoryQuery,
+      { kind: "page" }
+    >,
+    signal: AbortSignal,
+  ) => {
+    const api = this.api;
+    const generation = this.selectionGeneration;
+    if (
+      !api ||
+      this.state.sessionId !== sessionId ||
+      this.state.transcriptViewId !== viewId
+    )
+      return null;
+    const page = await api.sessionHistory(sessionId, viewId, query, signal);
+    return this.api === api &&
+      this.selectionGeneration === generation &&
+      this.state.sessionId === sessionId &&
+      this.state.transcriptViewId === viewId &&
+      page.sessionId === sessionId &&
+      page.viewId === viewId &&
+      !signal.aborted
+      ? page
+      : null;
+  };
+
+  searchNativeHistory = async (
+    sessionId: string,
+    viewId: string,
+    text: string,
+    leafId: string | undefined,
+    signal: AbortSignal,
+  ) => {
+    const api = this.api;
+    const generation = this.selectionGeneration;
+    if (
+      !api ||
+      this.state.sessionId !== sessionId ||
+      this.state.transcriptViewId !== viewId
+    )
+      return null;
+    const result = await api.sessionHistory(
+      sessionId,
+      viewId,
+      { kind: "search", text, leafId },
+      signal,
+    );
+    return this.api === api &&
+      this.selectionGeneration === generation &&
+      this.state.sessionId === sessionId &&
+      this.state.transcriptViewId === viewId &&
+      !signal.aborted
+      ? result
+      : null;
+  };
 
   loadComposerHistory = (
     sessionId: string,
@@ -1286,19 +1275,6 @@ export class AppStore {
       incarnation,
       historyVersion,
     );
-
-  loadPromptMapTurns = (start?: number): Promise<UserTurnAnchor[]> =>
-    this.transcriptData.loadPromptMapTurns(start);
-
-  navigatePromptMapTurn = (ordinal: number): Promise<boolean> =>
-    this.transcriptData.navigatePromptMapTurn(ordinal);
-
-  materializeActivityRanges = (
-    cursors: readonly string[],
-    beforeCommit?: () => void,
-    mode: ActivityMaterializationMode = "all",
-  ): Promise<void> =>
-    this.transcriptData.materializeActivityRanges(cursors, beforeCommit, mode);
 
   // --- Connection lifecycle ---
 

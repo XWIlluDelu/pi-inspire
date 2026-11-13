@@ -73,9 +73,6 @@ export interface ChatMessage {
   __inspireEntryId?: string;
   /** Host-owned readable names, independent of physical upload cache basenames. */
   __inspireFileNames?: Record<string, string>;
-  /** Opaque lazy-range alias retained while deferred history materializes so
-   * the surrounding activity disclosure keeps its mounted identity. */
-  __inspireActivityRangeCursor?: string;
   /** Position in Pi's authoritative active-path message projection. Embedded
    * image content is addressed by this index plus its content-part index. */
   __inspireMessageIndex?: number;
@@ -116,6 +113,7 @@ export interface ChatMessage {
   __inspireBashRunning?: boolean;
   __inspireBashPreviewTruncated?: boolean;
   __inspireBashError?: string;
+  __inspireUnconfirmed?: boolean;
   __inspireBashInterrupted?: boolean;
 }
 

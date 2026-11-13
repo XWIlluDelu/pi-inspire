@@ -234,7 +234,6 @@ export function activeSnapshot(
       appendFromRevision: 1,
       messages: pageMessages,
       hasOlder: false,
-      olderCursor: null,
       ...transcriptPage,
     },
   };

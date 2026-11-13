@@ -950,20 +950,6 @@ export interface ProjectionHealth {
   message?: string;
 }
 
-export type TranscriptActivityKind = "thinking" | "tool";
-
-/** Opaque, revision-bound history omitted from an earlier transcript page.
- * `afterMessageId` anchors the range after its nearest older visible message;
- * null means the range starts the selected branch. */
-export interface TranscriptActivityRange {
-  cursor: string;
-  afterMessageId: string | null;
-  messageCount: number;
-  /** Chronological hints, at most two per kind, preserve single/multiple cues
-   * even when one kind is hidden. Paired results do not add a cue. */
-  kinds: TranscriptActivityKind[];
-}
-
 export interface TranscriptPage {
   sessionId: string;
   revision: number;
@@ -978,63 +964,38 @@ export interface TranscriptPage {
   /** Prompt-history invalidation token, stable across assistant/tool-only appends. */
   composerHistoryVersion: string;
   messages: unknown[];
-  /** Activity-only persisted messages skipped by response-oriented paging. */
-  activityRanges?: TranscriptActivityRange[];
   hasOlder: boolean;
-  olderCursor: string | null;
 }
 
-export interface TranscriptActivityPage {
+export interface NativeTurnPage {
   sessionId: string;
-  revision: number;
   viewId: string;
-  incarnation?: string;
-  effectiveLeafId?: string | null;
+  incarnation: string;
+  revision: number;
+  leafId: string | null;
+  firstTurn: number;
+  lastTurn: number;
+  totalTurns: number;
   messages: unknown[];
-  hasMore: boolean;
-  cursor: string | null;
+  earlier: string | null;
+  later: string | null;
 }
 
-export interface UserTurnAnchor {
-  id: string;
-  ordinal: number;
+export interface HistoryMatch {
+  entryId: string;
+  turn: number;
   snippet: string;
-  timestamp?: string;
-  attachmentCount: number;
-}
-
-/** A bounded slice of the complete user-turn outline for the current branch. */
-export interface UserTurnIndexPage {
-  sessionId: string;
-  revision: number;
-  viewId: string;
-  incarnation?: string;
-  appendFromRevision?: number;
-  effectiveLeafId?: string | null;
-  total: number;
-  start: number;
-  turns: UserTurnAnchor[];
-}
-
-/** Response-oriented transcript material beginning at one selected user turn. */
-export interface UserTurnTranscriptPage extends TranscriptPage {
-  targetMessageId: string;
-  rangeStart: number;
-  rangeEnd: number;
-  continuationCursor: string | null;
 }
 
 export type SessionHistoryQuery =
-  | { kind: "older" | "activity"; cursor: string }
-  | { kind: "turns" | "composer"; start?: number }
-  | { kind: "turn"; id: string; cursor?: string }
+  | { kind: "page"; cursor?: string; entryId?: string; leafId?: string }
+  | { kind: "search"; text: string; leafId?: string }
+  | { kind: "composer"; start?: number }
   | { kind: "entry"; targetId: string; offset?: number; format?: "message" };
 
 export interface SessionHistoryPages {
-  older: TranscriptPage;
-  activity: TranscriptActivityPage;
-  turns: UserTurnIndexPage;
-  turn: UserTurnTranscriptPage;
+  page: NativeTurnPage;
+  search: { matches: HistoryMatch[]; more: boolean };
   composer: ComposerHistoryPage;
   entry: BranchEntryResponse;
 }

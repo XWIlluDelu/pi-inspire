@@ -329,12 +329,6 @@ const ConversationStage = memo(function ConversationStage({
       model: source.model,
       thinkingLevel: source.thinkingLevel,
       messages: source.messages,
-      transcriptActivityRanges: source.transcriptActivityRanges,
-      promptMapTurns: source.promptMapTurns,
-      promptMapTotal: source.promptMapTotal,
-      promptMapLoadingStarts: source.promptMapLoadingStarts,
-      promptMapError: source.promptMapError,
-      promptMapNavigatingOrdinal: source.promptMapNavigatingOrdinal,
       streaming: source.streaming,
       runState: source.runState,
       activeAssistantMessageKey: source.activeAssistantMessageKey,
@@ -347,9 +341,6 @@ const ConversationStage = memo(function ConversationStage({
       thinkingVisibility: source.prefs.thinkingVisibility,
       toolVisibility: source.prefs.toolVisibility,
       activityFoldVisibility: source.prefs.activityFoldVisibility,
-      hasOlderMessages: source.hasOlderMessages,
-      loadingOlderMessages: source.loadingOlderMessages,
-      olderMessagesError: source.olderMessagesError,
     }),
     shallowEqual,
   );
@@ -362,12 +353,6 @@ const ConversationStage = memo(function ConversationStage({
     <Transcript
       ref={transcriptRef}
       messages={state.messages}
-      activityRanges={state.transcriptActivityRanges}
-      promptMapTurns={state.promptMapTurns}
-      promptMapTotal={state.promptMapTotal}
-      promptMapLoadingStarts={state.promptMapLoadingStarts}
-      promptMapError={state.promptMapError}
-      promptMapNavigatingOrdinal={state.promptMapNavigatingOrdinal}
       streaming={state.streaming}
       runState={state.runState}
       activeAssistantMessageKey={state.activeAssistantMessageKey}
@@ -381,9 +366,6 @@ const ConversationStage = memo(function ConversationStage({
       thinkingVisibility={state.thinkingVisibility}
       toolVisibility={state.toolVisibility}
       activityFoldVisibility={state.activityFoldVisibility}
-      hasOlder={state.hasOlderMessages}
-      loadingOlder={state.loadingOlderMessages}
-      olderError={state.olderMessagesError}
     />
   );
   const composer = (

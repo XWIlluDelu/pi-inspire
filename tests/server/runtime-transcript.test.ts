@@ -4,7 +4,6 @@ import {
   TRANSCRIPT_PAGE_MAX_BYTES,
   TRANSIENT_OVERLAY_MAX_BYTES,
 } from "../../server/session-projection.js";
-import { TaskOutcomeTracker } from "../../server/task-notifications.js";
 
 import {
   disposeProjectionFixture,
@@ -54,14 +53,12 @@ describe("live and durable transcript reconciliation", () => {
     "settles a background $phase using native cancellation evidence (aborted=$aborted)",
     async ({ event, aborted }) => {
       const { runtime, workers } = await setup();
-      const tracker = new TaskOutcomeTracker();
       const notifications: unknown[] = [];
       const settled = vi.fn();
       runtime.on("event", (event) => {
         if (event.type === "agent_settled") settled(event);
-        const notification = tracker.observe(event);
-        if (notification) notifications.push(notification);
       });
+      runtime.on("task_outcome", (event) => notifications.push(event));
       await runtime.deselectSession();
       const worker = workers[0]!;
       worker.emit("event", { type: "agent_start" });
@@ -326,7 +323,9 @@ describe("live and durable transcript reconciliation", () => {
         stopped,
       );
 
-      await appendFile(path, jsonl(messageEntry("stopped", "u1", stopped)));
+      const entry = messageEntry("stopped", "u1", stopped);
+      await appendFile(path, jsonl(entry));
+      worker.publishCheckpoint([entry], { sealed: "settled" });
       worker.emit("event", { type: "agent_settled" });
       await vi.waitFor(async () => {
         const snapshot = await runtime.snapshot();
@@ -499,16 +498,13 @@ describe("live and durable transcript reconciliation", () => {
         timestamp: "2026-08-01T00:00:08.000Z",
       },
     ];
-    await appendFile(
-      path,
-      jsonl(
-        ...entries.map((entry) => ({
-          type: "custom_message",
-          ...entry,
-          ...payload,
-        })),
-      ),
-    );
+    const native = entries.map((entry) => ({
+      type: "custom_message",
+      ...entry,
+      ...payload,
+    }));
+    await appendFile(path, jsonl(...native));
+    worker.publishCheckpoint(native, { sealed: "settled" });
     worker.emit("event", { type: "agent_settled" });
     const saved = await vi.waitFor(async () => {
       const snapshot = await runtime.snapshot();
@@ -528,8 +524,9 @@ describe("live and durable transcript reconciliation", () => {
       expect(message).not.toHaveProperty("__inspireLiveId");
   });
 
-  it("merges entry-first custom lifecycle events into the already projected row", async () => {
+  it("keeps a custom message live until its ordered checkpoint, even when the file already contains it", async () => {
     const { runtime, workers, path } = await setup();
+    const worker = workers[0]!;
     const entry = {
       type: "custom_message",
       id: "custom-entry-first",
@@ -539,98 +536,30 @@ describe("live and durable transcript reconciliation", () => {
       content: "arrived while idle",
       display: true,
     };
+    await appendFile(path, jsonl(entry));
+    worker.emit("event", { type: "entry_appended", entry });
     const live = {
       role: "custom",
-      customType: "relay_message",
-      content: "arrived while idle",
+      customType: entry.customType,
+      content: entry.content,
       display: true,
-      timestamp: 3_000,
+      timestamp: 3000,
     };
-    const worker = workers[0]!;
-    worker.emit("event", {
-      type: "entry_appended",
-      entry: structuredClone(entry),
+    worker.emit("event", { type: "message_start", message: live });
+    worker.emit("event", { type: "message_end", message: live });
+    const before = (
+      await runtime.snapshot()
+    ).active!.transcriptPage.messages.at(-1);
+    expect(before).toMatchObject({
+      __inspireLiveId: expect.any(String),
+      content: entry.content,
     });
-    await appendFile(path, jsonl(entry));
-    await vi.waitFor(async () => {
-      expect(
-        (await runtime.snapshot()).active?.transcriptPage.messages.some(
-          (message) =>
-            (message as Record<string, unknown>).__inspireMessageId ===
-            "custom-entry-first:0",
-        ),
-      ).toBe(true);
-    });
-
-    const forwarded: Array<Record<string, unknown>> = [];
-    runtime.on("event", (event) => {
-      const record = event as Record<string, unknown>;
-      if (record.type === "message_start" || record.type === "message_end")
-        forwarded.push(record);
-    });
-    worker.emit("event", {
-      type: "message_start",
-      message: structuredClone(live),
-    });
-    worker.emit("event", {
-      type: "message_end",
-      message: structuredClone(live),
-    });
-    const snapshot = await runtime.snapshot();
-    const custom =
-      snapshot.active?.transcriptPage.messages.filter(
-        (message) => (message as { role?: string }).role === "custom",
-      ) ?? [];
-    expect(custom).toHaveLength(1);
-    expect(custom[0]).toMatchObject({
-      timestamp: Date.parse(entry.timestamp),
-      __inspireMessageId: "custom-entry-first:0",
-      __inspireEntryId: "custom-entry-first",
-    });
-    expect(forwarded).toHaveLength(2);
-    const forwardedMessages = forwarded.map(
-      (event) => event.message as Record<string, unknown>,
-    );
+    expect(before).not.toHaveProperty("__inspireEntryId");
+    worker.publishCheckpoint([entry], { sealed: "idle" });
+    const after = (await runtime.snapshot()).active!.transcriptPage.messages;
     expect(
-      new Set(forwardedMessages.map((message) => message.__inspireLiveId)),
-    ).toHaveLength(1);
-    for (const message of forwardedMessages) {
-      expect(message).toMatchObject({
-        __inspireMessageId: "custom-entry-first:0",
-        __inspireEntryId: "custom-entry-first",
-      });
-    }
-    expect(forwardedMessages[1]).toMatchObject({ __inspireSettled: true });
-
-    // The entry-first lifecycle must not leave a stale custom persistence
-    // expectation that claims the next unrelated append.
-    const assistant = {
-      role: "assistant",
-      content: "next",
-      timestamp: 4_000,
-      stopReason: "stop",
-    };
-    worker.emit("event", { type: "agent_start" });
-    worker.emit("event", {
-      type: "message_end",
-      message: structuredClone(assistant),
-    });
-    await appendFile(
-      path,
-      jsonl(messageEntry("after-entry-first", "custom-entry-first", assistant)),
-    );
-    worker.emit("event", { type: "agent_settled" });
-    await vi.waitFor(async () => {
-      const settled = await runtime.snapshot();
-      expect(settled.active?.projectionConflict).toBeNull();
-      expect(
-        settled.active?.transcriptPage.messages.some(
-          (message) =>
-            (message as Record<string, unknown>).__inspireMessageId ===
-            "after-entry-first:0",
-        ),
-      ).toBe(true);
-    });
+      after.filter((item) => (item as { role?: string }).role === "custom"),
+    ).toMatchObject([{ __inspireEntryId: entry.id, content: entry.content }]);
   });
 
   it("bounds a live reply on reconnect and serves its complete saved text only for the current view", async () => {
@@ -658,8 +587,10 @@ describe("live and durable transcript reconciliation", () => {
       ),
     ).toBeLessThanOrEqual(TRANSIENT_OVERLAY_MAX_BYTES);
 
-    await appendFile(path, jsonl(messageEntry("a1", "u1", live)));
+    const entry = messageEntry("a1", "u1", live);
+    await appendFile(path, jsonl(entry));
     workers[0]!.emit("event", { type: "message_end", message: live });
+    workers[0]!.publishCheckpoint([entry], { sealed: "settled" });
     await vi.waitFor(async () => {
       snapshot = await runtime.snapshot();
       expect(snapshot.active?.activeAssistantMessageKey).toBe("persisted:a1:0");

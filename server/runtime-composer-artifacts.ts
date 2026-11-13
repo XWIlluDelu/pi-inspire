@@ -20,7 +20,11 @@ import type { ComposerHistoryMessage } from "./composer-history.js";
 import { filesystemRelativePath } from "./filesystem-containment.js";
 import { canonicalBase64DecodedSize } from "./image-content.js";
 import { requestError } from "./request-error.js";
-import { effectiveRuntimeLeaf, type RuntimeSlot } from "./runtime-slot.js";
+import {
+  effectiveRuntimeLeaf,
+  runtimeHistory,
+  type RuntimeSlot,
+} from "./runtime-slot.js";
 
 type HistorySelection = NonNullable<PromptRequest["historyArtifacts"]>;
 type RecalledImage = { type: "image"; data: string; mimeType: string };
@@ -38,10 +42,10 @@ function historyProjection(
   slot: RuntimeSlot,
   selection: HistorySelection,
 ): {
-  projection: NonNullable<RuntimeSlot["projection"]>;
+  projection: NonNullable<ReturnType<typeof runtimeHistory>>;
   effectiveLeafId: string | null;
 } {
-  const projection = slot.projection;
+  const projection = runtimeHistory(slot);
   const effectiveLeafId = effectiveRuntimeLeaf(slot);
   if (
     !projection ||

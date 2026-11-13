@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { Transcript } from "../../src/components/Transcript";
 import { ResponseActivityFold } from "../../src/components/transcript-fold";
 
@@ -41,7 +41,7 @@ function toolRounds(count: number) {
 }
 
 describe("response activity folds", () => {
-  it("summarizes repeated tools, deferred steps and failures in the fold header", () => {
+  it("summarizes repeated tools and failures in the fold header", () => {
     const { container } = render(
       <ResponseActivityFold
         visibility="expanded"
@@ -54,7 +54,7 @@ describe("response activity folds", () => {
           { id: "4", kind: "tool", name: "preview_check", failed: true },
           { id: "5", kind: "tool", name: "read" },
           { id: "6", kind: "tool", name: "edit" },
-          { id: "7", kind: "tool", deferred: true },
+          { id: "7", kind: "tool" },
         ]}
       >
         Activity
@@ -262,160 +262,6 @@ describe("response activity folds", () => {
         name: "Collapse assistant activity from the upper boundary",
       }),
     ).toHaveAttribute("aria-expanded", "true");
-  });
-
-  it.each([
-    { preference: "dynamic", running: false, initial: "closed" },
-    { preference: "dynamic", running: true, initial: "compact" },
-    { preference: "compact", running: false, initial: "compact" },
-    { preference: "expanded", running: false, initial: "expanded" },
-  ] as const)(
-    "materializes deferred activity at the requested density ($preference, running $running)",
-    async ({ preference, running, initial }) => {
-      const onMaterialize = vi.fn(async () => undefined);
-      const range = {
-        cursor: "range-1",
-        afterMessageId: "response-id",
-        messageCount: 100,
-        kinds: ["tool"] as ("thinking" | "tool")[],
-        status: "idle" as const,
-        error: null,
-      };
-      const response = {
-        role: "assistant",
-        content: "visible response",
-        __inspireMessageId: "response-id",
-      };
-      const view = (failed: boolean) =>
-        transcript([response], preference, {
-          streaming: running,
-          runState: running ? "running" : "idle",
-          activityRanges: [
-            failed
-              ? {
-                  ...range,
-                  status: "error",
-                  error: "range expired",
-                }
-              : range,
-          ],
-          onMaterializeActivityRanges: onMaterialize,
-        });
-      const { container, rerender } = render(view(false));
-      const fold = container.querySelector(
-        "[data-activity-fold]",
-      ) as HTMLElement;
-      const controls = within(fold);
-      if (initial === "closed") {
-        expect(onMaterialize).not.toHaveBeenCalled();
-        fireEvent.click(
-          controls.getByRole("button", { name: "Expand assistant activity" }),
-        );
-      }
-      const firstScope = initial === "expanded" ? "all" : "tail";
-      expect(fold).toHaveAttribute(
-        "data-activity-fold-presentation",
-        firstScope === "all" ? "expanded" : "compact",
-      );
-      expect(onMaterialize).toHaveBeenCalledExactlyOnceWith(
-        ["range-1"],
-        expect.any(Function),
-        firstScope,
-      );
-      if (firstScope === "tail") {
-        fireEvent.click(
-          controls.getByRole("button", {
-            name: "Show all earlier assistant activity",
-          }),
-        );
-      } else {
-        rerender(view(true));
-        fireEvent.click(
-          controls.getByRole("button", {
-            name: "Retry loading all earlier assistant activity",
-          }),
-        );
-      }
-      await act(async () => undefined);
-      expect(fold).toHaveAttribute(
-        "data-activity-fold-presentation",
-        "expanded",
-      );
-      expect(onMaterialize).toHaveBeenLastCalledWith(
-        ["range-1"],
-        expect.any(Function),
-        "all",
-      );
-    },
-  );
-
-  it("retains the opened fold identity when a deferred range becomes real activity", async () => {
-    const onMaterialize = vi.fn(async () => undefined);
-    const response = {
-      role: "assistant",
-      content: "visible response",
-      timestamp: 1,
-      __inspireMessageId: "response-id",
-    };
-    const range = {
-      cursor: "range-1",
-      afterMessageId: "response-id",
-      messageCount: 1,
-      kinds: ["tool"] as ("thinking" | "tool")[],
-      status: "idle" as const,
-      error: null,
-    };
-    const { container, rerender } = render(
-      transcript([response], "collapsed", {
-        activityRanges: [range],
-        onMaterializeActivityRanges: onMaterialize,
-      }),
-    );
-    let fold = container.querySelector("[data-activity-fold]") as HTMLElement;
-    fireEvent.click(
-      within(fold).getByRole("button", {
-        name: "Expand assistant activity",
-      }),
-    );
-    await act(async () => undefined);
-    expect(fold).toHaveAttribute("data-activity-fold", "open");
-    within(fold)
-      .getByRole("button", {
-        name: "Show all earlier assistant activity",
-      })
-      .focus();
-
-    rerender(
-      transcript(
-        [
-          response,
-          {
-            role: "toolResult",
-            toolName: "read",
-            content: "materialized result",
-            timestamp: 2,
-            __inspireMessageId: "activity-id",
-            __inspireActivityRangeCursor: "range-1",
-          },
-        ],
-        "collapsed",
-        {
-          activityRanges: [],
-          onMaterializeActivityRanges: onMaterialize,
-        },
-      ),
-    );
-    fold = container.querySelector("[data-activity-fold]") as HTMLElement;
-    expect(fold).toHaveAttribute("data-activity-fold", "open");
-    expect(
-      within(fold).getByRole("button", { name: "Expand read result details" }),
-    ).toBeVisible();
-    await act(async () => Promise.resolve());
-    expect(
-      within(fold).getByRole("button", {
-        name: "Collapse assistant activity from the upper boundary",
-      }),
-    ).toHaveFocus();
   });
 
   it("resets fold-local choices when the projection incarnation changes", () => {

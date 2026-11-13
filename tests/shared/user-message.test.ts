@@ -8,7 +8,6 @@ import {
   userMessageContent,
   userMessageTitle,
 } from "../../shared/user-message";
-import { userTurnSummary } from "../../shared/user-turns";
 
 const trailer = (...paths: string[]) =>
   `${ATTACHMENT_CONTEXT_HEADING}\n${paths.map((path) => `- ${JSON.stringify(path)}`).join("\n")}`;
@@ -33,10 +32,7 @@ it("reads mixed file and image prompts without exposing model instructions or ch
     references: paths,
   });
   expect(userMessageTitle(message.content)).toBe("Inspect");
-  expect(userTurnSummary(message)).toEqual({
-    snippet: "Inspect",
-    attachmentCount: 4,
-  });
+  expect(userMessageContent(message.content).imageCount).toBe(2);
   expect(userMessageContent(source)).toMatchObject({
     text: source,
     references: [],
@@ -71,35 +67,12 @@ it("shows file-only captions without storage IDs and leaves ordinary filenames i
     text: "",
     references: [stored, String.raw`C:\workspace\report.md`],
   });
-  expect(userTurnSummary({ content: fileOnly })).toEqual({
-    snippet: "AGENTS 1.md, report.md",
-    attachmentCount: 2,
-  });
+  expect(userMessageContent(fileOnly).caption).toBe("AGENTS 1.md, report.md");
   expect(fileReferenceName(`C:${stored.replaceAll("/", "\\")}`)).toBe(
     "AGENTS 1.md",
   );
   expect(fileReferenceName(`/project/${id}-report.md`)).toBe(`${id}-report.md`);
   expect(fileReferenceName(String.raw`/workspace/back\slash.md`)).toBe(
     String.raw`back\slash.md`,
-  );
-});
-
-it("labels image-only turns and bounds text without splitting Unicode characters", () => {
-  expect(
-    userTurnSummary({
-      content: [{ type: "text", text: `\n\n${imageNote}` }, { type: "image" }],
-    }),
-  ).toEqual({
-    snippet: "Image attachment",
-    attachmentCount: 1,
-  });
-  expect(
-    userTurnSummary({ content: [{ type: "image" }, { type: "image" }] }),
-  ).toEqual({
-    snippet: "2 image attachments",
-    attachmentCount: 2,
-  });
-  expect(userTurnSummary({ content: "😀".repeat(181) }).snippet).toBe(
-    "😀".repeat(180),
   );
 });

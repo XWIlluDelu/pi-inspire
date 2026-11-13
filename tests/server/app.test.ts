@@ -381,31 +381,20 @@ describe("Host HTTP workflows", () => {
   it("forwards authenticated transcript cursors to the correct reader", async () => {
     const sessionId = "fixture-active";
     const address = { sessionId, revision: 7, viewId: "branch-1" };
-    const older = {
+    const page = {
       ...address,
-      composerHistoryVersion: "history-1",
       messages: [{ role: "user", content: "older", timestamp: 1 }],
-      hasOlder: false,
-      olderCursor: null,
-    };
-    const activity = {
-      ...address,
-      messages: [{ role: "toolResult", content: "deferred", timestamp: 2 }],
-      hasMore: false,
-      cursor: null,
-    };
-    const userTurn = {
-      ...older,
-      targetMessageId: "user-0",
-      rangeStart: 0,
-      rangeEnd: 1,
-      continuationCursor: null,
+      incarnation: "source",
+      leafId: "leaf",
+      firstTurn: 1,
+      lastTurn: 1,
+      totalTurns: 1,
+      earlier: null,
+      later: null,
     };
     const read = vi.spyOn(runtime, "sessionHistory");
     for (const [query, expected] of [
-      [{ kind: "older", cursor: "older+cursor=" }, older],
-      [{ kind: "activity", cursor: "activity+cursor=" }, activity],
-      [{ kind: "turn", id: "user-0", cursor: "turn+cursor=" }, userTurn],
+      [{ kind: "page", entryId: "user-0", cursor: "turn+cursor=" }, page],
     ] as const) {
       const { viewId } = address;
       read.mockResolvedValueOnce(expected);
@@ -421,19 +410,19 @@ describe("Host HTTP workflows", () => {
     }
     await local
       .get("/api/history")
-      .query({ sessionId, kind: "turns" })
+      .query({ sessionId, kind: "page" })
       .expect(400);
     await local
       .get("/api/history")
       .query({
         sessionId,
         viewId: address.viewId,
-        kind: "older",
+        kind: "page",
         cursor: "cursor",
         offset: 5,
       })
       .expect(400);
-    expect(read).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenCalledTimes(1);
   });
 
   it("reads and clones an addressed session while another session is selected", async () => {
@@ -444,13 +433,20 @@ describe("Host HTTP workflows", () => {
     const firstPrompt =
       "Show me a formula-rich example and inspect the analysis steps.";
     for (const [kind, content] of [
-      ["turns", { turns: [expect.objectContaining({ snippet: firstPrompt })] }],
+      [
+        "page",
+        {
+          messages: expect.arrayContaining([
+            expect.objectContaining({ role: "user", content: firstPrompt }),
+          ]),
+        },
+      ],
       [
         "composer",
         { entries: [expect.objectContaining({ text: firstPrompt })] },
       ],
     ] as const) {
-      const query = { sessionId, viewId, kind, start: 0 };
+      const query = { sessionId, viewId, kind };
       await guest.get("/api/history").query(query).expect(401);
       const result = await local.get("/api/history").query(query).expect(200);
       expect(result.body).toMatchObject({ sessionId, viewId, ...content });

@@ -13,9 +13,7 @@ import {
   type SessionReadOnlyReason,
   type SessionRuntimeStatus,
   type SessionSummary,
-  type TranscriptActivityRange,
   type UpdateCheckResponse,
-  type UserTurnAnchor,
 } from "../shared/contracts";
 import type { ModelSettingsOwner } from "../shared/model-settings";
 import {
@@ -97,15 +95,6 @@ export interface NativeCommandUiRequest {
   modelSettingsOwner?: ModelSettingsOwner;
 }
 
-export interface TranscriptActivityRangeState extends TranscriptActivityRange {
-  status: "idle" | "loading" | "error";
-  error: string | null;
-}
-
-export type ActivityMaterializationMode = "all" | "tail";
-
-/** Whether a projection revision still contains the unchanged prefix ending at
- * an earlier revision. */
 export function transcriptRevisionContains(
   revision: number,
   appendFromRevision: number,
@@ -198,17 +187,7 @@ export interface AppState
   transcriptNavigationLeased: boolean;
   composerHistoryVersion: string | null;
   hasOlderMessages: boolean;
-  olderMessagesCursor: string | null;
-  loadingOlderMessages: boolean;
-  olderMessagesError: string | null;
-  transcriptActivityRanges: TranscriptActivityRangeState[];
   /** Sparse, branch-bound user-turn outline pages backing Prompt Map. */
-  promptMapTurns: UserTurnAnchor[];
-  promptMapTotal: number;
-  promptMapLoadedStarts: number[];
-  promptMapLoadingStarts: number[];
-  promptMapError: string | null;
-  promptMapNavigatingOrdinal: number | null;
   projectionHealth: ProjectionHealth;
   projectionConflict: ProjectionConflict | null;
   projectionError: string | null;
@@ -345,16 +324,6 @@ export function createInitialAppState(): AppState {
     transcriptNavigationLeased: false,
     composerHistoryVersion: null,
     hasOlderMessages: false,
-    olderMessagesCursor: null,
-    loadingOlderMessages: false,
-    olderMessagesError: null,
-    transcriptActivityRanges: [],
-    promptMapTurns: [],
-    promptMapTotal: 0,
-    promptMapLoadedStarts: [],
-    promptMapLoadingStarts: [],
-    promptMapError: null,
-    promptMapNavigatingOrdinal: null,
     projectionHealth: { status: "ok" },
     projectionConflict: null,
     projectionError: null,

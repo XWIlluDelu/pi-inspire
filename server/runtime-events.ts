@@ -30,6 +30,7 @@ import {
   messageFallbackCorrelation,
   structuralMessageIdentity,
 } from "../shared/message-identity.js";
+import type { TaskOutcome } from "../shared/notifications.js";
 import { PROVIDER_AUTH_SUFFIX } from "../shared/provider-auth-bridge.js";
 import {
   childCallFromEvent,
@@ -41,10 +42,7 @@ import type { PiRpcProcess } from "./pi-rpc.js";
 import { requestError } from "./request-error.js";
 import { parseBridgeResult } from "./runtime-branch-bridge.js";
 import { exactPendingInput } from "./runtime-pending.js";
-import type {
-  PersistenceMessageIdentity,
-  RuntimeSlot,
-} from "./runtime-slot.js";
+import type { RuntimeSlot } from "./runtime-slot.js";
 import type { ReducedAssistantDelta } from "./runtime-stream-budget.js";
 import { ToolArgumentStream } from "./tool-argument-stream.js";
 
@@ -79,10 +77,13 @@ const PI_STARTUP_RESPONSE_UI_ERROR =
 interface RuntimeEventControllerHost {
   updateBash(slot: RuntimeSlot, event: Record<string, unknown>): boolean;
   selectedSessionId(): string | null;
-  recordPersistenceEvent(
+  finishTask(slot: RuntimeSlot, outcome: TaskOutcome | null): void;
+  checkpoint(
     slot: RuntimeSlot,
-    event: Record<string, unknown>,
-  ): PersistenceMessageIdentity | undefined;
+    rpc: PiRpcProcess,
+    record: Record<string, unknown>,
+  ): boolean;
+  refreshCheckpoint(slot: RuntimeSlot): void;
   activeAssistantOverlayMessage(slot: RuntimeSlot): unknown;
   updateOverlay(
     slot: RuntimeSlot,
@@ -124,6 +125,12 @@ export class RuntimeEventController {
   >();
 
   constructor(private readonly host: RuntimeEventControllerHost) {}
+
+  publishCheckpoint(slot: RuntimeSlot, publish: () => void): void {
+    if (this.orderedSlots.has(slot))
+      this.enqueueOrderedEvent(slot, publish, "worker_checkpoint");
+    else publish();
+  }
 
   private enqueueOrderedEvent(
     slot: RuntimeSlot,
@@ -258,7 +265,6 @@ export class RuntimeEventController {
     event: unknown,
     rpc: PiRpcProcess,
     pendingContentChanged: boolean,
-    persistence: PersistenceMessageIdentity | undefined,
     pendingInput: PendingInput | null,
   ): void {
     if (pendingContentChanged) {
@@ -272,17 +278,6 @@ export class RuntimeEventController {
       event && typeof event === "object"
         ? (event as Record<string, unknown>)
         : {};
-    const entryId = persistence?.entryId;
-    if (entryId && record.message && typeof record.message === "object") {
-      event = record = {
-        ...record,
-        message: {
-          ...record.message,
-          __inspireEntryId: entryId,
-          __inspireMessageId: `${entryId}:0`,
-        },
-      };
-    }
     if (
       record.type === "agent_settled" ||
       ((record.type === "message_start" || record.type === "message_end") &&
@@ -290,7 +285,6 @@ export class RuntimeEventController {
           "assistant")
     )
       this.argumentStreams.delete(rpc);
-    // Persistence claims are recorded by dispatchOwnedProcessEvent first.
     // Pi 0.86 system loadouts/checkpoints stay host-side, including live events
     // and the aggregate agent_end payload, without becoming overlay messages.
     if (
@@ -394,14 +388,6 @@ export class RuntimeEventController {
             ? { previous: previousMessage, event: record.assistantMessageEvent }
             : undefined,
         );
-        // Presentation may follow reconciliation. Share the same identity so
-        // either side can bind the exact entry without requiring an overlay
-        // to exist when persistence is witnessed.
-        if (record.type === "message_end" && persistence) {
-          const liveId = (projectedMessage as Record<string, unknown> | null)
-            ?.__inspireLiveId;
-          if (typeof liveId === "string") persistence.overlayId = liveId;
-        }
         if (
           record.type === "message_start" &&
           projectedMessage &&
@@ -553,6 +539,7 @@ export class RuntimeEventController {
             return;
           slot.extensionStatuses = {};
           slot.extensionDisplays = [];
+          this.host.refreshCheckpoint(slot);
           forwardedEvent = {
             type: "extension_ui_request",
             id: record.id,
@@ -617,16 +604,16 @@ export class RuntimeEventController {
         slot.summarizationRetry = null;
         break;
       case "agent_start":
+        slot.activeTask = "agent";
         slot.toolActivity = {};
         slot.summarizationRetry = null;
         slot.runState = "running";
         slot.compactionReturnState = null;
         slot.activeAssistantCorrelation = null;
-        slot.customActivities.pendingEntries = [];
-        slot.customActivities.pendingMessageActivityIds = [];
         slot.attention = null;
         break;
       case "compaction_start":
+        if (record.reason === "manual") slot.activeTask ??= "compaction";
         slot.summarizationRetry = null;
         if (
           slot.compactionReturnState === null &&
@@ -652,9 +639,19 @@ export class RuntimeEventController {
               : record.willRetry === true
                 ? "running"
                 : returnState;
+        if (record.reason === "manual" && slot.activeTask === "compaction")
+          this.host.finishTask(
+            slot,
+            record.aborted === true
+              ? null
+              : slot.conflict || record.errorMessage || record.result == null
+                ? "failed"
+                : "completed",
+          );
         break;
       }
       case "auto_retry_start":
+        slot.activeTask ??= "agent";
         slot.runState = "retrying";
         slot.retry = parseRetryInfo({
           attempt: record.attempt,
@@ -702,12 +699,7 @@ export class RuntimeEventController {
         slot.activeAssistantCorrelation = null;
         slot.attention =
           this.host.selectedSessionId() === slot.id ? null : outcome;
-        for (const expectation of slot.persistenceExpectations)
-          expectation.settle(null);
-        slot.persistenceExpectations = [];
-        slot.absorbedPersistenceEntries.clear();
-        slot.customActivities.pendingEntries = [];
-        slot.customActivities.pendingMessageActivityIds = [];
+        if (slot.activeTask === "agent") this.host.finishTask(slot, outcome);
         // Native display captions can outlive consumption and settlement.
         // Keep worker-bound row evidence until Pi removes them or the worker retires.
         slot.pendingImages?.settled();
@@ -726,6 +718,12 @@ export class RuntimeEventController {
       record.type === "agent_settled"
     )
       this.host.resumeDeferredPrompts(slot);
+    if (
+      record.type === "compaction_end" ||
+      record.type === "agent_settled" ||
+      (record.type === "message_end" && !isBusyRunState(slot.runState))
+    )
+      this.host.refreshCheckpoint(slot);
   }
 
   private interceptBranchStatus(
@@ -791,7 +789,7 @@ export class RuntimeEventController {
     return true;
   }
 
-  private dispatchOwnedProcessEvent(
+  private dispatchNativeEvent(
     slot: RuntimeSlot,
     rpc: PiRpcProcess,
     event: unknown,
@@ -811,19 +809,12 @@ export class RuntimeEventController {
       slot.manualCompaction?.worker === rpc
     )
       slot.manualCompaction.aborted = record.aborted === true;
-    const persistence = this.host.recordPersistenceEvent(slot, record);
-    // `entry_appended` is host provenance, not transcript content. Its raw
-    // extension payload must never cross the browser boundary.
-    if (record.type === "entry_appended") return;
+    if (record.type === "entry_appended") {
+      if (!isBusyRunState(slot.runState)) this.host.refreshCheckpoint(slot);
+      return;
+    }
     const handle = () =>
-      this.handleEvent(
-        slot,
-        event,
-        rpc,
-        pendingContentChanged,
-        persistence,
-        pendingInput,
-      );
+      this.handleEvent(slot, event, rpc, pendingContentChanged, pendingInput);
     if (record.type === "agent_settled" || record.type === "compaction_end") {
       this.enqueueOrderedEvent(
         slot,
@@ -903,8 +894,9 @@ export class RuntimeEventController {
       ].includes(record.statusKey as string)
     )
       return;
+    if (this.host.checkpoint(slot, rpc, record)) return;
     if (this.interceptBranchStatus(slot, rpc, record)) return;
     if (this.rejectUnsupportedStartupUi(slot, rpc, record)) return;
-    this.dispatchOwnedProcessEvent(slot, rpc, event, record);
+    this.dispatchNativeEvent(slot, rpc, event, record);
   }
 }

@@ -1,10 +1,4 @@
-import {
-  ChevronDown,
-  ChevronUp,
-  GalleryHorizontalEnd,
-  Search,
-  X,
-} from "lucide-react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import type { RefObject } from "react";
 import { isComposingKeyboardEvent } from "../keyboard-input";
 import { Dropdown } from "./Dropdown";
@@ -14,7 +8,7 @@ import {
   type useTranscriptSearch,
 } from "./transcript-search";
 
-export type MobileTranscriptTool = "search" | "prompt" | null;
+type MobileTranscriptTool = "search" | null;
 
 /**
  * Persistent desktop search and local narrow launchers.
@@ -24,7 +18,7 @@ export function TranscriptUtilities({
   search,
   inputRef,
   searchLauncherRef,
-  promptLauncherRef,
+  onOpenHistory,
   mobileTool,
   onOpenMobile,
   onClose,
@@ -32,7 +26,7 @@ export function TranscriptUtilities({
   search: ReturnType<typeof useTranscriptSearch>;
   inputRef: RefObject<HTMLInputElement | null>;
   searchLauncherRef: RefObject<HTMLButtonElement | null>;
-  promptLauncherRef: RefObject<HTMLButtonElement | null>;
+  onOpenHistory?: () => void;
   mobileTool: MobileTranscriptTool;
   onOpenMobile: (tool: MobileTranscriptTool) => void;
   onClose: (restoreFocus?: boolean) => void;
@@ -52,16 +46,15 @@ export function TranscriptUtilities({
             role="toolbar"
             aria-label="Transcript tools"
           >
-            <button
-              ref={promptLauncherRef}
-              type="button"
-              className="transcript-mobile-toolbar__button transcript-mobile-toolbar__button--prompt"
-              aria-label="Open prompt navigation"
-              title="Open prompt navigation"
-              onClick={() => onOpenMobile("prompt")}
-            >
-              <GalleryHorizontalEnd size={18} aria-hidden />
-            </button>
+            {onOpenHistory && (
+              <button
+                type="button"
+                className="transcript-mobile-toolbar__button transcript-mobile-toolbar__button--history"
+                onClick={onOpenHistory}
+              >
+                Turn history
+              </button>
+            )}
             <button
               ref={searchLauncherRef}
               type="button"
@@ -75,6 +68,15 @@ export function TranscriptUtilities({
           </div>
         ) : null}
       </div>
+      {onOpenHistory && (
+        <button
+          type="button"
+          className="native-history-launcher"
+          onClick={onOpenHistory}
+        >
+          Turn history
+        </button>
+      )}
       <div
         className={`transcript-search ${search.query ? "transcript-search--active" : ""} ${mobileTool === "search" ? "transcript-search--open" : ""}`}
         role="search"

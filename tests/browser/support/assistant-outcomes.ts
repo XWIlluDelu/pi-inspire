@@ -49,8 +49,6 @@ export async function assistantOutcomeScenario(page: Page) {
       ...snapshot.active.transcriptPage,
       messages,
       hasOlder: false,
-      olderCursor: null,
-      activityRanges: [],
     };
   };
   const transport = await routeSnapshots(page, {

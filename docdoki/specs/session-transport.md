@@ -66,6 +66,8 @@ digest. A match yields a digest-only unchanged acknowledgement; otherwise send a
 snapshot. Failed resume falls back to bootstrap. A committed HTTP-open snapshot also passes its
 authority-bound digest into changed detail interest. The Host still performs a second authoritative
 read and queues events behind it, using a digest-only confirmation for an identical window.
+The runtime captures its event sequence when assembling the snapshot. The socket replays only
+queued runtime events newer than that cut.
 
 Pending detail confirmation keeps the exact authority/session/revision/digest witness. Previously
 sent detail from another session may invalidate the general reconnect cache, but not this witness.
@@ -207,11 +209,11 @@ Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refus
 
 ## Transcript views
 
-`GET /api/history` serves older rows, deferred activity, prompt outline, a selected turn, composer
-recall, and History entry detail. It requires `sessionId` and `viewId` and admits the query against
-that session's reconciled view. Transcript pages and activity use the same byte and row budgets.
-Prompt outline and turn lookup share a branch index, and recall and entry detail keep their own
-content limits. History image bytes use the separate view-bound image endpoint.
+`GET /api/history` serves bounded native pages, full branch text search, composer recall and entry
+detail, with an explicit `sessionId` and `viewId`. Page cursors bind a fixed native leaf and an
+earlier/later entry boundary. Search can find entries outside the current page, including before
+compaction. Entry detail exposes bounded body sections and image metadata; image bytes use the
+view-bound image endpoint. Live uses a separately bounded transcript tail.
 
 Each transcript snapshot/page carries an opaque branch-view generation and effective leaf.
 Browser transcript readers validate the returned `viewId` against the request before applying
@@ -228,7 +230,7 @@ Pi system prompts/tool-loadout messages stay in Host canonical state, outside br
 overlays. Apply this consistently to compaction checkpoints, aggregate agent events, full/incremental
 and reopened/branch views, History search, complete-entry preview and image access. Preserve SDK
 entry identities and chronological compaction summaries; system placeholders produce no empty search
-results. Filtering changes neither persisted bytes nor ownership claims. Use the ordinary
+results. Filtering does not change native or saved entries. Use the ordinary
 structured-key redaction policy without an extra text-redaction rule.
 
 ## Bounded streaming

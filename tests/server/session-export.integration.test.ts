@@ -79,7 +79,6 @@ it.skipIf(
       ).href
     )) as { serializeSessionBranch(manager: unknown): string };
     const expected = native.serializeSessionBranch(SessionManager.open(f.path));
-    const rpc = vi.spyOn(f.workers[0]!, "request");
     const response = await fetch(`${f.url}/api/control/native-command`, {
       method: "POST",
       headers: f.headers,
@@ -90,10 +89,7 @@ it.skipIf(
       }),
     });
     expect(response.status).toBe(200);
-    expect(rpc).toHaveBeenCalledWith({
-      type: "get_entries",
-      since: "00000007",
-    });
+
     const result = (await response.json()) as HostNativeCommandResponse;
     expect(result.export).toMatchObject({
       format: "jsonl",

@@ -1,6 +1,7 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
+  ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
   BRANCH_BRIDGE_MAX_ARGUMENT_BYTES,
@@ -19,9 +20,28 @@ import {
   type RetryStateResult,
 } from "../../shared/branch-bridge-protocol.js";
 
+import { nativeEntryDigest } from "../native-entry-digest.js";
 import { userMessageEvidence } from "../pending-image-evidence.js";
 import { MAX_SESSION_ID_CHARS } from "../../shared/contracts.js";
+import {
+  CHECKPOINT_CHUNK_CHARS,
+  CHECKPOINT_MAX_CHARS,
+  CHECKPOINT_MAX_ENTRIES,
+  CHECKPOINT_SUFFIX,
+  NATIVE_START_SUFFIX,
+  type WorkerCheckpoint,
+} from "../../shared/worker-checkpoint.js";
 import { registerProviderAuthBridge } from "./provider-auth-bridge.js";
+
+const CHECKPOINT_STATE = Symbol.for("inspire.worker-checkpoint");
+type CheckpointState = {
+  workerId: string;
+  contextGeneration: number;
+  published: number;
+  run: number;
+  tail: string | null;
+  leaf: string | null;
+};
 
 const TOKEN = /^[A-Za-z0-9_-]{16,200}$/;
 const ENTRY_ID = /^[A-Za-z0-9_-]{1,200}$/;
@@ -111,7 +131,131 @@ export default function inspireBranchBridge(pi: ExtensionAPI): void {
 
   registerProviderAuthBridge(pi, { command, statusKey, workerId });
 
+  const processState = process as NodeJS.Process & {
+    [CHECKPOINT_STATE]?: CheckpointState;
+  };
+  const previous = processState[CHECKPOINT_STATE];
+  const checkpoint =
+    previous?.workerId === workerId
+      ? previous
+      : {
+          workerId,
+          contextGeneration: 0,
+          published: 0,
+          run: 0,
+          tail: null,
+          leaf: null,
+        };
+  processState[CHECKPOINT_STATE] = checkpoint;
+  const checkpointKey = `${statusKey}${CHECKPOINT_SUFFIX}`;
+
+  function publish(ctx: ExtensionContext, sealed: WorkerCheckpoint["sealed"]) {
+    if (ctx.mode !== "rpc") return;
+    const native = ctx.sessionManager;
+    const entries = native.getEntries();
+    if (
+      checkpoint.published > entries.length ||
+      (checkpoint.published > 0 &&
+        entries[checkpoint.published - 1]?.id !== checkpoint.tail)
+    ) {
+      ctx.ui.setStatus(checkpointKey, "Native checkpoint prefix changed");
+      return;
+    }
+    const leaf = native.getLeafId();
+    let at = checkpoint.published;
+    let next: string | undefined;
+    do {
+      const bodies: string[] = [];
+      let chars = 0;
+      while (at < entries.length && bodies.length < CHECKPOINT_MAX_ENTRIES) {
+        next ??= JSON.stringify(entries[at]);
+        if (chars + next.length > CHECKPOINT_MAX_CHARS) break;
+        chars += next.length;
+        bodies.push(next);
+        next = undefined;
+        at += 1;
+      }
+      if (bodies.length === 0 && at < entries.length) {
+        ctx.ui.setStatus(
+          checkpointKey,
+          "Native checkpoint entry exceeds its bound",
+        );
+        return;
+      }
+      const final = at === entries.length;
+      const marker: WorkerCheckpoint = {
+        workerId,
+        contextGeneration: checkpoint.contextGeneration,
+        sessionId: native.getSessionId(),
+        sessionFile: native.getSessionFile() ?? null,
+        from: checkpoint.tail,
+        tail: entries[at - 1]?.id ?? null,
+        leaf: final ? leaf : checkpoint.leaf,
+        run: checkpoint.run,
+        sealed: final ? sealed : null,
+        entries: bodies.length,
+      };
+      ctx.ui.setStatus(checkpointKey, JSON.stringify(marker));
+      for (const body of bodies)
+        for (
+          let start = 0;
+          start < body.length;
+          start += CHECKPOINT_CHUNK_CHARS
+        ) {
+          const end = start + CHECKPOINT_CHUNK_CHARS;
+          ctx.ui.setStatus(
+            checkpointKey,
+            (end >= body.length ? "!" : "+") + body.slice(start, end),
+          );
+        }
+      checkpoint.published = at;
+      checkpoint.tail = marker.tail;
+      checkpoint.leaf = marker.leaf;
+    } while (at < entries.length);
+  }
+
+  pi.on("agent_start", () => {
+    checkpoint.run += 1;
+  });
+  pi.on("turn_start", (_event, ctx) => {
+    publish(ctx, "turn");
+  });
+  pi.on("agent_settled", (_event, ctx) => {
+    publish(ctx, "settled");
+  });
+  pi.registerCommand(`${command}${CHECKPOINT_SUFFIX}`, {
+    description: "Internal Inspire native session checkpoint",
+    handler: async (_argument, ctx) => {
+      publish(ctx, ctx.isIdle() ? "idle" : null);
+    },
+  });
+
   pi.on("session_start", (event, ctx) => {
+    checkpoint.contextGeneration += 1;
+    if (event.reason !== "reload") {
+      const initial = ctx.sessionManager.getEntries();
+      checkpoint.published = initial.length;
+      checkpoint.tail = initial.at(-1)?.id ?? null;
+      checkpoint.leaf = ctx.sessionManager.getLeafId();
+      const expected = process.env.INSPIRE_NATIVE_START_COUNT;
+      if (
+        ctx.mode === "rpc" &&
+        event.reason === "startup" &&
+        expected !== undefined
+      ) {
+        const count = Math.min(initial.length, Number(expected));
+        ctx.ui.setStatus(
+          `${statusKey}${NATIVE_START_SUFFIX}`,
+          JSON.stringify({
+            workerId,
+            sessionId: ctx.sessionManager.getSessionId(),
+            sessionFile: ctx.sessionManager.getSessionFile(),
+            count,
+            digest: nativeEntryDigest(initial.slice(0, count)),
+          }),
+        );
+      }
+    }
     // This explicit Host extension loads before configured extensions. Clear
     // the prior runtime (including shutdown UI) before their startup handlers.
     if (event.reason === "reload" && ctx.mode === "rpc") {

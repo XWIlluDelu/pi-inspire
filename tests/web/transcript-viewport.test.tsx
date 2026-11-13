@@ -1,20 +1,8 @@
 // @vitest-environment jsdom
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  type TranscriptViewportRow,
-  useTranscriptViewport,
-} from "../../src/components/transcript-viewport";
-import { deferred } from "./helpers";
-
-const ROWS: TranscriptViewportRow[] = [{ key: "one" }];
+import { useTranscriptViewport } from "../../src/components/transcript-viewport";
 
 class TestResizeObserver {
   static instances: TestResizeObserver[] = [];
@@ -56,22 +44,14 @@ function flushAnimationFrames(): void {
 function ViewportHarness({
   sessionId = "session",
   viewId = "view",
-  hasOlder = false,
-  onLoadOlder = async () => false,
 }: {
   sessionId?: string;
   viewId?: string;
-  hasOlder?: boolean;
-  onLoadOlder?: () => Promise<boolean>;
 }) {
   const searchOwnsViewportRef = useRef(false);
   const viewport = useTranscriptViewport({
-    rows: ROWS,
     sessionId,
     viewId,
-    hasOlder,
-    olderError: null,
-    onLoadOlder,
     followSignal: "stable",
     searchOwnsViewportRef,
   });
@@ -81,7 +61,6 @@ function ViewportHarness({
       role="log"
       data-pinned={viewport.pinned}
       data-at-latest={viewport.atLatest}
-      data-loading-earlier={viewport.loadingEarlier}
       onScroll={viewport.onScroll}
       onWheel={(event) =>
         viewport.markUserScrollIntent(
@@ -251,153 +230,6 @@ describe("transcript viewport geometry", () => {
     act(() => vi.runOnlyPendingTimers());
     expect(log.scrollTop).toBe(100);
     expect(log).toHaveAttribute("data-at-latest", "true");
-  });
-
-  it("keeps one loading state across consecutive automatic older pages", async () => {
-    const releases: Array<(loaded: boolean) => void> = [];
-    const onLoadOlder = vi.fn(
-      () =>
-        new Promise<boolean>((resolve) => {
-          releases.push(resolve);
-        }),
-    );
-    const { rerender } = render(
-      <ViewportHarness hasOlder onLoadOlder={onLoadOlder} />,
-    );
-    const log = screen.getByRole("log");
-    await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(1));
-    expect(log).toHaveAttribute("data-loading-earlier", "true");
-
-    await act(async () => releases[0]!(true));
-    act(() => {
-      flushAnimationFrames();
-      flushAnimationFrames();
-    });
-    expect(log).toHaveAttribute("data-loading-earlier", "true");
-    act(() => flushAnimationFrames());
-    await waitFor(() => expect(onLoadOlder).toHaveBeenCalledTimes(2));
-    expect(log).toHaveAttribute("data-loading-earlier", "true");
-
-    rerender(<ViewportHarness hasOlder={false} onLoadOlder={onLoadOlder} />);
-    await act(async () => releases[1]!(true));
-    act(() => {
-      flushAnimationFrames();
-      flushAnimationFrames();
-      flushAnimationFrames();
-    });
-    expect(log).toHaveAttribute("data-loading-earlier", "false");
-  });
-
-  it("keeps the new view's loading owner when a retired page settles", async () => {
-    const oldPage = deferred<boolean>(),
-      currentPage = deferred<boolean>();
-    const onLoadOlder = vi
-      .fn()
-      .mockReturnValueOnce(oldPage.promise)
-      .mockReturnValueOnce(currentPage.promise);
-    const view = render(
-      <ViewportHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
-    );
-    view.rerender(
-      <ViewportHarness hasOlder viewId="current" onLoadOlder={onLoadOlder} />,
-    );
-    expect(onLoadOlder).toHaveBeenCalledTimes(2);
-    await act(async () => oldPage.resolve(false));
-    expect(screen.getByRole("log")).toHaveAttribute(
-      "data-loading-earlier",
-      "true",
-    );
-    await act(async () => currentPage.resolve(false));
-    expect(screen.getByRole("log")).toHaveAttribute(
-      "data-loading-earlier",
-      "false",
-    );
-  });
-
-  it.each([
-    { navigation: "search", afterResponse: false },
-    { navigation: "search", afterResponse: true },
-    { navigation: "scroll", afterResponse: false },
-    { navigation: "latest", afterResponse: false },
-  ])(
-    "keeps newer $navigation navigation across an earlier-history completion (after response: $afterResponse)",
-    async ({ navigation, afterResponse }) => {
-      const page = deferred<boolean>();
-      const onLoadOlder = vi.fn(() => page.promise);
-      const view = render(
-        <ViewportHarness hasOlder={false} onLoadOlder={onLoadOlder} />,
-      );
-      const log = screen.getByRole("log");
-      setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
-      view.rerender(<ViewportHarness hasOlder onLoadOlder={onLoadOlder} />);
-      expect(onLoadOlder).toHaveBeenCalledOnce();
-
-      const complete = async () => {
-        Object.defineProperty(log, "scrollHeight", {
-          configurable: true,
-          value: 1_400,
-        });
-        await act(async () => page.resolve(true));
-      };
-      if (afterResponse) {
-        await complete();
-        act(() => flushAnimationFrames());
-      }
-      if (navigation === "scroll") {
-        fireEvent.wheel(log);
-        log.scrollTop = 500;
-      } else {
-        fireEvent.click(
-          screen.getByRole("button", {
-            name:
-              navigation === "search" ? "Navigate search" : "Jump to latest",
-          }),
-        );
-      }
-      fireEvent.scroll(log);
-      if (!afterResponse) {
-        // Native anchoring preserves the current row when history prepends.
-        log.scrollTop += 400;
-        await complete();
-      }
-      act(() => {
-        TestResizeObserver.trigger(log);
-        flushAnimationFrames();
-        flushAnimationFrames();
-        flushAnimationFrames();
-      });
-      fireEvent.scroll(log);
-      expect(log.scrollTop).toBe(navigation === "latest" ? 1_000 : 900);
-      expect(log).toHaveAttribute("data-loading-earlier", "false");
-      expect(onLoadOlder).toHaveBeenCalledOnce();
-    },
-  );
-
-  it("retires an older page's queued scroll after a view change", async () => {
-    const page = deferred<boolean>();
-    const onLoadOlder = vi.fn(() => page.promise);
-    const view = render(
-      <ViewportHarness hasOlder viewId="old" onLoadOlder={onLoadOlder} />,
-    );
-    const log = screen.getByRole("log");
-    setScrollGeometry(log, { clientHeight: 400, scrollTop: 100 });
-    await act(async () => page.resolve(true));
-    act(() => flushAnimationFrames());
-    view.rerender(
-      <ViewportHarness
-        hasOlder={false}
-        viewId="current"
-        onLoadOlder={onLoadOlder}
-      />,
-    );
-    expect(log.scrollTop).toBe(600);
-    act(() => {
-      flushAnimationFrames();
-      flushAnimationFrames();
-      flushAnimationFrames();
-    });
-    expect(log.scrollTop).toBe(600);
-    expect(onLoadOlder).toHaveBeenCalledOnce();
   });
 
   it("reports the visible latest boundary independently of follow ownership", () => {

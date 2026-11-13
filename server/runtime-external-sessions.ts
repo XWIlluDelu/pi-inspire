@@ -9,6 +9,7 @@ import {
   MAX_PROMPT_CHARS,
   type PromptRequest,
 } from "../shared/contracts.js";
+import type { TaskOutcome } from "../shared/notifications.js";
 import {
   type AttachmentStore,
   addAttachmentContext,
@@ -45,6 +46,7 @@ interface Connection {
 interface ExternalSessionHost {
   current(slot: RuntimeSlot): boolean;
   emit(slot: RuntimeSlot, event: unknown): void;
+  taskOutcome(slot: RuntimeSlot, outcome: TaskOutcome, id?: string): void;
   reconcile(slot: RuntimeSlot, force: boolean): Promise<unknown>;
   assertUsable(slot: RuntimeSlot): void;
   log(slot: RuntimeSlot, error: unknown): void;
@@ -368,11 +370,12 @@ export class RuntimeExternalSessions {
         )
       : [];
     for (const result of newResults) {
-      this.host.emit(slot, {
-        type: "native_task_outcome",
-        outcomeId: state.taskRuns.instanceId + ":" + result.id,
-        outcome: result.outcome,
-      });
+      if (result.outcome !== "aborted")
+        this.host.taskOutcome(
+          slot,
+          result.outcome,
+          state.taskRuns.instanceId + ":" + result.id,
+        );
     }
     if (connection.sending > 0 && state.activity === "idle") return;
     const previous = slot.runState;
@@ -393,13 +396,11 @@ export class RuntimeExternalSessions {
     )
       return;
     if (state.activity === "idle") {
-      if (isBusyRunState(previous))
+      if (isBusyRunState(previous)) {
         slot.attention = slot.runState === "failed" ? "failed" : null;
-      this.host.emit(slot, {
-        type: "agent_settled",
-        taskOutcomeReported: sameReceiver,
-        outcomeUnknown: !sameReceiver,
-      });
+        if (!sameReceiver) this.host.taskOutcome(slot, "ended");
+      }
+      this.host.emit(slot, { type: "agent_settled" });
     } else {
       this.host.emit(slot, { type: "agent_start" });
     }
@@ -465,6 +466,7 @@ export class RuntimeExternalSessions {
    * the event's reason says what was actually observed. */
   private end(slot: RuntimeSlot, reason: AttachmentEnd, release = true): void {
     const duringWork = isBusyRunState(slot.runState);
+    if (duringWork && reason === "exited") this.host.taskOutcome(slot, "ended");
     this.detach(slot);
     this.host.renewView(slot);
     if (slot.runState !== "failed")

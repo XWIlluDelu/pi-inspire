@@ -27,7 +27,6 @@ import { isComposingKeyboardEvent } from "../keyboard-input";
 import { resourceReferenceFromEventTarget } from "../resources";
 import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
-import { useImageUrl } from "../use-image-url";
 import {
   type HistoryReadingState,
   readHistoryReading,
@@ -39,7 +38,7 @@ import {
   historyShellContent,
 } from "./HistoryShellPreview";
 import { ImageGallery } from "./ImageGallery";
-import { ImagePreview } from "./ImagePreview";
+import { HistoryImage } from "./HistoryImage";
 import { PiLoader } from "./PiLoader";
 import { RichText } from "./RichText";
 import { SearchField } from "./SearchField";
@@ -99,41 +98,6 @@ function pointKind(node: BranchTreeNode): string {
     custom: "Extension data",
   };
   return kinds[node.type] ?? "Session event";
-}
-
-function HistoryImage({
-  targetId,
-  index,
-}: {
-  targetId: string;
-  index: number;
-}) {
-  const [attempt, setAttempt] = useState(0);
-  const loadImage = useCallback(
-    (signal: AbortSignal) => store.readBranchImage(targetId, index, signal),
-    [targetId, index, attempt],
-  );
-  const { src: url, error } = useImageUrl(loadImage);
-  return error ? (
-    <div className="history-image-error">
-      <span>Image unavailable</span>
-      <button
-        type="button"
-        className="button button--quiet"
-        onClick={() => setAttempt((value) => value + 1)}
-      >
-        Retry image
-      </button>
-    </div>
-  ) : url ? (
-    <ImagePreview
-      className="history-detail__image"
-      src={url}
-      alt="image in this history entry"
-    />
-  ) : (
-    <span role="status">Loading image…</span>
-  );
 }
 
 /** History has read-only inspection state; AppStore/Pi still own the active

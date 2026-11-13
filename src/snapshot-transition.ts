@@ -1,19 +1,15 @@
 import type { ActiveSnapshot, TranscriptPage } from "../shared/contracts";
-import { messageFallbackCorrelation } from "../shared/message-identity";
 import {
   type AppState,
   emptyResourceInspectionState,
   isCommandQuery,
   transcriptRevisionContains,
 } from "./app-state";
-import { asMessage, type ChatMessage, messageKey } from "./events";
-
-export type SnapshotMode = "replace" | "preserve";
+import { asMessage, type ChatMessage } from "./events";
 
 export interface ResyncOptions {
   /** Ignore a snapshot older than the revision that requested this read. */
   minimumRevision?: number;
-  history?: SnapshotMode;
   /** A user-requested refresh reports failure instead of retrying quietly. */
   explicit?: boolean;
 }
@@ -34,40 +30,7 @@ interface SnapshotTransition {
   nextDurableLeafId: string | null;
   nextEffectiveLeafId: string | null;
   revisionChanged: boolean;
-  projectionLineageCompatible: boolean;
-  historyCompatible: boolean;
   messages: ChatMessage[];
-}
-
-function mergeMessages(
-  previous: readonly ChatMessage[],
-  newest: ChatMessage[],
-): ChatMessage[] {
-  const newestKeys = new Set(
-    newest.map((message) => messageKey(message) ?? JSON.stringify(message)),
-  );
-  const persistedCorrelations = new Map<string, number>();
-  for (const message of newest) {
-    if (typeof message.__inspireMessageId !== "string") continue;
-    const key = messageFallbackCorrelation(message);
-    if (key) {
-      persistedCorrelations.set(key, (persistedCorrelations.get(key) ?? 0) + 1);
-    }
-  }
-  return [
-    ...previous.filter((message) => {
-      const key = messageKey(message) ?? JSON.stringify(message);
-      if (newestKeys.has(key)) return false;
-      if (typeof message.__inspireLiveId !== "string") return true;
-      const correlation = messageFallbackCorrelation(message);
-      if (!correlation) return true;
-      const count = persistedCorrelations.get(correlation) ?? 0;
-      if (count === 0) return true;
-      persistedCorrelations.set(correlation, count - 1);
-      return false;
-    }),
-    ...newest,
-  ];
 }
 
 /** Classify one authoritative snapshot and derive its transcript projection
@@ -75,7 +38,6 @@ function mergeMessages(
 export function deriveSnapshotTransition(
   previous: AppState,
   snapshot: ActiveSnapshot,
-  mode: SnapshotMode,
 ): SnapshotTransition {
   const active = snapshot.active;
   const page = active?.transcriptPage;
@@ -112,15 +74,6 @@ export function deriveSnapshotTransition(
   const projectionReplaced = Boolean(
     sameProjectionOwner && revisionChanged && !projectionLineageCompatible,
   );
-  const historyCompatible = Boolean(
-    mode === "preserve" &&
-      projectionLineageCompatible &&
-      page &&
-      ((page.revision === previous.transcriptRevision &&
-        (previous.hasOlderMessages !== page.hasOlder ||
-          previous.olderMessagesCursor !== (page.olderCursor ?? null))) ||
-        page.revision > previous.transcriptRevision),
-  );
   const newestMessages = (page?.messages ?? []).map(asMessage);
   const kind: SnapshotTransitionKind = sessionChanged
     ? "session-changed"
@@ -143,11 +96,7 @@ export function deriveSnapshotTransition(
     nextEffectiveLeafId:
       page?.effectiveLeafId ?? active?.effectiveLeafId ?? null,
     revisionChanged,
-    projectionLineageCompatible,
-    historyCompatible,
-    messages: historyCompatible
-      ? mergeMessages(previous.messages, newestMessages)
-      : newestMessages,
+    messages: newestMessages,
   };
 }
 

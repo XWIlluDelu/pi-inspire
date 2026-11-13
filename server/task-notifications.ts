@@ -10,7 +10,6 @@ import type {
   TaskAlertSettings,
   TaskNotification,
   TaskNotificationGrouping,
-  TaskOutcome,
 } from "../shared/notifications.js";
 import { replacePrivateStateFile } from "./private-state-file.js";
 import { requestError } from "./request-error.js";
@@ -74,7 +73,6 @@ interface Saved {
   devices: Record<string, Device>;
   pending: Pending[];
 }
-type Wire = Record<string, unknown>;
 
 function notificationSessionName(
   value: string | undefined,
@@ -99,127 +97,12 @@ function coalescePending(items: Pending[]): Pending[] {
   );
 }
 
-/** Correlates live work once in the Host, never from browser snapshot ownership. */
-export class TaskOutcomeTracker {
-  private runs = new Map<
-    string,
-    { id: string; kind: "agent" | "compaction" }
-  >();
-  private nativeSeen = new Map<string, string>();
-  private lastCreatedAt = 0;
-  observe(event: Wire): TaskNotification | null {
-    if (typeof event.sessionId !== "string") return null;
-    const sessionId = event.sessionId;
-    if (event.type === "native_task_outcome") {
-      if (
-        typeof event.outcomeId !== "string" ||
-        this.nativeSeen.get(sessionId) === event.outcomeId
-      )
-        return null;
-      this.nativeSeen.set(sessionId, event.outcomeId);
-      this.runs.delete(sessionId);
-      if (event.outcome === "aborted") return null;
-      return this.result(
-        sessionId,
-        event.outcomeId,
-        event.outcome === "failed"
-          ? "failed"
-          : event.outcome === "completed"
-            ? "completed"
-            : "ended",
-        event,
-      );
-    }
-    if (event.type === "agent_start" || event.type === "auto_retry_start") {
-      if (!this.runs.has(sessionId))
-        this.runs.set(sessionId, { id: randomUUID(), kind: "agent" });
-      return null;
-    }
-    if (
-      event.type === "compaction_start" &&
-      event.reason === "manual" &&
-      !this.runs.has(sessionId)
-    ) {
-      this.runs.set(sessionId, { id: randomUUID(), kind: "compaction" });
-      return null;
-    }
-    const run = this.runs.get(sessionId);
-    if (!run) return null;
-    if (event.type === "external_attachment_ended") {
-      this.runs.delete(sessionId);
-      // A Pi that left this view or stopped answering may still be working;
-      // only an exit ends the task, and even then its outcome is unobserved.
-      return event.reason === "exited" && event.duringWork === true
-        ? this.result(sessionId, run.id, "ended", event)
-        : null;
-    }
-    if (
-      event.type !== "runtime_error" &&
-      !(event.type === "agent_settled" && run.kind === "agent") &&
-      !(event.type === "compaction_end" && run.kind === "compaction")
-    )
-      return null;
-    this.runs.delete(sessionId);
-    // A richer native settlement is published separately, even for short runs.
-    if (event.taskOutcomeReported === true) return null;
-    const status = (event.sessionStatus ?? {}) as Wire;
-    if (
-      event.aborted === true ||
-      (event.outcomeUnknown !== true && status.runState === "aborted")
-    )
-      return null;
-    const failed =
-      event.type === "runtime_error" ||
-      (event.outcomeUnknown !== true &&
-        (status.runState === "failed" || status.runState === "conflict")) ||
-      (event.type === "compaction_end" && Boolean(event.errorMessage));
-    return this.result(
-      sessionId,
-      run.id,
-      failed
-        ? "failed"
-        : event.outcomeUnknown === true
-          ? "ended"
-          : event.type === "compaction_end" && event.result == null
-            ? "failed"
-            : "completed",
-      event,
-    );
-  }
-  private result(
-    sessionId: string,
-    id: string,
-    outcome: TaskOutcome,
-    event: Wire,
-  ): TaskNotification {
-    return {
-      id,
-      sessionId,
-      outcome,
-      // Distinguish settlements within one clock tick so delayed delivery can
-      // never choose an older result just because their timestamps tied.
-      createdAt: (this.lastCreatedAt = Math.max(
-        Date.now(),
-        this.lastCreatedAt + 1,
-      )),
-      ...(typeof event.taskSessionName === "string"
-        ? {
-            sessionName: notificationSessionName(event.taskSessionName),
-          }
-        : {}),
-      ...(typeof event.taskProject === "string"
-        ? { project: event.taskProject.slice(0, 160) }
-        : {}),
-    };
-  }
-}
-
 /** Per-browser delivery. Pending items expire; this is not a notification inbox. */
 export class TaskNotifications {
   private saved!: Saved;
   private readonly ready: Promise<void>;
   private writes: Promise<void> = Promise.resolve();
-  private readonly tracker = new TaskOutcomeTracker();
+  private lastOutcomeAt = 0;
   private readonly clients = new Map<
     string,
     Set<(event: TaskAlertEvent) => boolean>
@@ -367,10 +250,10 @@ export class TaskNotifications {
     return settings;
   }
   /** Listener stays installed independently of every browser connection. */
-  observe = (value: unknown): void => {
-    if (this.closed || !value || typeof value !== "object") return;
-    const event = this.tracker.observe(value as Wire);
-    if (event) void this.enqueue(event).catch(() => {});
+  observe = (event: TaskNotification): void => {
+    if (this.closed || event.createdAt <= this.lastOutcomeAt) return;
+    this.lastOutcomeAt = event.createdAt;
+    void this.enqueue(event).catch(() => {});
   };
   private async enqueue(
     event: TaskNotification,

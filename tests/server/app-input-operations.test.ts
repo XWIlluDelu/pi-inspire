@@ -25,7 +25,7 @@ describe("HTTP prompt operation ownership", () => {
   it("requires an open explicit target and accepts an escaped prompt at the character limit", async () => {
     const { localRequest, runtime, promptDelivery } = await start();
     await runtime.openSession("fixture-active");
-    const before = (await runtime.snapshot()).active?.transcriptPage;
+    const before = (await runtime.snapshot()).active?.transcriptPage.messages;
     const prompt = vi.spyOn(runtime, "prompt");
     const abort = vi.spyOn(runtime, "abort");
     const send = (body: Parameters<typeof promptDelivery>[0]) =>
@@ -36,7 +36,9 @@ describe("HTTP prompt operation ownership", () => {
     expect(prompt).not.toHaveBeenCalled();
     expect(abort).not.toHaveBeenCalled();
     await send({ sessionId: "never-opened", message: "hello" }).expect(409);
-    expect((await runtime.snapshot()).active?.transcriptPage).toEqual(before);
+    expect((await runtime.snapshot()).active?.transcriptPage.messages).toEqual(
+      before,
+    );
 
     prompt.mockClear().mockResolvedValue(null);
     const delivery = {

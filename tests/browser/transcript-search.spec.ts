@@ -387,12 +387,12 @@ test("literal highlights track visible matches and open collapsed results", asyn
   await expect(count).toHaveText("1 match");
 });
 
-test("highlights recover when a searched virtual row mounts and clear on session change", async ({
+test("reveals a searched older live row and clears highlights on session change", async ({
   page,
 }) => {
   const emit = await openEventSession(
     page,
-    "Virtual search highlights",
+    "Live search highlights",
     configuration,
     {},
   );
@@ -409,10 +409,12 @@ test("highlights recover when a searched virtual row mounts and clear on session
       },
     })),
   );
-  await expect(page.locator(".transcript__column--virtual")).toBeVisible();
+  await expect(
+    page.getByRole("log").getByText("Ordinary prompt 79."),
+  ).toBeAttached();
   await openConversationSearch(page);
   const input = page.getByRole("searchbox", { name: "Search conversation" });
-  // Count the whole projection, including rows outside the virtual DOM window.
+  // Search includes the bounded Live page even when rows are outside the viewport.
   await input.fill("Ordinary prompt");
   await expect(
     page.getByRole("status", { name: "Transcript search matches" }),

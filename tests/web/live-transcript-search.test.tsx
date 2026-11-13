@@ -1,27 +1,12 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
-
-const virtual = vi.hoisted(() => ({ scrollToIndex: vi.fn() }));
-
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getTotalSize: () => count * 100,
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, index) => ({
-        index,
-        start: index * 100,
-      })),
-    measureElement: () => undefined,
-    scrollToIndex: virtual.scrollToIndex,
-  }),
-}));
+import { describe, expect, it } from "vitest";
 
 import { Transcript } from "../../src/components/Transcript";
 import { openTranscriptSearch } from "./helpers";
 
-describe("virtualized transcript search navigation", () => {
+describe("Live transcript search navigation", () => {
   it("clears view-local search when the branch projection changes", () => {
     const props = {
       sessionId: "branch-session",
@@ -39,7 +24,7 @@ describe("virtualized transcript search navigation", () => {
     expect(search).toHaveValue("");
   });
 
-  it("retains a manual fold override when paging crosses into virtualization", () => {
+  it("retains a manual fold override as its Live context changes", () => {
     const recent = [
       ...Array.from({ length: 57 }, (_, index) => ({
         role: "user",
@@ -94,7 +79,7 @@ describe("virtualized transcript search navigation", () => {
     );
   });
 
-  it("mounts and follows the virtual tail across the threshold and same-message tool growth", () => {
+  it("follows the Live tail when the same message grows", () => {
     const messages = Array.from({ length: 60 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",
       content: index === 59 ? [] : `settled row ${index}`,
@@ -161,7 +146,7 @@ describe("virtualized transcript search navigation", () => {
     expect(screen.queryByText("Working…")).not.toBeInTheDocument();
   });
 
-  it("keeps a prepended search match anchored when a near-bottom scroll precedes a live append", async () => {
+  it("keeps a search match selected when a near-bottom scroll precedes a live append", async () => {
     function Harness() {
       const [messages, setMessages] = useState(
         Array.from({ length: 60 }, (_, index) => ({
@@ -223,10 +208,6 @@ describe("virtualized transcript search navigation", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Next transcript match" }),
     );
-    expect(virtual.scrollToIndex).toHaveBeenLastCalledWith(60, {
-      align: "center",
-    });
-
     const log = screen.getByRole("log");
     Object.defineProperties(log, {
       scrollHeight: { configurable: true, value: 10_000 },
@@ -234,10 +215,8 @@ describe("virtualized transcript search navigation", () => {
       scrollTop: { configurable: true, writable: true, value: 9_900 },
     });
     fireEvent.scroll(log);
-    virtual.scrollToIndex.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Append live" }));
 
-    expect(virtual.scrollToIndex).not.toHaveBeenCalled();
     expect(
       screen.getByLabelText("Transcript search matches"),
     ).toHaveTextContent("1 of 1");
