@@ -157,7 +157,7 @@ test("starts History Copy at the gesture and delivers complete text and saved PN
   await expect(more).toBeVisible();
   await observeWrites(page);
   await page.route(
-    "**/api/branches/entry?**",
+    "**/api/history?kind=entry&**",
     async (route) => {
       reading.resolve();
       await delivery.promise;
@@ -201,7 +201,7 @@ test("leaving a pending History copy retires it while /copy keeps the replacemen
 
   const historyRead = Promise.withResolvers<void>();
   const historyDelivery = Promise.withResolvers<void>();
-  await page.route("**/api/branches/entry?**", async (route) => {
+  await page.route("**/api/history?kind=entry&**", async (route) => {
     const response = await route.fetch();
     historyRead.resolve();
     await historyDelivery.promise;
@@ -225,7 +225,8 @@ test("leaving a pending History copy retires it while /copy keeps the replacemen
     await historyRead.promise;
     const retired = page.waitForEvent("requestfailed", {
       predicate: (request) =>
-        new URL(request.url()).pathname === "/api/branches/entry",
+        new URL(request.url()).pathname === "/api/history" &&
+        new URL(request.url()).searchParams.get("kind") === "entry",
     });
     await history
       .getByRole("button", { name: "Back to history", exact: true })

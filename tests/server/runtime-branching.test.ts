@@ -352,14 +352,19 @@ describe("stock RPC branch bridge", () => {
       viewId: snapshot.active!.transcriptPage.viewId,
       targetId: saved.id,
     };
-    const first = await runtime.branchEntry(request);
+    const first = await runtime.sessionHistory(
+      request.sessionId,
+      request.viewId,
+      { kind: "entry", targetId: request.targetId },
+    );
     expect(first.nextOffset).toBe(32_000);
     await runtime.prompt({ sessionId: SESSION_ID, message: "New input" });
     worker.emit("event", { type: "agent_settled" });
-    const next = await runtime.branchEntry({
-      ...request,
-      offset: first.nextOffset!,
-    });
+    const next = await runtime.sessionHistory(
+      request.sessionId,
+      request.viewId,
+      { kind: "entry", targetId: request.targetId, offset: first.nextOffset! },
+    );
     expect(next.text).toBe(text.slice(32_000, 64_000));
     expect((await runtime.branchImage(request, 1)).data.toString()).toBe(
       "image",
@@ -389,7 +394,12 @@ describe("stock RPC branch bridge", () => {
       runtime.abort(SESSION_ID, request.viewId),
     ).rejects.toMatchObject({ code: "PENDING_VIEW_CHANGED" });
     expect(worker.commands).toHaveLength(commands);
-    await expect(runtime.branchEntry(request)).rejects.toMatchObject({
+    await expect(
+      runtime.sessionHistory(request.sessionId, request.viewId, {
+        kind: "entry",
+        targetId: request.targetId,
+      }),
+    ).rejects.toMatchObject({
       status: 409,
     });
     await expect(runtime.branchImage(request, 1)).rejects.toMatchObject({
@@ -671,7 +681,10 @@ describe("stock RPC branch bridge", () => {
       viewId: (await runtime.snapshot()).active!.transcriptPage.viewId,
     };
     expect(
-      await runtime.branchEntry({ ...request, targetId: "a1" }),
+      await runtime.sessionHistory(request.sessionId, request.viewId, {
+        kind: "entry",
+        targetId: "a1",
+      }),
     ).toMatchObject({ text: expect.stringContaining("first answer") });
     await expect(
       runtime.navigateBranch({

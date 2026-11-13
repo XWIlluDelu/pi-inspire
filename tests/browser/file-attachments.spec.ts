@@ -149,7 +149,8 @@ test("sent file prompts retain readable names, original bytes, and history acros
   // (especially in WebKit); send the recall key only once that page arrives.
   const history = page.waitForResponse(
     (response) =>
-      new URL(response.url()).pathname === "/api/composer/history" &&
+      new URL(response.url()).pathname === "/api/history" &&
+      new URL(response.url()).searchParams.get("kind") === "composer" &&
       response.ok(),
   );
   await page.reload();

@@ -337,8 +337,8 @@ it("recalls retained branch prompts and exact artifacts through live compaction,
     projection,
   } as unknown as RuntimeSlot;
   const page = () =>
-    projection.composerHistoryPage(
-      0,
+    projection.historyPage(
+      { kind: "composer", start: 0 },
       slot.navigationLease?.effectiveLeafId ?? projection.leafId,
       slot.viewId,
       cwd,

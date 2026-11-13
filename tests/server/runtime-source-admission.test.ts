@@ -158,7 +158,10 @@ describe("runtime source admission", () => {
     const viewId = opened.active!.transcriptPage.viewId;
     const tree = await runtime.branchTree("a");
     expect(
-      await runtime.branchEntry({ sessionId: "a", viewId, targetId: "u1" }),
+      await runtime.sessionHistory("a", viewId, {
+        kind: "entry",
+        targetId: "u1",
+      }),
     ).toMatchObject({
       text: "persisted:a",
     });

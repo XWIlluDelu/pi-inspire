@@ -53,7 +53,7 @@ test("History failures recover in a short drawer and the chosen preview survives
         })
       : route.fallback(),
   );
-  await page.route("**/api/branches/entry?**", async (route) => {
+  await page.route("**/api/history?kind=entry&**", async (route) => {
     if (entryFailure)
       return route.fulfill({
         status: entryFailure,
@@ -86,7 +86,7 @@ test("History failures recover in a short drawer and the chosen preview survives
   await retry.focus();
   await expect(retry).toBeInViewport();
   refuseTree = false;
-  await retry.press("Enter");
+  await page.keyboard.press("Enter");
   const history = pane.getByRole("region", { name: "Conversation history" });
   const search = history.getByRole("searchbox", { name: "Find in history" });
   const query = "Review calibration run 598";
@@ -293,7 +293,7 @@ test("recovers a History image and opens local references in the authorized sess
   let imageAvailable = false;
   const imageRequests: string[] = [];
   let entryRequests = 0;
-  await page.route("**/api/branches/entry?**", async (route) => {
+  await page.route("**/api/history?kind=entry&**", async (route) => {
     entryRequests++;
     const response = await route.fetch();
     const body = await response.json();

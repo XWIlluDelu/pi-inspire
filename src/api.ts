@@ -2,16 +2,14 @@ import type {
   ActiveSnapshot,
   BootstrapResponse,
   BranchCloneRequest,
-  BranchEntryRequest,
-  BranchEntryResponse,
   BranchForkRequest,
   BranchForkResponse,
+  BranchImageRequest,
   BranchLeavesResponse,
   BranchNavigateRequest,
   BranchNavigateResponse,
   BranchTreeQuery,
   BranchTreeResponse,
-  ComposerHistoryPage,
   GitDiffResponse,
   GitStatusResponse,
   HiddenClearResponse,
@@ -40,14 +38,12 @@ import type {
   SessionDeleteResponse,
   SessionExportRequest,
   SessionExportResponse,
+  SessionHistoryPages,
+  SessionHistoryQuery,
   SessionListResponse,
   SessionOpenResponse,
   ThinkingLevel,
-  TranscriptActivityPage,
-  TranscriptPage,
   UploadedAttachment,
-  UserTurnIndexPage,
-  UserTurnTranscriptPage,
 } from "../shared/contracts";
 import type { HerdrEnhancementStatus } from "../shared/herdr";
 import type {
@@ -606,43 +602,24 @@ export function createApi() {
       post<HostUpdateStatus>("/api/update/snooze", { identity }),
     snapshot: (sessionId?: string | null) =>
       request<ActiveSnapshot>(`/api/snapshot${detailQuery(sessionId)}`),
-    olderTranscript: (
+    sessionHistory: <Q extends SessionHistoryQuery>(
       sessionId: string,
-      cursor: string,
+      viewId: string,
+      query: Q,
       signal?: AbortSignal,
-    ) =>
-      request<TranscriptPage>(
-        `/api/transcript/older?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
-        { signal },
-      ),
-    transcriptActivity: (
-      sessionId: string,
-      cursor: string,
-      signal?: AbortSignal,
-    ) =>
-      request<TranscriptActivityPage>(
-        `/api/transcript/activity?sessionId=${encodeURIComponent(sessionId)}&cursor=${encodeURIComponent(cursor)}`,
-        { signal },
-      ),
-    transcriptUserTurns: (
-      sessionId: string,
-      start?: number,
-      signal?: AbortSignal,
-    ) =>
-      request<UserTurnIndexPage>(
-        `/api/transcript/user-turns?sessionId=${encodeURIComponent(sessionId)}${start === undefined ? "" : `&start=${start}`}`,
-        { signal },
-      ),
-    transcriptUserTurn: (
-      sessionId: string,
-      id: string,
-      cursor?: string,
-      signal?: AbortSignal,
-    ) =>
-      request<UserTurnTranscriptPage>(
-        `/api/transcript/user-turn?sessionId=${encodeURIComponent(sessionId)}&id=${encodeURIComponent(id)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-        { signal },
-      ),
+    ) => {
+      const params = new URLSearchParams({
+        kind: query.kind,
+        sessionId,
+        viewId,
+      });
+      for (const [key, value] of Object.entries(query))
+        if (key !== "kind" && value !== undefined)
+          params.set(key, String(value));
+      return request<SessionHistoryPages[Q["kind"]]>(`/api/history?${params}`, {
+        signal,
+      });
+    },
     lastAssistantText: (
       sessionId: string,
       viewId: string,
@@ -651,10 +628,6 @@ export function createApi() {
       request<{ text: string | null }>(
         `/api/transcript/assistant-text?sessionId=${encodeURIComponent(sessionId)}&viewId=${encodeURIComponent(viewId)}`,
         { signal },
-      ),
-    composerHistory: (sessionId: string, start = 0) =>
-      request<ComposerHistoryPage>(
-        `/api/composer/history?sessionId=${encodeURIComponent(sessionId)}&start=${start}`,
       ),
     branchTree: (
       sessionId: string,
@@ -665,19 +638,8 @@ export function createApi() {
         `/api/branches/tree?${new URLSearchParams({ sessionId, ...query }).toString()}`,
         { signal },
       ),
-    branchEntry: (body: BranchEntryRequest, signal?: AbortSignal) =>
-      request<BranchEntryResponse>(
-        `/api/branches/entry?${new URLSearchParams({
-          sessionId: body.sessionId,
-          viewId: body.viewId,
-          targetId: body.targetId,
-          offset: String(body.offset ?? 0),
-          ...(body.format ? { format: body.format } : {}),
-        }).toString()}`,
-        { signal },
-      ),
     branchImage: (
-      body: BranchEntryRequest,
+      body: BranchImageRequest,
       index: number,
       signal?: AbortSignal,
     ) =>

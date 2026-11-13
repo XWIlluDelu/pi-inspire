@@ -394,10 +394,6 @@ describe("Host HTTP workflows", () => {
       hasMore: false,
       cursor: null,
     };
-    const paging = vi.spyOn(runtime, "transcriptPage").mockResolvedValue(older);
-    const activityPaging = vi
-      .spyOn(runtime, "transcriptActivityPage")
-      .mockResolvedValue(activity);
     const userTurn = {
       ...older,
       targetMessageId: "user-0",
@@ -405,37 +401,39 @@ describe("Host HTTP workflows", () => {
       rangeEnd: 1,
       continuationCursor: null,
     };
-    const turnPaging = vi
-      .spyOn(runtime, "transcriptUserTurn")
-      .mockResolvedValue(userTurn);
-    for (const [path, query, read, args, expected] of [
-      [
-        "/api/transcript/older",
-        { cursor: "older+cursor=" },
-        paging,
-        ["older+cursor="],
-        older,
-      ],
-      [
-        "/api/transcript/activity",
-        { cursor: "activity+cursor=" },
-        activityPaging,
-        ["activity+cursor="],
-        activity,
-      ],
-      [
-        "/api/transcript/user-turn",
-        { id: "user-0", cursor: "turn+cursor=" },
-        turnPaging,
-        ["user-0", "turn+cursor="],
-        userTurn,
-      ],
+    const read = vi.spyOn(runtime, "sessionHistory");
+    for (const [query, expected] of [
+      [{ kind: "older", cursor: "older+cursor=" }, older],
+      [{ kind: "activity", cursor: "activity+cursor=" }, activity],
+      [{ kind: "turn", id: "user-0", cursor: "turn+cursor=" }, userTurn],
     ] as const) {
-      const address = { sessionId, ...query };
-      await guest.get(path).query(address).expect(401);
-      await local.get(path).query(address).expect(200, expected);
-      expect(read).toHaveBeenCalledExactlyOnceWith(sessionId, ...args);
+      const { viewId } = address;
+      read.mockResolvedValueOnce(expected);
+      await guest
+        .get("/api/history")
+        .query({ sessionId, viewId, ...query })
+        .expect(401);
+      await local
+        .get("/api/history")
+        .query({ sessionId, viewId, ...query })
+        .expect(200, expected);
+      expect(read).toHaveBeenLastCalledWith(sessionId, viewId, query);
     }
+    await local
+      .get("/api/history")
+      .query({ sessionId, kind: "turns" })
+      .expect(400);
+    await local
+      .get("/api/history")
+      .query({
+        sessionId,
+        viewId: address.viewId,
+        kind: "older",
+        cursor: "cursor",
+        offset: 5,
+      })
+      .expect(400);
+    expect(read).toHaveBeenCalledTimes(3);
   });
 
   it("reads and clones an addressed session while another session is selected", async () => {
@@ -445,20 +443,21 @@ describe("Host HTTP workflows", () => {
     const viewId = active!.transcriptPage.viewId;
     const firstPrompt =
       "Show me a formula-rich example and inspect the analysis steps.";
-    for (const [path, content] of [
+    for (const [kind, content] of [
+      ["turns", { turns: [expect.objectContaining({ snippet: firstPrompt })] }],
       [
-        "/api/transcript/user-turns",
-        { turns: [expect.objectContaining({ snippet: firstPrompt })] },
-      ],
-      [
-        "/api/composer/history",
+        "composer",
         { entries: [expect.objectContaining({ text: firstPrompt })] },
       ],
     ] as const) {
-      const query = { sessionId, start: 0 };
-      await guest.get(path).query(query).expect(401);
-      const result = await local.get(path).query(query).expect(200);
+      const query = { sessionId, viewId, kind, start: 0 };
+      await guest.get("/api/history").query(query).expect(401);
+      const result = await local.get("/api/history").query(query).expect(200);
       expect(result.body).toMatchObject({ sessionId, viewId, ...content });
+      await local
+        .get("/api/history")
+        .query({ ...query, viewId: "old-branch" })
+        .expect(409);
     }
     const copy = "/api/transcript/assistant-text";
     await guest.get(copy).query({ sessionId, viewId }).expect(401);
@@ -476,15 +475,12 @@ describe("Host HTTP workflows", () => {
       (node: { role?: string }) => node.role === "user",
     );
     expect(target).toBeDefined();
-    const entry = { sessionId, viewId, targetId: target.id };
-    await guest.get("/api/branches/entry").query(entry).expect(401);
-    const read = await local
-      .get("/api/branches/entry")
-      .query(entry)
-      .expect(200);
+    const entry = { sessionId, viewId, kind: "entry", targetId: target.id };
+    await guest.get("/api/history").query(entry).expect(401);
+    const read = await local.get("/api/history").query(entry).expect(200);
     expect(read.body.text).toBe(firstPrompt);
     await local
-      .get("/api/branches/entry")
+      .get("/api/history")
       .query({ ...entry, viewId: "old-branch" })
       .expect(409);
 

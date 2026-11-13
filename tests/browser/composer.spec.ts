@@ -234,11 +234,19 @@ test("composer text drafts survive reload and stay partitioned through switching
   await input.fill("other session draft");
   await openFixtureSession(page, /Review extension event lifecycle/);
   await expect(input).toHaveValue(draft);
-  const priorHistory: ComposerHistoryPage = await (
-    await hostRequest(page).get(
-      "/api/composer/history?sessionId=fixture-history",
-    )
+  const host = hostRequest(page);
+  const snapshot = await (
+    await host.get("/api/snapshot?detail=fixture-history")
   ).json();
+  const history = await host.get("/api/history", {
+    params: {
+      kind: "composer",
+      sessionId: "fixture-history",
+      viewId: snapshot.active.transcriptPage.viewId,
+    },
+  });
+  expect(history.ok()).toBe(true);
+  const priorHistory: ComposerHistoryPage = await history.json();
   const priorPrompt = priorHistory.entries[0]!.text;
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
@@ -342,12 +350,25 @@ test("composer text drafts survive reload and stay partitioned through switching
   await page.reload();
   await expect(input).toHaveValue(historyDraft);
   await input.fill("send and do not resurrect");
+  const updatedHistory = page.waitForResponse(async (response) => {
+    const url = new URL(response.url());
+    if (
+      url.pathname !== "/api/history" ||
+      url.searchParams.get("kind") !== "composer" ||
+      url.searchParams.get("sessionId") !== "fixture-history" ||
+      !response.ok()
+    )
+      return false;
+    const history: ComposerHistoryPage = await response.json();
+    return history.entries[0]?.text === "send and do not resurrect";
+  });
   const accepted = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/prompt") && response.status() === 202,
   );
   await page.getByRole("button", { name: "Send message", exact: true }).click();
   await accepted;
+  await updatedHistory;
   await expect(input).toHaveValue("");
   await input.press("ArrowUp");
   await expect(input).toHaveValue("send and do not resurrect");

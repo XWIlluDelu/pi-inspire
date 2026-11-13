@@ -205,13 +205,22 @@ Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refus
 
 ## Transcript views
 
+`GET /api/history` serves older rows, deferred activity, prompt outline, a selected turn, composer
+recall, and History entry detail. It requires `sessionId` and `viewId` and admits the query against
+that session's reconciled view. Transcript pages and activity use the same byte and row budgets.
+Prompt outline and turn lookup share a branch index, and recall and entry detail keep their own
+content limits. History image bytes use the separate view-bound image endpoint.
+
 Each transcript snapshot/page carries an opaque branch-view generation and effective leaf.
-All page readers share the same scope validation: the response must carry the requested `viewId`;
-never fill a missing view identity from current browser state.
+Browser transcript readers validate the returned `viewId` against the request before applying
+the response.
 `active.transcriptPage` is the snapshot's single row authority; do not duplicate those rows in
 `active.messages`. Explicit same-session navigation, worker reset and non-append replacement change
-generation; ordinary appends do not. Older-page cursors bind both view and effective-leaf lineage,
-and late pages across a branch boundary are aborted/discarded.
+generation; ordinary appends do not. Signed history cursors bind the projection incarnation, file
+generation, view, effective-leaf lineage and the revision from which page positions remain valid.
+Append-compatible cursors stay usable across any number of appends. A file replacement invalidates
+them even when the new file contains identical bytes. Late pages across a branch boundary are
+aborted or discarded.
 
 Pi system prompts/tool-loadout messages stay in Host canonical state, outside browser rows and live
 overlays. Apply this consistently to compaction checkpoints, aggregate agent events, full/incremental

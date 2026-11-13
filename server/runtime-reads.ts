@@ -1,11 +1,8 @@
 import type {
   ActiveSnapshot,
-  ComposerHistoryPage,
+  SessionHistoryPages,
+  SessionHistoryQuery,
   SessionRuntimeStatus,
-  TranscriptActivityPage,
-  TranscriptPage,
-  UserTurnIndexPage,
-  UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import { lastAssistantText } from "./assistant-text.js";
 import { requestError } from "./request-error.js";
@@ -23,6 +20,7 @@ interface RuntimeReadControllerHost {
   snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot>;
   reconcileSlot(slot: RuntimeSlot, force?: boolean): Promise<unknown>;
   promptFileName(path: string): string | null;
+  throwIfConflicted(slot: RuntimeSlot): void;
 }
 
 function requireProjection(slot: RuntimeSlot) {
@@ -81,42 +79,28 @@ export class RuntimeReadController {
     });
   }
 
-  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage> {
-    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
-      projection.visiblePage(cursor, effectiveLeafId, slot.viewId),
-    );
-  }
-
-  transcriptActivityPage(
+  sessionHistory<Q extends SessionHistoryQuery>(
     sessionId: string,
-    cursor: string,
-  ): Promise<TranscriptActivityPage> {
-    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
-      projection.activityPage(cursor, effectiveLeafId, slot.viewId),
-    );
-  }
-
-  transcriptUserTurns(
-    sessionId: string,
-    start?: number,
-  ): Promise<UserTurnIndexPage> {
-    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
-      projection.userTurnIndexPage(start, effectiveLeafId, slot.viewId),
-    );
-  }
-
-  transcriptUserTurn(
-    sessionId: string,
-    targetMessageId: string,
-    cursor?: string,
-  ): Promise<UserTurnTranscriptPage> {
-    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
-      projection.userTurnTranscriptPage(
-        targetMessageId,
-        effectiveLeafId,
-        slot.viewId,
-        cursor,
-      ),
+    viewId: string,
+    query: Q,
+  ): Promise<SessionHistoryPages[Q["kind"]]> {
+    return this.projectionRead(
+      sessionId,
+      (projection, slot, effectiveLeafId) => {
+        if (query.kind === "entry") this.host.throwIfConflicted(slot);
+        if (slot.viewId !== viewId)
+          throw requestError("The branch changed; reopen History", 409);
+        const page = projection.historyPage(
+          query,
+          effectiveLeafId,
+          slot.viewId,
+          slot.cwd,
+          (path) => this.host.promptFileName(path),
+        );
+        return query.kind === "entry"
+          ? { ...page, revision: slot.branchRevision }
+          : page;
+      },
     );
   }
 
@@ -136,18 +120,6 @@ export class RuntimeReadController {
           text: lastAssistantText(projection.viewMessages(effectiveLeafId)),
         };
       },
-    );
-  }
-
-  composerHistory(sessionId: string, start = 0): Promise<ComposerHistoryPage> {
-    return this.projectionRead(sessionId, (projection, slot, effectiveLeafId) =>
-      projection.composerHistoryPage(
-        start,
-        effectiveLeafId,
-        slot.viewId,
-        slot.cwd,
-        (path) => this.host.promptFileName(path),
-      ),
     );
   }
 

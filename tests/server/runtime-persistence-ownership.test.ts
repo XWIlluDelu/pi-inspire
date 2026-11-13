@@ -457,11 +457,11 @@ describe("writer persistence ownership", () => {
     const active = (await runtime.snapshot()).active;
     expect(active?.projectionConflict).toBeNull();
     expect(active?.durableLeafId).toBe(message.id);
-    const history = await runtime.branchEntry({
-      sessionId: "session-a",
-      targetId: message.id,
-      viewId: active!.transcriptPage.viewId,
-    });
+    const history = await runtime.sessionHistory(
+      "session-a",
+      active!.transcriptPage.viewId,
+      { kind: "entry", targetId: message.id },
+    );
     expect(history.text).toContain(message.message.content);
     expect(worker.stops).toBe(0);
   });

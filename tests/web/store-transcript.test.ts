@@ -33,7 +33,7 @@ describe("transcript paging", () => {
         },
       }),
       (url) => {
-        if (url.startsWith("/api/transcript/older"))
+        if (url.startsWith("/api/history?kind=older&"))
           return {
             body: {
               ...address,
@@ -50,7 +50,7 @@ describe("transcript paging", () => {
               olderCursor: null,
             },
           };
-        if (url.startsWith("/api/transcript/activity")) {
+        if (url.startsWith("/api/history?kind=activity&")) {
           const cursor = new URL(url, "http://localhost").searchParams.get(
             "cursor",
           )!;
@@ -120,7 +120,7 @@ describe("transcript paging", () => {
           },
         }),
         (url) =>
-          url.startsWith("/api/transcript/older")
+          url.startsWith("/api/history?kind=older&")
             ? read(new URL(url, "http://localhost").searchParams.get("cursor"))
             : undefined,
       );
@@ -305,7 +305,7 @@ describe("transcript paging", () => {
         }),
         async (url) => {
           if (url.startsWith("/api/snapshot")) return { body: committed };
-          if (url.startsWith("/api/transcript/older")) {
+          if (url.startsWith("/api/history?kind=older&")) {
             requested.resolve();
             await gate.promise;
             return {
@@ -401,7 +401,7 @@ describe("transcript paging", () => {
         },
       }),
       (url) => {
-        if (url.startsWith("/api/transcript/older"))
+        if (url.startsWith("/api/history?kind=older&"))
           return { status: 409, body: { error: "stale" } };
         if (url.startsWith("/api/snapshot")) {
           snapshotCalls += 1;

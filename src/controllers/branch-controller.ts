@@ -238,7 +238,12 @@ export class BranchController {
     if (!viewId) return null;
     return this.read(
       (api, sessionId, signal) =>
-        api.branchEntry({ sessionId, viewId, targetId, offset }, signal),
+        api.sessionHistory(
+          sessionId,
+          viewId,
+          { kind: "entry", targetId, offset },
+          signal,
+        ),
       "view",
       { signal },
     );
@@ -272,8 +277,10 @@ export class BranchController {
       let imageEntries: NonNullable<BranchEntryResponse["images"]> = [];
       do {
         signal.throwIfAborted();
-        const page = await api.branchEntry(
-          { sessionId, viewId, targetId, offset, format },
+        const page = await api.sessionHistory(
+          sessionId,
+          viewId,
+          { kind: "entry", targetId, offset, format },
           signal,
         );
         chunks.push(page.text);

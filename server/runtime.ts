@@ -27,17 +27,15 @@ import {
 import {
   type ActiveSnapshot,
   type BranchCloneRequest,
-  type BranchEntryRequest,
-  type BranchEntryResponse,
   type BranchForkRequest,
   type BranchForkResponse,
+  type BranchImageRequest,
   type BranchLeavesResponse,
   type BranchNavigateRequest,
   type BranchNavigateResponse,
   type BranchTreeQuery,
   type BranchTreeResponse,
   type ComposerHistoryEntry,
-  type ComposerHistoryPage,
   type HiddenClearResponse,
   type HostNativeCommandRequest,
   type HostNativeCommandResponse,
@@ -56,14 +54,11 @@ import {
   type ProjectionConflict,
   type PromptRequest,
   type SessionDeleteResponse,
+  type SessionHistoryQuery,
   type SessionRuntimeStatus,
   THINKING_LEVELS,
   type ThinkingLevel,
-  type TranscriptActivityPage,
-  type TranscriptPage,
   type UploadedAttachment,
-  type UserTurnIndexPage,
-  type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
 import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import {
@@ -627,6 +622,7 @@ export class RuntimeController extends EventEmitter {
       useSlot: (slot, operation) => this.useSlot(slot, operation),
       snapshotSlot: (slot) => this.snapshotSlot(slot),
       reconcileSlot: (slot, force) => this.reconcileSlot(slot, force),
+      throwIfConflicted: (slot) => this.throwIfConflicted(slot),
       promptFileName: (path) => this.attachments.promptFileName(path),
     });
     this.projectionCoordinator = new RuntimeProjectionCoordinator(
@@ -3465,8 +3461,8 @@ export class RuntimeController extends EventEmitter {
               await this.reconcileAcceptedPersistence(slot, "the prompt", true)
             ) {
               try {
-                const newest = slot.projection?.composerHistoryPage(
-                  0,
+                const newest = slot.projection?.historyPage(
+                  { kind: "composer" },
                   effectiveRuntimeLeaf(slot),
                   slot.viewId,
                   slot.cwd,
@@ -3626,28 +3622,8 @@ export class RuntimeController extends EventEmitter {
     });
   }
 
-  async branchEntry(request: BranchEntryRequest): Promise<BranchEntryResponse> {
-    const slot = this.requireSlot(request.sessionId);
-    return this.useSlot(slot, async () => {
-      await this.reconcileSlot(slot, false);
-      this.throwIfConflicted(slot);
-      this.requireHistoryView(slot, request.viewId);
-      if (!slot.projection)
-        throw requestError("History content is unavailable", 503);
-      return {
-        ...slot.projection.branchEntry(
-          request.targetId,
-          request.offset ?? 0,
-          effectiveRuntimeLeaf(slot),
-          request.format,
-        ),
-        revision: slot.branchRevision,
-      };
-    });
-  }
-
   async branchImage(
-    request: BranchEntryRequest,
+    request: BranchImageRequest,
     index: number,
   ): Promise<{ data: Buffer; mimeType: string }> {
     const slot = this.requireSlot(request.sessionId);
@@ -5626,30 +5602,12 @@ export class RuntimeController extends EventEmitter {
     });
   }
 
-  transcriptPage(sessionId: string, cursor: string): Promise<TranscriptPage> {
-    return this.reads.transcriptPage(sessionId, cursor);
-  }
-
-  transcriptActivityPage(
+  sessionHistory<Q extends SessionHistoryQuery>(
     sessionId: string,
-    cursor: string,
-  ): Promise<TranscriptActivityPage> {
-    return this.reads.transcriptActivityPage(sessionId, cursor);
-  }
-
-  transcriptUserTurns(
-    sessionId: string,
-    start?: number,
-  ): Promise<UserTurnIndexPage> {
-    return this.reads.transcriptUserTurns(sessionId, start);
-  }
-
-  transcriptUserTurn(
-    sessionId: string,
-    targetMessageId: string,
-    cursor?: string,
-  ): Promise<UserTurnTranscriptPage> {
-    return this.reads.transcriptUserTurn(sessionId, targetMessageId, cursor);
+    viewId: string,
+    query: Q,
+  ) {
+    return this.reads.sessionHistory(sessionId, viewId, query);
   }
 
   lastAssistantText(
@@ -5657,10 +5615,6 @@ export class RuntimeController extends EventEmitter {
     viewId: string,
   ): Promise<{ text: string | null }> {
     return this.reads.lastAssistantText(sessionId, viewId);
-  }
-
-  composerHistory(sessionId: string, start = 0): Promise<ComposerHistoryPage> {
-    return this.reads.composerHistory(sessionId, start);
   }
 
   resourceContext(sessionId: string): Promise<ResourceContext> {

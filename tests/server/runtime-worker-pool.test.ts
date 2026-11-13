@@ -42,9 +42,13 @@ describe("worker and projection retention", () => {
     const other = runtime.retainSessionView("b");
     try {
       const initial = await runtime.snapshot("a");
-      await runtime.snapshot("b");
-      await runtime.composerHistory("a");
-      await expect(runtime.transcriptUserTurns("b")).resolves.toMatchObject({
+      const otherView = (await runtime.snapshot("b")).active!.transcriptPage
+        .viewId;
+      const initialView = initial.active!.transcriptPage.viewId;
+      await runtime.sessionHistory("a", initialView, { kind: "composer" });
+      await expect(
+        runtime.sessionHistory("b", otherView, { kind: "turns" }),
+      ).resolves.toMatchObject({
         turns: [expect.objectContaining({ snippet: "persisted:b" })],
       });
       expect(runtime.activeSessionId).toBeNull();
@@ -59,14 +63,18 @@ describe("worker and projection retention", () => {
 
       first();
       first(); // One browser closing twice cannot release another's view.
-      await expect(runtime.composerHistory("a")).resolves.toMatchObject({
+      await expect(
+        runtime.sessionHistory("a", initialView, { kind: "composer" }),
+      ).resolves.toMatchObject({
         sessionId: "a",
       });
       second();
       const slots = (runtime as unknown as { slots: Map<string, unknown> })
         .slots;
       await vi.waitFor(() => expect(slots.has("a")).toBe(false));
-      await expect(runtime.composerHistory("b")).resolves.toMatchObject({
+      await expect(
+        runtime.sessionHistory("b", otherView, { kind: "composer" }),
+      ).resolves.toMatchObject({
         sessionId: "b",
       });
       other();

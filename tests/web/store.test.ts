@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
+
 import { act, cleanup, render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
 import { AppStore, shallowEqual, store, useAppState } from "../../src/store";
@@ -613,7 +614,7 @@ describe("multi-session event routing", () => {
       };
       let reads = 0;
       installStoreRoutes((url) => {
-        if (url.startsWith("/api/transcript/older"))
+        if (url.startsWith("/api/history?kind=older&"))
           return {
             body: {
               sessionId: "s1",

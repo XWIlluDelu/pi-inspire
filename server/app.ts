@@ -308,45 +308,58 @@ const resourceContentSchema = z.object({
   sessionId: sessionIdField,
   download: z.literal("1").optional(),
 });
-const transcriptPageSchema = z.object({
-  sessionId: sessionIdField,
-  cursor: z.string().min(1).max(2_048),
-});
 const assistantTextSchema = z
   .object({
     sessionId: sessionIdField,
     viewId: z.string().min(1).max(512),
   })
   .strict();
-const transcriptUserTurnsSchema = z
-  .object({
-    sessionId: sessionIdField,
-    start: z.coerce
-      .number()
-      .int()
-      .min(0)
-      .max(Number.MAX_SAFE_INTEGER)
-      .optional(),
-  })
-  .strict();
-const transcriptUserTurnSchema = z
-  .object({
-    sessionId: sessionIdField,
+const historyCursor = z.string().min(1).max(2_048);
+const historyAddress = {
+  sessionId: sessionIdField,
+  viewId: z.string().min(1).max(512),
+};
+const historyStart = z.coerce
+  .number()
+  .int()
+  .min(0)
+  .max(Number.MAX_SAFE_INTEGER)
+  .optional();
+const historyQuerySchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...historyAddress,
+    kind: z.enum(["older", "activity"]),
+    cursor: historyCursor,
+  }),
+  z.strictObject({
+    ...historyAddress,
+    kind: z.literal("turns"),
+    start: historyStart,
+  }),
+  z.strictObject({
+    ...historyAddress,
+    kind: z.literal("turn"),
     id: z.string().min(1).max(512),
-    cursor: z.string().min(1).max(2_048).optional(),
-  })
-  .strict();
-const composerHistorySchema = z
-  .object({
-    sessionId: sessionIdField,
+    cursor: historyCursor.optional(),
+  }),
+  z.strictObject({
+    ...historyAddress,
+    kind: z.literal("composer"),
     start: z.coerce
       .number()
       .int()
       .min(0)
       .max(MAX_COMPOSER_HISTORY_ENTRIES)
       .optional(),
-  })
-  .strict();
+  }),
+  z.strictObject({
+    ...historyAddress,
+    kind: z.literal("entry"),
+    targetId: z.string().min(1).max(200),
+    offset: historyStart,
+    format: z.literal("message").optional(),
+  }),
+]);
 const branchTreeSchema = z
   .object({
     sessionId: sessionIdField,
@@ -356,15 +369,11 @@ const branchTreeSchema = z
     parentId: z.string().max(200).optional(),
   })
   .strict();
-const branchEntrySchema = z
-  .object({
-    sessionId: sessionIdField,
-    viewId: z.string().min(1).max(200),
-    targetId: z.string().min(1).max(200),
-    offset: z.coerce.number().int().min(0).optional(),
-    format: z.literal("message").optional(),
-  })
-  .strict();
+const branchImageSchema = z.strictObject({
+  ...historyAddress,
+  targetId: z.string().min(1).max(200),
+  index: z.coerce.number().int().min(0),
+});
 const branchNavigateSchema = z
   .object({
     sessionId: sessionIdField,
@@ -1802,47 +1811,23 @@ export function createInspireServer(deps: AppDependencies): {
       await deps.runtime.snapshot(requestedDetail(request.query.detail)),
     ),
   );
-  app.get("/api/transcript/older", async (request, response) => {
-    const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
-    response.json(await deps.runtime.transcriptPage(sessionId, cursor));
-  });
-  app.get("/api/transcript/activity", async (request, response) => {
-    const { sessionId, cursor } = transcriptPageSchema.parse(request.query);
-    response.json(await deps.runtime.transcriptActivityPage(sessionId, cursor));
-  });
-  app.get("/api/transcript/user-turns", async (request, response) => {
-    const { sessionId, start } = transcriptUserTurnsSchema.parse(request.query);
-    response.json(await deps.runtime.transcriptUserTurns(sessionId, start));
-  });
-  app.get("/api/transcript/user-turn", async (request, response) => {
-    const { sessionId, id, cursor } = transcriptUserTurnSchema.parse(
+  app.get("/api/history", async (request, response) => {
+    const { sessionId, viewId, ...query } = historyQuerySchema.parse(
       request.query,
     );
-    response.json(await deps.runtime.transcriptUserTurn(sessionId, id, cursor));
+    response.json(await deps.runtime.sessionHistory(sessionId, viewId, query));
   });
   app.get("/api/transcript/assistant-text", async (request, response) => {
     const { sessionId, viewId } = assistantTextSchema.parse(request.query);
     response.json(await deps.runtime.lastAssistantText(sessionId, viewId));
   });
-  app.get("/api/composer/history", async (request, response) => {
-    const { sessionId, start } = composerHistorySchema.parse(request.query);
-    response.json(await deps.runtime.composerHistory(sessionId, start));
-  });
   app.get("/api/branches/tree", async (request, response) => {
     const { sessionId, ...query } = branchTreeSchema.parse(request.query);
     response.json(await deps.runtime.branchTree(sessionId, query));
   });
-  app.get("/api/branches/entry", async (request, response) => {
-    response.json(
-      await deps.runtime.branchEntry(branchEntrySchema.parse(request.query)),
-    );
-  });
   app.get("/api/branches/image", async (request, response) => {
-    const { index, ...query } = request.query;
-    const image = await deps.runtime.branchImage(
-      branchEntrySchema.parse(query),
-      z.coerce.number().int().min(0).parse(index),
-    );
+    const { index, ...address } = branchImageSchema.parse(request.query);
+    const image = await deps.runtime.branchImage(address, index);
     response.setHeader("Cache-Control", "private, no-store");
     response.type(
       ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(

@@ -1024,6 +1024,21 @@ export interface UserTurnTranscriptPage extends TranscriptPage {
   continuationCursor: string | null;
 }
 
+export type SessionHistoryQuery =
+  | { kind: "older" | "activity"; cursor: string }
+  | { kind: "turns" | "composer"; start?: number }
+  | { kind: "turn"; id: string; cursor?: string }
+  | { kind: "entry"; targetId: string; offset?: number; format?: "message" };
+
+export interface SessionHistoryPages {
+  older: TranscriptPage;
+  activity: TranscriptActivityPage;
+  turns: UserTurnIndexPage;
+  turn: UserTurnTranscriptPage;
+  composer: ComposerHistoryPage;
+  entry: BranchEntryResponse;
+}
+
 export interface ComposerHistoryImage {
   /** Branch-view-scoped reference to the image persisted in Pi's JSONL. */
   reference: string;
@@ -1114,13 +1129,10 @@ export interface BranchTreeQuery {
   parentId?: string;
 }
 
-export interface BranchEntryRequest {
+export interface BranchImageRequest {
   sessionId: string;
   viewId: string;
   targetId: string;
-  offset?: number;
-  /** Original copyable message fields as paged JSON, not History display text. */
-  format?: "message";
 }
 
 export interface BranchEntryResponse {

@@ -56,7 +56,11 @@ describe("native shell input", () => {
     const modelContext = JSON.stringify(f.modelRequests[0]!.body.messages);
     expect(modelContext).toContain("NATIVE_INCLUDED");
     expect(modelContext).not.toContain("NATIVE_EXCLUDED");
-    const history = await f.runtime.composerHistory(f.sessionId);
+    const history = await f.runtime.sessionHistory(
+      f.sessionId,
+      snapshot.active!.transcriptPage.viewId,
+      { kind: "composer" },
+    );
     expect(history.entries.map((entry) => entry.text)).toContain(
       "!!printf 'NATIVE_EXCLUDED'",
     );
@@ -126,12 +130,15 @@ describe("native shell input", () => {
       const node = matches.nodes.find(
         (candidate) => candidate.role === "shell",
       )!;
-      const detail = await f.runtime.branchEntry({
-        sessionId: f.sessionId,
-        viewId: snapshot.active!.transcriptPage.viewId,
-        targetId: node.id,
-        offset: 0,
-      });
+      const detail = await f.runtime.sessionHistory(
+        f.sessionId,
+        snapshot.active!.transcriptPage.viewId,
+        {
+          kind: "entry",
+          targetId: node.id,
+          offset: 0,
+        },
+      );
       expect(detail.text).toContain(command);
       expect(detail.text).toContain(context);
       expect(detail.text).not.toContain('"role"');

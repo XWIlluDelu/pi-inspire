@@ -59,13 +59,13 @@ describe("Prompt Map navigation ownership", () => {
     const resync = deferred<RouteResponse>();
     const turnReads: string[] = [];
     installStoreRoutes((url) => {
-      if (url.startsWith("/api/transcript/user-turns"))
+      if (url.startsWith("/api/history?kind=turns&"))
         return { status: 409, body: { error: "view changed" } };
       if (url.startsWith("/api/snapshot")) {
         resyncStarted.resolve();
         return resync.promise;
       }
-      if (url.startsWith("/api/transcript/user-turn?")) turnReads.push(url);
+      if (url.startsWith("/api/history?kind=turn&")) turnReads.push(url);
       if (url === "/api/sessions/open")
         return {
           body: activeSnapshot({
@@ -128,13 +128,13 @@ describe("Prompt Map navigation ownership", () => {
           },
         }),
         (url) => {
-          if (url.startsWith("/api/transcript/older")) {
+          if (url.startsWith("/api/history?kind=older&")) {
             olderStarted.resolve();
             return olderResponse.promise;
           }
-          if (url.startsWith("/api/transcript/user-turns"))
+          if (url.startsWith("/api/history?kind=turns&"))
             return { body: { ...scope, total: 2, start: 0, turns: mapTurns } };
-          if (!url.startsWith("/api/transcript/user-turn?")) return;
+          if (!url.startsWith("/api/history?kind=turn&")) return;
           const query = new URL(url, "http://localhost").searchParams;
           expect(query.get("id")).toBe("u2");
           const cursor = query.get("cursor");
@@ -208,7 +208,7 @@ describe("Prompt Map navigation ownership", () => {
     const seekStarted = deferred<void>();
     let outlineReads = 0;
     installStoreSnapshot(firstWindow, (url) => {
-      if (url.startsWith("/api/transcript/user-turns")) {
+      if (url.startsWith("/api/history?kind=turns&")) {
         switch (++outlineReads) {
           case 1:
             return { body: { ...scope, total: turns.length, start: 0, turns } };
@@ -223,7 +223,7 @@ describe("Prompt Map navigation ownership", () => {
             };
         }
       }
-      if (url.startsWith("/api/transcript/user-turn?")) {
+      if (url.startsWith("/api/history?kind=turn&")) {
         seekStarted.resolve();
         return staleSeek.promise;
       }

@@ -5,6 +5,7 @@ import {
 import {
   type ComposerHistoryEntry,
   MAX_COMPOSER_HISTORY_ENTRIES,
+  type TranscriptActivityPage,
   type UserTurnAnchor,
   type UserTurnTranscriptPage,
 } from "../../shared/contracts";
@@ -185,7 +186,13 @@ export class TranscriptDataController {
     this.host.patch({ loadingOlderMessages: true, olderMessagesError: null });
     try {
       const page = await recovery.read(
-        () => api.olderTranscript(sessionId, cursor, request.signal),
+        () =>
+          api.sessionHistory(
+            sessionId,
+            scope.viewId,
+            { kind: "older", cursor },
+            request.signal,
+          ),
         request.signal,
         () => ownsCursor() && this.ownsScope(scope, true),
       );
@@ -270,7 +277,10 @@ export class TranscriptDataController {
         let total: number | null = null;
         const entries: ComposerHistoryEntry[] = [];
         while (true) {
-          const page = await api.composerHistory(sessionId, start);
+          const page = await api.sessionHistory(sessionId, viewId, {
+            kind: "composer",
+            start,
+          });
           if (
             !ownsHistory() ||
             page.sessionId !== sessionId ||
@@ -388,9 +398,10 @@ export class TranscriptDataController {
     let pending!: Promise<UserTurnAnchor[]>;
     pending = (async (): Promise<UserTurnAnchor[]> => {
       try {
-        const page = await api.transcriptUserTurns(
+        const page = await api.sessionHistory(
           sessionId,
-          start,
+          scope.viewId,
+          { kind: "turns", start },
           request.signal,
         );
         if (!this.ownsPage(scope, request, page)) return [];
@@ -506,10 +517,10 @@ export class TranscriptDataController {
       let continuationCursor: string | undefined;
       do {
         if (request.signal.aborted || !this.ownsScope(scope)) return false;
-        const page = await api.transcriptUserTurn(
+        const page = await api.sessionHistory(
           sessionId,
-          turn.id,
-          continuationCursor,
+          scope.viewId,
+          { kind: "turn", id: turn.id, cursor: continuationCursor },
           request.signal,
         );
         if (
@@ -641,9 +652,10 @@ export class TranscriptDataController {
             if (seenCursors.has(cursor))
               throw new Error("Deferred activity cursor did not advance");
             seenCursors.add(cursor);
-            const page = await api.transcriptActivity(
+            const page: TranscriptActivityPage = await api.sessionHistory(
               sessionId,
-              cursor,
+              viewId,
+              { kind: "activity", cursor },
               request.signal,
             );
             if (

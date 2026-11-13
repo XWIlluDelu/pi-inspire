@@ -38,6 +38,32 @@ function validateEntryIdentity(
     );
 }
 
+export function indexSessionEntries(
+  entries: readonly SessionEntry[],
+  existing?: ReadonlyMap<string, SessionEntry>,
+): Map<string, SessionEntry> {
+  const byId = new Map(existing);
+  for (const entry of entries) {
+    if (
+      typeof entry.type !== "string" ||
+      entry.type.length === 0 ||
+      entry.type.length > 200
+    )
+      throw new Error("Persisted session contains an invalid entry identity");
+    validateEntryIdentity(entry.id, "entry");
+    if (entry.parentId !== null)
+      validateEntryIdentity(entry.parentId, "parent");
+    if (byId.has(entry.id))
+      throw new Error(`Persisted session contains duplicate entry ${entry.id}`);
+    if (entry.parentId !== null && !byId.has(entry.parentId))
+      throw new Error(
+        `Persisted session entry ${entry.id} has a missing or forward parent`,
+      );
+    byId.set(entry.id, entry);
+  }
+  return byId;
+}
+
 export function branchEntryContent(entry: SessionEntry): unknown {
   if (
     entry.type === "message" &&
@@ -245,20 +271,11 @@ const treeIndexes = new WeakMap<
 >();
 
 function indexSessionTree(entries: readonly SessionEntry[]) {
-  const byId = new Map<string, SessionEntry>();
   const depth = new Map<string, number>();
   const labels = new Map<string, string>();
   const children = new Map<string | null, number>();
   const descendant = new Map<string, string>();
   for (const entry of entries) {
-    validateEntryIdentity(entry.id, "entry");
-    if (entry.parentId !== null)
-      validateEntryIdentity(entry.parentId, "parent");
-    if (entry.parentId !== null && !byId.has(entry.parentId))
-      throw new Error(
-        `Session entry ${entry.id} has a missing or forward parent`,
-      );
-    byId.set(entry.id, entry);
     depth.set(
       entry.id,
       entry.parentId === null ? 0 : depth.get(entry.parentId)! + 1,
@@ -276,7 +293,7 @@ function indexSessionTree(entries: readonly SessionEntry[]) {
     if (entry.parentId !== null && !descendant.has(entry.parentId))
       descendant.set(entry.parentId, leaf);
   }
-  return { byId, depth, labels, children, descendant };
+  return { depth, labels, children, descendant };
 }
 
 /** One bounded page. The complete projection remains action/search authority;
@@ -285,13 +302,14 @@ export function projectSessionTree(
   entries: readonly SessionEntry[],
   effectiveLeafId: string | null,
   query: BranchTreeQuery = {},
+  byId: ReadonlyMap<string, SessionEntry> = indexSessionEntries(entries),
 ) {
   let index = treeIndexes.get(entries);
   if (!index) {
     index = indexSessionTree(entries);
     treeIndexes.set(entries, index);
   }
-  const { byId, depth, labels, children, descendant } = index;
+  const { depth, labels, children, descendant } = index;
   const active = new Set(ancestorPath(byId, effectiveLeafId));
   const routeLeafId = query.leafId ?? effectiveLeafId;
   const path =

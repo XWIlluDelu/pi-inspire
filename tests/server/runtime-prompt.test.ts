@@ -444,10 +444,8 @@ describe("prompt admission and artifact ownership", () => {
       const result = await request<T>(command);
       if (command.type === "prompt") {
         if (failure === "receipt projection") failProjection();
-        if (failure === "history")
-          vi.spyOn(projection, "composerHistoryPage").mockImplementationOnce(
-            fail,
-          );
+        if (failure === "history" && command.message === "accepted once")
+          vi.spyOn(projection, "historyPage").mockImplementationOnce(fail);
       }
       return result;
     };
@@ -487,7 +485,17 @@ describe("prompt admission and artifact ownership", () => {
       });
     } else {
       expect(worker.stops).toBe(0);
-      expect((await runtime.composerHistory("a", 0)).entries).toContainEqual(
+      expect(
+        (
+          await runtime.sessionHistory(
+            "a",
+            (
+              await runtime.snapshot("a")
+            ).active!.transcriptPage.viewId,
+            { kind: "composer", start: 0 },
+          )
+        ).entries,
+      ).toContainEqual(
         expect.objectContaining({
           text: "persisted:a",
           images: [],
@@ -545,7 +553,11 @@ describe("prompt admission and artifact ownership", () => {
     trackRuntime(runtime);
     await runtime.openSession("a");
     await waitForReady(runtime);
-    const history = await runtime.composerHistory("a", 0);
+    const history = await runtime.sessionHistory(
+      "a",
+      (await runtime.snapshot("a")).active!.transcriptPage.viewId,
+      { kind: "composer", start: 0 },
+    );
     const original = history.entries.find(
       (entry) => entry.text === "original",
     )!;

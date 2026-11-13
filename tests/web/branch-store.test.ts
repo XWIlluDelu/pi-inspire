@@ -56,7 +56,7 @@ describe("branch request view ownership", () => {
   it("discards a complete-content copy when its source view changes during image loading", async () => {
     const image = deferred<RouteResponse>();
     const store = await setup((url) => {
-      if (url.startsWith("/api/branches/entry"))
+      if (url.startsWith("/api/history?kind=entry&"))
         return {
           body: {
             sessionId: "s1",

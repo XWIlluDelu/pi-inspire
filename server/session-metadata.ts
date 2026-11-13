@@ -1,38 +1,27 @@
-import { constants, type Dirent } from "node:fs";
-import {
-  type FileHandle,
-  lstat,
-  open,
-  readdir,
-  realpath,
-} from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import {
-  MAX_SESSION_ID_CHARS,
-  type SessionCatalogIssue,
-} from "../shared/contracts.js";
+import type { SessionHeader } from "@earendil-works/pi-coding-agent";
+import type { SessionCatalogIssue } from "../shared/contracts.js";
 import { stripImageDimensionNotes } from "../shared/image-dimension-notes.js";
 import { jsonRecord } from "../shared/json-record.js";
 import { userMessageTitle } from "../shared/user-message.js";
-import { JsonlObjectDecoder, PersistedJsonlError } from "./session-jsonl.js";
+import {
+  isDisappearedSessionPath,
+  PersistedJsonlError,
+  SessionDocumentReader,
+  type SessionSourceIdentity,
+  SessionSourceTypeError,
+  sameSessionObject,
+  sessionSourceVersion,
+} from "./session-jsonl.js";
 import {
   sessionSearchMatcher,
   sessionSearchSnippet,
 } from "./session-search-query.js";
 
 const MAX_INDEXED_TEXT_CHARS = 10_000;
-const MAX_SESSION_PATH_CHARS = 32_768;
 const SESSION_READ_CONCURRENCY = 4;
-
-class SessionMetadataFormatError extends Error {}
-
-export interface SessionSourceIdentity {
-  dev: bigint;
-  ino: bigint;
-  size: bigint;
-  mtimeNs: bigint;
-  ctimeNs: bigint;
-}
 
 export interface SessionRecord {
   path: string;
@@ -113,57 +102,20 @@ function emptyState(): SessionMetadataState {
 function applyEntry(
   state: SessionMetadataState,
   entry: Record<string, unknown>,
+  header: SessionHeader | null,
   fallbackModified: number,
 ): void {
-  if (!state.header) {
-    if (entry.type !== "session")
-      throw new SessionMetadataFormatError(
-        "Persisted session does not begin with a session header",
-      );
-    if (
-      typeof entry.id !== "string" ||
-      entry.id.length === 0 ||
-      entry.id.length > MAX_SESSION_ID_CHARS
-    )
-      throw new SessionMetadataFormatError(
-        "Persisted session has an invalid session identity",
-      );
-    const cwd = typeof entry.cwd === "string" ? entry.cwd : "";
-    if (
-      !cwd ||
-      !isAbsolute(cwd) ||
-      cwd.includes("\0") ||
-      cwd.length > MAX_SESSION_PATH_CHARS
-    ) {
-      throw new SessionMetadataFormatError(
-        "Persisted session has an invalid working directory",
-      );
-    }
-    if (
-      typeof entry.parentSession === "string" &&
-      (!isAbsolute(entry.parentSession) ||
-        entry.parentSession.includes("\0") ||
-        entry.parentSession.length > MAX_SESSION_PATH_CHARS)
-    ) {
-      throw new SessionMetadataFormatError(
-        "Persisted session has an invalid parent path",
-      );
-    }
-    const parentSessionPath =
-      typeof entry.parentSession === "string" ? entry.parentSession : undefined;
+  if (header) {
     state.header = {
-      id: entry.id,
-      cwd,
-      ...(parentSessionPath ? { parentSessionPath } : {}),
-      timestamp: timestamp(entry.timestamp),
+      id: header.id,
+      cwd: header.cwd,
+      ...(header.parentSession
+        ? { parentSessionPath: header.parentSession }
+        : {}),
+      timestamp: timestamp(header.timestamp),
       fallbackCreated: fallbackModified,
     };
     return;
-  }
-  if (entry.type === "session") {
-    throw new SessionMetadataFormatError(
-      "Persisted session contains a second session header",
-    );
   }
   if (entry.type === "session_info") {
     state.name =
@@ -211,12 +163,10 @@ function projectRecord(
 }
 
 async function scanSessionFile(
-  handle: FileHandle,
+  document: SessionDocumentReader,
   path: string,
-  size: number,
   start: number,
   previous: SessionMetadataState | null,
-  fallbackModified: number,
   onEntry?: (entry: Record<string, unknown>) => void,
 ): Promise<{
   state: SessionMetadataState;
@@ -224,117 +174,16 @@ async function scanSessionFile(
   completeBytes: number;
 }> {
   const state = previous ? { ...previous } : emptyState();
-  if (size === start)
-    return {
-      state,
-      record: projectRecord(path, state, fallbackModified),
-      completeBytes: start,
-    };
-
-  let framedBytes = 0;
-  const decoder = new JsonlObjectDecoder((frame) => {
-    framedBytes += frame.length;
+  const fallbackModified = Number(document.source.mtimeNs / 1_000_000n);
+  const scan = await document.scan(start, (entry, header) => {
+    applyEntry(state, entry, header, fallbackModified);
+    onEntry?.(entry);
   });
-  const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, size - start));
-  let offset = start;
-  while (offset < size) {
-    const length = Math.min(buffer.length, size - offset);
-    const { bytesRead } = await handle.read(buffer, 0, length, offset);
-    if (bytesRead === 0) break;
-    for (const entry of decoder.push(buffer.subarray(0, bytesRead))) {
-      applyEntry(state, entry, fallbackModified);
-      onEntry?.(entry);
-    }
-    offset += bytesRead;
-  }
   return {
     state,
     record: projectRecord(path, state, fallbackModified),
-    completeBytes: start + framedBytes,
+    completeBytes: scan.completeBytes,
   };
-}
-
-function stableMetadataError(error: unknown): boolean {
-  return (
-    error instanceof PersistedJsonlError ||
-    error instanceof SessionMetadataFormatError
-  );
-}
-
-const DISAPPEARED_PATH_CODES = new Set(["ELOOP", "ENOENT", "ENOTDIR"]);
-
-function isDisappearedPath(error: unknown): boolean {
-  return Boolean(
-    error &&
-      typeof error === "object" &&
-      DISAPPEARED_PATH_CODES.has(String((error as NodeJS.ErrnoException).code)),
-  );
-}
-
-function sourceIdentity(details: SessionSourceIdentity): SessionSourceIdentity {
-  return {
-    dev: details.dev,
-    ino: details.ino,
-    size: details.size,
-    mtimeNs: details.mtimeNs,
-    ctimeNs: details.ctimeNs,
-  };
-}
-
-function fileVersion(details: {
-  dev: bigint;
-  ino: bigint;
-  size: bigint;
-  mtimeNs: bigint;
-  ctimeNs: bigint;
-}): string {
-  return `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}:${details.ctimeNs}`;
-}
-
-async function pathAddressesVersion(
-  path: string,
-  canonicalPath: string,
-  version: string,
-): Promise<boolean> {
-  try {
-    const [canonical, details] = await Promise.all([
-      realpath(path),
-      lstat(path, { bigint: true }),
-    ]);
-    return (
-      canonical === canonicalPath &&
-      details.isFile() &&
-      fileVersion(details) === version
-    );
-  } catch (error) {
-    if (isDisappearedPath(error)) return false;
-    throw error;
-  }
-}
-
-/** Under Pi's one-writer append rule, growth preserves the admitted byte prefix. */
-async function pathAddressesPrefix(
-  path: string,
-  canonicalPath: string,
-  prefix: SessionSourceIdentity,
-): Promise<boolean> {
-  try {
-    const [canonical, details] = await Promise.all([
-      realpath(path),
-      lstat(path, { bigint: true }),
-    ]);
-    return (
-      canonical === canonicalPath &&
-      details.isFile() &&
-      details.dev === prefix.dev &&
-      details.ino === prefix.ino &&
-      (details.size > prefix.size ||
-        fileVersion(details) === fileVersion(prefix))
-    );
-  } catch (error) {
-    if (isDisappearedPath(error)) return false;
-    throw error;
-  }
 }
 
 function readFailure(
@@ -504,34 +353,24 @@ export class SessionMetadataIndex {
     const matchesQuery = sessionSearchMatcher(query);
     const matches: SessionRecord[] = [];
     for (const session of sessions) {
-      let handle: FileHandle | undefined;
+      let document: SessionDocumentReader | undefined;
       try {
-        handle = await open(
-          session.path,
-          constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-        );
-        const before = await handle.stat({ bigint: true });
+        document = await SessionDocumentReader.open(session.path);
         const canonical = await realpath(session.path);
-        const source = session.source;
         if (
-          !before.isFile() ||
-          !source ||
-          source.dev !== before.dev ||
-          source.ino !== before.ino ||
-          before.size > BigInt(Number.MAX_SAFE_INTEGER) ||
-          !(await pathAddressesPrefix(session.path, canonical, before))
+          !session.source ||
+          !sameSessionObject(session.source, document.source) ||
+          !(await document.stillAddressesPrefix(canonical))
         ) {
           throw new Error("Session source changed; refresh the session list");
         }
         let name: string | undefined;
         const messages: string[] = [];
         const scan = await scanSessionFile(
-          handle,
+          document,
           session.path,
-          Number(before.size),
           0,
           null,
-          Number(before.mtimeNs / 1_000_000n),
           (entry) => {
             if (entry.type === "session_info")
               name =
@@ -549,8 +388,7 @@ export class SessionMetadataIndex {
         if (
           scan.record?.id !== session.id ||
           scan.record.cwd !== session.cwd ||
-          (await handle.stat({ bigint: true })).size < before.size ||
-          !(await pathAddressesPrefix(session.path, canonical, before))
+          !(await document.stillAddressesPrefix(canonical))
         ) {
           throw new Error("Session source changed while searching; try again");
         }
@@ -572,7 +410,7 @@ export class SessionMetadataIndex {
       } catch (error) {
         readFailure(issues, session.path, error);
       } finally {
-        await handle?.close();
+        await document?.close();
       }
     }
     return matches;
@@ -583,75 +421,47 @@ export class SessionMetadataIndex {
     canonicalPath: string,
   ): Promise<SessionRecord | null> {
     const previous = this.cache.get(path);
-    let authorityMismatch = false;
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const handle = await open(
-          path,
-          constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-        );
+        const document = await SessionDocumentReader.open(path);
         try {
-          const before = await handle.stat({ bigint: true });
-          if (!before.isFile()) {
-            authorityMismatch = true;
-            continue;
-          }
-          const version = fileVersion(before);
-          if (!(await pathAddressesVersion(path, canonicalPath, version)))
-            continue;
+          const before = document.source;
+          const version = sessionSourceVersion(before);
           const cached = this.cache.get(path);
           if (cached?.version === version) {
-            if (await pathAddressesVersion(path, canonicalPath, version))
+            if (await document.addressesVersion(canonicalPath))
               return cached.record;
             continue;
           }
-          if (before.size > BigInt(Number.MAX_SAFE_INTEGER))
-            return previous?.record ?? null;
-
+          if (!(await document.addressesVersion(canonicalPath))) continue;
           const append =
             cached !== undefined &&
             cached.state !== null &&
-            cached.dev === before.dev &&
-            cached.ino === before.ino &&
+            sameSessionObject(cached, before) &&
             cached.size < before.size &&
             cached.completeBytes <= Number(cached.size);
-          const fallbackModified = Number(before.mtimeNs / 1_000_000n);
           let scan: Awaited<ReturnType<typeof scanSessionFile>> | null = null;
           let scanError: unknown;
           try {
             scan = await scanSessionFile(
-              handle,
+              document,
               path,
-              Number(before.size),
               append ? cached.completeBytes : 0,
               append ? cached.state : null,
-              fallbackModified,
             );
           } catch (error) {
             scanError = error;
             if (append) {
               try {
-                scan = await scanSessionFile(
-                  handle,
-                  path,
-                  Number(before.size),
-                  0,
-                  null,
-                  fallbackModified,
-                );
+                scan = await scanSessionFile(document, path, 0, null);
               } catch (fallbackError) {
                 scanError = fallbackError;
               }
             }
           }
-          const after = await handle.stat({ bigint: true });
-          if (
-            version !== fileVersion(after) ||
-            !(await pathAddressesVersion(path, canonicalPath, version))
-          )
-            continue;
+          if (!(await document.stillCurrent(canonicalPath))) continue;
           if (!scan) {
-            if (stableMetadataError(scanError)) {
+            if (scanError instanceof PersistedJsonlError) {
               this.cache.set(path, {
                 version,
                 dev: before.dev,
@@ -667,7 +477,7 @@ export class SessionMetadataIndex {
             return previous?.record ?? null;
           }
           const record = scan.record
-            ? { ...scan.record, source: sourceIdentity(before) }
+            ? { ...scan.record, source: before }
             : null;
           this.cache.set(path, {
             version,
@@ -680,7 +490,7 @@ export class SessionMetadataIndex {
           });
           return record;
         } finally {
-          await handle.close();
+          await document.close();
         }
       }
     } catch (error) {
@@ -689,11 +499,11 @@ export class SessionMetadataIndex {
       // revalidates the path and source identity. Read failures on a still
       // addressed regular file are reported to the scan caller. Browsing can
       // retain this summary; destructive callers still require a complete set.
-      if (!isDisappearedPath(error)) throw error;
-    }
-    if (authorityMismatch) {
-      this.cache.delete(path);
-      return null;
+      if (error instanceof SessionSourceTypeError) {
+        this.cache.delete(path);
+        return null;
+      }
+      if (!isDisappearedSessionPath(error)) throw error;
     }
     return previous?.record ?? null;
   }

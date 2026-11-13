@@ -6,9 +6,9 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { constants, type FSWatcher, watch } from "node:fs";
-import { lstat, open, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { type FSWatcher, watch } from "node:fs";
+import { stat } from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 import type {
   SessionEntry,
   SessionHeader,
@@ -21,9 +21,10 @@ import {
   type BranchTreeQuery,
   type BranchTreeResponse,
   type ComposerHistoryPage,
-  MAX_SESSION_ID_CHARS,
   type ModelOption,
   type ProjectionHealth,
+  type SessionHistoryPages,
+  type SessionHistoryQuery,
   type TranscriptActivityKind,
   type TranscriptActivityPage,
   type TranscriptActivityRange,
@@ -32,6 +33,7 @@ import {
   type UserTurnIndexPage,
   type UserTurnTranscriptPage,
 } from "../shared/contracts.js";
+import { jsonRecord } from "../shared/json-record.js";
 import { resultChildCalls } from "../shared/tool-activity.js";
 import { userMessageContent } from "../shared/user-message.js";
 import { userTurnSummary } from "../shared/user-turns.js";
@@ -51,7 +53,13 @@ import {
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
 import type { SessionRecord } from "./session-catalog.js";
-import { JsonlObjectDecoder } from "./session-jsonl.js";
+import {
+  SessionDocumentReader,
+  type SessionSourceIdentity,
+  sameSessionObject,
+  sessionSourceVersion,
+  sessionVersionAtPath,
+} from "./session-jsonl.js";
 import {
   appendModelSelection,
   type BranchModelSelection,
@@ -67,6 +75,7 @@ import {
   branchEntryText,
   branchMessageSource,
   branchNode,
+  indexSessionEntries,
   projectSessionTree,
 } from "./session-tree.js";
 
@@ -76,7 +85,6 @@ export const TRANSCRIPT_PAGE_MAX_BYTES = 1024 * 1024;
 export const TRANSCRIPT_PAGE_MAX_MESSAGES = 100;
 const USER_TURN_INDEX_PAGE_SIZE = 100;
 const USER_TURN_INDEX_MAX_BYTES = 128 * 1024;
-const MAX_SESSION_PATH_CHARS = 32_768;
 /** Per-slot reconnect-only live messages are separately bounded by runtime. */
 export const TRANSIENT_OVERLAY_MAX_BYTES = 512 * 1024;
 export const TRANSCRIPT_ITEM_MAX_BYTES = 256 * 1024;
@@ -84,16 +92,8 @@ export const TRANSCRIPT_ITEM_MAX_BYTES = 256 * 1024;
 const WATCH_DEBOUNCE_MS = 75;
 const RECONCILE_INTERVAL_MS = 750;
 const CURSOR_KEY = randomBytes(32);
-interface FileIdentity {
-  dev: bigint;
-  ino: bigint;
-  size: bigint;
-  mtimeNs: bigint;
-  ctimeNs: bigint;
-}
-
 interface Candidate {
-  identity: FileIdentity;
+  identity: SessionSourceIdentity;
   fingerprint: string;
   hashState: Hash;
   committedBytes: number;
@@ -211,44 +211,17 @@ export interface SessionProjectionView {
     effectiveLeafId?: string | null,
     viewId?: string,
   ): TranscriptPage;
-  visiblePage(
-    cursor: string,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-  ): TranscriptPage;
-  activityPage(
-    cursor: string,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-  ): TranscriptActivityPage;
-  userTurnIndexPage(
-    start?: number,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-  ): UserTurnIndexPage;
-  userTurnTranscriptPage(
-    targetMessageId: string,
-    effectiveLeafId?: string | null,
-    viewId?: string,
-    cursor?: string,
-  ): UserTurnTranscriptPage;
-  composerHistoryPage(
-    start?: number,
+  historyPage<Q extends SessionHistoryQuery>(
+    query: Q,
     effectiveLeafId?: string | null,
     viewId?: string,
     cwd?: string,
     fileNameForPath?: ComposerHistoryFileNameResolver,
-  ): ComposerHistoryPage;
+  ): SessionHistoryPages[Q["kind"]];
   branchTree(
     effectiveLeafId?: string | null,
     query?: BranchTreeQuery,
   ): BranchTreeResponse;
-  branchEntry(
-    id: string,
-    offset: number,
-    effectiveLeafId: string | null,
-    format?: "message",
-  ): BranchEntryResponse;
   branchImage(id: string, index: number): { data: Buffer; mimeType: string };
   editableText(id: string, maxChars: number): string;
   entry(id: string): ProjectionEntryTarget | null;
@@ -272,61 +245,13 @@ export interface SessionProjectionView {
   ): this;
 }
 
-function validSessionHeader(value: unknown): value is SessionHeader {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const header = value as unknown as Record<string, unknown>;
-  return (
-    header.type === "session" &&
-    typeof header.id === "string" &&
-    header.id.length > 0 &&
-    header.id.length <= MAX_SESSION_ID_CHARS &&
-    typeof header.cwd === "string" &&
-    header.cwd.length > 0 &&
-    header.cwd.length <= MAX_SESSION_PATH_CHARS &&
-    !header.cwd.includes("\0") &&
-    isAbsolute(header.cwd) &&
-    (header.parentSession === undefined ||
-      (typeof header.parentSession === "string" &&
-        header.parentSession.length > 0 &&
-        header.parentSession.length <= MAX_SESSION_PATH_CHARS &&
-        !header.parentSession.includes("\0") &&
-        isAbsolute(header.parentSession)))
-  );
-}
-
-function identity(
-  details: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>,
-): FileIdentity {
-  const value = details as unknown as {
-    dev: bigint;
-    ino: bigint;
-    size: bigint;
-    mtimeNs: bigint;
-    ctimeNs: bigint;
-  };
-  return {
-    dev: value.dev,
-    ino: value.ino,
-    size: value.size,
-    mtimeNs: value.mtimeNs,
-    ctimeNs: value.ctimeNs,
-  };
-}
-
-function sameObject(
-  left: Pick<FileIdentity, "dev" | "ino">,
-  right: Pick<FileIdentity, "dev" | "ino">,
-): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
-}
-
-function sameVersion(left: FileIdentity, right: FileIdentity): boolean {
-  return (
-    sameObject(left, right) &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs
-  );
+function fingerprintOfSpan(
+  hash: Hash,
+  length: number,
+  bytesRead: number,
+): string | null {
+  if (length === 0) return null;
+  return bytesRead >= length ? hash.digest("hex") : "";
 }
 
 async function sameDirectory(left: string, right: string): Promise<boolean> {
@@ -344,34 +269,6 @@ async function sameDirectory(left: string, right: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-function indexSessionEntries(
-  entries: readonly SessionEntry[],
-  existing: ReadonlyMap<string, SessionEntry> = new Map(),
-): Map<string, SessionEntry> {
-  const byId = new Map(existing);
-  for (const entry of entries) {
-    if (
-      typeof entry.type !== "string" ||
-      entry.type.length === 0 ||
-      entry.type.length > 200 ||
-      typeof entry.id !== "string" ||
-      entry.id.length === 0 ||
-      entry.id.length > 200 ||
-      (entry.parentId !== null &&
-        (typeof entry.parentId !== "string" || entry.parentId.length > 200))
-    )
-      throw new Error("Persisted session contains an invalid entry identity");
-    if (byId.has(entry.id))
-      throw new Error(`Persisted session contains duplicate entry ${entry.id}`);
-    if (entry.parentId !== null && !byId.has(entry.parentId))
-      throw new Error(
-        `Persisted session entry ${entry.id} has a missing or forward parent`,
-      );
-    byId.set(entry.id, entry);
-  }
-  return byId;
 }
 
 /** System prompts/tool declarations remain canonical Pi state, not transcript
@@ -417,24 +314,7 @@ function contextMessages(
     const included = new Set(contextEntries.map((entry) => entry.id));
     transcriptEntries = entries.filter((entry) => included.has(entry.id));
   }
-  const messages = transcriptEntries.flatMap(transcriptEntryMessages);
-  let turnOrdinal = -1;
-  let turnId: string | null = null;
-  return messages.map((message) => {
-    if (message.role === "user") {
-      turnOrdinal += 1;
-      turnId = message.__inspireMessageId;
-    }
-    return {
-      ...message,
-      ...(turnId !== null
-        ? {
-            __inspireUserTurnId: turnId,
-            __inspireUserTurnIndex: turnOrdinal,
-          }
-        : {}),
-    };
-  });
+  return appendContextMessages([], transcriptEntries);
 }
 
 function appendContextMessages(
@@ -457,10 +337,9 @@ function appendContextMessages(
     }
   }
   const appended = entries.flatMap(transcriptEntryMessages).map((message) => {
-    const id = message.__inspireMessageId;
     if (message.role === "user") {
       turnOrdinal += 1;
-      turnId = id;
+      turnId = message.__inspireMessageId;
     }
     return {
       ...message,
@@ -741,6 +620,60 @@ function withinTranscriptPageBudget<T>(page: T): T {
   return page;
 }
 
+/** Account for each row and lazy range once. The shell includes the cursor for
+ * the candidate boundary, so its encoded length can change between rows. */
+class TranscriptPageBuilder<Page> {
+  private readonly messages: unknown[] = [];
+  private readonly ranges: TranscriptActivityRange[] = [];
+  private bytes = 0;
+
+  constructor(
+    private readonly shell: (
+      boundary: number,
+      messages: unknown[],
+      ranges: TranscriptActivityRange[],
+    ) => Page,
+  ) {}
+
+  get length(): number {
+    return this.messages.length;
+  }
+
+  add(
+    boundary: number,
+    item: ReturnType<typeof boundedTranscriptItem> | null,
+    range: TranscriptActivityRange | null = null,
+  ): boolean {
+    const itemBytes = item
+      ? Buffer.byteLength(item.serialized) + Number(this.messages.length > 0)
+      : 0;
+    const rangeBytes = range
+      ? Buffer.byteLength(JSON.stringify(range)) +
+        (this.ranges.length ? 1 : ',"activityRanges":[]'.length)
+      : 0;
+    const bytes = this.bytes + itemBytes + rangeBytes;
+    if (
+      bytes + Buffer.byteLength(JSON.stringify(this.shell(boundary, [], []))) >
+      TRANSCRIPT_PAGE_MAX_BYTES
+    )
+      return false;
+    if (item) this.messages.push(item.value);
+    if (range) this.ranges.push(range);
+    this.bytes = bytes;
+    return true;
+  }
+
+  page(boundary: number, reverse = false): Page {
+    if (reverse) {
+      this.messages.reverse();
+      this.ranges.reverse();
+    }
+    return withinTranscriptPageBudget(
+      this.shell(boundary, this.messages, this.ranges),
+    );
+  }
+}
+
 export function boundedTranscriptProjection(
   value: unknown,
   fileNameForPath?: ComposerHistoryFileNameResolver,
@@ -840,77 +773,11 @@ function signedCursor(payloadValue: Record<string, unknown>): string {
   return `${payload}.${signature}`;
 }
 
-function cursorFor(
-  sessionId: string,
-  incarnation: string,
-  fingerprint: string,
-  revision: number,
-  before: number,
-  effectiveLeafId: string | null,
-  viewId: string,
-): string {
-  return signedCursor({
-    sessionId,
-    incarnation,
-    fingerprint,
-    revision,
-    before,
-    effectiveLeafId,
-    viewId,
-  });
-}
-
-function activityCursorFor(
-  sessionId: string,
-  incarnation: string,
-  fingerprint: string,
-  revision: number,
-  start: number,
-  before: number,
-  effectiveLeafId: string | null,
-  viewId: string,
-): string {
-  return signedCursor({
-    kind: "activity",
-    sessionId,
-    incarnation,
-    fingerprint,
-    revision,
-    start,
-    before,
-    effectiveLeafId,
-    viewId,
-  });
-}
-
-function userTurnCursorFor(
-  sessionId: string,
-  incarnation: string,
-  fingerprint: string,
-  revision: number,
-  target: number,
-  after: number,
-  effectiveLeafId: string | null,
-  viewId: string,
-): string {
-  return signedCursor({
-    kind: "user-turn",
-    sessionId,
-    incarnation,
-    fingerprint,
-    revision,
-    start: target,
-    before: after,
-    effectiveLeafId,
-    viewId,
-  });
-}
-
 interface ParsedCursor {
   kind: "page" | "activity" | "user-turn";
   sessionId: string;
   incarnation: string;
-  fingerprint: string;
+  sourceGeneration: number;
   revision: number;
   start: number;
   before: number;
@@ -939,7 +806,7 @@ function parseCursor(cursor: string): ParsedCursor {
     if (
       typeof parsed.sessionId !== "string" ||
       typeof parsed.incarnation !== "string" ||
-      typeof parsed.fingerprint !== "string" ||
+      !Number.isSafeInteger(parsed.sourceGeneration) ||
       !Number.isSafeInteger(parsed.revision) ||
       !Number.isSafeInteger(parsed.before) ||
       Number(parsed.before) < 0 ||
@@ -947,30 +814,21 @@ function parseCursor(cursor: string): ParsedCursor {
         typeof parsed.effectiveLeafId !== "string") ||
       typeof parsed.viewId !== "string" ||
       !parsed.viewId ||
-      (parsed.kind !== undefined &&
+      (parsed.kind !== "page" &&
         parsed.kind !== "activity" &&
         parsed.kind !== "user-turn") ||
-      ((parsed.kind === "activity" || parsed.kind === "user-turn") &&
-        (!Number.isSafeInteger(parsed.start) ||
-          Number(parsed.start) < 0 ||
-          Number(parsed.start) > Number(parsed.before)))
+      !Number.isSafeInteger(parsed.start) ||
+      Number(parsed.start) < 0 ||
+      Number(parsed.start) > Number(parsed.before)
     )
       throw new Error("invalid");
     return {
-      kind:
-        parsed.kind === "activity"
-          ? "activity"
-          : parsed.kind === "user-turn"
-            ? "user-turn"
-            : "page",
+      kind: parsed.kind,
       sessionId: parsed.sessionId,
       incarnation: parsed.incarnation,
-      fingerprint: parsed.fingerprint,
+      sourceGeneration: Number(parsed.sourceGeneration),
       revision: Number(parsed.revision),
-      start:
-        parsed.kind === "activity" || parsed.kind === "user-turn"
-          ? Number(parsed.start)
-          : 0,
+      start: Number(parsed.start),
       before: Number(parsed.before),
       effectiveLeafId: parsed.effectiveLeafId,
       viewId: parsed.viewId,
@@ -998,7 +856,6 @@ export class SessionProjection
   private currentRevision = 0;
   readonly incarnation = randomBytes(18).toString("base64url");
   private appendFromRevision = 0;
-  private readonly revisionFingerprints = new Map<number, string>();
   private currentHealth: ProjectionHealth = { status: "ok" };
   private currentFailureStatus: number | null = null;
   private currentFailureCode: string | undefined;
@@ -1013,12 +870,13 @@ export class SessionProjection
   private currentEntriesById = new Map<string, SessionEntry>();
   private currentHistoryAnchor: string | null = null;
   private historyReplacementRevision = 0;
+  private historySourceGeneration = 0;
   private readonly userTurnIndexes = new Map<
-    string,
-    { revision: number; turns: readonly UserTurnAnchor[] }
+    string | null,
+    { positions: number[]; byId: Map<string, number> }
   >();
   private currentHeader: SessionHeader | null = null;
-  private currentIdentity: FileIdentity | null = null;
+  private currentIdentity: SessionSourceIdentity | null = null;
   private currentFingerprint = "";
   private currentHashState: Hash | null = null;
   private currentCommittedBytes = 0;
@@ -1060,7 +918,6 @@ export class SessionProjection
     if (initialMaterializationPending) {
       this.currentRevision = 1;
       this.appendFromRevision = 1;
-      this.revisionFingerprints.set(1, "");
     }
   }
 
@@ -1156,9 +1013,7 @@ export class SessionProjection
   }
   get sourceVersion(): string | null {
     const value = this.currentIdentity;
-    return value
-      ? `${value.dev}:${value.ino}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`
-      : null;
+    return value ? sessionSourceVersion(value) : null;
   }
   attestInitialMaterialization(
     workerEntries: readonly SessionEntry[],
@@ -1362,7 +1217,7 @@ export class SessionProjection
     return boundedEditableText(entry, maxChars);
   }
 
-  branchEntry(
+  private branchEntry(
     id: string,
     offset: number,
     effectiveLeafId: string | null,
@@ -1420,6 +1275,7 @@ export class SessionProjection
       this.currentEntries,
       effectiveLeafId,
       query,
+      this.currentEntriesById,
     );
     const response: BranchTreeResponse = {
       sessionId: this.sessionId,
@@ -1653,9 +1509,7 @@ export class SessionProjection
         // Ordinary reads reuse a verified version, not merely a pathname or
         // size. Do not follow a replacement symlink back to the former inode;
         // changed or unhealthy sources still take the full verification path.
-        const details = await lstat(this.path, { bigint: true });
-        const next = identity(details as never);
-        if (details.isFile() && sameVersion(next, this.currentIdentity)) {
+        if (await sessionVersionAtPath(this.path, this.currentIdentity)) {
           return {
             changed: false,
             initialMaterialization,
@@ -1676,16 +1530,19 @@ export class SessionProjection
         }
       }
 
-      const candidate =
-        (await this.tryReadAppendCandidate()) ?? (await this.readCandidate());
+      const candidate = await this.readCandidate();
       const initialFileAppearance =
         initialMaterialization && this.currentHeader === null;
       const changed = candidate.fingerprint !== this.currentFingerprint;
+      const replaced =
+        this.currentHeader !== null &&
+        this.currentIdentity !== null &&
+        !sameSessionObject(candidate.identity, this.currentIdentity);
       const verifiedUnchangedContent =
         !changed &&
         candidate.prefixRevalidated &&
         this.currentIdentity !== null &&
-        sameObject(candidate.identity, this.currentIdentity) &&
+        sameSessionObject(candidate.identity, this.currentIdentity) &&
         previousUncommittedBytes === 0 &&
         candidate.uncommittedBytes === 0 &&
         candidate.committedBytes === this.currentCommittedBytes &&
@@ -1696,6 +1553,7 @@ export class SessionProjection
       let kind: ProjectionReconcileResult["kind"] = "none";
       let messageChange: ProjectionMessageChange = "none";
       let appendedEntries: SessionEntry[] | undefined;
+      if (replaced) this.historySourceGeneration += 1;
       if (changed) {
         const prefixVerified =
           this.currentCommittedBytes === 0 ||
@@ -1706,7 +1564,7 @@ export class SessionProjection
         kind =
           initialFileAppearance ||
           (this.currentIdentity &&
-            sameObject(candidate.identity, this.currentIdentity) &&
+            sameSessionObject(candidate.identity, this.currentIdentity) &&
             candidate.committedBytes >= this.currentCommittedBytes &&
             this.currentFingerprint &&
             prefixVerified &&
@@ -1729,17 +1587,9 @@ export class SessionProjection
           candidate.messages,
         );
         this.currentRevision += 1;
+        this.userTurnIndexes.clear();
         if (messageChange === "replace")
           this.appendFromRevision = this.currentRevision;
-        this.revisionFingerprints.set(
-          this.currentRevision,
-          candidate.fingerprint,
-        );
-        while (this.revisionFingerprints.size > 256) {
-          this.revisionFingerprints.delete(
-            this.revisionFingerprints.keys().next().value!,
-          );
-        }
         if (kind !== "append")
           this.historyReplacementRevision = this.currentRevision;
         if (
@@ -1871,226 +1721,92 @@ export class SessionProjection
   }
 
   /** Reconcile newly appended frames, reusing an owned prefix when provenance allows. */
-  private async tryReadAppendCandidate(): Promise<Candidate | null> {
+  private async verifiedPrefix(document: SessionDocumentReader) {
     if (
       !this.currentIdentity ||
       !this.currentHeader ||
       !this.currentHashState ||
-      this.currentRevision === 0
+      !sameSessionObject(document.source, this.currentIdentity) ||
+      document.source.size < BigInt(this.currentCommittedBytes)
     )
       return null;
-    const addressed = identity(
-      (await stat(this.path, { bigint: true })) as never,
-    );
-    if (
-      !sameObject(addressed, this.currentIdentity) ||
-      addressed.size < BigInt(this.currentCommittedBytes)
-    )
-      return null;
-    const handle = await open(
-      this.path,
-      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-    );
-    try {
-      const before = identity((await handle.stat({ bigint: true })) as never);
-      if (!sameObject(before, addressed)) return null;
-      // An exact pending Pi claim supplies the provenance for the ordinary
-      // one-writer append path. Otherwise reread the prefix so unowned rewrites
-      // still fail closed before any new entries are projected.
-      const reuseVerifiedPrefix =
-        before.size > this.currentIdentity.size && this.ownedAppendWindow();
-      const hash = reuseVerifiedPrefix
-        ? this.currentHashState.copy()
-        : createHash("sha256");
-      if (!reuseVerifiedPrefix) {
-        let prefixBytes = 0;
-        if (this.currentCommittedBytes > 0) {
-          for await (const raw of handle.createReadStream({
-            start: 0,
-            end: this.currentCommittedBytes - 1,
-            autoClose: false,
-          })) {
-            const chunk = raw as Buffer;
-            hash.update(chunk);
-            prefixBytes += chunk.length;
-          }
-        }
-        if (
-          prefixBytes !== this.currentCommittedBytes ||
-          hash.copy().digest("hex") !== this.currentFingerprint
-        )
-          return null;
-      }
 
-      const appended: Record<string, unknown>[] = [];
-      let committedBytes = this.currentCommittedBytes;
-      let previousTailRemaining = this.currentUncommittedBytes;
-      const previousTailHash = createHash("sha256");
-      const decoder = new JsonlObjectDecoder((frame) => {
-        hash.update(frame);
-        committedBytes += frame.length;
-      });
-      if (before.size > BigInt(this.currentCommittedBytes)) {
-        for await (const raw of handle.createReadStream({
-          start: this.currentCommittedBytes,
-          autoClose: false,
-        })) {
-          const chunk = raw as Buffer;
-          if (previousTailRemaining > 0) {
-            const used = chunk.subarray(0, previousTailRemaining);
-            previousTailHash.update(used);
-            previousTailRemaining -= used.length;
-          }
-          for (const value of decoder.push(chunk)) {
-            if (value.type === "session")
-              throw new Error(
-                "Persisted session contains a second session header",
-              );
-            appended.push(value);
-          }
-        }
-      }
-      const after = identity((await handle.stat({ bigint: true })) as never);
-      const finalAddressed = identity(
-        (await stat(this.path, { bigint: true })) as never,
-      );
-      if (!sameVersion(before, after) || !sameVersion(after, finalAddressed))
-        return null;
-      const tail = decoder.tail();
-      const appendedEntries = appended as unknown as SessionEntry[];
-      const entriesById = indexSessionEntries(
-        appendedEntries,
-        this.currentEntriesById,
-      );
-      const entries = [...this.currentEntries, ...appendedEntries];
-      const leafId = entries.at(-1)?.id ?? null;
-      let messages = this.currentMessages;
-      let modelSelection = this.currentModelSelection;
-      let thinkingLevel = this.currentThinkingLevel;
-      if (appendedEntries.length > 0) {
-        if (isLinearAppend(this.currentLeafId, appendedEntries)) {
-          messages = appendContextMessages(
-            this.currentMessages,
-            appendedEntries,
-          );
-          modelSelection = appendModelSelection(
-            this.currentModelSelection,
-            appendedEntries,
-          );
-          thinkingLevel = appendedThinkingLevel(
-            this.currentThinkingLevel,
-            appendedEntries,
-          );
-        } else {
-          const context = buildSessionContext(entries, leafId, entriesById);
-          messages = contextMessages(entries, leafId, entriesById);
-          modelSelection = branchModelSelection(entriesById, leafId);
-          thinkingLevel = context.thinkingLevel;
-        }
-      }
-      const fingerprint = hash.copy().digest("hex");
-      return {
-        identity: finalAddressed,
-        fingerprint,
-        hashState: hash,
-        committedBytes,
-        uncommittedBytes: tail.length,
-        uncommittedFingerprint:
-          tail.length > 0
-            ? createHash("sha256").update(tail).digest("hex")
-            : null,
-        previousPrefixFingerprint: this.currentFingerprint,
-        prefixRevalidated: !reuseVerifiedPrefix,
-        previousTailFingerprint:
-          previousTailRemaining === 0 && this.currentUncommittedBytes > 0
-            ? previousTailHash.digest("hex")
-            : this.currentUncommittedBytes === 0
-              ? null
-              : "",
-        header: this.currentHeader,
-        entries,
-        entriesById,
-        messages,
-        modelSelection,
-        thinkingLevel,
-        leafId,
-      };
-    } finally {
-      await handle.close();
-    }
+    // An exact pending Pi claim supplies the provenance for the one-writer
+    // append path. For other writes verify the old bytes before extending them.
+    if (
+      document.source.size > this.currentIdentity.size &&
+      this.ownedAppendWindow()
+    )
+      return { hash: this.currentHashState.copy(), revalidated: false };
+
+    const hash = createHash("sha256");
+    const bytes = await document.readBytes(
+      0,
+      this.currentCommittedBytes,
+      (chunk) => {
+        hash.update(chunk);
+      },
+    );
+    return bytes === this.currentCommittedBytes &&
+      hash.copy().digest("hex") === this.currentFingerprint
+      ? { hash, revalidated: true }
+      : null;
   }
 
   private async readCandidate(): Promise<Candidate> {
-    // A path can be atomically replaced while its old inode is being read. Retry
-    // once against the now-addressed object rather than publishing an orphan.
+    // Retry against the currently addressed object when a read races a write
+    // or a rename. Both append and full scans use the same open descriptor.
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const handle = await open(
-        this.path,
-        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-      );
+      const document = await SessionDocumentReader.open(this.path);
       try {
-        const before = identity((await handle.stat({ bigint: true })) as never);
         if (
           this.currentRevision === 0 &&
           this.initialSourceIdentity &&
-          !sameObject(before, this.initialSourceIdentity)
+          !sameSessionObject(document.source, this.initialSourceIdentity)
         ) {
           throw requestError(
             "The session changed since the catalog was loaded",
             409,
-            { code: "SESSION_CATALOG_STALE" },
+            {
+              code: "SESSION_CATALOG_STALE",
+            },
           );
         }
-        const hash = createHash("sha256");
+        const prefix = await this.verifiedPrefix(document);
+        const committed = this.currentCommittedBytes;
+        const tailEnd = committed + this.currentUncommittedBytes;
+        const start = prefix ? committed : 0;
+        const hash = prefix?.hash ?? createHash("sha256");
+        const prefixHash = createHash("sha256");
+        const tailHash = createHash("sha256");
         const parsed: Record<string, unknown>[] = [];
-        let committedBytes = 0;
-        let readOffset = 0;
-        let previousPrefixBytes = 0;
-        let previousTailBytes = 0;
-        const previousPrefixHash = createHash("sha256");
-        const previousTailHash = createHash("sha256");
-        const decoder = new JsonlObjectDecoder((frame) => {
-          hash.update(frame);
-          committedBytes += frame.length;
-        });
-        for await (const raw of handle.createReadStream({ autoClose: false })) {
-          const chunk = raw as Buffer;
-          await this.readHooks?.afterFullReadChunk?.();
-          const end = readOffset + chunk.length;
-          if (readOffset < this.currentCommittedBytes) {
-            const prefixEnd = Math.min(end, this.currentCommittedBytes);
-            const used = chunk.subarray(0, prefixEnd - readOffset);
-            previousPrefixHash.update(used);
-            previousPrefixBytes += used.length;
-          }
-          const tailStart = Math.max(readOffset, this.currentCommittedBytes);
-          const tailEnd = Math.min(
-            end,
-            this.currentCommittedBytes + this.currentUncommittedBytes,
-          );
-          if (tailEnd > tailStart) {
-            const used = chunk.subarray(
-              tailStart - readOffset,
-              tailEnd - readOffset,
-            );
-            previousTailHash.update(used);
-            previousTailBytes += used.length;
-          }
-          readOffset = end;
-          parsed.push(...decoder.push(chunk));
-        }
-        const after = identity((await handle.stat({ bigint: true })) as never);
-        const addressed = identity(
-          (await stat(this.path, { bigint: true })) as never,
-        );
-        if (!sameVersion(before, after) || !sameVersion(after, addressed))
-          continue;
-        const tail = decoder.tail();
-        if (
-          parsed.length === 0 &&
-          this.initialMaterializationPending &&
-          this.currentHeader === null
-        ) {
+        const scan = await document
+          .scan(
+            start,
+            (entry) => parsed.push(entry),
+            (frame) => hash.update(frame),
+            async (chunk, offset) => {
+              if (!prefix) await this.readHooks?.afterFullReadChunk?.();
+              if (offset < committed)
+                prefixHash.update(chunk.subarray(0, committed - offset));
+              const tailStart = Math.max(offset, committed);
+              if (tailStart < tailEnd && tailStart < offset + chunk.length)
+                tailHash.update(
+                  chunk.subarray(tailStart - offset, tailEnd - offset),
+                );
+            },
+          )
+          .catch(async (error: unknown) => {
+            if (await document.stillCurrent()) throw error;
+            return null;
+          });
+        if (!scan || !(await document.stillCurrent())) continue;
+
+        const tail = scan.tail();
+        const header = prefix ? this.currentHeader : scan.header;
+        if (!header) {
+          if (!this.initialMaterializationPending || this.currentHeader)
+            throw new Error("Session file has an invalid Pi session header");
           if (tail.length === 0) {
             const pending = new Error(
               "The new session file has not materialized yet",
@@ -2098,103 +1814,73 @@ export class SessionProjection
             pending.code = "ENOENT";
             throw pending;
           }
-          return {
-            identity: addressed,
-            fingerprint: this.currentFingerprint,
-            hashState: hash,
-            committedBytes,
-            uncommittedBytes: tail.length,
-            uncommittedFingerprint:
-              tail.length > 0
-                ? createHash("sha256").update(tail).digest("hex")
-                : null,
-            previousPrefixFingerprint:
-              this.currentCommittedBytes === 0 ? null : "",
-            prefixRevalidated: true,
-            previousTailFingerprint:
-              previousTailBytes === this.currentUncommittedBytes &&
-              this.currentUncommittedBytes > 0
-                ? previousTailHash.digest("hex")
-                : this.currentUncommittedBytes === 0
-                  ? null
-                  : "",
-            header: null,
-            entries: [],
-            entriesById: new Map(),
-            messages: [],
-            modelSelection: { change: null, fallback: null },
-            thinkingLevel: "off",
-            leafId: null,
-          };
+        } else if (!prefix) {
+          if (header.id !== this.sessionId)
+            throw requestError("Session file belongs to another session", 409, {
+              code: "SESSION_CATALOG_STALE",
+            });
+          if (
+            header.cwd !== this.initialCwd &&
+            !(await sameDirectory(header.cwd, this.initialCwd))
+          )
+            throw requestError(
+              "The session working directory changed since the catalog was loaded",
+              409,
+              {
+                code: "SESSION_CATALOG_STALE",
+              },
+            );
         }
-        const header = parsed[0];
-        if (!validSessionHeader(header))
-          throw new Error("Session file has an invalid Pi session header");
-        if (header.id !== this.sessionId)
-          throw requestError("Session file belongs to another session", 409, {
-            code: "SESSION_CATALOG_STALE",
-          });
-        if (
-          header.cwd !== this.initialCwd &&
-          !(await sameDirectory(header.cwd, this.initialCwd))
-        ) {
-          throw requestError(
-            "The session working directory changed since the catalog was loaded",
-            409,
-            { code: "SESSION_CATALOG_STALE" },
-          );
-        }
-        if (
-          parsed
-            .slice(1)
-            .some((entry) => (entry as { type?: unknown }).type === "session")
-        ) {
-          throw new Error("Persisted session contains a second session header");
-        }
+
         const mutable = parsed as unknown as Array<
           SessionHeader | SessionEntry
         >;
-        migrateSessionEntries(mutable);
-        const entries = mutable.slice(1) as SessionEntry[];
+        if (header && !prefix) migrateSessionEntries(mutable);
+        const suffix = (prefix ? mutable : mutable.slice(1)) as SessionEntry[];
+        const entries = prefix ? [...this.currentEntries, ...suffix] : suffix;
+        const entriesById = indexSessionEntries(
+          suffix,
+          prefix ? this.currentEntriesById : undefined,
+        );
         const leafId = entries.at(-1)?.id ?? null;
-        const byId = indexSessionEntries(entries);
-        const context = buildSessionContext(entries, leafId, byId);
-        const fingerprint = hash.copy().digest("hex");
+        const linearAppend =
+          prefix && isLinearAppend(this.currentLeafId, suffix);
         return {
-          identity: addressed,
-          fingerprint,
+          identity: document.source,
+          fingerprint: header
+            ? hash.copy().digest("hex")
+            : this.currentFingerprint,
           hashState: hash,
-          committedBytes,
+          committedBytes: scan.completeBytes,
           uncommittedBytes: tail.length,
-          uncommittedFingerprint:
-            tail.length > 0
-              ? createHash("sha256").update(tail).digest("hex")
-              : null,
-          prefixRevalidated: true,
-          previousPrefixFingerprint:
-            previousPrefixBytes === this.currentCommittedBytes &&
-            this.currentCommittedBytes > 0
-              ? previousPrefixHash.digest("hex")
-              : this.currentCommittedBytes === 0
-                ? null
-                : "",
-          previousTailFingerprint:
-            previousTailBytes === this.currentUncommittedBytes &&
-            this.currentUncommittedBytes > 0
-              ? previousTailHash.digest("hex")
-              : this.currentUncommittedBytes === 0
-                ? null
-                : "",
+          uncommittedFingerprint: tail.length
+            ? createHash("sha256").update(tail).digest("hex")
+            : null,
+          previousPrefixFingerprint: prefix
+            ? this.currentFingerprint
+            : fingerprintOfSpan(prefixHash, committed, scan.end),
+          prefixRevalidated: prefix?.revalidated ?? true,
+          previousTailFingerprint: fingerprintOfSpan(
+            tailHash,
+            this.currentUncommittedBytes,
+            scan.end - committed,
+          ),
           header,
           entries,
-          entriesById: byId,
-          messages: contextMessages(entries, leafId, byId),
-          modelSelection: branchModelSelection(byId, leafId),
-          thinkingLevel: context.thinkingLevel,
+          entriesById,
+          messages: linearAppend
+            ? appendContextMessages(this.currentMessages, suffix)
+            : contextMessages(entries, leafId, entriesById),
+          modelSelection: linearAppend
+            ? appendModelSelection(this.currentModelSelection, suffix)
+            : branchModelSelection(entriesById, leafId),
+          thinkingLevel: linearAppend
+            ? appendedThinkingLevel(this.currentThinkingLevel, suffix)
+            : buildSessionContext(entries, leafId, entriesById).thinkingLevel,
           leafId,
         };
       } finally {
-        await handle.close();
+        await document.close();
       }
     }
     throw new Error("Session file changed while it was being reconciled");
@@ -2258,12 +1944,33 @@ export class SessionProjection
     return this.buildPage(combined, persisted.length, effectiveLeafId, viewId);
   }
 
+  private historyCursor(
+    kind: ParsedCursor["kind"],
+    before: number,
+    effectiveLeafId: string | null,
+    viewId: string,
+    start = 0,
+  ): string {
+    return signedCursor({
+      kind,
+      sessionId: this.sessionId,
+      incarnation: this.incarnation,
+      sourceGeneration: this.historySourceGeneration,
+      revision: this.revision,
+      effectiveLeafId,
+      viewId,
+      start,
+      before,
+    });
+  }
+
   private validatedCursor(
     cursor: string,
     expectedKind: ParsedCursor["kind"],
     effectiveLeafId: string | null,
     viewId: string,
-  ): { decoded: ParsedCursor; messages: readonly unknown[] } {
+    length: number,
+  ): ParsedCursor {
     const decoded = parseCursor(cursor);
     if (decoded.kind !== expectedKind) {
       throw requestError("Transcript cursor has the wrong purpose", 400);
@@ -2283,101 +1990,117 @@ export class SessionProjection
         409,
       );
     }
-    if (decoded.effectiveLeafId !== effectiveLeafId) {
-      let branchCursor = effectiveLeafId;
-      let appendDescendant = decoded.effectiveLeafId === null;
-      while (branchCursor && !appendDescendant) {
-        if (branchCursor === decoded.effectiveLeafId) appendDescendant = true;
-        branchCursor =
-          this.currentEntriesById.get(branchCursor)?.parentId ?? null;
-      }
-      // Cursors survive a strictly append-only continuation of the same
-      // branch. A switch to a sibling or ancestor view remains stale.
-      if (!appendDescendant || decoded.revision < this.appendFromRevision) {
-        throw requestError(
-          "Transcript cursor is stale or belongs to another branch view",
-          409,
-        );
-      }
-    }
-    const knownFingerprint = this.revisionFingerprints.get(decoded.revision);
+    if (!this.continues(effectiveLeafId, decoded.effectiveLeafId))
+      throw requestError(
+        "Transcript cursor is stale or belongs to another branch view",
+        409,
+      );
     if (
+      decoded.sourceGeneration !== this.historySourceGeneration ||
       decoded.revision > this.revision ||
-      decoded.revision < this.appendFromRevision ||
-      knownFingerprint !== decoded.fingerprint
+      decoded.revision < this.appendFromRevision
     ) {
       throw requestError(
         "Transcript cursor is stale; refresh the session",
         409,
       );
     }
-    const messages = this.viewMessages(effectiveLeafId);
-    if (decoded.before > messages.length) {
+    if (decoded.before > length) {
       throw requestError("Transcript cursor is invalid", 400);
     }
-    return { decoded, messages };
+    return decoded;
   }
 
-  visiblePage(
-    cursor: string,
+  historyPage<Q extends SessionHistoryQuery>(
+    query: Q,
+    effectiveLeafId?: string | null,
+    viewId?: string,
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): SessionHistoryPages[Q["kind"]];
+  historyPage(
+    query: SessionHistoryQuery,
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
-  ): TranscriptPage {
-    const { decoded, messages } = this.validatedCursor(
-      cursor,
-      "page",
-      effectiveLeafId,
-      viewId,
-    );
-    return this.buildVisiblePage(
-      messages,
-      decoded.before,
-      effectiveLeafId,
-      viewId,
-    );
+    cwd?: string,
+    fileNameForPath?: ComposerHistoryFileNameResolver,
+  ): SessionHistoryPages[keyof SessionHistoryPages] {
+    switch (query.kind) {
+      case "entry":
+        return this.branchEntry(
+          query.targetId,
+          query.offset ?? 0,
+          effectiveLeafId,
+          query.format,
+        );
+      case "composer":
+        return this.composerHistoryPage(
+          query.start,
+          effectiveLeafId,
+          viewId,
+          cwd,
+          fileNameForPath,
+        );
+      case "turns":
+        return this.userTurnIndexPage(query.start, effectiveLeafId, viewId);
+      case "older":
+      case "activity": {
+        const source = this.viewMessages(effectiveLeafId);
+        const cursor = this.validatedCursor(
+          query.cursor,
+          query.kind === "older" ? "page" : "activity",
+          effectiveLeafId,
+          viewId,
+          source.length,
+        );
+        return query.kind === "older"
+          ? this.buildBackwardPage(
+              source,
+              0,
+              cursor.before,
+              source.length,
+              this.transcriptPageShell(effectiveLeafId, viewId),
+              (start, end, after) =>
+                this.activityRange(
+                  start,
+                  end,
+                  after,
+                  source,
+                  effectiveLeafId,
+                  viewId,
+                ),
+            )
+          : this.buildActivityPage(
+              source,
+              cursor.start,
+              cursor.before,
+              effectiveLeafId,
+              viewId,
+            );
+      }
+      case "turn":
+        return this.userTurnTranscriptPage(
+          query.id,
+          effectiveLeafId,
+          viewId,
+          query.cursor,
+        );
+    }
   }
 
-  activityPage(
-    cursor: string,
-    effectiveLeafId: string | null = this.currentLeafId,
-    viewId = this.incarnation,
-  ): TranscriptActivityPage {
-    const { decoded, messages } = this.validatedCursor(
-      cursor,
-      "activity",
-      effectiveLeafId,
-      viewId,
-    );
-    return this.buildActivityPage(
-      messages,
-      decoded.start,
-      decoded.before,
-      effectiveLeafId,
-      viewId,
-    );
-  }
-
-  userTurnIndexPage(
+  private userTurnIndexPage(
     start: number | undefined,
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
   ): UserTurnIndexPage {
-    const indexKey = effectiveLeafId ?? "\u0000current";
-    const cached = this.userTurnIndexes.get(indexKey);
-    const turns =
-      cached?.revision === this.revision
-        ? cached.turns
-        : this.buildUserTurnIndex(effectiveLeafId);
-    if (cached?.revision !== this.revision) {
-      if (this.userTurnIndexes.size >= 16) this.userTurnIndexes.clear();
-      this.userTurnIndexes.set(indexKey, { revision: this.revision, turns });
-    }
+    const source = this.viewMessages(effectiveLeafId);
+    const { positions } = this.userTurnIndex(source, effectiveLeafId);
     if (start !== undefined && (!Number.isSafeInteger(start) || start < 0))
       throw requestError("User-turn index offset is invalid", 400);
     const pageStart =
       start === undefined
-        ? Math.max(0, turns.length - USER_TURN_INDEX_PAGE_SIZE)
-        : Math.min(start, turns.length);
+        ? Math.max(0, positions.length - USER_TURN_INDEX_PAGE_SIZE)
+        : Math.min(start, positions.length);
     const page: UserTurnIndexPage = {
       sessionId: this.sessionId,
       revision: this.revision,
@@ -2385,9 +2108,18 @@ export class SessionProjection
       incarnation: this.incarnation,
       appendFromRevision: this.appendFromRevision,
       effectiveLeafId,
-      total: turns.length,
+      total: positions.length,
       start: pageStart,
-      turns: turns.slice(pageStart, pageStart + USER_TURN_INDEX_PAGE_SIZE),
+      turns: positions
+        .slice(pageStart, pageStart + USER_TURN_INDEX_PAGE_SIZE)
+        .map(
+          (position, index): UserTurnAnchor => ({
+            id: projectedMessageId(source[position])!,
+            ordinal: pageStart + index,
+            timestamp: projectedTimestamp(source[position]),
+            ...userTurnSummary(source[position]),
+          }),
+        ),
     };
     if (Buffer.byteLength(JSON.stringify(page)) > USER_TURN_INDEX_MAX_BYTES) {
       throw new Error("User-turn index page exceeded its declared byte bound");
@@ -2405,7 +2137,7 @@ export class SessionProjection
     return JSON.stringify([this.historyReplacementRevision, anchor]);
   }
 
-  composerHistoryPage(
+  private composerHistoryPage(
     start = 0,
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
@@ -2428,34 +2160,23 @@ export class SessionProjection
     );
   }
 
-  private buildUserTurnIndex(
-    effectiveLeafId: string | null,
-  ): readonly UserTurnAnchor[] {
-    return this.viewMessages(effectiveLeafId).flatMap((value) => {
-      if (!value || typeof value !== "object" || Array.isArray(value))
-        return [];
-      const record = value as Record<string, unknown>;
+  private userTurnIndex(source: readonly unknown[], leaf: string | null) {
+    const cached = this.userTurnIndexes.get(leaf);
+    if (cached) return cached;
+    const positions: number[] = [];
+    const byId = new Map<string, number>();
+    for (let position = 0; position < source.length; position += 1) {
+      const value = source[position];
+      if (jsonRecord(value)?.role !== "user") continue;
       const id = projectedMessageId(value);
-      const ordinal = record.__inspireUserTurnIndex;
-      if (
-        record.role !== "user" ||
-        id === null ||
-        !Number.isSafeInteger(ordinal) ||
-        Number(ordinal) < 0
-      )
-        return [];
-      const summary = userTurnSummary(value);
-      const timestamp = projectedTimestamp(value);
-      return [
-        {
-          id,
-          ordinal: Number(ordinal),
-          snippet: summary.snippet,
-          ...(timestamp ? { timestamp } : {}),
-          attachmentCount: summary.attachmentCount,
-        },
-      ];
-    });
+      if (id === null) continue;
+      byId.set(id, positions.length);
+      positions.push(position);
+    }
+    const index = { positions, byId };
+    if (this.userTurnIndexes.size >= 16) this.userTurnIndexes.clear();
+    this.userTurnIndexes.set(leaf, index);
+    return index;
   }
 
   private activityRange(
@@ -2469,15 +2190,12 @@ export class SessionProjection
     const kinds = deferredActivityKinds(source, rangeStart, rangeEnd);
     return kinds.length > 0
       ? {
-          cursor: activityCursorFor(
-            this.sessionId,
-            this.incarnation,
-            this.currentFingerprint,
-            this.revision,
-            rangeStart,
+          cursor: this.historyCursor(
+            "activity",
             rangeEnd,
             effectiveLeafId,
             viewId,
+            rangeStart,
           ),
           afterMessageId,
           messageCount: rangeEnd - rangeStart,
@@ -2486,37 +2204,19 @@ export class SessionProjection
       : null;
   }
 
-  userTurnTranscriptPage(
+  private userTurnTranscriptPage(
     targetMessageId: string,
     effectiveLeafId: string | null = this.currentLeafId,
     viewId = this.incarnation,
     continuationCursor?: string,
   ): UserTurnTranscriptPage {
     const source = this.viewMessages(effectiveLeafId);
-    const target = source.findIndex(
-      (value) =>
-        projectedMessageId(value) === targetMessageId &&
-        Boolean(
-          value &&
-            typeof value === "object" &&
-            !Array.isArray(value) &&
-            (value as Record<string, unknown>).role === "user",
-        ),
-    );
-    if (target < 0)
+    const { positions, byId } = this.userTurnIndex(source, effectiveLeafId);
+    const ordinal = byId.get(targetMessageId);
+    if (ordinal === undefined)
       throw requestError("User turn does not exist in this branch", 404);
-    let turnEnd = target + 1;
-    while (turnEnd < source.length) {
-      const value = source[turnEnd];
-      if (
-        value &&
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        (value as Record<string, unknown>).role === "user"
-      )
-        break;
-      turnEnd += 1;
-    }
+    const target = positions[ordinal]!;
+    const turnEnd = positions[ordinal + 1] ?? source.length;
 
     let cursor = target;
     if (continuationCursor) {
@@ -2525,7 +2225,8 @@ export class SessionProjection
         "user-turn",
         effectiveLeafId,
         viewId,
-      ).decoded;
+        source.length,
+      );
       if (
         validated.start !== target ||
         validated.before <= target ||
@@ -2535,8 +2236,6 @@ export class SessionProjection
       cursor = validated.before;
     }
 
-    const messages: unknown[] = [];
-    const activityRanges: TranscriptActivityRange[] = [];
     let committedEnd = cursor;
     let previousVisibleId: string | null = null;
     for (let index = cursor - 1; index >= target; index -= 1) {
@@ -2546,31 +2245,26 @@ export class SessionProjection
     }
     let pendingStart: number | null = null;
     const page = this.transcriptPageShell(effectiveLeafId, viewId);
-    const shell = (
-      nextMessages: unknown[],
-      nextRanges: TranscriptActivityRange[],
-      rangeEnd: number,
-    ): UserTurnTranscriptPage => ({
-      ...page(target, nextMessages, nextRanges),
-      targetMessageId,
-      rangeStart: target,
-      rangeEnd,
-      continuationCursor:
-        rangeEnd < turnEnd
-          ? userTurnCursorFor(
-              this.sessionId,
-              this.incarnation,
-              this.currentFingerprint,
-              this.revision,
-              target,
-              rangeEnd,
-              effectiveLeafId,
-              viewId,
-            )
-          : null,
-    });
+    const builder = new TranscriptPageBuilder(
+      (rangeEnd, nextMessages, nextRanges): UserTurnTranscriptPage => ({
+        ...page(target, nextMessages, nextRanges),
+        targetMessageId,
+        rangeStart: target,
+        rangeEnd,
+        continuationCursor:
+          rangeEnd < turnEnd
+            ? this.historyCursor(
+                "user-turn",
+                rangeEnd,
+                effectiveLeafId,
+                viewId,
+                target,
+              )
+            : null,
+      }),
+    );
 
-    while (cursor < turnEnd && messages.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+    while (cursor < turnEnd && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const value = source[cursor];
       if (!isVisibleTranscriptBoundary(value)) {
         if (pendingStart === null) pendingStart = cursor;
@@ -2589,19 +2283,10 @@ export class SessionProjection
               effectiveLeafId,
               viewId,
             );
-      const nextMessages = [...messages, item.value];
-      const nextRanges = [...activityRanges, ...(range ? [range] : [])];
-      if (
-        Buffer.byteLength(
-          JSON.stringify(shell(nextMessages, nextRanges, cursor + 1)),
-        ) > TRANSCRIPT_PAGE_MAX_BYTES
-      ) {
-        if (messages.length === 0) oversizedTranscriptItem();
-        cursor = pendingStart ?? cursor;
+      if (!builder.add(cursor + 1, item, range)) {
+        if (builder.length === 0) oversizedTranscriptItem();
         break;
       }
-      messages.push(item.value);
-      if (range) activityRanges.push(range);
       previousVisibleId = projectedMessageId(value);
       pendingStart = null;
       cursor += 1;
@@ -2617,23 +2302,9 @@ export class SessionProjection
         effectiveLeafId,
         viewId,
       );
-      if (
-        trailing &&
-        Buffer.byteLength(
-          JSON.stringify(
-            shell(messages, [...activityRanges, trailing], turnEnd),
-          ),
-        ) <= TRANSCRIPT_PAGE_MAX_BYTES
-      ) {
-        activityRanges.push(trailing);
-        committedEnd = turnEnd;
-      } else if (!trailing) {
-        committedEnd = turnEnd;
-      }
+      if (builder.add(turnEnd, null, trailing)) committedEnd = turnEnd;
     }
-    return withinTranscriptPageBudget(
-      shell(messages, activityRanges, committedEnd),
-    );
+    return builder.page(committedEnd);
   }
 
   private transcriptPageShell(effectiveLeafId: string | null, viewId: string) {
@@ -2657,15 +2328,7 @@ export class SessionProjection
       hasOlder: start > 0,
       olderCursor:
         start > 0
-          ? cursorFor(
-              identity.sessionId,
-              identity.incarnation,
-              this.currentFingerprint,
-              identity.revision,
-              start,
-              effectiveLeafId,
-              viewId,
-            )
+          ? this.historyCursor("page", start, effectiveLeafId, viewId)
           : null,
     });
   }
@@ -2691,117 +2354,55 @@ export class SessionProjection
     floor: number,
     before: number,
     persistedLength: number,
-    shell: (start: number, messages: unknown[]) => Page,
+    shell: (
+      start: number,
+      messages: unknown[],
+      ranges: TranscriptActivityRange[],
+    ) => Page,
+    defer?: (
+      start: number,
+      end: number,
+      after: string | null,
+    ) => TranscriptActivityRange | null,
   ): Page {
+    const builder = new TranscriptPageBuilder(shell);
     let start = before;
-    const reversed: unknown[] = [];
-    let messagesBytes = 2; // JSON array brackets.
-    while (start > floor && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
+    let pendingEnd: number | null = null;
+    while (start > floor && builder.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
       const index = start - 1;
-      const item = boundedTranscriptItem(
-        source[index],
-        index < persistedLength ? index : undefined,
-        this.fileNameForPath,
-      );
-      const nextBytes =
-        messagesBytes +
-        Buffer.byteLength(item.serialized) +
-        (reversed.length ? 1 : 0);
-      const shellBytes = Buffer.byteLength(JSON.stringify(shell(index, [])));
-      if (shellBytes - 2 + nextBytes > TRANSCRIPT_PAGE_MAX_BYTES) break;
-      reversed.push(item.value);
-      messagesBytes = nextBytes;
-      start = index;
-    }
-    if (reversed.length === 0 && before > floor) oversizedTranscriptItem();
-    return withinTranscriptPageBudget(shell(start, reversed.reverse()));
-  }
-
-  private buildVisiblePage(
-    source: readonly unknown[],
-    before: number,
-    effectiveLeafId: string | null,
-    viewId: string,
-  ): TranscriptPage {
-    let start = before;
-    let pendingActivityEnd: number | null = null;
-    const reversed: unknown[] = [];
-    const ranges: TranscriptActivityRange[] = [];
-    const shell = this.transcriptPageShell(effectiveLeafId, viewId);
-    while (start > 0 && reversed.length < TRANSCRIPT_PAGE_MAX_MESSAGES) {
-      const index = start - 1;
-      const sourceItem = source[index];
-      if (!isVisibleTranscriptBoundary(sourceItem)) {
-        if (pendingActivityEnd === null) pendingActivityEnd = start;
+      const value = source[index];
+      if (defer && !isVisibleTranscriptBoundary(value)) {
+        pendingEnd ??= start;
         start = index;
         continue;
       }
-
       const item = boundedTranscriptItem(
-        sourceItem,
-        index,
+        value,
+        index < persistedLength ? index : undefined,
         this.fileNameForPath,
       );
-      const nextRange =
-        pendingActivityEnd === null
+      const range =
+        pendingEnd === null
           ? null
-          : this.activityRange(
-              index + 1,
-              pendingActivityEnd,
-              projectedMessageId(sourceItem),
-              source,
-              effectiveLeafId,
-              viewId,
-            );
-      const candidateMessages = [...reversed, item.value].reverse();
-      const candidateRanges = [
-        ...ranges,
-        ...(nextRange ? [nextRange] : []),
-      ].reverse();
-      if (
-        Buffer.byteLength(
-          JSON.stringify(shell(index, candidateMessages, candidateRanges)),
-        ) > TRANSCRIPT_PAGE_MAX_BYTES
-      ) {
-        // The skipped activity needs this older visible message as its stable
-        // insertion anchor, so leave both for the next page.
-        start = pendingActivityEnd ?? start;
+          : defer!(index + 1, pendingEnd, projectedMessageId(value));
+      if (!builder.add(index, item, range)) {
+        // A deferred range and its preceding row must stay together.
+        start = pendingEnd ?? start;
         break;
       }
-      reversed.push(item.value);
-      if (nextRange) ranges.push(nextRange);
       start = index;
-      pendingActivityEnd = null;
+      pendingEnd = null;
     }
-
-    if (start === 0 && pendingActivityEnd !== null) {
-      const leading = this.activityRange(
-        0,
-        pendingActivityEnd,
-        null,
-        source,
-        effectiveLeafId,
-        viewId,
-      );
-      if (leading) {
-        const withLeading = shell(
-          0,
-          [...reversed].reverse(),
-          [...ranges, leading].reverse(),
-        );
-        if (
-          Buffer.byteLength(JSON.stringify(withLeading)) <=
-          TRANSCRIPT_PAGE_MAX_BYTES
-        )
-          ranges.push(leading);
-        else start = pendingActivityEnd;
-      }
+    if (
+      start === floor &&
+      pendingEnd !== null &&
+      !builder.add(floor, null, defer!(floor, pendingEnd, null))
+    ) {
+      start = pendingEnd;
     }
-    if (reversed.length === 0 && start === before && before > 0)
+    if (builder.length === 0 && start === before && before > floor)
       oversizedTranscriptItem();
-    return withinTranscriptPageBudget(
-      shell(start, reversed.reverse(), ranges.reverse()),
-    );
+    return builder.page(start, true);
   }
 
   private buildActivityPage(
@@ -2824,15 +2425,12 @@ export class SessionProjection
       hasMore: candidateStart > floor,
       cursor:
         candidateStart > floor
-          ? activityCursorFor(
-              this.sessionId,
-              this.incarnation,
-              this.currentFingerprint,
-              this.revision,
-              floor,
+          ? this.historyCursor(
+              "activity",
               candidateStart,
               effectiveLeafId,
               viewId,
+              floor,
             )
           : null,
     });

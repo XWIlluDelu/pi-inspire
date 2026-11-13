@@ -134,7 +134,7 @@ beforeEach(async () => {
           await fixture.searchGate;
         return Response.json(tree(url));
       }
-      if (url.startsWith("/api/branches/entry")) {
+      if (url.startsWith("/api/history?kind=entry&")) {
         const id = new URL(url, "http://fixture").searchParams.get("targetId");
         const node = nodes.find((node) => node.id === id);
         if (!node)

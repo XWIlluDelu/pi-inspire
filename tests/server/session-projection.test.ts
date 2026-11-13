@@ -26,6 +26,7 @@ import {
   TRANSCRIPT_PAGE_MAX_MESSAGES,
 } from "../../server/session-projection.js";
 import { ATTACHMENT_CONTEXT_HEADING } from "../../shared/attachment-context.js";
+import type { TranscriptActivityPage } from "../../shared/contracts.js";
 import { collectSessionResourceReferences } from "../../shared/resource-references.js";
 import { deferredSignal } from "./fixtures/runtime.js";
 import { jsonl, messageEntry } from "./fixtures/session-jsonl.js";
@@ -243,7 +244,10 @@ describe("SessionProjection framing and last-good state", () => {
         .filter((reference) => reference?.startsWith("pi-embedded:")),
     ).toEqual(["pi-embedded://0/2", "pi-embedded://0/1"]);
     expect(
-      projection.branchEntry("mixed-input", 0, "mixed-input"),
+      projection.historyPage(
+        { kind: "entry", targetId: "mixed-input", offset: 0 },
+        "mixed-input",
+      ),
     ).toMatchObject({
       text,
       totalChars: text.length,
@@ -279,9 +283,9 @@ describe("SessionProjection framing and last-good state", () => {
     await projection.reconcile(true);
     const appended = projection.latestPage().composerHistoryVersion;
     expect(appended).not.toBe(original);
-    expect(projection.composerHistoryPage().composerHistoryVersion).toBe(
-      appended,
-    );
+    expect(
+      projection.historyPage({ kind: "composer" }).composerHistoryVersion,
+    ).toBe(appended);
     expect(projection.latestPage([], "u1").composerHistoryVersion).toBe(
       original,
     );
@@ -292,7 +296,9 @@ describe("SessionProjection framing and last-good state", () => {
     const branched = projection.latestPage().composerHistoryVersion;
     expect(branched).not.toBe(appended);
     expect(
-      projection.composerHistoryPage().entries.map((entry) => entry.text),
+      projection
+        .historyPage({ kind: "composer" })
+        .entries.map((entry) => entry.text),
     ).toEqual(["alternate", "first"]);
 
     await writeFile(
@@ -305,7 +311,9 @@ describe("SessionProjection framing and last-good state", () => {
       original,
     );
     expect(
-      projection.composerHistoryPage().entries.map((entry) => entry.text),
+      projection
+        .historyPage({ kind: "composer" })
+        .entries.map((entry) => entry.text),
     ).toEqual(["alternate", "rewritten"]);
   });
 
@@ -937,7 +945,10 @@ describe("SessionProjection bounded paging", () => {
       );
       received.unshift(...page.messages);
       if (!page.hasOlder) break;
-      page = projection.visiblePage(page.olderCursor!);
+      page = projection.historyPage({
+        kind: "older",
+        cursor: page.olderCursor!,
+      });
     }
     expect(received).toMatchObject(
       Array.from({ length: 24 }, (_, index) => ({
@@ -1009,7 +1020,10 @@ describe("SessionProjection bounded paging", () => {
     await projection.close();
     const reopened = await SessionProjection.open(record);
     try {
-      const older = reopened.visiblePage(reopened.latestPage().olderCursor!);
+      const older = reopened.historyPage({
+        kind: "older",
+        cursor: reopened.latestPage().olderCursor!,
+      });
       const visible = [
         { content: "inspect activity" },
         { content: "old response" },
@@ -1029,17 +1043,22 @@ describe("SessionProjection bounded paging", () => {
       expect(older.messages).toMatchObject(visible);
       expect(older.activityRanges).toMatchObject([range]);
 
-      const turnId = reopened.userTurnIndexPage(0).turns[0]!.id;
-      const turn = reopened.userTurnTranscriptPage(turnId);
+      const turnId = reopened.historyPage({ kind: "turns", start: 0 }).turns[0]!
+        .id;
+      const turn = reopened.historyPage({ kind: "turn", id: turnId });
       expect(turn.messages.slice(0, visible.length)).toMatchObject(visible);
       expect(turn.activityRanges).toMatchObject([range]);
       expect(JSON.stringify(turn.messages)).not.toContain("private context");
 
       const cursor = older.activityRanges![0]!.cursor;
-      expect(reopened.activityPage(cursor).messages).toMatchObject(
+      expect(
+        reopened.historyPage({ kind: "activity", cursor: cursor }).messages,
+      ).toMatchObject(
         ["tool", "result", "thought"].map((id) => ({ __inspireEntryId: id })),
       );
-      expect(() => reopened.visiblePage(cursor)).toThrow(/wrong purpose/);
+      expect(() =>
+        reopened.historyPage({ kind: "older", cursor: cursor }),
+      ).toThrow(/wrong purpose/);
     } finally {
       await reopened.close();
     }
@@ -1094,8 +1113,8 @@ describe("SessionProjection bounded paging", () => {
       }
     }
     const { path, projection } = await fixture(lines);
-    const latestTurns = projection.userTurnIndexPage(
-      undefined,
+    const latestTurns = projection.historyPage(
+      { kind: "turns" },
       projection.leafId,
       "view-a",
     );
@@ -1117,7 +1136,7 @@ describe("SessionProjection bounded paging", () => {
       messageChange: "append",
     });
     expect(
-      projection.userTurnIndexPage(undefined, projection.leafId, "view-a"),
+      projection.historyPage({ kind: "turns" }, projection.leafId, "view-a"),
     ).toMatchObject({
       total: 141,
       turns: expect.arrayContaining([
@@ -1125,14 +1144,14 @@ describe("SessionProjection bounded paging", () => {
       ]),
     });
 
-    const firstTurns = projection.userTurnIndexPage(
-      0,
+    const firstTurns = projection.historyPage(
+      { kind: "turns", start: 0 },
       projection.leafId,
       "view-a",
     );
     const target = firstTurns.turns[3]!;
-    const page = projection.userTurnTranscriptPage(
-      target.id,
+    const page = projection.historyPage(
+      { kind: "turn", id: target.id },
       projection.leafId,
       "view-a",
     );
@@ -1140,25 +1159,30 @@ describe("SessionProjection bounded paging", () => {
     expect(page.hasOlder).toBe(true);
     expect(page.olderCursor).toBeTruthy();
     expect(
-      projection.visiblePage(page.olderCursor!, projection.leafId, "view-a")
-        .messages.length,
+      projection.historyPage(
+        { kind: "older", cursor: page.olderCursor! },
+        projection.leafId,
+        "view-a",
+      ).messages.length,
     ).toBeGreaterThan(0);
     expect(
       page.messages.some((value) => JSON.stringify(value).includes("hidden 0")),
     ).toBe(false);
     expect(page.activityRanges?.length).toBeGreaterThan(0);
     expect(page.continuationCursor).toBeTruthy();
-    const continuation = projection.userTurnTranscriptPage(
-      target.id,
+    const continuation = projection.historyPage(
+      { kind: "turn", id: target.id, cursor: page.continuationCursor! },
       projection.leafId,
       "view-a",
-      page.continuationCursor!,
     );
     expect(continuation.rangeStart).toBe(page.rangeStart);
     expect(continuation.rangeEnd).toBeGreaterThan(page.rangeEnd);
-    expect(() => projection.visiblePage(page.continuationCursor!)).toThrow(
-      /wrong purpose/,
-    );
+    expect(() =>
+      projection.historyPage({
+        kind: "older",
+        cursor: page.continuationCursor!,
+      }),
+    ).toThrow(/wrong purpose/);
     const annotatedUser = page.messages.find(
       (value) =>
         (value as { __inspireMessageId?: string }).__inspireMessageId ===
@@ -1169,8 +1193,8 @@ describe("SessionProjection bounded paging", () => {
       __inspireUserTurnId: target.id,
     });
     expect(() =>
-      projection.userTurnTranscriptPage(
-        "not-a-turn",
+      projection.historyPage(
+        { kind: "turn", id: "not-a-turn" },
         projection.leafId,
         "view-a",
       ),
@@ -1186,8 +1210,8 @@ describe("SessionProjection bounded paging", () => {
       message("u-alt", "a-root", "user", "alternate prompt", 5),
       message("a-alt", "u-alt", "assistant", "alternate response", 6),
     ]);
-    const mainTurns = projection.userTurnIndexPage(
-      0,
+    const mainTurns = projection.historyPage(
+      { kind: "turns", start: 0 },
       "a-main",
       "view-main",
     ).turns;
@@ -1197,20 +1221,24 @@ describe("SessionProjection bounded paging", () => {
     ]);
     expect(
       projection
-        .userTurnIndexPage(0, "a-alt", "view-alt")
+        .historyPage({ kind: "turns", start: 0 }, "a-alt", "view-alt")
         .turns.map((turn) => turn.snippet),
     ).toEqual(["root prompt", "alternate prompt"]);
 
     const mainTurnId = mainTurns[1]!.id;
-    const main = projection.userTurnTranscriptPage(
-      mainTurnId,
+    const main = projection.historyPage(
+      { kind: "turn", id: mainTurnId },
       "a-main",
       "view-main",
     );
     expect(JSON.stringify(main.messages)).toContain("main response");
     expect(JSON.stringify(main.messages)).not.toContain("alternate prompt");
     expect(() =>
-      projection.userTurnTranscriptPage(mainTurnId, "a-alt", "view-alt"),
+      projection.historyPage(
+        { kind: "turn", id: mainTurnId },
+        "a-alt",
+        "view-alt",
+      ),
     ).toThrow(/does not exist/);
   });
 
@@ -1240,7 +1268,10 @@ describe("SessionProjection bounded paging", () => {
       for (const range of page.activityRanges ?? []) {
         let cursor: string | null = range.cursor;
         while (cursor) {
-          const activity = projection.activityPage(cursor);
+          const activity: TranscriptActivityPage = projection.historyPage({
+            kind: "activity",
+            cursor: cursor,
+          });
           messages.push(...activity.messages);
           cursor = activity.cursor;
         }
@@ -1256,7 +1287,10 @@ describe("SessionProjection bounded paging", () => {
         ),
       );
       if (!page.hasOlder) break;
-      page = projection.visiblePage(page.olderCursor!);
+      page = projection.historyPage({
+        kind: "older",
+        cursor: page.olderCursor!,
+      });
     }
     expect(ids).toHaveLength(120);
     expect(ids.every((id) => typeof id === "string")).toBe(true);
@@ -1286,11 +1320,18 @@ describe("SessionProjection bounded paging", () => {
     const viewBound = projection.latestPage([], projection.leafId, "view-a")
       .olderCursor!;
     expect(() =>
-      projection.visiblePage(viewBound, projection.leafId, "view-b"),
+      projection.historyPage(
+        { kind: "older", cursor: viewBound },
+        projection.leafId,
+        "view-b",
+      ),
     ).toThrow(/another branch view/);
     let oldest = latest;
     while (oldest.hasOlder)
-      oldest = projection.visiblePage(oldest.olderCursor!);
+      oldest = projection.historyPage({
+        kind: "older",
+        cursor: oldest.olderCursor!,
+      });
     expect(
       collectSessionResourceReferences(oldest.messages)[0]?.reference,
     ).toBe("pi-embedded://0/0");
@@ -1304,18 +1345,38 @@ describe("SessionProjection bounded paging", () => {
       timeout: 2_000,
     });
     expect(projection.messages.at(-1)).toMatchObject({ content: "watched" });
-    expect(projection.visiblePage(cursor).revision).toBeGreaterThan(
-      latest.revision,
-    );
-    expect(projection.composerHistoryPage().composerHistoryVersion).toBe(
-      latest.composerHistoryVersion,
-    );
+    expect(
+      projection.historyPage({ kind: "older", cursor: cursor }).revision,
+    ).toBeGreaterThan(latest.revision);
+    expect(
+      projection.historyPage({ kind: "composer" }).composerHistoryVersion,
+    ).toBe(latest.composerHistoryVersion);
+
+    await projection.suspendReconciliation();
+    try {
+      let parent = "last";
+      for (let index = 0; index < 257; index += 1) {
+        const id = `later-${index}`;
+        await appendFile(
+          path,
+          jsonl(message(id, parent, "assistant", "later", 201 + index)),
+        );
+        await projection.reconcileSuspended(true);
+        parent = id;
+      }
+      expect(projection.revision - latest.revision).toBeGreaterThan(256);
+      expect(
+        projection.historyPage({ kind: "older", cursor: cursor }).messages,
+      ).toEqual(oldest.messages);
+    } finally {
+      projection.resumeReconciliation();
+    }
 
     const reopened = await SessionProjection.open(record);
     try {
-      expect(() => reopened.visiblePage(cursor)).toThrow(
-        /expired projection incarnation/,
-      );
+      expect(() =>
+        reopened.historyPage({ kind: "older", cursor: cursor }),
+      ).toThrow(/expired projection incarnation/);
     } finally {
       await reopened.close();
     }
@@ -1325,7 +1386,7 @@ describe("SessionProjection bounded paging", () => {
       jsonl({
         type: "compaction",
         id: "compact",
-        parentId: "last",
+        parentId: "later-256",
         timestamp: "2026-08-01T00:03:00.000Z",
         summary: "compacted history",
         firstKeptEntryId: "m2",
@@ -1333,26 +1394,27 @@ describe("SessionProjection bounded paging", () => {
       }),
     );
     await projection.reconcile(true);
-    expect(() => projection.visiblePage(cursor)).toThrow(/stale/);
+    expect(() =>
+      projection.historyPage({ kind: "older", cursor: cursor }),
+    ).toThrow(/stale/);
     const compacted = projection.latestPage();
     expect(compacted.composerHistoryVersion).toBe(
       latest.composerHistoryVersion,
     );
     expect(compacted.olderCursor).toBeTruthy();
     expect(
-      projection.visiblePage(compacted.olderCursor!).messages.length,
+      projection.historyPage({ kind: "older", cursor: compacted.olderCursor! })
+        .messages.length,
     ).toBeGreaterThan(0);
 
     const replacement = join(directory, "replacement.jsonl");
-    await writeFile(
-      replacement,
-      jsonl(header(), message("replacement", null, "user", "rewrite", 300)),
-    );
+    await writeFile(replacement, await readFile(path));
     await rename(replacement, path);
     await projection.reconcile(true);
-    expect(() => projection.visiblePage(compacted.olderCursor!)).toThrow(
-      /stale/,
-    );
+    expect(projection.revision).toBe(compacted.revision);
+    expect(() =>
+      projection.historyPage({ kind: "older", cursor: compacted.olderCursor! }),
+    ).toThrow(/stale/);
   });
 });
 

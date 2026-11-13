@@ -33,7 +33,7 @@ test("earlier conversation pages retry explicitly and preserve the reading posit
     },
   });
   const cursors: string[] = [];
-  await page.route("**/api/transcript/older?**", (route) => {
+  await page.route("**/api/history?kind=older&**", (route) => {
     const params = new URL(route.request().url()).searchParams;
     expect(params.get("sessionId")).toBe(sessionId);
     const cursor = params.get("cursor")!;
@@ -117,7 +117,7 @@ test("prompt outline metadata stays readable and shares the first-line text base
       }
     },
   });
-  await page.route("**/api/transcript/user-turns?**", async (route) => {
+  await page.route("**/api/history?kind=turns&**", async (route) => {
     const response = await route.fetch();
     const data = await response.json();
     for (const turn of data.turns) turn.attachmentCount = count(turn.ordinal);

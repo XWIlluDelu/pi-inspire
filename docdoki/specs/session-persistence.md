@@ -6,7 +6,7 @@ covers:
   - server/attach-control.ts
   - extensions/inspire-session-bridge.ts
   - server/pi-rpc.ts
-  - server/session-{projection,preview,jsonl}.ts
+  - server/session-{projection,preview,jsonl,metadata,tree}.ts
   - server/persisted-json.ts
   - server/resources.ts
   - tests/server/runtime*.test.ts
@@ -25,7 +25,15 @@ boundary. Catalog and navigation obligations remain in [[session-continuity]]; b
 
 ## Read-only preview and independent workers
 
-Opening a session first projects its active branch through Pi's read-only parser and context
+Catalog summaries, full-history search, and transcript projections share a document reader. It
+opens regular files without following the final symlink, checks the observed file version and
+address, and scans complete UTF-8 JSONL frames with one header check. An incomplete last frame stays
+outside the committed prefix until its newline arrives. Catalog summaries keep bounded metadata and
+can extend a cached summary from the last complete frame. Full projections verify byte prefixes,
+migrate old Pi entries in memory, and share the native entry index with History. A full scan after
+a prefix mismatch uses the same open file. Search still runs off-thread.
+
+Opening a session reads its saved entries and projects the active branch with Pi's context
 builder, without writing JSONL or waiting for extensions. Transcript virtualization bounds mounted
 history. Auxiliary project-discovery writes and upload-retention registration are not prerequisites
 for history reads or writer admission.

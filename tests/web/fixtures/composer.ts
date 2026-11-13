@@ -28,7 +28,7 @@ export async function createComposerFixture() {
   }
   installFakeWebSocket();
   installFetch((url, init) => {
-    if (url.startsWith("/api/composer/history")) {
+    if (url.startsWith("/api/history?kind=composer&")) {
       host.historyRequests += 1;
       const requestUrl = new URL(url, "https://inspire.test");
       const sessionId = requestUrl.searchParams.get("sessionId") ?? "s1";
