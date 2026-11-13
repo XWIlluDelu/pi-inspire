@@ -10,6 +10,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type {
@@ -27,6 +28,7 @@ import {
   takeoverCandidate,
 } from "../../server/attach-control.js";
 import { AttachmentStore } from "../../server/attachments.js";
+import { piInstallation } from "../../server/pi-installation.js";
 import { PiRpcProcess } from "../../server/pi-rpc.js";
 import { RuntimeController } from "../../server/runtime.js";
 import type { SessionRecord } from "../../server/session-catalog.js";
@@ -42,6 +44,9 @@ afterEach(async () => {
 const NAVIGATE = "tests/fixtures/pi-navigate-extension.ts";
 const RELOAD = "tests/fixtures/pi-resource-reload-extension.ts";
 const ATTACH_PROMPT = "tests/fixtures/pi-attach-prompt-extension.ts";
+const pty = createRequire(import.meta.url)(
+  "@lydell/node-pty",
+) as typeof import("@lydell/node-pty");
 
 function replacementRuntime({
   registry,
@@ -188,6 +193,13 @@ async function livePi(
       sessionFile,
       `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
     );
+  const environment = isolatedTestEnvironment(root, {
+    PI_CODING_AGENT_DIR: config,
+    PI_CODING_AGENT_SESSION_DIR: sessions,
+    XDG_RUNTIME_DIR: runtimeDir,
+    INSPIRE_TEST_ATTACH_API_KEY: "synthetic",
+    ...env,
+  });
   const pi = new PiRpcProcess({
     cwd: root,
     args: [
@@ -203,16 +215,7 @@ async function livePi(
       resolve("extensions/attach-control.ts"),
       ...extensions.flatMap((path) => ["--extension", resolve(path)]),
     ],
-    env: isolatedTestEnvironment(root, {
-      PI_CODING_AGENT_DIR: config,
-      PI_CODING_AGENT_SESSION_DIR: sessions,
-      XDG_RUNTIME_DIR: runtimeDir,
-      PI_OFFLINE: "1",
-      PI_SKIP_VERSION_CHECK: "1",
-      PI_TELEMETRY: "0",
-      INSPIRE_TEST_ATTACH_API_KEY: "synthetic",
-      ...env,
-    }),
+    env: environment,
   });
   await pi.start();
   cleanup.push(() => pi.stop());
@@ -221,7 +224,7 @@ async function livePi(
       ? join(env.HOME ?? root, "Library", "Caches", "pi-attach-control")
       : join(runtimeDir, "pi-attach-control"),
   );
-  return { pi, registry, id, sessionFile, root };
+  return { pi, registry, id, sessionFile, root, environment };
 }
 
 async function soleReceiver({
@@ -316,7 +319,7 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     await connection.abort();
   }, 20_000);
 
-  it("reports unknown for Steer and Follow up queued by native Pi", async () => {
+  it("refuses unconfirmable Steer and Follow up before changing Pi's queue", async () => {
     const { pi, connection, enter } = await promptFixture();
     const run = pi.request({ type: "prompt", message: "gated run" });
     void run.catch(() => {});
@@ -324,17 +327,92 @@ describe.skipIf(process.platform === "win32")("attach-control in Pi", () => {
     await Promise.all([
       expect(
         connection.prompt("next steering input", "steer"),
-      ).rejects.toMatchObject(UNKNOWN_OUTCOME),
+      ).rejects.toMatchObject({
+        code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE",
+      }),
       expect(
         connection.prompt("later follow up", "followUp"),
-      ).rejects.toMatchObject(UNKNOWN_OUTCOME),
+      ).rejects.toMatchObject({
+        code: "ATTACH_CONTROL_QUEUE_ACK_UNAVAILABLE",
+      }),
     ]);
     await expect(pi.request({ type: "get_state" })).resolves.toMatchObject({
-      pendingMessageCount: 2,
+      pendingMessageCount: 0,
     });
     await release();
     await run;
   }, 20_000);
+
+  it("acknowledges Steer and Follow up through the native terminal before its current run can finish", async () => {
+    const fixture = await livePi();
+    const { id, root, sessionFile, environment, registry } = fixture;
+    await fixture.pi.stop();
+    const config = join(root, "config", "settings.json");
+    const settings = JSON.parse(await readFile(config, "utf8"));
+    await writeFile(
+      config,
+      JSON.stringify({ ...settings, extensions: [resolve(ATTACH_PROMPT)] }),
+    );
+    const terminal = pty.spawn(
+      process.execPath,
+      [resolve("inspire.mjs"), "pi", "--session", sessionFile],
+      {
+        cwd: root,
+        name: "xterm-256color",
+        env: {
+          ...environment,
+          INSPIRE_PI_COMMAND: piInstallation.commandPath,
+        },
+      },
+    );
+    let output = "";
+    terminal.onData((data) => {
+      output = (output + data).slice(-6000);
+    });
+    const exited = new Promise<void>((resolveExit) =>
+      terminal.onExit(() => resolveExit()),
+    );
+    cleanup.push(async () => {
+      terminal.kill();
+      await exited;
+    });
+    const record = await soleReceiver(fixture).catch((error) => {
+      throw new Error(output, { cause: error });
+    });
+    expect(record.mode).toBe("tui");
+    terminal.write("gated run\r");
+    await vi.waitFor(() => access(join(root, "gated run.entered")), {
+      timeout: 5_000,
+    });
+    try {
+      for (const behavior of ["steer", "followUp"] as const) {
+        await expect(
+          requestAttachControl(record.endpoint, {
+            token: record.token,
+            op: "prompt",
+            behavior,
+            sessionFile,
+            message: `test ${behavior}`,
+          }),
+        ).resolves.toMatchObject({
+          ok: true,
+          witnessed: true,
+          disposition: "queued",
+          state: { sessionId: id, activity: "working" },
+        });
+      }
+      await expect(
+        access(join(root, "gated run.release")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(registry.forSession(id, sessionFile)).resolves.toHaveLength(
+        1,
+      );
+    } finally {
+      await writeFile(join(root, "gated run.release"), "");
+    }
+  }, 30_000);
 
   it("rejects unauthenticated prompts and fences an input still in preflight when stopped", async () => {
     const root = await mkdtemp(join(await realpath("/tmp"), "pi-gate-"));

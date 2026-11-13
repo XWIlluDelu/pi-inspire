@@ -27,9 +27,9 @@ import type {
   PendingRecovery,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
-  PromptDeliveryResponse,
 } from "../../../shared/contracts.js";
 
+import type { HostOperationReceipt } from "../../../shared/host-operations.js";
 import { nativePiWorkspace, stubNativePiEnvironment } from "./native-pi.js";
 import {
   listenOnLoopback,
@@ -53,7 +53,7 @@ const cleanups: Array<() => Promise<void>> = [];
 type ObservedEvent = Record<string, unknown> & { type: string };
 interface Observation {
   method: string;
-  receipt?: PromptDeliveryResponse;
+  receipt?: HostOperationReceipt<"prompt">;
 }
 interface BrowserClient {
   snapshot(sessionId: string): Promise<ActiveSnapshot>;
@@ -310,7 +310,7 @@ export async function fixture(
     if (response.headers.get("Content-Type")?.includes("application/json"))
       observation.receipt = (await response
         .clone()
-        .json()) as PromptDeliveryResponse;
+        .json()) as HostOperationReceipt<"prompt">;
     return response;
   }) satisfies typeof fetch);
   // The server tsconfig intentionally excludes browser sources. A computed

@@ -17,6 +17,7 @@ import {
   type HostRootsResponse,
   isBusyRunState,
   type LaunchPreference,
+  type LiveTranscript,
   type ModelOption,
   type NewSessionOptions,
   type PalettePreference,
@@ -64,6 +65,7 @@ import {
   isCommandQuery,
   type NativeCommandActivity,
 } from "./app-state";
+import { BrowserUpgradeRequired } from "./browser-auth";
 import { type PiCommand, resolveCommandInventory } from "./composer-completion";
 import type { ComposerHistoryScope } from "./composer-history";
 import {
@@ -114,6 +116,7 @@ import {
   deriveSnapshotTransition,
   type ResyncOptions,
   snapshotLifecyclePatch,
+  transcriptPatch,
 } from "./snapshot-transition";
 import { configureToolPresentationRegistry } from "./tool-presentations/registry";
 import {
@@ -377,6 +380,8 @@ export class AppStore {
     state: () => this.state,
     patch: (patch) => this.set(patch),
     applySnapshot: (snapshot) => this.applySnapshot(snapshot),
+    applyTranscript: (sessionId, data, sequence, statuses) =>
+      this.applyLiveTranscript(sessionId, data, sequence, statuses),
     invalidateSelection: () => this.selection.invalidateForReplacement(),
     ensureSessionVisible: (sessionId) => this.ensureSessionVisible(sessionId),
     recordRuntimeReady: (sessionId) => {
@@ -438,6 +443,8 @@ export class AppStore {
   });
   private hostAuthorityId: string | null = null;
   private snapshotDigest: string | null = null;
+  private transcriptSequence = -1;
+  private visibleEventSequence = -1;
   /** A bootstrap read cannot replace a snapshot committed while it awaited I/O. */
   private snapshotGeneration = 0;
   private readonly pendingRecovery = new PendingRecoveryController({
@@ -483,6 +490,17 @@ export class AppStore {
         );
         return;
       }
+      if (
+        typeof event.runtimeSequence === "number" &&
+        event.sessionId === this.state.sessionId &&
+        event.type !== "session_status"
+      ) {
+        if (event.runtimeSequence <= this.transcriptSequence) return;
+        this.visibleEventSequence = Math.max(
+          this.visibleEventSequence,
+          event.runtimeSequence,
+        );
+      }
       if (event.type === "agent_start" && typeof event.sessionId === "string")
         this.pendingRecovery.startRun(event.sessionId);
       if (
@@ -520,6 +538,8 @@ export class AppStore {
     },
     onTransportReplaced: () => {
       this.runtimeEvents.invalidateTransport();
+      this.transcriptSequence = -1;
+      this.visibleEventSequence = -1;
       this.set({ externalSessionActivities: {} });
     },
     onTransportClosed: () => {
@@ -685,6 +705,8 @@ export class AppStore {
    * API or event stream can publish state. */
   private replaceTransport(): void {
     this.workbenchReady = false;
+    this.transcriptSequence = -1;
+    this.visibleEventSequence = -1;
     // Stop detaches its owned socket before closing it, so the close handler
     // cannot schedule a retry with the superseded credential or API.
     this.connectionController.stop();
@@ -881,7 +903,9 @@ export class AppStore {
         });
     } catch (error) {
       if (!ownsBootstrap()) return;
-      if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof BrowserUpgradeRequired) {
+        this.requireBrowserUpgrade();
+      } else if (error instanceof ApiError && error.status === 401) {
         this.handleAuthFailure();
       } else {
         this.set({
@@ -936,19 +960,19 @@ export class AppStore {
         ? snapshot.snapshotDigest
         : null;
     const active = snapshot.active;
-    const transition = deriveSnapshotTransition(this.state, snapshot);
-    const {
-      page,
-      nextSessionId,
-      cwd,
-      nextTranscriptRevision,
-      nextViewId,
-      nextDurableLeafId,
-      nextEffectiveLeafId,
-      revisionChanged,
-      messages,
-    } = transition;
+    const transition = deriveSnapshotTransition(this.state, active);
+    const { nextSessionId, cwd, nextViewId, revisionChanged, messages } =
+      transition;
     const sessionChanged = transition.kind === "session-changed";
+    if (sessionChanged) {
+      this.transcriptSequence = -1;
+      this.visibleEventSequence = -1;
+    }
+    if (typeof snapshot.runtimeSequence === "number")
+      this.transcriptSequence = Math.max(
+        this.transcriptSequence,
+        snapshot.runtimeSequence,
+      );
     const projectionOwnerChanged =
       sessionChanged ||
       transition.kind === "view-changed" ||
@@ -980,21 +1004,6 @@ export class AppStore {
       this.resources.cancelProbes();
     }
     this.runtimeEvents.replaceSettledMessages(messages);
-    const projectionHealth = active?.projectionHealth ?? {
-      status: "ok" as const,
-    };
-    const projectionConflict = active?.projectionConflict ?? null;
-    const projectionError =
-      projectionConflict?.message ??
-      (projectionHealth.status !== "ok"
-        ? (projectionHealth.message ??
-          "Session persistence is not yet confirmed")
-        : null);
-    const projectionSeverity =
-      projectionConflictSeverity(projectionConflict) === "attention" ||
-      (!projectionConflict && projectionHealth.status === "pending")
-        ? "warning"
-        : "error";
     const sessionStatuses = this.runtimeEvents.projectSessionStatuses(
       snapshot.sessionStatuses,
       nextSessionId,
@@ -1023,7 +1032,6 @@ export class AppStore {
       sessionFile: active?.sessionFile ?? null,
       sessionStats: active?.stats ?? null,
       runtimeSettings: active?.runtimeSettings ?? null,
-      branchRevision: active?.branchRevision ?? null,
       ...(sessionChanged || nextViewId !== this.state.transcriptViewId
         ? { pendingRuntimeSettings: {}, thinkingLevelPending: false }
         : {}),
@@ -1044,30 +1052,9 @@ export class AppStore {
         ? (active.commands as PiCommand[])
         : [],
       contextUsage: contextUsage(active?.stats ?? null),
-      messages,
-      transcriptRevision: nextTranscriptRevision,
-      transcriptAppendFromRevision:
-        page?.appendFromRevision ?? nextTranscriptRevision,
-      transcriptIncarnation: page?.incarnation ?? null,
-      transcriptViewId: nextViewId,
-      transcriptDurableLeafId: nextDurableLeafId,
-      transcriptEffectiveLeafId: nextEffectiveLeafId,
-      transcriptNavigationLeased: active?.navigationLeased === true,
-      composerHistoryVersion: page?.composerHistoryVersion ?? null,
-      hasOlderMessages: Boolean(page?.hasOlder),
-      projectionHealth,
-      projectionConflict,
-      projectionError,
-      // A successful authoritative read resolves an old refresh warning;
-      // operation feedback lives beside its action or in Notices instead.
-      error: projectionError,
-      errorSeverity: projectionSeverity,
+      ...transcriptPatch(transition, active),
       streaming: Boolean(active?.isStreaming),
       bashRunning: snapshot.bashRunning === true,
-      activeAssistantMessageKey:
-        typeof active?.activeAssistantMessageKey === "string"
-          ? active.activeAssistantMessageKey
-          : null,
       runState: active?.projectionConflict ? "conflict" : snapshot.runState,
       sessionStatuses,
       sessionActionError: null,
@@ -1119,6 +1106,64 @@ export class AppStore {
       void this.git.refreshStatus();
   }
 
+  private applyLiveTranscript(
+    sessionId: string,
+    live: LiveTranscript,
+    sequence: number,
+    sessionStatuses?: AppState["sessionStatuses"],
+  ): void {
+    if (
+      this.state.sessionId !== sessionId ||
+      sequence <= this.transcriptSequence
+    )
+      return;
+    this.transcriptSequence = sequence;
+    this.snapshotGeneration += 1;
+    this.snapshotDigest = null;
+    this.resyncRecovery.reset();
+    const transition = deriveSnapshotTransition(this.state, {
+      ...live,
+      sessionId,
+      cwd: this.state.cwd,
+    });
+    const replaced =
+      transition.kind === "view-changed" ||
+      transition.kind === "projection-replaced";
+    const lifecycle = snapshotLifecyclePatch(this.state, transition);
+    if (replaced) {
+      this.selectionGeneration += 1;
+      this.resyncRequest += 1;
+      this.branches.invalidate({ preserveError: true, preserveAction: true });
+      this.resources.invalidate();
+      this.git.clearComparison();
+    } else if (transition.revisionChanged) {
+      this.resources.cancelProbes();
+    }
+    this.runtimeEvents.replaceSettledMessages(transition.messages);
+    const { error, errorSeverity, ...transcript } = transcriptPatch(
+      transition,
+      live,
+    );
+    this.set({
+      ...lifecycle,
+      ...(sessionStatuses ? { sessionStatuses } : {}),
+      ...transcript,
+      ...(error || this.state.error === this.state.projectionError
+        ? { error, errorSeverity }
+        : {}),
+      ...(live.projectionConflict ? { runState: "conflict" } : {}),
+      ...(replaced
+        ? {
+            extensionUiRespondingId: null,
+            pendingRuntimeSettings: {},
+            thinkingLevelPending: false,
+          }
+        : {}),
+    });
+    if (replaced && lifecycle.fileInspection?.kind === "file")
+      void this.restoreFileTab();
+  }
+
   private visibleSessionIsExternal(): boolean {
     const id = this.state.sessionId;
     return Boolean(id && this.state.sessionStatuses[id]?.external);
@@ -1167,6 +1212,9 @@ export class AppStore {
         this.state.sessionId !== expectedSessionId ||
         this.selectionGeneration !== expectedGeneration ||
         snapshotSessionId !== expectedSessionId ||
+        (snapshot.runtimeSequence !== undefined &&
+          snapshot.runtimeSequence <
+            Math.max(this.transcriptSequence, this.visibleEventSequence)) ||
         (minimumRevision !== undefined &&
           (page?.revision ?? -1) < minimumRevision) ||
         (page?.incarnation &&
@@ -1270,7 +1318,20 @@ export class AppStore {
 
   // --- Connection lifecycle ---
 
-  retryConnection = (): void => this.connectionController.retry();
+  requireBrowserUpgrade = (): void => {
+    this.connectionController.stop();
+    this.set({
+      startupPending: false,
+      connection: "offline",
+      connectionProblem: { kind: "browser-upgrade" },
+    });
+  };
+
+  retryConnection = (): void => {
+    if (this.state.connectionProblem?.kind === "browser-upgrade")
+      window.location.reload();
+    else this.connectionController.retry();
+  };
 
   recoverConnection = (trigger: ConnectionRecoveryTrigger): void =>
     this.connectionController.recover(trigger);

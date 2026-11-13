@@ -78,11 +78,13 @@ export async function socketAdmission(
   origin: string,
   bearer: string,
   audience = "events",
+  headers: Record<string, string> = {},
 ): Promise<string> {
   const response = await request(server)
     .post("/api/auth/socket-ticket")
     .set("Origin", origin)
     .set("Authorization", `Bearer ${bearer}`)
+    .set(headers)
     .send({ audience })
     .expect(200);
   return response.body.ticket as string;
@@ -108,7 +110,7 @@ export async function hostApiFixture(
     promptObservationWindowMs?: number;
     runtime?: Parameters<typeof createInspireServer>[0]["runtime"];
     distDir?: string;
-    staticAssetCacheDirs?: string[];
+    developmentBrowserBuild?: string;
   } = {},
 ) {
   const temporary = await realpath(

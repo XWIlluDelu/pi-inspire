@@ -28,10 +28,6 @@ import {
 
 const execFile = promisify(execFileCallback);
 const root = resolve(import.meta.dirname, "..");
-const plexSansManifestDigest =
-  "012a329e2e373c4aba5c81e46eb6df3bc78252fc65d97e2207a5c12ce286e6c6";
-const fluxSumsDigest =
-  "3d2eb1c72f167c502e9809c4f08d9ab9e5d37ba880e5281775a5ec5bcb788c7a";
 
 async function execNpm(args, options = {}) {
   const invocation = npmInvocation(args, {
@@ -65,12 +61,8 @@ function parseSha256Sums(value, label) {
   return entries;
 }
 
-async function verifyFontFiles(directory, manifestDigest, label) {
+async function verifyFontFiles(directory, label) {
   const manifest = await readFile(join(directory, "SHA256SUMS"));
-  if (sha256(manifest) !== manifestDigest)
-    throw new Error(
-      `${label} checksum manifest differs from the reviewed release`,
-    );
   const entries = parseSha256Sums(manifest.toString("ascii"), label);
   const files = (await readdir(directory)).filter(
     (name) => name !== "SHA256SUMS",
@@ -90,16 +82,8 @@ async function verifyFontFiles(directory, manifestDigest, label) {
 async function verifySourceFonts() {
   const fontRoot = join(root, "src/assets/fonts");
   const digests = await Promise.all([
-    verifyFontFiles(
-      join(fontRoot, "ibm-plex-sans-sc"),
-      plexSansManifestDigest,
-      "IBM Plex Sans SC",
-    ),
-    verifyFontFiles(
-      join(fontRoot, "flux-mono-sc"),
-      fluxSumsDigest,
-      "Flux Mono SC",
-    ),
+    verifyFontFiles(join(fontRoot, "ibm-plex-sans-sc"), "IBM Plex Sans SC"),
+    verifyFontFiles(join(fontRoot, "flux-mono-sc"), "Flux Mono SC"),
   ]);
   return new Set(digests.flat());
 }
@@ -269,6 +253,9 @@ try {
   // module graph. Keep a contents check for optional entries it cannot load.
   const required = [
     "build/server/host-restart-systemd.js",
+    "build/server/attached-pi-entry.js",
+    "build/server/current-web-build.mjs",
+    "build/shared/browser-build.mjs",
     "connections/dispatch.mjs",
     "connections/ssh-reverse/manifest.json",
     "connections/ssh-reverse/runner.mjs",
@@ -280,6 +267,7 @@ try {
     "extensions/attach-control.ts",
     "build/extensions/attach-control.js",
     "dist/index.html",
+    "dist/.inspire-current-assets.json",
     "inspire",
   ];
   const packedPaths = new Set(

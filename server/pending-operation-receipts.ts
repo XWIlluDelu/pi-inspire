@@ -40,10 +40,6 @@ export class PendingOperationReceipts {
         {
           code: "PENDING_OPERATION_RESULT_RETIRED",
           outcomeUnknown: true,
-          pendingReceipt: {
-            operationId: request.operationId,
-            outcome: "retired",
-          },
         },
       );
     return receipt.result;
@@ -72,26 +68,7 @@ export class PendingOperationReceipts {
     return this.receipts.start(
       request.operationId,
       fingerprint(request),
-      async () => {
-        try {
-          return await execute();
-        } catch (error) {
-          throw Object.assign(
-            new Error(
-              error instanceof Error
-                ? error.message
-                : "Pending operation failed",
-            ),
-            error && typeof error === "object" ? error : {},
-            {
-              pendingReceipt: {
-                operationId: request.operationId,
-                outcome: "failed",
-              },
-            },
-          );
-        }
-      },
+      execute,
     );
   }
 }

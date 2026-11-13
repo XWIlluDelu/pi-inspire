@@ -168,23 +168,10 @@ both this glow and wordmark color transitions.
 - Display presents seven named color swatches in two columns, keeping complete names reachable on
   narrow screens. The botanical palettes come first, then Jade and Amber; Carbon & Silicon is last
   and spans the full picker row. The selected choice has a border and pressed state, not color alone.
-- Saved `amber` migrates to `chimonanthus`; saved `teal` (formerly Jade) migrates to
-  `hydrangea`. The next successful preference write saves canonical identifiers. The browser's
-  visual cache applies the same migration before React starts. Host preferences are authoritative
-  after bootstrap.
 - Semantic role mappings stay consistent across palettes while botanical and classic families
   retain their distinct character. Roles may share a color value.
-- Decorative accents and readable ink are separate roles:
-
-  | Palette | Light accent | Light accent ink | Dark accent | Dark accent ink |
-  | --- | --- | --- | --- | --- |
-  | Wisteria | `#6E5494` | `#543D78` | `#B39DDB` | `#C2B0E6` |
-  | Hydrangea | `#1F7A68` | `#155B4D` | `#5EC4AE` | `#74D2BE` |
-  | Lycoris | `#BC5042` | `#94362A` | `#EE8474` | `#F49B8E` |
-  | Chimonanthus | `#B36010` | `#8A4605` | `#EAA03E` | `#F2B25C` |
-  | Jade | `#007D78` | `#005E5A` | `#52D2C9` | `#52D2C9` |
-  | Amber | `#D95A00` | `#A23E00` | `#FF781F` | `#FF781F` |
-  | Carbon & Silicon | `#4B4B4B` | `#3B3B3B` | `#C8C8C8` | `#D7D7D7` |
+- Decorative accents and readable ink are separate roles. The current values
+  live in [the foundation stylesheet](../../src/styles/foundation.css).
 
   | Role | Use |
   | --- | --- |

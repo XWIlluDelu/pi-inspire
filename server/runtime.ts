@@ -37,6 +37,7 @@ import {
   type HostNativeCommandRequest,
   type HostNativeCommandResponse,
   isBusyRunState,
+  type LiveTranscript,
   MAX_PROJECT_FILES,
   MAX_PROMPT_CHARS,
   MAX_SESSION_ID_CHARS,
@@ -655,7 +656,7 @@ export class RuntimeController extends EventEmitter {
     });
     this.reads = new RuntimeReadController({
       assertAvailable: () => this.assertMaintenanceAvailable(),
-      sessionStatuses: () => this.sessionStatuses(),
+      emptySnapshot: () => this.emptySnapshot(),
       requireSlot: (sessionId) => this.requireSlot(sessionId),
       useSlot: (slot, operation) => this.useSlot(slot, operation),
       snapshotSlot: (slot) => this.snapshotSlot(slot),
@@ -1090,11 +1091,6 @@ export class RuntimeController extends EventEmitter {
       if (id === before) return;
     slot.branchRevision += 1;
     this.renewView(slot);
-    this.emitSlotEvent(slot, {
-      type: "branch_changed",
-      revision: slot.branchRevision,
-      effectiveLeafId: after,
-    });
   }
 
   private renewView(slot: RuntimeSlot): void {
@@ -1752,6 +1748,9 @@ export class RuntimeController extends EventEmitter {
         : {}),
       ...(needsInput ? { needsInput: true } : {}),
       ...(this.externalSessions?.has(slot) ? { external: true } : {}),
+      ...(this.externalSessions?.canQueue(slot)
+        ? { queueAdmission: true }
+        : {}),
     };
   }
 
@@ -1797,6 +1796,19 @@ export class RuntimeController extends EventEmitter {
     return this.snapshotCuts.get(snapshot);
   }
 
+  private captureSnapshot(snapshot: ActiveSnapshot): ActiveSnapshot {
+    this.snapshotCuts.set(snapshot, this.eventSequence);
+    return snapshot;
+  }
+
+  private emptySnapshot(): ActiveSnapshot {
+    return this.captureSnapshot({
+      active: null,
+      runState: "idle",
+      sessionStatuses: this.sessionStatuses(),
+    });
+  }
+
   private emitSlotEvent(slot: RuntimeSlot, event: unknown): void {
     // A slot enters the registry only under its final Pi session id. Before
     // that (newSession's provisional phase) its events would broadcast an
@@ -1832,6 +1844,15 @@ export class RuntimeController extends EventEmitter {
       projected && typeof projected === "object" && !Array.isArray(projected)
         ? (projected as Record<string, unknown>)
         : { type: "runtime_event", data: projected };
+    if (
+      (body.type === "session_projection_changed" ||
+        body.type === "branch_changed") &&
+      slot.projection &&
+      slot.preview &&
+      this.sessionViewObservers.has(slot.id)
+    ) {
+      body.transcript = this.liveTranscript(slot);
+    }
     if (body.type === "runtime_ready") this.scheduleExternalSessionRecovery();
     this.emit("event", {
       ...body,
@@ -2086,22 +2107,38 @@ export class RuntimeController extends EventEmitter {
     });
   }
 
+  private liveTranscript(slot: RuntimeSlot): LiveTranscript {
+    const saved = slot.projection!;
+    const effectiveLeafId = effectiveRuntimeLeaf(slot);
+    const transcriptPage = runtimeHistory(slot)!.latestPage(
+      slot.overlay,
+      effectiveLeafId,
+      slot.viewId,
+    );
+    return {
+      transcriptPage,
+      projectionHealth: saved.health,
+      projectionConflict: slot.conflict,
+      durableLeafId: saved.leafId,
+      effectiveLeafId,
+      navigationLeased: workerOnSeparateBranch(slot),
+      branchRevision: slot.branchRevision,
+      activeAssistantMessageKey: this.liveTail.activeAssistantSnapshotKey(
+        slot,
+        transcriptPage.messages,
+      ),
+    };
+  }
+
   private snapshotView(
     slot: RuntimeSlot,
     sessionStatuses: Record<
       string,
       SessionRuntimeStatus
     > = this.sessionStatuses(),
-    native?: { isStreaming: boolean; isCompacting: boolean },
   ): ActiveSnapshot {
     if (!slot.preview || !slot.projection)
       throw new Error("Session projection is not available");
-    const effectiveLeafId = effectiveRuntimeLeaf(slot);
-    const page = runtimeHistory(slot)!.latestPage(
-      slot.overlay,
-      effectiveLeafId,
-      slot.viewId,
-    );
     const live = Boolean(slot.process && slot.ready);
     const external = this.externalSessions?.has(slot) === true;
     const nativeSelection = this.externalSessions?.modelSelection(slot);
@@ -2150,20 +2187,10 @@ export class RuntimeController extends EventEmitter {
             slot,
             live ? slot.preview.thinkingLevel : undefined,
           ),
-        transcriptPage: page,
-        projectionHealth: slot.projection.health,
-        projectionConflict: slot.conflict,
-        durableLeafId: slot.projection.leafId,
-        effectiveLeafId,
-        navigationLeased: workerOnSeparateBranch(slot),
-        branchRevision: slot.branchRevision,
-        isStreaming: native?.isStreaming ?? isBusyRunState(slot.runState),
-        activeAssistantMessageKey: this.liveTail.activeAssistantSnapshotKey(
-          slot,
-          page.messages,
-        ),
+        ...this.liveTranscript(slot),
+        isStreaming: isBusyRunState(slot.runState),
         toolActivity: slot.toolActivity,
-        isCompacting: native?.isCompacting ?? slot.runState === "compacting",
+        isCompacting: slot.runState === "compacting",
       },
       runState: slot.runState,
       bashRunning: Boolean(slot.nativeBash),
@@ -2177,8 +2204,7 @@ export class RuntimeController extends EventEmitter {
       extensionDisplays: slot.extensionDisplays,
       extensionStatuses: slot.extensionStatuses,
     }) as ActiveSnapshot;
-    this.snapshotCuts.set(snapshot, this.eventSequence);
-    return snapshot;
+    return this.captureSnapshot(snapshot);
   }
 
   private async resolveWorkspaceRoot(cwd: string): Promise<string | null> {
@@ -2655,11 +2681,7 @@ export class RuntimeController extends EventEmitter {
     this.assertNotClosing();
     ++this.openHintSequence;
     this.lastOpenedSessionId = null;
-    return {
-      active: null,
-      runState: "idle",
-      sessionStatuses: this.sessionStatuses(),
-    };
+    return this.emptySnapshot();
   }
 
   deleteSession(sessionId: string): Promise<SessionDeleteResponse> {
@@ -5319,10 +5341,7 @@ export class RuntimeController extends EventEmitter {
         },
         commands,
       };
-      return this.snapshotView(slot, this.sessionStatuses(), {
-        isStreaming: Boolean(state.isStreaming),
-        isCompacting: Boolean(state.isCompacting),
-      });
+      return this.snapshotView(slot);
     });
   }
 

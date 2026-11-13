@@ -17,9 +17,11 @@ function fixture() {
   let registered = slot;
   const host = {
     assertAvailable: () => {},
-    selectedSlot: () => selected,
-    selectedSessionId: () => "b",
-    sessionStatuses: () => ({}),
+    emptySnapshot: () => ({
+      active: null,
+      runState: "idle" as const,
+      sessionStatuses: {},
+    }),
     requireSlot: (id: string) => {
       if (id === slot.id) return registered;
       if (id === selected.id) return selected;

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { hostReceipt } from "../../shared/host-operations";
 import {
   ApiError,
   ApiRequestCancelledError,
@@ -14,6 +15,10 @@ const prompt = {
   sessionId: "session-1",
   message: "hello",
 };
+
+const receipt = hostReceipt("prompt", prompt);
+const accepted = { ...receipt, state: "completed", result: null };
+const pending = { ...receipt, state: "pending" };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -47,7 +52,6 @@ describe("prompt delivery transport", () => {
 
   it("confirms a lost submission response using only the original receipt", async () => {
     vi.useFakeTimers();
-    const accepted = { accepted: true, historyEntry: null };
     const fetch = vi
       .fn<typeof globalThis.fetch>()
       .mockRejectedValueOnce(
@@ -61,7 +65,10 @@ describe("prompt delivery transport", () => {
 
     const delivery = createApi().prompt(prompt);
     await vi.advanceTimersByTimeAsync(1_500);
-    await expect(delivery).resolves.toEqual(accepted);
+    await expect(delivery).resolves.toEqual({
+      accepted: true,
+      historyEntry: null,
+    });
     expect(fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
       ["/api/prompt", "POST"],
       ["/api/prompt/operation-1?authorityId=authority-1", undefined],
@@ -99,9 +106,7 @@ describe("prompt delivery transport", () => {
     vi.useFakeTimers();
     const fetch = vi
       .fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(
-        Response.json({ ...prompt, accepted: false, pending: true }),
-      )
+      .mockResolvedValueOnce(Response.json(pending))
       .mockResolvedValueOnce(
         Response.json({ error: "Pairing expired" }, { status: 401 }),
       );
@@ -134,15 +139,14 @@ describe("prompt delivery transport", () => {
   });
 
   it("accepts only matching Host proof of rejection", async () => {
-    const headers = {
-      "X-Inspire-Authority": prompt.authorityId,
-      "X-Inspire-Prompt-Operation": prompt.operationId,
-      "X-Inspire-Prompt-Outcome": "rejected",
-    };
-    const response = (values = headers) =>
+    const response = (state = "rejected") =>
       Response.json(
-        { error: "Pi refused prompt" },
-        { status: 409, headers: values },
+        {
+          ...receipt,
+          state,
+          error: { status: 409, message: "Pi refused prompt" },
+        },
+        { status: 409 },
       );
     const fetch = vi.fn(() => Promise.resolve(response()));
     vi.stubGlobal("fetch", fetch);
@@ -160,9 +164,7 @@ describe("prompt delivery transport", () => {
         outcomeUnknown: true,
       });
     }
-    fetch.mockResolvedValueOnce(
-      response({ ...headers, "X-Inspire-Prompt-Outcome": "unknown" }),
-    );
+    fetch.mockResolvedValueOnce(response("unknown"));
     await expect(api.prompt(prompt)).rejects.toMatchObject({
       name: "ApiError",
       status: 409,
@@ -172,20 +174,11 @@ describe("prompt delivery transport", () => {
 
   it("waits beyond 30s using owned pending receipts without posting the prompt again", async () => {
     vi.useFakeTimers();
-    const pending = {
-      accepted: false,
-      pending: true,
-      operationId: prompt.operationId,
-      authorityId: prompt.authorityId,
-    };
     let calls = 0;
     const fetch = vi.fn(async () => {
       calls += 1;
       await new Promise((resolve) => setTimeout(resolve, 20_000));
-      return Response.json(
-        calls < 3 ? pending : { accepted: true, historyEntry: null },
-        { status: 202 },
-      );
+      return Response.json(calls < 3 ? pending : accepted, { status: 202 });
     });
     vi.stubGlobal("fetch", fetch);
     const delivery = createApi().prompt(prompt);
@@ -209,14 +202,7 @@ describe("prompt delivery transport", () => {
 
   it("cancels only receipt observation when the owning transport is retired", async () => {
     vi.useFakeTimers();
-    const fetch = vi.fn(async () =>
-      Response.json({
-        accepted: false,
-        pending: true,
-        operationId: prompt.operationId,
-        authorityId: prompt.authorityId,
-      }),
-    );
+    const fetch = vi.fn(async () => Response.json(pending));
     vi.stubGlobal("fetch", fetch);
     const controller = new AbortController();
     const delivery = createApi().prompt(prompt, controller.signal);
@@ -230,22 +216,21 @@ describe("prompt delivery transport", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("does not poll a pending receipt from another operation", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({
-          accepted: false,
-          pending: true,
-          operationId: "another-operation",
-          authorityId: prompt.authorityId,
-        }),
-      ),
-    );
-    await expect(createApi().prompt(prompt)).rejects.toBeInstanceOf(
-      ApiTransportError,
-    );
-  });
+  it.each([pending, accepted])(
+    "ignores a receipt from another operation ($state)",
+    async (result) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () =>
+          Response.json({ ...result, operationId: "another-operation" }),
+        ),
+      );
+      await expect(createApi().prompt(prompt)).rejects.toMatchObject({
+        name: ApiTransportError.name,
+        outcomeUnknown: true,
+      });
+    },
+  );
 });
 
 describe("ordinary HTTP observation", () => {

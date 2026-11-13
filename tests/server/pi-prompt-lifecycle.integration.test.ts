@@ -273,7 +273,7 @@ describe("native prompt admission and extension dialogs", () => {
       },
     );
     await vi.waitFor(() =>
-      expect(f.observations[0]?.receipt).toMatchObject({ pending: true }),
+      expect(f.observations[0]?.receipt).toMatchObject({ state: "pending" }),
     );
     const pending = await f.runtime.snapshot();
     expect(pending.runState).toBe("queued");

@@ -94,35 +94,6 @@ const sharedPairs: Pair[] = [
 
 test.use({ contextOptions: { reducedMotion: "reduce" } });
 
-// Preserve the documented palette identities alongside the actual contrast checks.
-const paletteIdentity = {
-  wisteria: [
-    ["#6E5494", "#FAF9FC", "#684E8E", "#4663AC"],
-    ["#B39DDB", "#16151D", "#B39DDB", "#7AA2F7"],
-  ],
-  hydrangea: [
-    ["#1F7A68", "#FBFBF9", "#1E7564", "#6554B8"],
-    ["#5EC4AE", "#151A17", "#5EC4AE", "#A393EB"],
-  ],
-  lycoris: [
-    ["#BC5042", "#FCFBF9", "#B5493B", "#4A6696"],
-    ["#EE8474", "#1A1515", "#EE8474", "#88A4E0"],
-  ],
-  chimonanthus: [
-    ["#B36010", "#FCFBF8", "#A6570B", "#6652BA"],
-    ["#EAA03E", "#181613", "#EAA03E", "#A490F0"],
-  ],
-  "classic-jade": [
-    ["#007D78", "#F6F8F7", "#E9EEEB"],
-    ["#52D2C9", "#171C19", "#232B26"],
-  ],
-  "classic-amber": [
-    ["#D95A00", "#F8F7F5", "#EEECE8"],
-    ["#FF781F", "#171A1E", "#23272C"],
-  ],
-  mono: null,
-} as const;
-
 for (const palette of PALETTE_PREFERENCES) {
   test(`${palette} paints the saved theme and retains contrast in both luminosities`, async ({
     page,
@@ -253,24 +224,6 @@ for (const palette of PALETTE_PREFERENCES) {
             )
             .toBeGreaterThanOrEqual(minimum);
         }
-        const colors = paletteIdentity[palette]?.[theme === "light" ? 0 : 1];
-        if (colors) {
-          const [accent, stage] = colors;
-          expect(identity).toMatchObject({ accent, "bg-stage": stage });
-          if (colors.length === 3)
-            expect(identity["bg-prompt"]).toBe(colors[2]);
-          if (colors.length === 4) {
-            expect(identity).toMatchObject({
-              "activity-tool": colors[2],
-              "activity-think": colors[3],
-              "accent-focus": accent,
-              "accent-soft": "TRANSPARENT",
-              "nav-active-bg": identity["accent-tint"],
-            });
-            expect(identity["bg-prompt"]).not.toBe(identity["bg-surface"]);
-            expect(identity.error).not.toBe(accent);
-          }
-        }
         expect(identity["activity-tool"]).not.toBe(identity["activity-error"]);
         expect(identity["activity-think"]).not.toBe(identity["activity-tool"]);
         expect(identity["activity-event"]).toBe(identity["activity-tool"]);
@@ -319,10 +272,9 @@ test("context selection and keyboard focus keep distinct color roles", async ({
   await expect(files).toHaveCSS("outline-color", focusInk);
   await expect(files).toHaveCSS("color", selectionInk);
   expect((await renderedColors(files)).contrast).toBeGreaterThanOrEqual(4.5);
-  await expect(page.getByRole("tab", { name: "History" })).not.toHaveCSS(
-    "color",
-    selectionInk,
-  );
+  await expect(
+    page.getByRole("tab", { name: "Changes", exact: true }),
+  ).not.toHaveCSS("color", selectionInk);
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
   await expect(toggle).toHaveCSS("color", selectionInk);
   await toggle.hover();

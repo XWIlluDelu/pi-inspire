@@ -55,6 +55,7 @@
   "knip": {
     "entry": [
       "server/index.ts",
+      "server/attached-pi-entry.ts",
       "server/terminal-daemon-entry.ts",
       "server/terminal-control-entry.ts",
       "server/session-recovery-entry.ts",
@@ -105,7 +106,8 @@
       "server/process-tree.d.mts",
       "server/pi-processes.d.mts",
       "server/launcher-restart.d.mts",
-      "server/static-asset-cache.d.mts",
+      "server/current-web-build.d.mts",
+      "shared/browser-build.d.mts",
       "server/user-environment.d.mts"
     ]
   },
@@ -117,7 +119,7 @@
     "build:web": "node scripts/build-web.mjs",
     "icons:build": "node scripts/render-app-icons.mjs",
     "build": "npm run typecheck && npm run build:web",
-    "release:build": "npm run typecheck && npm run build:web -- --clean && node scripts/build-release.mjs",
+    "release:build": "npm run typecheck && npm run build:web && node scripts/build-release.mjs",
     "release:verify": "node scripts/verify-release-package.mjs",
     "prepack": "npm run release:build",
     "start": "node inspire.mjs",

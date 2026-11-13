@@ -32,7 +32,7 @@ covers:
   - tests/restart-launcher.test.ts
   - tests/server/{runtime-worker-lifecycle,runtime-worker-pool,runtime-maintenance-restart,pi-startup.integration}.test.ts
   - tests/{server,web}/host-restart*.{ts,tsx}
-  - server/{file-lock,static-asset-cache,instance-state}.mjs
+  - server/{file-lock,current-web-build,instance-state}.mjs
   - server/instance-state.d.mts
   - server/instance-control.{mjs,d.mts}
   - tests/server/{instance-state,instance-control,host-shutdown.integration}.test.ts
@@ -44,7 +44,7 @@ covers:
   - tests/launcher.test.ts
   - tests/server/terminal-daemon-launcher.test.ts
   - tests/portable/**
-  - tests/server/{app,access-token,pi-installation,pi-rpc,static-asset-cache}.test.ts
+  - tests/server/{app,access-token,pi-installation,pi-rpc,current-web-build}.test.ts
 ---
 
 # Host lifecycle, pairing, and distribution
@@ -412,26 +412,15 @@ Scheduled restart uses a single-owner handoff through signed actions at `/api/ho
   leaves that stamp stale so the next launch rebuilds. A current stamp avoids rebuilding at startup.
   The npm distribution omits the stamp and uses its packaged build.
 
-- Ordinary source builds serialize publication per installation. Each build:
-  1. stages Vite output away from the live `dist`;
-  2. snapshots the outgoing build's complete content-addressed JavaScript, CSS, and WebAssembly
-     generation;
-  3. publishes new hashed assets before switching `index.html`;
-  4. keeps that one outgoing executable generation beside the new files during the Host handoff.
-
-  Clean release packaging exactly mirrors staged output and omits that outgoing generation from
-  the artifact after archiving it. A production Host also registers the active generation in an
-  installation-scoped user cache before accepting browser traffic.
-  Builds precompress hashed JavaScript and CSS. The Host serves a matching Brotli or gzip
-  representation when accepted and retains those variants with their original assets.
-
-  The active `dist/assets` always wins. Complete prior generations remain available for seven days
-  under a 64 MiB stale-asset ceiling, so an already-open page can perform its first deferred import
-  after a rebuild or package replacement without reloading and losing browser-local work.
-  Generations are evicted only as units; a locked stale generation defers its own cleanup without
-  disabling retained ones. Missing `/assets/*` paths return an actual `404` and can never
-  fall through to the SPA document or poison the Service Worker cache with HTML under a module URL.
-  Cache preparation failure is reported but does not prevent the current build from starting.
+- Source builds stage Vite output behind one installation lock and publish assets before
+  switching the index. A current manifest identifies the browser build and the assets it can
+  serve. After publication, old files are removed when possible and are excluded even if still
+  present on disk. Current JavaScript and CSS retain immutable validators, ranges and negotiated
+  Brotli/gzip variants. A missing asset returns `404` without falling through to the shell.
+- Paired browser requests and socket admission use the current build identity. The development
+  browser and Host share their development identity. A stale browser is told to reload, stops
+  reconnecting, and keeps its open draft for copying or manual reload. Native sessions and
+  notification storage are independent of shell publication.
 
 ## Diagnostics
 

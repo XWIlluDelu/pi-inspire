@@ -1,7 +1,6 @@
 import type {
   ActiveSnapshot,
   SessionHistoryPages,
-  SessionRuntimeStatus,
 } from "../shared/contracts.js";
 import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { lastAssistantText } from "./assistant-text.js";
@@ -9,14 +8,15 @@ import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";
 import {
   effectiveRuntimeLeaf,
-  runtimeHistory,
   type RuntimeSlot,
+  runtimeHistory,
 } from "./runtime-slot.js";
+
 type RuntimeHistory = NonNullable<ReturnType<typeof runtimeHistory>>;
 
 interface RuntimeReadControllerHost {
   assertAvailable(): void;
-  sessionStatuses(): Record<string, SessionRuntimeStatus>;
+  emptySnapshot(): ActiveSnapshot;
   requireSlot(sessionId: string): RuntimeSlot;
   useSlot<T>(slot: RuntimeSlot, operation: () => Promise<T>): Promise<T>;
   snapshotSlot(slot: RuntimeSlot): Promise<ActiveSnapshot>;
@@ -39,11 +39,7 @@ export class RuntimeReadController {
   async snapshot(sessionId: string | null): Promise<ActiveSnapshot> {
     this.host.assertAvailable();
     return sessionId === null
-      ? {
-          active: null,
-          runState: "idle",
-          sessionStatuses: this.host.sessionStatuses(),
-        }
+      ? this.host.emptySnapshot()
       : this.host.snapshotSlot(this.host.requireSlot(sessionId));
   }
 

@@ -223,6 +223,12 @@ function connectionProblemText(
   host: string,
 ): { title: string; detail: string } {
   switch (problem.kind) {
+    case "browser-upgrade":
+      return {
+        title: "Reload Inspire",
+        detail:
+          "A newer build is available. Reload when ready. Draft text stays in this tab; keep a copy of any unsent attachments.",
+      };
     case "device-offline":
       return {
         title: "This device is offline",
@@ -288,11 +294,13 @@ function HostUnavailable({
             className="button button--primary"
             onClick={() => store.retryConnection()}
           >
-            Try again
+            {problem.kind === "browser-upgrade" ? "Reload" : "Try again"}
           </button>
-          <span>
-            <PiLoader size={12} aria-hidden /> Reconnecting automatically
-          </span>
+          {problem.kind !== "browser-upgrade" ? (
+            <span>
+              <PiLoader size={12} aria-hidden /> Reconnecting automatically
+            </span>
+          ) : null}
         </div>
       </div>
     </div>
@@ -1023,7 +1031,9 @@ export function App() {
             </div>
           </div>
         ) : null}
-        {showConnectionBanner && !state.error ? (
+        {showConnectionBanner &&
+        (!state.error ||
+          state.connectionProblem?.kind === "browser-upgrade") ? (
           <div className="banner banner--warning" role="status">
             <span>
               {state.connectionProblem
@@ -1034,7 +1044,9 @@ export function App() {
                 : "Connection lost. Recent content stays visible."}
             </span>
             <button type="button" onClick={() => store.retryConnection()}>
-              Retry now
+              {state.connectionProblem?.kind === "browser-upgrade"
+                ? "Reload"
+                : "Retry now"}
             </button>
           </div>
         ) : null}

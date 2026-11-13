@@ -184,8 +184,9 @@ a retry of uncertain input observes the original receipt without posting again. 
 same operation. A valid pending receipt renews the read budget. Replacing the transport cancels
 the browser observation while execution continues.
 
-The browser API confirms refusal only from a retained rejected receipt with matching Host authority
-and operation id. Transport failures and unavailable or unknown receipts leave delivery unconfirmed.
+The browser API confirms a result only from a retained receipt with matching Host authority,
+command and operation ID. Transport failures and unavailable or unknown receipts leave delivery
+unconfirmed.
 [[composer]] restores the input and retains the original id and payload to recognize an unchanged-draft retry
 on the same Host, including after a delivery-mode change. After a Host restart, Inspire asks the
 user to inspect refreshed history before resending.
@@ -202,9 +203,8 @@ Reconnect may observe a receipt while its old mutation observer is still pending
 API/transport owner restores it once into the original draft partition. Recovered images keep
 ordinary staging ownership under [[composer]].
 
-A matched authority/operation receipt establishes execution failure or result retirement and ends
-that intent. A later explicit action admits a new id. Plain HTTP 500, mismatched proof and transport
-loss stay uncertain.
+A matched rejected receipt ends that intent. A retired or missing receipt, plain HTTP 500,
+mismatched proof and transport loss stay uncertain; retrying the same intent only observes.
 
 Prompt and Pending each retain at most 2,048 settled results and 32 MiB for 15 minutes.
 Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refuses further admission.
@@ -215,7 +215,9 @@ Process-lifetime tombstones prevent redispatch. Each 65,536-identity limit refus
 detail, with an explicit `sessionId` and `viewId`. Page cursors bind a fixed native leaf and an
 earlier/later entry boundary. Search can find entries outside the current page, including before
 compaction. Entry detail exposes bounded body sections and image metadata; image bytes use the
-view-bound image endpoint. Live uses a separately bounded transcript tail.
+view-bound image endpoint. Live uses a separately bounded transcript tail. Each replacement
+installs the rows, branch coordinates and persistence state from one Host event. Joining sockets
+retain individual deltas so they can cut the backlog inside a stream batch.
 
 Each transcript snapshot/page carries an opaque branch-view generation and effective leaf.
 Browser transcript readers validate the returned `viewId` against the request before applying

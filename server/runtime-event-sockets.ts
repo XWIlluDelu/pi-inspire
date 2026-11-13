@@ -3,6 +3,7 @@ import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
+import { BROWSER_UPGRADE_CLOSE } from "../shared/browser-build.mjs";
 import { MAX_ASSISTANT_STREAM_BATCH_EVENTS } from "../shared/assistant-stream.js";
 import {
   isSessionRuntimeStatus,
@@ -30,6 +31,7 @@ interface RuntimeEventSocketOptions {
   updateCoordinator: Pick<UpdateCoordinator, "status" | "subscribe">;
   authorityId: string;
   heartbeatIntervalMs: number;
+  currentBrowserBuild?(): Promise<string | undefined>;
   taskNotifications?: Pick<TaskNotifications, "attach">;
 }
 
@@ -40,6 +42,7 @@ export function createRuntimeEventSockets({
   updateCoordinator,
   authorityId,
   heartbeatIntervalMs,
+  currentBrowserBuild,
   taskNotifications,
 }: RuntimeEventSocketOptions) {
   const websocket = new WebSocketServer({
@@ -63,6 +66,7 @@ export function createRuntimeEventSockets({
     principal?: NotificationPrincipal;
     unsubscribe?: () => void;
     backgroundStatuses: Map<string, string>;
+    browserBuild?: string;
   };
   const peers = new Map<WebSocket, Peer>();
   const setDetailInterest = (peer: Peer, interest: DetailInterest) => {
@@ -128,7 +132,24 @@ export function createRuntimeEventSockets({
     }
   };
   const heartbeatMessage = JSON.stringify({ type: "heartbeat" });
+  let checkingBuild = false;
   const heartbeatInterval = setInterval(() => {
+    if (!checkingBuild && currentBrowserBuild) {
+      checkingBuild = true;
+      void currentBrowserBuild()
+        .then((current) => {
+          for (const [socket, peer] of peers) {
+            if (current && peer.browserBuild && current !== peer.browserBuild) {
+              forgetSocket(socket);
+              socket.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire");
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          checkingBuild = false;
+        });
+    }
     for (const [socket, peer] of peers) {
       if (socket.readyState !== WebSocket.OPEN) continue;
       if (!peer.responsive) {
@@ -280,6 +301,7 @@ export function createRuntimeEventSockets({
           ...(sourceStatus.external !== undefined
             ? { external: sourceStatus.external }
             : {}),
+          ...(sourceStatus.queueAdmission ? { queueAdmission: true } : {}),
         }
       : undefined;
     const lifecycle = globalLifecycle.has(String(record.type));
@@ -374,59 +396,48 @@ export function createRuntimeEventSockets({
 
     if (peers.size === 0) return;
 
-    // Joining sockets need complete, overlap-safe replacements. Avoid the
-    // cumulative-message stringify entirely when every socket is established;
-    // otherwise that hidden O(response length × fragments) cost survives even
-    // after wire deltas have removed the redundant network bytes.
+    const compact = { ...record };
+    delete compact.message;
+    delete compact.streamDelta;
+    const compactEncoded = serializeRuntimeEvent(compact);
+    if (!compactEncoded || compactEncoded.bytes > MAX_RUNTIME_EVENT_BYTES) {
+      closeProjectionDestinations(
+        compactEncoded
+          ? "Runtime event exceeded projection budget"
+          : "Runtime event was not serializable",
+        destinations,
+      );
+      return;
+    }
+    // Keep each fragment separately in a joining backlog so a cut in the
+    // middle of a transport batch cannot duplicate an already captured delta.
     if (
       [...peers.values()].some(
         (peer) => peer.backlog && wantsDetail(peer, String(sessionId)),
       )
     ) {
-      const complete = serializeRuntimeEvent(event);
-      if (!complete) {
-        closeProjectionDestinations("Runtime event was not serializable", {
-          joining: true,
-          established: false,
-          sessionId,
-        });
-      } else if (complete.bytes > MAX_RUNTIME_EVENT_BYTES) {
-        closeProjectionDestinations(
-          "Runtime event exceeded projection budget",
-          {
-            joining: true,
-            established: false,
-            sessionId,
-          },
-        );
-      } else {
-        broadcastEncoded(complete.message, complete.bytes, {
-          joining: true,
-          established: false,
-          sessionId,
-        });
-      }
-    }
-    const hasEstablishedSocket = [...peers].some(
-      ([socket, peer]) =>
-        !peer.backlog &&
-        socket.readyState === WebSocket.OPEN &&
-        wantsDetail(peer, String(sessionId)),
-    );
-    if (!hasEstablishedSocket) return;
-
-    const compact = { ...record };
-    delete compact.message;
-    delete compact.streamDelta;
-    const compactEncoded = serializeRuntimeEvent(compact);
-    if (!compactEncoded) {
-      closeProjectionDestinations("Runtime event was not serializable", {
-        joining: false,
-        established: true,
+      const joining = serializeRuntimeEvent({
+        ...compact,
+        type: "message_update_batch",
+        assistantMessageEvent: undefined,
+        assistantMessageEvents: [compact.assistantMessageEvent],
+        sourceEventCount: 1,
+      })!;
+      broadcastEncoded(joining.message, joining.bytes, {
+        joining: true,
+        established: false,
         sessionId,
       });
-      return;
     }
+    if (
+      ![...peers].some(
+        ([socket, peer]) =>
+          !peer.backlog &&
+          socket.readyState === WebSocket.OPEN &&
+          wantsDetail(peer, String(sessionId)),
+      )
+    )
+      return;
     const key = `${record.sessionId}\0${record.streamMessageKey}`;
     if (
       pendingStreamBatch &&
@@ -483,10 +494,11 @@ export function createRuntimeEventSockets({
           const queued = peer.backlog;
           if (queued !== queue) return;
           // Pending batches exclude this joining socket, which already queued
-          // their complete projections. Flush before it becomes established.
+          // their individual deltas. Flush before it becomes established.
           flushStreamBatch();
           peer.backlog = undefined;
           if (socket.readyState !== WebSocket.OPEN) return;
+          const cut = runtime.eventSnapshotCut(snapshot);
           let message: string;
           try {
             const encodedSnapshot = JSON.stringify(snapshot);
@@ -497,6 +509,7 @@ export function createRuntimeEventSockets({
             message = JSON.stringify({
               type: "snapshot",
               authorityId,
+              runtimeSequence: cut,
               snapshotDigest,
               updateStatus,
               detailSessionId: interest.sessionId,
@@ -513,7 +526,6 @@ export function createRuntimeEventSockets({
               peer.principal,
               (event) => sendBounded(socket, JSON.stringify(event)),
             );
-          const cut = runtime.eventSnapshotCut(snapshot);
           for (const message of queued.messages) {
             // A superseded read may have queued detail for the previous owner.
             // Retain its global lifecycle evidence, never replay its body.
@@ -579,12 +591,18 @@ export function createRuntimeEventSockets({
   }
 
   return {
+    rejectUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer) {
+      websocket.handleUpgrade(request, socket, head, (client) =>
+        client.close(BROWSER_UPGRADE_CLOSE, "Reload Inspire"),
+      );
+    },
     upgrade(
       request: IncomingMessage,
       socket: Duplex,
       head: Buffer,
       url: URL,
       notificationPrincipal?: NotificationPrincipal,
+      browserBuild?: string,
     ): void {
       const detail = url.searchParams.get("detail");
       if (
@@ -603,6 +621,7 @@ export function createRuntimeEventSockets({
           interest,
           backgroundStatuses: new Map(),
           principal: notificationPrincipal,
+          browserBuild,
           requestedDigest:
             requestedDigest && /^[0-9a-f]{64}$/u.test(requestedDigest)
               ? requestedDigest

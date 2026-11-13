@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { ModelOption } from "../../shared/contracts";
 import { routeSnapshots } from "./support/host-events";
+import { completeOperation } from "./support/host-operations";
 import { hostRequest } from "./support/host-request";
 import { pairAndOpen } from "./support/navigation";
 
@@ -82,7 +83,7 @@ test("New inherits the selected Router and hands off a multiline draft", async (
   });
   await page.route("**/api/prompt", (route) => {
     prompted = route.request().postDataJSON().message;
-    return route.fulfill({ status: 202, json: { accepted: true } });
+    return completeOperation(route, "prompt", null);
   });
   await pairAndOpen(page);
   if (

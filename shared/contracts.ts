@@ -198,6 +198,8 @@ export interface SessionRuntimeStatus {
   needsInput?: boolean;
   /** Connected to an independently owned native Pi, not an Inspire worker. */
   external?: boolean;
+  /** The attached Pi can return a per-input native queue receipt. */
+  queueAdmission?: true;
 }
 
 /** Socket-local transcript interest. Changing it establishes a fresh snapshot
@@ -222,7 +224,8 @@ export function isSessionRuntimeStatus(
       Number.isSafeInteger(status.attentionId)) &&
     (status.needsInput === undefined ||
       typeof status.needsInput === "boolean") &&
-    (status.external === undefined || typeof status.external === "boolean")
+    (status.external === undefined || typeof status.external === "boolean") &&
+    (status.queueAdmission === undefined || status.queueAdmission === true)
   );
 }
 
@@ -689,16 +692,13 @@ export interface PendingInput {
   followUp: string[];
 }
 
-export interface PendingOperationIdentity {
-  operationId: string;
-  authorityId: string;
-  expectedViewId?: string;
-}
-
-export interface PendingOperationRequest extends PendingOperationIdentity {
-  sessionId: string;
-  action: "recover" | "abort";
-}
+export type PendingOperationRequest = import("zod").infer<
+  typeof import("./host-operations.js").pendingOperationRequestSchema
+>;
+export type PendingOperationIdentity = Omit<
+  PendingOperationRequest,
+  "sessionId" | "action"
+>;
 
 export interface PendingRecovery extends PendingInput {
   /** Native extension interruption does not include terminal user Bash. */
@@ -1182,6 +1182,8 @@ export function parseRetryInfo(value: unknown): RetryInfo | null {
 export type SessionReadOnlyReason = "workspace-unavailable" | "external-active";
 
 export interface ActiveSnapshot {
+  /** Host event cut for addressed snapshot reads. */
+  runtimeSequence?: number;
   active: null | {
     sessionId: string;
     sessionFile?: string;
@@ -1231,6 +1233,19 @@ export interface ActiveSnapshot {
   extensionDisplays?: ExtensionDisplay[];
   extensionStatuses?: Record<string, string>;
 }
+
+/** Native rows and the branch/save facts captured with them in one runtime turn. */
+export type LiveTranscript = Pick<
+  NonNullable<ActiveSnapshot["active"]>,
+  | "transcriptPage"
+  | "projectionHealth"
+  | "projectionConflict"
+  | "durableLeafId"
+  | "effectiveLeafId"
+  | "navigationLeased"
+  | "branchRevision"
+  | "activeAssistantMessageKey"
+>;
 
 export interface SnapshotWitness {
   authorityId: string;
@@ -1398,27 +1413,12 @@ export interface HostNativeCommandResponse {
   };
 }
 
-export interface PromptDeliveryRequest extends PromptRequest {
-  /** One browser-owned delivery identity. Repeating the same operation against
-   * the same Host process returns its first acceptance instead of writing
-   * another prompt. */
-  operationId: string;
-  /** Host process observed before delivery began. A restarted Host rejects the
-   * old operation rather than guessing whether its predecessor accepted it. */
-  authorityId: string;
-}
+/** A process-lifetime operation ID and its immutable prompt input. */
+export type PromptDeliveryRequest = import("zod").infer<
+  typeof import("./host-operations.js").promptSchema
+>;
 
 export interface PromptAcceptedResponse {
   accepted: true;
   historyEntry: ComposerHistoryEntry | null;
 }
-
-/** Receipt observation only: Pi still owns the in-flight operation. */
-export type PromptDeliveryResponse =
-  | PromptAcceptedResponse
-  | {
-      accepted: false;
-      pending: true;
-      operationId: string;
-      authorityId: string;
-    };

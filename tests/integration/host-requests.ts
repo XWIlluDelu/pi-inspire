@@ -21,8 +21,10 @@ export function forwardHostRequests({
         : local.get(path));
     if (body?.authorityId === authorityId)
       body.authorityId = TEST_HOST_AUTHORITY;
-    if (headers["x-inspire-authority"] === authorityId)
-      headers["x-inspire-authority"] = TEST_HOST_AUTHORITY;
+    if (body?.executor?.authorityId === authorityId)
+      body.executor.authorityId = TEST_HOST_AUTHORITY;
+    if (body?.result?.authorityId === authorityId)
+      body.result.authorityId = TEST_HOST_AUTHORITY;
     return { body, headers, status };
   };
 }

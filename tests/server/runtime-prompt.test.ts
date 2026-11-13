@@ -344,10 +344,10 @@ describe("prompt admission and artifact ownership", () => {
         const response = await posting;
         expect(response.status).toBe(409);
         expect(response.body).toMatchObject({
-          code: "PI_RPC_OUTCOME_UNKNOWN",
-          outcomeUnknown: true,
+          state: "unknown",
+          operationId: delivery.operationId,
+          error: { code: "PI_RPC_OUTCOME_UNKNOWN" },
         });
-        expect(response.headers["x-inspire-prompt-outcome"]).toBe("unknown");
         expect(slot.inputStopEpoch).toBe(stopEpoch + 1);
         expect(slot.process).toBeNull();
         expect(stop).toHaveBeenCalledOnce();
@@ -363,16 +363,13 @@ describe("prompt admission and artifact ownership", () => {
           .post("/api/prompt")
           .set("Authorization", `Bearer ${token}`)
           .send(delivery)
-          .expect(409)
-          .expect("X-Inspire-Prompt-Outcome", "unknown");
+          .expect(409);
         expect(repeated.body).toEqual(response.body);
         const observed = await request(http.application.server)
           .get(`/api/prompt/${delivery.operationId}`)
           .query({ authorityId: http.application.authorityId })
           .set("Authorization", `Bearer ${token}`)
-          .expect(409)
-          .expect("X-Inspire-Prompt-Operation", delivery.operationId)
-          .expect("X-Inspire-Prompt-Outcome", "unknown");
+          .expect(409);
         expect(observed.body).toEqual(response.body);
         expect(prompt).toHaveBeenCalledOnce();
         expect(

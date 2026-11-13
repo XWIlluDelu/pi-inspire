@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { appendFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
 import {
@@ -48,6 +49,57 @@ describe("WebSocket observation and transport limits", () => {
       throw socketError ?? error;
     }
   }
+
+  it("publishes saved entries and their effective leaf in one addressed frame", async () => {
+    const { active } = await runtime.openSession("fixture-history");
+    const detail = await connect("detail=fixture-history");
+    const background = await connect();
+    try {
+      const id = "native-append";
+      await appendFile(
+        active!.sessionFile!,
+        `${JSON.stringify({
+          type: "message",
+          id,
+          parentId: active!.effectiveLeafId,
+          timestamp: new Date().toISOString(),
+          message: {
+            role: "user",
+            content: "one native replacement",
+            timestamp: 3,
+          },
+        })}\n`,
+      );
+      // An addressed observation exercises the real JSONL reader and publisher.
+      await runtime.snapshot("fixture-history");
+      const frame = await vi.waitFor(() => {
+        const frame = detail.frames.find(
+          ({ type }) => type === "session_projection_changed",
+        );
+        expect(frame).toBeDefined();
+        return frame;
+      });
+      expect(frame).toMatchObject({
+        transcript: {
+          durableLeafId: id,
+          effectiveLeafId: id,
+          projectionHealth: { status: "ok" },
+          transcriptPage: {
+            viewId: active!.transcriptPage.viewId,
+            messages: expect.arrayContaining([
+              expect.objectContaining({ content: "one native replacement" }),
+            ]),
+          },
+        },
+      });
+      expect(JSON.stringify(background.frames)).not.toContain(
+        "one native replacement",
+      );
+    } finally {
+      detail.socket.close();
+      background.socket.close();
+    }
+  });
 
   it("retains detail before synchronization and releases only the departing subscription", async () => {
     const observers = new Map<string, number>();
@@ -350,7 +402,7 @@ describe("WebSocket observation and transport limits", () => {
       expect(frames.map((frame) => frame.type)).toEqual([
         "snapshot",
         "agent_start",
-        "message_update",
+        "message_update_batch",
         "agent_settled",
       ]);
       expect(JSON.stringify(frames)).not.toContain("old-owner-body");
@@ -391,6 +443,7 @@ describe("WebSocket observation and transport limits", () => {
       expect(frames[0]).toEqual({
         type: "snapshot",
         authorityId: application.authorityId,
+        runtimeSequence: 0,
         snapshotDigest: bootstrap.body.snapshotDigest,
         updateStatus: bootstrap.body.updateStatus,
         detailSessionId: null,

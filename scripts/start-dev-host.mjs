@@ -14,6 +14,7 @@ const child = spawn(
       // The coordinated dev entry supplies a private per-run credential.
       // Only the owned Vite listener opens its origin-bound pairing link.
       INSPIRE_OPEN: "0",
+      INSPIRE_DEV_HOST: "1",
     },
   },
 );

@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HTTP_OBSERVATION_TIMEOUT_MS } from "../../src/api";
+import { sessionDraft, setSessionDraft } from "../../src/session-drafts";
 import { AppStore, shallowEqual, store, useAppState } from "../../src/store";
 import {
   activeSnapshot,
@@ -26,6 +27,39 @@ afterEach(() => {
 });
 
 describe("websocket lifecycle", () => {
+  it("accepts low event sequences from a restarted Host on the same session", async () => {
+    const nextHost = "22222222-2222-4222-8222-222222222222";
+    let authorityId = TEST_HOST_AUTHORITY;
+    const snapshot = activeSnapshot();
+    installStoreRoutes((url) =>
+      url.startsWith("/api/bootstrap")
+        ? { body: bootstrapPayload({ authorityId, snapshot }) }
+        : undefined,
+    );
+    const { store, socket } = await initStore();
+    const publish = (
+      peer: FakeWebSocket,
+      runtimeSequence: number,
+      content: string,
+    ) =>
+      peer.emit({
+        type: "session_projection_changed",
+        sessionId: "s1",
+        runtimeSequence,
+        transcript: activeSnapshot({
+          transcriptPage: { messages: [{ role: "assistant", content }] },
+        }).active,
+      });
+    publish(socket, 200, "before restart");
+    expect(store.getState().messages.at(-1)?.content).toBe("before restart");
+    authorityId = nextHost;
+    await store.init();
+    const replacement = FakeWebSocket.instances.at(-1)!;
+    replacement.open(snapshot, nextHost);
+    publish(replacement, 2, "after restart");
+    expect(store.getState().messages.at(-1)?.content).toBe("after restart");
+  });
+
   it.each(["target changed", "wrong authority", "wrong digest"] as const)(
     "reconnects when an unchanged HTTP-open confirmation no longer attests the selected detail (%s)",
     async (confirmation) => {
@@ -452,6 +486,63 @@ describe("multi-session event routing", () => {
       });
     } finally {
       unsubscribe();
+    }
+  });
+
+  it("installs native rows and branch ownership together and fences an older HTTP read", async () => {
+    const old = deferred<RouteResponse>();
+    const fetch = installStoreRoutes((url) =>
+      url.startsWith("/api/snapshot") ? old.promise : undefined,
+    );
+    const { store, socket } = await initStore();
+    setSessionDraft("s1", "keep this draft");
+    const seen: Array<[string | null, unknown]> = [];
+    const unsubscribe = store.subscribe(() => {
+      const { transcriptViewId, messages } = store.getState();
+      seen.push([transcriptViewId, messages.at(-1)?.content]);
+    });
+    try {
+      const refresh = store.refreshSession();
+      await vi.waitFor(() =>
+        expect(
+          fetch.mock.calls.some(([url]) =>
+            String(url).startsWith("/api/snapshot"),
+          ),
+        ).toBe(true),
+      );
+      socket.emit({
+        type: "branch_changed",
+        sessionId: "s1",
+        runtimeSequence: 12,
+        transcript: activeSnapshot({
+          branchRevision: 2,
+          durableLeafId: "native-leaf",
+          transcriptPage: {
+            viewId: "new-view",
+            revision: 2,
+            effectiveLeafId: "native-leaf",
+            messages: [{ role: "assistant", content: "saved native text" }],
+          },
+        }).active,
+      });
+      old.resolve({ body: { ...activeSnapshot(), runtimeSequence: 11 } });
+      await refresh;
+      expect(seen).toContainEqual(["new-view", "saved native text"]);
+      for (const [view, text] of seen)
+        expect(view === "new-view").toBe(text === "saved native text");
+      expect(store.getState()).toMatchObject({
+        branchRevision: 2,
+        transcriptEffectiveLeafId: "native-leaf",
+      });
+      expect(sessionDraft("s1")).toBe("keep this draft");
+      expect(
+        fetch.mock.calls.filter(([url]) =>
+          String(url).startsWith("/api/snapshot"),
+        ),
+      ).toHaveLength(1);
+    } finally {
+      unsubscribe();
+      setSessionDraft("s1", "");
     }
   });
 

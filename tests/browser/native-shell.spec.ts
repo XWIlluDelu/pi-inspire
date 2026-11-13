@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { ActiveSnapshot } from "../../shared/contracts";
 import { routeSnapshots } from "./support/host-events";
+import { completeOperation } from "./support/host-operations";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
 // UI wire fixture only; real native execution is checked by the isolated Pi
@@ -47,13 +48,10 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
         shellExecution: true,
         bashRunning: true,
       });
-    await route.fulfill({
-      status: 202,
-      headers: { "X-Inspire-Authority": transport.authority() },
-      json: {
-        accepted: true,
-        historyEntry: { text: body.message, images: [], files: [] },
-      },
+    await completeOperation(route, "prompt", {
+      text: String(body.message),
+      images: [],
+      files: [],
     });
   });
   await page.route("**/api/control/abort", async (route) => {
@@ -71,10 +69,7 @@ test("native shell cards stream, stop, recall and fit the narrow composer withou
       },
     });
     transport.send({ type: "bash_finished", sessionId, bashRunning: false });
-    await route.fulfill({
-      headers: { "X-Inspire-Authority": transport.authority() },
-      json: { steering: [], followUp: [] },
-    });
+    await completeOperation(route, "abort", { steering: [], followUp: [] });
   });
 
   await pairedPage(page);

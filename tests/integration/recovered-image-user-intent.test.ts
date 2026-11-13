@@ -144,9 +144,12 @@ describe("Host-deferred image recovery", () => {
           expect(promptResponse).toMatchObject({
             status: 409,
             body: {
-              code: "PROMPT_RECOVERED",
-              recoveredAttachments: [image],
-              recoveryId: expect.any(String),
+              state: "rejected",
+              error: {
+                code: "PROMPT_RECOVERED",
+                recoveredAttachments: [image],
+                recoveryId: expect.any(String),
+              },
             },
           });
         };

@@ -2,21 +2,20 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   copyFile,
   mkdir,
-  readFile,
   readdir,
+  readFile,
   rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { promisify } from "node:util";
 import { brotliCompress, constants, gzip } from "node:zlib";
 import {
   CURRENT_WEB_ASSETS_MANIFEST,
-  currentStaticAssetPaths,
   isCompressibleStaticAsset,
-} from "../server/static-asset-cache.mjs";
+} from "../server/current-web-build.mjs";
 
 const brotli = promisify(brotliCompress);
 const gzipBytes = promisify(gzip);
@@ -98,25 +97,14 @@ async function publishManifest(path, value) {
   }
 }
 
-/** Publish a clean staged Vite build without invalidating the page currently
- * served from dist. New assets land first, index.html switches last, and one
- * outgoing executable generation remains during the handoff. */
-export async function publishWebBuild(
-  stagingDirectory,
-  distDirectory,
-  options = {},
-) {
-  const retainOutgoing = options.retainOutgoing ?? true;
-  const outgoing = retainOutgoing
-    ? await currentStaticAssetPaths(distDirectory)
-    : [];
+/** Publish all current assets before switching the index, then clean old files. */
+export async function publishWebBuild(stagingDirectory, distDirectory) {
   const stagingRoot = join(stagingDirectory, "assets");
   const stagedAssets = await regularFiles(stagingRoot);
   const encodedAssets = await precompressAssets(stagingRoot, stagedAssets);
   const stagingAssets = [
     ...new Set([...stagedAssets, ...encodedAssets]),
   ].sort();
-  const keep = new Set([...stagingAssets, ...outgoing]);
 
   for (const relativePath of stagingAssets) {
     await publishFile(
@@ -147,38 +135,31 @@ export async function publishWebBuild(
     join(stagingDirectory, "index.html"),
     join(distDirectory, "index.html"),
   );
+  const indexDigest = digest(stagedIndex);
   await publishManifest(join(distDirectory, CURRENT_WEB_ASSETS_MANIFEST), {
-    version: 1,
-    indexDigest: digest(stagedIndex),
-    assets: stagingAssets,
+    version: 2,
+    indexDigest,
+    buildId:
+      stagedIndex
+        .toString("utf8")
+        .match(/src="\/assets\/(index-[^"/]+\.js)"/u)?.[1] ?? indexDigest,
+    assets: stagingAssets.map((path) => path.split(sep).join("/")),
   });
 
-  const publishedAssets = await regularFiles(join(distDirectory, "assets"));
+  const current = new Set([
+    ...stagedFiles,
+    ...stagingAssets.map((path) => join("assets", path)),
+    CURRENT_WEB_ASSETS_MANIFEST,
+  ]);
   let cleanupFailures = 0;
-  for (const relativePath of publishedAssets) {
-    if (keep.has(relativePath)) continue;
+  for (const relativePath of await regularFiles(distDirectory)) {
+    if (current.has(relativePath)) continue;
     try {
-      await rm(join(distDirectory, "assets", relativePath), { force: true });
-    } catch (error) {
-      if (!retainOutgoing) throw error;
-      // An old Host may still have this immutable file open on Windows. It is
-      // harmless to serve and the next publication retries its removal.
+      await rm(join(distDirectory, relativePath), { force: true });
+    } catch {
+      // The current manifest excludes old files even when Windows still has one open.
       cleanupFailures += 1;
     }
   }
-  if (!retainOutgoing) {
-    const keepPublishedFiles = new Set([
-      ...stagedFiles,
-      CURRENT_WEB_ASSETS_MANIFEST,
-    ]);
-    for (const relativePath of await regularFiles(distDirectory)) {
-      if (keepPublishedFiles.has(relativePath)) continue;
-      await rm(join(distDirectory, relativePath), { force: true });
-    }
-  }
-  return {
-    currentAssets: stagingAssets.length,
-    retainedOutgoingAssets: outgoing.length,
-    cleanupFailures,
-  };
+  return { cleanupFailures };
 }

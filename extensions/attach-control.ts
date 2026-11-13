@@ -32,6 +32,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import type {
+  AgentSession,
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
@@ -241,6 +242,7 @@ export interface AttachControlState {
   sessionFile: string;
   leafId: string | null;
   activity: AttachControlActivity;
+  queueAdmission?: true;
   taskRuns: TaskRuns;
   modelSelection: ModelSelection;
 }
@@ -250,8 +252,9 @@ export type AttachControlResponse =
       ok: true;
       state: AttachControlState;
       models?: ModelOption[];
-      /** Prompt reached a native message, or Stop had no unresolved handoff. */
+      /** Pi admitted the prompt, or Stop had no unresolved handoff. */
       witnessed?: true;
+      disposition?: "started" | "queued" | "handled";
     }
   | { ok: false; code: string; error: string };
 
@@ -373,9 +376,11 @@ const shared = ((globalThis as Record<symbol, unknown>)[
   owners: WeakMap<object, ExtensionAPI>;
   nativePrompts?: WeakMap<object, NativePromptState>;
   promptOrigin?: AsyncLocalStorage<PromptObservation>;
+  receiverStops?: WeakMap<ExtensionAPI, () => Promise<void>>;
 };
 const nativePrompts = (shared.nativePrompts ??= new WeakMap());
 const promptOrigin = (shared.promptOrigin ??= new AsyncLocalStorage());
+const receiverStops = (shared.receiverStops ??= new WeakMap());
 
 function promptDigest(
   text: string,
@@ -435,7 +440,16 @@ function observePrompt(
   });
 }
 
-export default function attachControl(pi: ExtensionAPI) {
+/** A Pi SDK host already owns the AgentSession and can supply its native
+ * admission result. Stock CLI extensions do not get that object. */
+export function attachControlForSession(currentSession: () => AgentSession) {
+  return (pi: ExtensionAPI) => attachControl(pi, currentSession);
+}
+
+export default function attachControl(
+  pi: ExtensionAPI,
+  currentSession?: () => AgentSession,
+) {
   if (process.env.PI_ATTACH_CONTROL === "0") return;
 
   let context: ExtensionContext | undefined;
@@ -454,6 +468,7 @@ export default function attachControl(pi: ExtensionAPI) {
   let settledTasks: TaskResult[] = [];
   let catalogEpoch = 0;
   let promptEpoch = 0;
+  let queueAdmission: Promise<"queued" | "handled"> | undefined;
   const catalogReads = new Set<AbortController>();
   // Shells started by a worker can launch a separate Pi with its environment.
   const ownerParent = process.env.PI_ATTACH_CONTROL_TAG_PARENT_PID;
@@ -474,6 +489,7 @@ export default function attachControl(pi: ExtensionAPI) {
     sessionFile: resolve(ctx.cwd, ctx.sessionManager.getSessionFile() ?? ""),
     leafId: ctx.sessionManager.getLeafId(),
     activity: activity(ctx),
+    ...(currentSession ? { queueAdmission: true } : {}),
     taskRuns: {
       instanceId: record?.instanceId ?? "",
       settled: settledTasks,
@@ -590,6 +606,7 @@ export default function attachControl(pi: ExtensionAPI) {
     };
     assertBranch();
     let models: ModelOption[] | undefined;
+    let disposition: "started" | "queued" | "handled" | undefined;
     switch (request.op) {
       case "state":
         break;
@@ -692,9 +709,46 @@ export default function attachControl(pi: ExtensionAPI) {
           });
         }
         assertReady();
-        // Pi returns no native admission result. A matching message from
-        // this call's async chain can prove admission, but a queue or an
-        // input hook can defer, transform, or reject it without a witness.
+        if (!ctx.isIdle()) {
+          const native = currentSession?.();
+          if (
+            !native?.isStreaming ||
+            native.sessionManager.getSessionId() !==
+              ctx.sessionManager.getSessionId() ||
+            native.sessionManager.getSessionFile() !==
+              ctx.sessionManager.getSessionFile()
+          )
+            throw new AttachControlError(
+              "QUEUE_ACK_UNAVAILABLE",
+              "Queue input in the original Pi terminal. This connection cannot confirm Steer or Follow up.",
+            );
+          if (queueAdmission)
+            throw new AttachControlError(
+              "BLOCKED",
+              "Pi is still checking a previous queued input.",
+            );
+          const images = loadedImages.length ? loadedImages : undefined;
+          const admission =
+            request.behavior === "followUp"
+              ? native.followUp(request.message, images, {
+                  source: "extension",
+                })
+              : native.steer(request.message, images, { source: "extension" });
+          queueAdmission = admission;
+          try {
+            disposition = await admission;
+            if (disposition !== "queued" && disposition !== "handled")
+              throw new AttachControlError(
+                "OUTCOME_UNKNOWN",
+                "Pi did not return an input admission result.",
+              );
+          } finally {
+            if (queueAdmission === admission) queueAdmission = undefined;
+          }
+          break;
+        }
+        // No deliverAs: if Pi becomes busy while an input hook is running,
+        // this idle submission cannot silently become unobservable queued input.
         const witnessed = await observePrompt(
           ctx,
           promptDigest(request.message, loadedImages),
@@ -704,7 +758,6 @@ export default function attachControl(pi: ExtensionAPI) {
                 ? [{ type: "text", text: request.message }, ...loadedImages]
                 : request.message,
               {
-                deliverAs: request.behavior ?? "steer",
                 expandPromptTemplates: false,
               },
             );
@@ -715,6 +768,7 @@ export default function attachControl(pi: ExtensionAPI) {
             "OUTCOME_UNKNOWN",
             "The attached Pi received the input, but its admission could not be confirmed. Check the conversation before sending again.",
           );
+        disposition = "started";
         break;
       }
       case "shutdown": {
@@ -735,7 +789,7 @@ export default function attachControl(pi: ExtensionAPI) {
         const native = nativePromptState(ctx);
         native.stopEpoch += 1;
         ctx.abort();
-        if (native.outstanding)
+        if (native.outstanding || queueAdmission)
           throw new AttachControlError(
             "OUTCOME_UNKNOWN",
             "Stop was requested, but an earlier input may still be waiting in the attached Pi.",
@@ -779,6 +833,7 @@ export default function attachControl(pi: ExtensionAPI) {
       ok: true,
       state: currentState(context),
       ...(models ? { models } : {}),
+      ...(disposition ? { disposition } : {}),
       ...(request.op === "prompt" || request.op === "abort"
         ? { witnessed: true as const }
         : {}),
@@ -851,8 +906,13 @@ export default function attachControl(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     const owner = shared.owners.get(ctx.sessionManager);
-    if (owner && owner !== pi) return;
+    if (owner && owner !== pi) {
+      const retire = receiverStops.get(owner);
+      if (!currentSession || !retire) return;
+      await retire();
+    }
     shared.owners.set(ctx.sessionManager, pi);
+    receiverStops.set(pi, stop);
     await stop();
     const generation = lifecycle;
     identity ??= await processIdentity(process.pid).catch(() => undefined);

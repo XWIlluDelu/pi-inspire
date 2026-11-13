@@ -12,6 +12,7 @@ import { modelSettingsScenario } from "./fixtures/model-settings";
 import { browserWorkspace } from "./fixtures/workspace.mjs";
 import { clipboardLines } from "./support/clipboard";
 import { routeSnapshots } from "./support/host-events";
+import { completeOperation } from "./support/host-operations";
 import { hostRequest } from "./support/host-request";
 import { moveCaretToEnd } from "./support/native-input";
 import {
@@ -207,7 +208,7 @@ test("Escape cancels an extension question during work and aborts during a proje
   let aborts = 0;
   await page.route("**/api/control/abort", (route) => {
     aborts++;
-    return route.fulfill({ json: { steering: [], followUp: [] } });
+    return completeOperation(route, "abort", { steering: [], followUp: [] });
   });
   demo.emit({ type: "agent_start" });
   await expect(

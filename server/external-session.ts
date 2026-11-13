@@ -9,7 +9,7 @@ export const PI_STATE_OBSERVATION_TIMEOUT_MS = 1_500;
 
 export type ExternalSessionState = Pick<
   AttachControlState,
-  "activity" | "leafId" | "modelSelection" | "taskRuns"
+  "activity" | "leafId" | "modelSelection" | "taskRuns" | "queueAdmission"
 >;
 
 /** Why Inspire stopped following an attached Pi. Only "exited" is evidence

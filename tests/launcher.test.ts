@@ -254,7 +254,7 @@ describe("production launcher", () => {
     expect(runLauncher(["stop"], env, checkoutLauncher)).toContain(
       "No managed INSΠRE instance is running.",
     );
-    // Cold startup must archive an outgoing chunk still used by an open page.
+    // Cold startup publishes only the current build, even with leftover files.
     const outgoingAsset = "ContextPane-launcher-old.js";
     const publishedAsset = join(checkout, "dist", "assets", outgoingAsset);
     await mkdir(dirname(publishedAsset), { recursive: true });
@@ -278,14 +278,8 @@ describe("production launcher", () => {
       };
     const firstState = await readState();
     runLauncher(["wait-ready"], env, checkoutLauncher);
-    // Remove the publication handoff copy to exercise the Host's retained generation.
-    await rm(publishedAsset);
     const origin = `http://127.0.0.1:${port}`;
-    const retainedAssetResponse = await fetch(
-      `${origin}/assets/${outgoingAsset}`,
-    );
-    expect(retainedAssetResponse.status).toBe(200);
-    expect(await retainedAssetResponse.text()).toBe("old chunk\n");
+    expect((await fetch(`${origin}/assets/${outgoingAsset}`)).status).toBe(404);
     const terminalHeaders = {
       Authorization: `Bearer ${firstState.token}`,
       "Content-Type": "application/json",

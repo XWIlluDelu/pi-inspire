@@ -133,7 +133,7 @@ With attach-control installed:
   it is idle. A busy Pi leaves the view read-only with progress and **Take over**. If the branch
   is free, Inspire continues it with its own Pi.
 - **Take over** attaches to that Pi. The terminal keeps working, and both interfaces operate the
-  same context and work: input, Steer/Follow-up, Stop, rename, model and thinking go to it. A Pi
+  same context and work: input, Stop, rename, model and thinking go to it. A Pi
   still at an older shared position does not block attaching to the one continuing the branch
   you see. If several Pi processes match that view, leave the session in the other processes
   before taking over.
@@ -148,13 +148,20 @@ With attach-control installed:
 
 Limits of attaching to another Pi:
 
-- Input queued in that Pi is not listed in Inspire's Pending; Pi has no public queue interface.
+- To send Steer or Follow up from the browser, start the terminal session with
+  `inspire pi` or `inspire pi --session <session.jsonl>` (from a source checkout:
+  `npm run inspire -- pi --session <session.jsonl>`). This opens Pi's native terminal UI using
+  its SDK and existing user settings and saved project trust. It confirms each input when Pi
+  queues or handles it. Native terminal queues remain outside Inspire's Pending.
+- A regular `pi` process running the extension can accept browser input when idle. While it
+  works, queue input in its terminal. The extension API cannot return a per-input queue
+  receipt, so Inspire refuses remote queue operations before sending them.
 - Stop interrupts agent work. Run Pi slash commands and start or stop terminal shell commands
   from the attached Pi's own interface.
 - Answer a terminal Pi's native dialogs in its terminal.
-- A prompt receipt requires evidence that Pi started processing that input. If Pi queues or
-  handles input without observable admission, or if the receipt is lost, Inspire retains the draft
-  and checks the original receipt on retry. Stop requests agent interruption and reports an
+- A prompt receipt requires evidence of native admission. If an idle input is handled without
+  an observable result, or if the receipt is lost, Inspire retains the draft and checks the
+  original receipt on retry. Stop requests agent interruption and reports an
   uncertain outcome while earlier input may still be in Pi's input hooks.
 - A Pi without attach-control is invisible to Inspire; both can still append to the same session.
 

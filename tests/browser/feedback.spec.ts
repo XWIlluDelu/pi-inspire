@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { renderedColors } from "./support/colors";
 import { routeSnapshots } from "./support/host-events";
+import { rejectOperation } from "./support/host-operations";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
 test.use({
@@ -51,17 +52,9 @@ test("session synchronization and prompt feedback recover independently on a nar
   expect((await renderedColors(retry)).contrast).toBeGreaterThanOrEqual(4.5);
 
   await page.route("**/api/prompt", async (route) => {
-    const request = route.request().postDataJSON();
-    await route.fulfill({
+    await rejectOperation(route, "prompt", {
       status: 409,
-      headers: {
-        "X-Inspire-Authority": request.authorityId,
-        "X-Inspire-Prompt-Operation": request.operationId,
-        "X-Inspire-Prompt-Outcome": "rejected",
-      },
-      json: {
-        error: "The provider is temporarily unavailable. Try sending again.",
-      },
+      message: "The provider is temporarily unavailable. Try sending again.",
     });
   });
   await input.fill("Keep this draft after a failed send.");

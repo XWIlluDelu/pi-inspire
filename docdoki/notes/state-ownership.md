@@ -46,8 +46,10 @@ unavailability keep their actual user-facing boundary.
 
 The saved document owns file integrity, while an owned Pi supplies the native leaf and its
 checkpointed entries. Browser History owns one pinned page and its page/body navigation intent.
-Live updates never mutate that History page. Directory/model previews, workspace and resource
-reads share bounded read recovery; no read recovery replays messages or other writes.
+Live updates never mutate that History page. A native checkpoint delivers the bounded Live rows,
+branch coordinates and saved-file diagnostics in one ordered frame. Joining peers retain individual
+deltas and replay only sequences newer than the snapshot cut. Directory/model previews, workspace
+and resource reads share bounded read recovery; no read recovery replays messages or other writes.
 
 ## Durable operations and catalogs
 
@@ -74,8 +76,10 @@ cleanup also fails. Concurrent native edits use one short lock-contention budget
 
 Pending dequeue is also a handoff, not just a mutation acknowledgement. Retain its exact returned
 text and image handles under the operation identity before returning HTTP; otherwise a successful
-clear followed by a lost response leaves nothing to retry. Reconnect observes that receipt on a
-new observer rather than joining a blackholed mutation promise. See [[session-transport]],
+clear followed by a lost response leaves nothing to retry. A prompt, Stop, or Return result must
+match its Host authority, command and operation ID. Reconnect observes the retained ID; a missing
+or retired receipt remains unknown. The Pending observer dispatches once and applies the first
+confirmed result only once, even if another HTTP observer is still waiting. See [[session-transport]],
 `server/pending-operation-receipts.ts` and `src/controllers/pending-recovery-controller.ts`.
 
 Host-owned private state files share `server/private-state-file.ts`: write a unique exclusive

@@ -26,7 +26,7 @@ for (const supportModule of [
   "platform-environment.mjs",
   "process-tree.mjs",
   "pi-processes.mjs",
-  "static-asset-cache.mjs",
+  "current-web-build.mjs",
   "user-environment.mjs",
 ]) {
   await cp(
@@ -34,3 +34,8 @@ for (const supportModule of [
     resolve(build, "server", supportModule),
   );
 }
+
+await cp(
+  resolve(root, "shared/browser-build.mjs"),
+  resolve(build, "shared/browser-build.mjs"),
+);

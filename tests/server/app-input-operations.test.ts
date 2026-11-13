@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_PROMPT_CHARS } from "../../shared/contracts.js";
+import { hostReceipt } from "../../shared/host-operations.js";
 import {
   closeHostApiFixture,
   hostApiFixture,
@@ -92,12 +93,8 @@ describe("HTTP prompt operation ownership", () => {
       expect(abort).not.toHaveBeenCalled();
       expect(close).not.toHaveBeenCalled();
 
-      const pending = {
-        accepted: false,
-        pending: true,
-        operationId,
-        authorityId,
-      };
+      const identity = hostReceipt("prompt", delivery);
+      const pending = { ...identity, state: "pending" };
       expect((await observe().expect(202)).body).toEqual(pending);
       expect((await post().expect(202)).body).toEqual(pending);
 
@@ -120,7 +117,11 @@ describe("HTTP prompt operation ownership", () => {
         .expect(409)
         .expect(({ body }) => expect(body.outcomeUnknown).toBe(true));
       finish();
-      const accepted = { accepted: true, historyEntry };
+      const accepted = {
+        ...identity,
+        state: "completed",
+        result: historyEntry,
+      };
       expect((await observe().expect(202)).body).toEqual(accepted);
       expect((await post().expect(202)).body).toEqual(accepted);
 
@@ -129,12 +130,12 @@ describe("HTTP prompt operation ownership", () => {
         .mockReturnValue(Date.now() + 15 * 60 * 1_000 + 1);
       try {
         for (const retired of [observe(), post()]) {
-          await retired.expect(409).expect(({ body, headers }) => {
+          await retired.expect(409).expect(({ body }) => {
             expect(body).toMatchObject({
               code: "PROMPT_OPERATION_RESULT_RETIRED",
               outcomeUnknown: true,
             });
-            expect(headers["x-inspire-prompt-outcome"]).toBeUndefined();
+            expect(body.executor).toBeUndefined();
           });
         }
       } finally {
@@ -181,22 +182,23 @@ describe("HTTP prompt operation ownership", () => {
         post(),
         localRequest.get(receipt).query({ authorityId }),
       ]) {
-        await observation
-          .expect(status)
-          .expect("X-Inspire-Authority", authorityId)
-          .expect("X-Inspire-Prompt-Operation", operationId)
-          .expect("X-Inspire-Prompt-Outcome", outcome)
-          .expect(({ body }) =>
-            expect(body).toMatchObject({ error, ...details }),
-          );
+        await observation.expect(status).expect(({ body }) =>
+          expect(body).toMatchObject({
+            ...hostReceipt("prompt", delivery),
+            state: outcome,
+            error: {
+              message: error,
+              status,
+              ...(details.code ? { code: details.code } : {}),
+            },
+          }),
+        );
       }
       await request(application.server)
         .get(receipt)
         .query({ authorityId })
         .expect(401)
-        .expect(({ headers }) =>
-          expect(headers["x-inspire-prompt-outcome"]).toBeUndefined(),
-        );
+        .expect(({ body }) => expect(body.executor).toBeUndefined());
       expect(prompt).toHaveBeenCalledOnce();
     },
   );
@@ -235,6 +237,11 @@ describe("HTTP Pending recovery and abort ownership", () => {
       finish({ steering: ["original text"], followUp: [] });
       const [a, b] = await Promise.all([first, second]);
       expect(a.status).toBe(200);
+      expect(a.body).toMatchObject({
+        ...hostReceipt(action, body),
+        state: "completed",
+        result: { steering: ["original text"], followUp: [] },
+      });
       expect(b.body).toEqual(a.body);
       operation.mockResolvedValue({
         steering: ["new queue must remain"],
@@ -297,10 +304,13 @@ describe("HTTP Pending recovery and abort ownership", () => {
     expect(recover).not.toHaveBeenCalled();
 
     const failure = (observation: ReturnType<typeof post>) =>
-      observation
-        .expect(500)
-        .expect("X-Inspire-Pending-Operation", body.operationId)
-        .expect("X-Inspire-Pending-Outcome", "failed");
+      observation.expect(500).expect(({ body: receipt }) =>
+        expect(receipt).toMatchObject({
+          ...hostReceipt("recover", body),
+          state: "rejected",
+          error: { status: 500, message: "transient failure" },
+        }),
+      );
     const failed = await failure(post());
     recover.mockResolvedValue({ steering: ["new input"], followUp: [] });
     expect((await failure(post())).body).toEqual(failed.body);

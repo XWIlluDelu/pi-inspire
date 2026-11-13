@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { ComposerHistoryPage } from "../../shared/contracts";
 import { routeSnapshots } from "./support/host-events";
+import { rejectOperation } from "./support/host-operations";
 import { hostRequest } from "./support/host-request";
 import { openFixtureSession, pairedPage } from "./support/navigation";
 
@@ -13,7 +14,7 @@ test.describe("touch recovery", () => {
   test("distinguishes unavailable Restore without overwriting the current draft", async ({
     page,
   }) => {
-    const transport = await routeSnapshots(page, {});
+    await routeSnapshots(page, {});
     await pairedPage(page);
     await openFixtureSession(page, /Review extension event lifecycle/);
     await page.locator(".composer__file-input").setInputFiles({
@@ -33,18 +34,13 @@ test.describe("touch recovery", () => {
       requested = resolve;
     });
     await page.route("**/api/prompt", async (route) => {
-      const { operationId, attachmentIds } = route.request().postDataJSON();
+      const { attachmentIds } = route.request().postDataJSON();
       expect(attachmentIds).toHaveLength(1);
       requested();
       await responseGate;
-      await route.fulfill({
+      await rejectOperation(route, "prompt", {
         status: 409,
-        headers: {
-          "X-Inspire-Authority": transport.authority(),
-          "X-Inspire-Prompt-Operation": operationId,
-          "X-Inspire-Prompt-Outcome": "rejected",
-        },
-        json: { error: "The prompt was not delivered." },
+        message: "The prompt was not delivered.",
       });
     });
     const input = page.getByRole("textbox", { name: "Message", exact: true });

@@ -2,6 +2,7 @@ import {
   type ActiveSnapshot,
   isBusyRunState,
   isSessionRuntimeStatus,
+  type LiveTranscript,
   type ProjectionConflict,
   type ProjectionHealth,
   projectionConflictSeverity,
@@ -16,12 +17,21 @@ import {
   reduceEvent,
   type WireEvent,
 } from "../events";
-import type { ResyncOptions } from "../snapshot-transition";
+import {
+  projectionDiagnostic,
+  type ResyncOptions,
+} from "../snapshot-transition";
 
 interface RuntimeEventHost {
   state(): AppState;
   patch(patch: Partial<AppState>): void;
   applySnapshot(snapshot: ActiveSnapshot): void;
+  applyTranscript?(
+    sessionId: string,
+    data: LiveTranscript,
+    sequence: number,
+    statuses?: Record<string, SessionRuntimeStatus>,
+  ): void;
   invalidateSelection(): void;
   ensureSessionVisible(sessionId: string): void;
   recordRuntimeReady(sessionId: string): void;
@@ -271,7 +281,13 @@ export class RuntimeEventController {
         // unaddressed selection pushes retain their replacement semantics.
         if (event.detailRevision === undefined) this.host.invalidateSelection();
         const snapshot = event.data as ActiveSnapshot;
-        this.host.applySnapshot(snapshot);
+        this.host.applySnapshot({
+          ...snapshot,
+          runtimeSequence:
+            typeof event.runtimeSequence === "number"
+              ? event.runtimeSequence
+              : undefined,
+        });
         if (snapshot.active?.sessionId)
           this.host.ensureSessionVisible(snapshot.active.sessionId);
       }
@@ -342,6 +358,33 @@ export class RuntimeEventController {
       void this.host.refreshGitStatus();
     }
 
+    if (
+      (event.type === "session_projection_changed" ||
+        event.type === "branch_changed") &&
+      eventSessionId &&
+      typeof event.runtimeSequence === "number" &&
+      Number.isSafeInteger(event.runtimeSequence) &&
+      event.transcript &&
+      this.host.applyTranscript
+    ) {
+      const transcript = event.transcript as LiveTranscript;
+      const page = transcript.transcriptPage;
+      if (
+        page?.sessionId !== eventSessionId ||
+        typeof page.viewId !== "string" ||
+        !Number.isSafeInteger(page.revision) ||
+        !Array.isArray(page.messages)
+      )
+        return;
+      this.host.applyTranscript(
+        eventSessionId,
+        transcript,
+        event.runtimeSequence,
+        sessionStatuses ?? undefined,
+      );
+      return;
+    }
+
     if (event.type === "session_projection_changed") {
       const rawHealth = event.health as Partial<ProjectionHealth> | undefined;
       const health: ProjectionHealth =
@@ -361,29 +404,16 @@ export class RuntimeEventController {
           : event.conflict && typeof event.conflict === "object"
             ? (event.conflict as ProjectionConflict)
             : this.host.state().projectionConflict;
-      const projectionError =
-        conflict?.message ??
-        (health.status !== "ok"
-          ? (health.message ?? "Session persistence is not yet confirmed")
-          : null);
-      const projectionSeverity =
-        projectionConflictSeverity(conflict) === "attention" ||
-        (!conflict && health.status === "pending")
-          ? "warning"
-          : "error";
+      const { error, errorSeverity, ...diagnostic } = projectionDiagnostic(
+        health,
+        conflict,
+      );
       const clearedProjectionError =
-        !projectionError &&
-        this.host.state().error === this.host.state().projectionError;
+        !error && this.host.state().error === this.host.state().projectionError;
       this.host.patch({
         ...(sessionStatuses ? { sessionStatuses } : {}),
-        projectionHealth: health,
-        projectionConflict: conflict,
-        projectionError,
-        ...(projectionError
-          ? { error: projectionError, errorSeverity: projectionSeverity }
-          : clearedProjectionError
-            ? { error: null, errorSeverity: "error" }
-            : {}),
+        ...diagnostic,
+        ...(error || clearedProjectionError ? { error, errorSeverity } : {}),
       });
       const revision =
         typeof event.revision === "number" ? event.revision : undefined;
@@ -457,7 +487,8 @@ export class RuntimeEventController {
       existing.indicator === next.indicator &&
       existing.attentionId === next.attentionId &&
       existing.needsInput === next.needsInput &&
-      existing.external === next.external
+      existing.external === next.external &&
+      existing.queueAdmission === next.queueAdmission
     )
       return null;
     return { ...this.host.state().sessionStatuses, [sessionId]: next };

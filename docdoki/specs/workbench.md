@@ -12,8 +12,8 @@ covers:
   - server/index.ts
   - server/preferences.ts
   - server/file-lock.mjs
-  - server/static-asset-cache.d.mts
-  - server/static-asset-cache.mjs
+  - server/current-web-build.d.mts
+  - server/current-web-build.mjs
   - server/update-checker.ts
   - server/pi-update-checker.ts
   - server/update-coordinator.ts
@@ -83,7 +83,7 @@ covers:
   - tests/server/host-dirs.test.ts
   - tests/web/directory-picker.test.tsx
   - tests/web/api.test.ts
-  - tests/server/static-asset-cache.test.ts
+  - tests/server/current-web-build.test.ts
   - tests/server/update-checker.test.ts
   - tests/launcher.test.ts
   - tests/portable/web-build-output.test.mjs
@@ -117,7 +117,7 @@ Give daily Pi work a conversation-centered interface with accessible session, fi
 
 - [[workspace-layout]] — responsive reading geometry, topbar identity, Git observation, and contextual modes.
 - [[interface-preferences]] — Settings, ordered preference writes, update observations, and completion attention.
-- [[host-lifecycle]] — atomic browser-build publication and retained executable assets.
+- [[host-lifecycle]] — atomic publication and current browser asset authority.
 
 ## Canonical project and session navigation
 

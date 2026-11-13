@@ -8,6 +8,65 @@ import {
   type SessionSummary,
 } from "../../shared/contracts";
 
+import { hostReceipt } from "../../shared/host-operations";
+
+function inputReceiptFixture(
+  url: string,
+  init: RequestInit,
+  route: RouteResponse,
+): unknown {
+  const path = new URL(url, "http://fixture.local");
+  const prompt =
+    path.pathname === "/api/prompt" || path.pathname.startsWith("/api/prompt/");
+  const recover = path.pathname === "/api/pending/recover";
+  const abort = path.pathname === "/api/control/abort";
+  const pending = path.pathname.startsWith("/api/pending/operations/");
+  if (!prompt && !recover && !abort && !pending) return route.body;
+  const value = route.body as Record<string, unknown> | null;
+  if (!value || typeof value !== "object" || "executor" in value) return value;
+  const action = prompt
+    ? "prompt"
+    : abort || path.searchParams.get("action") === "abort"
+      ? "abort"
+      : "recover";
+  const input =
+    init.method === "POST"
+      ? jsonBody(init)
+      : {
+          operationId: path.pathname.split("/").at(-1),
+          authorityId: path.searchParams.get("authorityId"),
+        };
+  if (
+    typeof input.operationId !== "string" ||
+    typeof input.authorityId !== "string"
+  )
+    return value;
+  const identity = hostReceipt(action, {
+    operationId: input.operationId,
+    authorityId: input.authorityId,
+  });
+  if (prompt && value.accepted === true)
+    return {
+      ...identity,
+      state: "completed",
+      result: value.historyEntry ?? null,
+    };
+  if (!prompt && Array.isArray(value.steering) && Array.isArray(value.followUp))
+    return { ...identity, state: "completed", result: value };
+  if (
+    prompt &&
+    typeof value.error === "string" &&
+    route.status &&
+    route.status < 500
+  )
+    return {
+      ...identity,
+      state: "rejected",
+      error: { ...value, status: route.status, message: value.error },
+    };
+  return value;
+}
+
 // --- Fetch stubbing ---
 
 export interface RouteResponse {
@@ -42,10 +101,13 @@ export function installFetch(handler: RouteHandler) {
       FakeWebSocket.bootstrapSnapshot = bootstrap.snapshot;
       FakeWebSocket.bootstrapUpdateStatus = bootstrap.updateStatus;
     }
-    return new Response(JSON.stringify(route.body), {
-      status: route.status ?? 200,
-      headers: { "Content-Type": "application/json", ...route.headers },
-    });
+    return new Response(
+      JSON.stringify(inputReceiptFixture(url, init ?? {}, route)),
+      {
+        status: route.status ?? 200,
+        headers: { "Content-Type": "application/json", ...route.headers },
+      },
+    );
   });
   vi.stubGlobal("fetch", fn);
   return fn;

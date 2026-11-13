@@ -10,16 +10,14 @@ import express, {
 import multer from "multer";
 import { ZodError, z } from "zod";
 import {
-  COMPOSER_HISTORY_FILE_REFERENCE,
-  COMPOSER_HISTORY_IMAGE_REFERENCE,
-} from "../shared/composer-artifact-references.js";
+  BROWSER_BUILD_HEADER,
+  BROWSER_UPGRADE_REQUIRED,
+} from "../shared/browser-build.mjs";
 import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
   MAX_CURATED_SESSION_RESULTS,
-  MAX_PROJECT_FILES,
-  MAX_PROMPT_CHARS,
   MAX_SESSION_CWD_HYDRATION_CWDS,
   MAX_SESSION_ID_CHARS,
   MAX_SESSION_ID_HYDRATION_IDS,
@@ -30,6 +28,17 @@ import {
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
 import { historyAddress, historyQuerySchema } from "../shared/history-query.js";
+import {
+  type HostOperationCommand,
+  type HostOperationIdentity,
+  type HostOperationReceipt,
+  type HostOperationResults,
+  hostReceipt,
+  INPUT_OPERATION_PATHS,
+  pendingOperationRequestSchema,
+  pendingOperationSchema,
+  promptSchema,
+} from "../shared/host-operations.js";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
 import {
   MAX_RESOURCE_PROBE_REFERENCES,
@@ -47,6 +56,7 @@ import {
   socketTicketSchema,
   secretMatches as tokenMatches,
 } from "./browser-auth.js";
+import { currentWebBuild } from "./current-web-build.mjs";
 import { showInFileManager } from "./file-manager.js";
 import { GeneratedExportStore } from "./generated-exports.js";
 import type { GitInspectionService } from "./git-inspection.js";
@@ -135,47 +145,6 @@ const newSchema = z
   })
   .strict();
 const sessionIdField = z.string().min(1).max(MAX_SESSION_ID_CHARS);
-const promptSchema = z
-  .object({
-    operationId: z.string().uuid(),
-    authorityId: z.string().uuid(),
-    sessionId: sessionIdField,
-    expectedViewId: z.string().min(1).max(240).optional(),
-    message: z.string().max(MAX_PROMPT_CHARS),
-    attachmentIds: z.array(z.string().uuid()).max(MAX_ATTACHMENTS).optional(),
-    historyArtifacts: z
-      .object({
-        viewId: z.string().min(1).max(240),
-        incarnation: z.string().min(1).max(240).nullable(),
-        effectiveLeafId: z.string().min(1).max(240).nullable(),
-        imageReferences: z
-          .array(z.string().max(800).regex(COMPOSER_HISTORY_IMAGE_REFERENCE))
-          .max(MAX_ATTACHMENTS),
-        fileReferences: z
-          .array(z.string().max(800).regex(COMPOSER_HISTORY_FILE_REFERENCE))
-          .max(MAX_ATTACHMENTS + MAX_PROJECT_FILES),
-      })
-      .strict()
-      .refine(
-        ({ imageReferences, fileReferences }) =>
-          imageReferences.length + fileReferences.length > 0,
-      )
-      .optional(),
-    projectFiles: z
-      .array(z.string().max(4_096))
-      .max(MAX_PROJECT_FILES)
-      .optional(),
-    behavior: z.enum(["steer", "followUp"]).optional(),
-  })
-  .strict();
-const pendingOperationSchema = z
-  .object({
-    sessionId: sessionIdField,
-    operationId: z.string().uuid(),
-    authorityId: z.string().uuid(),
-    expectedViewId: z.string().min(1).max(240).optional(),
-  })
-  .strict();
 const nativeCommandSchema = z
   .object({
     sessionId: sessionIdField,
@@ -396,7 +365,8 @@ interface AppDependencies {
   updateCoordinator?: UpdateCoordinator;
   distDir?: string;
   /** Complete prior asset generations retained for already-open clients. */
-  staticAssetCacheDirs?: readonly string[];
+  developmentBrowserBuild?: string;
+  requireBrowserBuild?: boolean;
   /** The persistent PTY authority. Production connects to the terminal
    * daemon; tests may supply an in-process implementation. */
   terminal?: TerminalService;
@@ -501,25 +471,9 @@ function apiError(
   // declined to choose between. Neither field contains runtime stderr.
   const matches = (error as { matches?: unknown })?.matches;
   const code = (error as { code?: unknown })?.code;
-  const pendingReceipt = (
-    error as { pendingReceipt?: { operationId: string; outcome: string } }
-  )?.pendingReceipt;
-  if (pendingReceipt)
-    response.set({
-      "X-Inspire-Pending-Operation": pendingReceipt.operationId,
-      "X-Inspire-Pending-Outcome": pendingReceipt.outcome,
-    });
   response.status(status).json({
     error: message,
     ...(typeof code === "string" ? { code } : {}),
-    ...(code === "PROMPT_RECOVERED"
-      ? {
-          recoveryId: (error as { recoveryId?: string }).recoveryId,
-          recoveredAttachments: (
-            error as { recoveredAttachments?: UploadedAttachment[] }
-          ).recoveredAttachments,
-        }
-      : {}),
     ...(Array.isArray(matches) ? { matches } : {}),
     ...((error as { outcomeUnknown?: unknown })?.outcomeUnknown === true
       ? { outcomeUnknown: true }
@@ -536,6 +490,16 @@ export function createInspireServer(deps: AppDependencies): {
   close: () => Promise<void>;
 } {
   const app = express();
+  const distDir = resolve(deps.distDir ?? "dist");
+  const currentBuild = currentWebBuild(distDir);
+  const currentBrowserBuild = async () =>
+    deps.developmentBrowserBuild ?? (await currentBuild())?.buildId;
+  const browserBuildAllowed = async (claimed: string | undefined) => {
+    const expected = await currentBrowserBuild();
+    return expected === undefined
+      ? !deps.requireBrowserBuild
+      : claimed === expected;
+  };
   const generatedExports = new GeneratedExportStore();
   // HTTP production behavior belongs to this application, not NODE_ENV:
   // changing the process environment also changes Pi and every tool it spawns.
@@ -546,19 +510,87 @@ export function createInspireServer(deps: AppDependencies): {
   const updateCoordinator =
     deps.updateCoordinator ??
     new UpdateCoordinator({ currentPiVersion: deps.piVersion });
-  type PromptOperationResponse = {
-    accepted: true;
-    historyEntry: Awaited<ReturnType<RuntimeController["prompt"]>>;
-  };
   const pendingOperations = new PendingOperationReceipts();
-  const promptOperations = new OperationReceipts<PromptOperationResponse>({
+  const promptOperations = new OperationReceipts<
+    HostOperationResults["prompt"]
+  >({
     message: "This Host has reached its process-lifetime prompt receipt limit",
     code: "PROMPT_OPERATION_CAPACITY",
   });
 
-  const observePrompt = async (
+  async function observeOperation<Command extends HostOperationCommand>(
+    command: Command,
+    identity: HostOperationIdentity,
+    completion: Promise<HostOperationResults[Command]>,
+    response: Response,
+    windowMs?: number,
+  ): Promise<void> {
+    const receipt = hostReceipt(command, identity);
+    const completed = completion.then(
+      (result): HostOperationReceipt<Command> => ({
+        ...receipt,
+        state: "completed",
+        result,
+      }),
+      (error: unknown): HostOperationReceipt<Command> => {
+        const detail = error as
+          | (Error & {
+              code?: string;
+              status?: number;
+              matches?: string[];
+              outcomeUnknown?: boolean;
+              recoveredAttachments?: UploadedAttachment[];
+              recoveryId?: string;
+            })
+          | null;
+        return {
+          ...receipt,
+          state: detail?.outcomeUnknown === true ? "unknown" : "rejected",
+          error: {
+            message:
+              detail instanceof Error ? detail.message : "Operation failed",
+            status: detail?.status ?? 500,
+            matches: detail?.matches,
+            code: detail?.code,
+            recoveredAttachments: detail?.recoveredAttachments,
+            recoveryId: detail?.recoveryId,
+          },
+        };
+      },
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let disconnected: (() => void) | undefined;
+    try {
+      const outcome =
+        windowMs === undefined
+          ? await completed
+          : await Promise.race([
+              completed,
+              new Promise<HostOperationReceipt<Command>>((resolve) => {
+                disconnected = () => resolve({ ...receipt, state: "pending" });
+                timer = setTimeout(disconnected, windowMs);
+                response.once("close", disconnected);
+              }),
+            ]);
+      if (!response.destroyed)
+        response
+          .status(
+            outcome.state === "unknown" || outcome.state === "rejected"
+              ? outcome.error.status
+              : command === "prompt"
+                ? 202
+                : 200,
+          )
+          .json(outcome);
+    } finally {
+      clearTimeout(timer);
+      if (disconnected) response.off("close", disconnected);
+    }
+  }
+
+  const observePrompt = (
     operationId: string,
-    completion: Promise<PromptOperationResponse> | null,
+    completion: Promise<HostOperationResults["prompt"]> | null,
     response: Response,
   ) => {
     if (!completion)
@@ -567,44 +599,13 @@ export function createInspireServer(deps: AppDependencies): {
         409,
         { code: "PROMPT_OPERATION_RESULT_RETIRED", outcomeUnknown: true },
       );
-    const pending = {
-      accepted: false,
-      pending: true,
-      operationId,
-      authorityId,
-    } as const;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let disconnected: (() => void) | undefined;
-    try {
-      return await Promise.race([
-        completion,
-        new Promise<typeof pending>((resolve) => {
-          timer = setTimeout(
-            () => resolve(pending),
-            deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
-          );
-          disconnected = () => resolve(pending);
-          response.once("close", disconnected);
-        }),
-      ]);
-    } catch (error) {
-      // This is the retained operation's own result. Middleware failures and
-      // missing/retired receipt lookups must never acquire this rejection proof.
-      const unknown = Boolean(
-        error &&
-          typeof error === "object" &&
-          "outcomeUnknown" in error &&
-          error.outcomeUnknown === true,
-      );
-      response.set({
-        "X-Inspire-Prompt-Operation": operationId,
-        "X-Inspire-Prompt-Outcome": unknown ? "unknown" : "rejected",
-      });
-      throw error;
-    } finally {
-      clearTimeout(timer);
-      if (disconnected) response.off("close", disconnected);
-    }
+    return observeOperation(
+      "prompt",
+      { operationId, authorityId },
+      completion,
+      response,
+      deps.promptObservationWindowMs ?? PROMPT_OBSERVATION_WINDOW_MS,
+    );
   };
 
   // The host itself remains loopback-only. A local reverse proxy may report
@@ -640,7 +641,7 @@ export function createInspireServer(deps: AppDependencies): {
     next();
   });
   // JSON escapes can take six bytes per character of a valid prompt.
-  app.post("/api/prompt", express.json({ limit: "4mb" }));
+  app.post(INPUT_OPERATION_PATHS.prompt, express.json({ limit: "4mb" }));
   app.use(express.json({ limit: "2mb" }));
   const browserAuth = new BrowserAuth(deps.token);
   const taskNotifications = new TaskNotifications(
@@ -796,6 +797,21 @@ export function createInspireServer(deps: AppDependencies): {
       return response.status(401).json({ error: "Authentication required" });
     response.locals.browserId = access.browserId;
     next();
+  });
+  app.use("/api", async (request, response, next) => {
+    // Explicit non-browser bearer clients use their own request contract.
+    if (
+      !response.locals.browserId ||
+      (await browserBuildAllowed(request.get(BROWSER_BUILD_HEADER)))
+    )
+      return next();
+    response
+      .set(BROWSER_BUILD_HEADER, BROWSER_UPGRADE_REQUIRED)
+      .status(409)
+      .json({
+        code: BROWSER_UPGRADE_REQUIRED,
+        error: "Reload this page to use the current Inspire build.",
+      });
   });
   app.post(
     "/api/auth/socket-ticket",
@@ -1242,10 +1258,9 @@ export function createInspireServer(deps: AppDependencies): {
     response.json({ ok: true });
   });
 
-  app.post("/api/prompt", async (request, response) => {
+  app.post(INPUT_OPERATION_PATHS.prompt, async (request, response) => {
     // Lets the browser distinguish a definitive Host refusal from an
     // intermediary 5xx whose delivery outcome remains unknown.
-    response.set("X-Inspire-Authority", authorityId);
     const prompt = promptSchema.parse(request.body);
     if (prompt.authorityId !== authorityId)
       throw requestError(
@@ -1274,30 +1289,32 @@ export function createInspireServer(deps: AppDependencies): {
           } = prompt;
           const historyEntry = await deps.runtime.prompt(input);
           void updateCoordinator.promptAccepted();
-          return { accepted: true, historyEntry };
+          return historyEntry;
         });
-    response
-      .status(202)
-      .json(await observePrompt(prompt.operationId, completion, response));
+    await observePrompt(prompt.operationId, completion, response);
   });
-  app.get("/api/prompt/:operationId", async (request, response) => {
-    response.set("X-Inspire-Authority", authorityId);
-    const operationId = z.string().uuid().parse(request.params.operationId);
-    if (request.query.authorityId !== authorityId)
-      throw requestError("The prompt receipt belongs to another Host", 409, {
-        code: "HOST_AUTHORITY_CHANGED",
-        outcomeUnknown: true,
-      });
-    const operation = promptOperations.get(operationId);
-    if (!operation)
-      throw requestError("This Host cannot identify that prompt receipt", 409, {
-        code: "PROMPT_OPERATION_NOT_FOUND",
-        outcomeUnknown: true,
-      });
-    response
-      .status(202)
-      .json(await observePrompt(operationId, operation.result, response));
-  });
+  app.get(
+    `${INPUT_OPERATION_PATHS.prompt}/:operationId`,
+    async (request, response) => {
+      const operationId = z.string().uuid().parse(request.params.operationId);
+      if (request.query.authorityId !== authorityId)
+        throw requestError("The prompt receipt belongs to another Host", 409, {
+          code: "HOST_AUTHORITY_CHANGED",
+          outcomeUnknown: true,
+        });
+      const operation = promptOperations.get(operationId);
+      if (!operation)
+        throw requestError(
+          "This Host cannot identify that prompt receipt",
+          409,
+          {
+            code: "PROMPT_OPERATION_NOT_FOUND",
+            outcomeUnknown: true,
+          },
+        );
+      await observePrompt(operationId, operation.result, response);
+    },
+  );
   app.get("/api/pi/changelog", async (_request, response) => {
     response.json(await installedPiChangelog());
   });
@@ -1416,36 +1433,43 @@ export function createInspireServer(deps: AppDependencies): {
     ...recovered,
     ...(recovered.attachments?.length ? { authorityId } : {}),
   });
-  app.get("/api/pending/operations/:operationId", async (request, response) => {
-    response.set("X-Inspire-Authority", authorityId);
-    const operation = pendingOperationSchema
-      .extend({ action: z.enum(["recover", "abort"]) })
-      .parse({
+  app.get(
+    `${INPUT_OPERATION_PATHS.pending}/:operationId`,
+    async (request, response) => {
+      const operation = pendingOperationRequestSchema.parse({
         ...request.query,
         operationId: request.params.operationId,
       });
-    assertPendingAuthority(operation.authorityId);
-    response.json(pendingResponse(await pendingOperations.observe(operation)));
-  });
+      assertPendingAuthority(operation.authorityId);
+      await observeOperation(
+        operation.action,
+        operation,
+        pendingOperations.observe(operation).then(pendingResponse),
+        response,
+      );
+    },
+  );
   for (const [path, action] of [
-    ["/api/control/abort", "abort"],
-    ["/api/pending/recover", "recover"],
+    [INPUT_OPERATION_PATHS.abort, "abort"],
+    [INPUT_OPERATION_PATHS.recover, "recover"],
   ] as const) {
     app.post(path, async (request, response) => {
-      response.set("X-Inspire-Authority", authorityId);
       const operation = pendingOperationSchema.parse(request.body);
       assertPendingAuthority(operation.authorityId);
-      const recovered = await pendingOperations.run(
-        { ...operation, action },
-        () =>
-          action === "abort"
-            ? deps.runtime.abort(operation.sessionId, operation.expectedViewId)
-            : deps.runtime.recoverPending(
-                operation.sessionId,
-                operation.expectedViewId,
-              ),
+      const completion = pendingOperations.run({ ...operation, action }, () =>
+        action === "abort"
+          ? deps.runtime.abort(operation.sessionId, operation.expectedViewId)
+          : deps.runtime.recoverPending(
+              operation.sessionId,
+              operation.expectedViewId,
+            ),
       );
-      response.json(pendingResponse(recovered));
+      await observeOperation(
+        action,
+        operation,
+        completion.then(pendingResponse),
+        response,
+      );
     });
   }
   app.post("/api/pending/text", async (request, response) => {
@@ -1761,11 +1785,15 @@ export function createInspireServer(deps: AppDependencies): {
     }
     response.json(preferences);
   });
-  app.get("/api/snapshot", async (request, response) =>
-    response.json(
-      await deps.runtime.snapshot(requestedDetail(request.query.detail)),
-    ),
-  );
+  app.get("/api/snapshot", async (request, response) => {
+    const snapshot = await deps.runtime.snapshot(
+      requestedDetail(request.query.detail),
+    );
+    response.json({
+      ...snapshot,
+      runtimeSequence: deps.runtime.eventSnapshotCut(snapshot),
+    });
+  });
   app.get(SESSION_HISTORY_PATH, async (request, response) => {
     const { sessionId, viewId, ...query } = historyQuerySchema.parse(
       request.query,
@@ -1819,14 +1847,8 @@ export function createInspireServer(deps: AppDependencies): {
     response.status(404).json({ error: "API route not found" });
   });
 
-  const distDir = resolve(deps.distDir ?? "dist");
   if (existsSync(distDir)) {
-    // Content-hashed bundles under /assets are safe to cache forever. Serve
-    // the active build first, then bounded prior generations so a connected
-    // old page can still perform its first lazy import after a Host rebuild.
-    app.use("/assets", staticWebAssets(join(distDir, "assets")));
-    for (const cacheDirectory of deps.staticAssetCacheDirs ?? [])
-      app.use("/assets", staticWebAssets(resolve(cacheDirectory)));
+    app.use("/assets", staticWebAssets(join(distDir, "assets"), currentBuild));
     // A missing module is an asset error, never a client-side route. Returning
     // index.html here both hides the cause and lets a Service Worker cache HTML
     // under a JavaScript URL.
@@ -1855,10 +1877,18 @@ export function createInspireServer(deps: AppDependencies): {
     updateCoordinator,
     authorityId,
     heartbeatIntervalMs,
+    currentBrowserBuild,
     taskNotifications,
   });
 
   server.on("upgrade", (request, socket, head) => {
+    void upgrade(request, socket, head).catch(() => socket.destroy());
+  });
+  async function upgrade(
+    request: IncomingMessage,
+    socket: import("node:stream").Duplex,
+    head: Buffer,
+  ) {
     let url: URL;
     try {
       url = new URL(
@@ -1897,6 +1927,13 @@ export function createInspireServer(deps: AppDependencies): {
           : undefined,
         deps.token,
       );
+    const browserBuild = url.searchParams.get("build") ?? undefined;
+    if (browserAuthenticated && !(await browserBuildAllowed(browserBuild))) {
+      if (url.pathname === "/events")
+        runtimeEvents.rejectUpgrade(request, socket, head);
+      else socket.destroy();
+      return;
+    }
     if (url.pathname === "/terminal" && deps.terminal && browserAuthenticated) {
       terminalGateway.upgrade(request, socket, head);
       return;
@@ -1913,12 +1950,13 @@ export function createInspireServer(deps: AppDependencies): {
         browserAuthenticated && browserAuthenticated.browserId
           ? { id: browserAuthenticated.browserId, origin }
           : undefined,
+        browserAuthenticated ? browserBuild : undefined,
       );
       return;
     }
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
-  });
+  }
 
   return {
     app,

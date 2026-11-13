@@ -64,10 +64,10 @@ async function addImage(composer: Locator, name: string) {
   return value;
 }
 
-test("Pending navigation keeps latest truthful in ordinary and virtualized conversations", async ({
+test("Pending navigation reaches the end of both short and long Live tails", async ({
   page,
 }) => {
-  let virtualized = false;
+  let longTail = false;
   const queue = {
     revision: 1,
     totalCount: 1,
@@ -83,7 +83,7 @@ test("Pending navigation keeps latest truthful in ordinary and virtualized conve
     snapshot(snapshot) {
       if (!snapshot.active) return;
       snapshot.pendingQueues = queue;
-      if (virtualized) {
+      if (longTail) {
         snapshot.active.transcriptPage.messages = Array.from(
           { length: 90 },
           (_, index) => ({
@@ -104,10 +104,10 @@ test("Pending navigation keeps latest truthful in ordinary and virtualized conve
   const remaining = () =>
     log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
   for (const long of [false, true]) {
-    virtualized = long;
+    longTail = long;
     if (long) {
       await page.reload();
-      await expect(page.locator(".transcript__column--virtual")).toBeVisible();
+      await expect(log.getByText(/Reading turn 90/)).toBeVisible();
     }
     await page.setViewportSize(
       long ? { width: 390, height: 844 } : { width: 1440, height: 960 },

@@ -271,7 +271,9 @@ export const Composer = memo(function Composer() {
   const isRetrying = state.runState === "retrying";
   const isCompacting = state.runState === "compacting";
   const isFailed = state.runState === "failed";
-  const deliveryBusy = busy;
+  const native = sessionId ? state.sessionStatuses[sessionId] : undefined;
+  const terminalQueueOnly = busy && native?.external && !native.queueAdmission;
+  const deliveryBusy = busy && !terminalQueueOnly;
   const shellInput = draft.trim().startsWith("!");
 
   const runStateClass = isRunning
@@ -348,6 +350,7 @@ export const Composer = memo(function Composer() {
 
   const canSend = Boolean(
     !sessionOpening &&
+      !terminalQueueOnly &&
       sessionId &&
       (draft.trim() ||
         state.attachments.length > 0 ||
@@ -471,11 +474,13 @@ export const Composer = memo(function Composer() {
         onShowHiddenFilesChange={store.setWorkspaceShowHidden}
         searchProjectFiles={store.searchProjectFiles}
         placeholder={
-          deliveryBusy
-            ? deliveryBehavior === "steer"
-              ? "Guide the current task…"
-              : "Queue a follow-up…"
-            : "Message Pi…"
+          terminalQueueOnly
+            ? "Draft a message or queue it in the Pi terminal…"
+            : deliveryBusy
+              ? deliveryBehavior === "steer"
+                ? "Guide the current task…"
+                : "Queue a follow-up…"
+              : "Message Pi…"
         }
         label="Message"
         onKeyDown={onKeyDown}

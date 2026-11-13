@@ -27,7 +27,7 @@ export async function preparePackagedLauncher(
       "platform-environment",
       "process-tree",
       "pi-processes",
-      "static-asset-cache",
+      "current-web-build",
       "user-environment",
     ].map((name) =>
       copyFile(

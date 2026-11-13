@@ -1,4 +1,10 @@
-import type { ActiveSnapshot, TranscriptPage } from "../shared/contracts";
+import {
+  type LiveTranscript,
+  type ProjectionConflict,
+  type ProjectionHealth,
+  projectionConflictSeverity,
+  type TranscriptPage,
+} from "../shared/contracts";
 import {
   type AppState,
   emptyResourceInspectionState,
@@ -37,9 +43,8 @@ interface SnapshotTransition {
  * without mutating store or controller ownership. */
 export function deriveSnapshotTransition(
   previous: AppState,
-  snapshot: ActiveSnapshot,
+  active: (LiveTranscript & { sessionId: string; cwd: string | null }) | null,
 ): SnapshotTransition {
-  const active = snapshot.active;
   const page = active?.transcriptPage;
   const nextSessionId = active?.sessionId ?? null;
   const cwd = active?.cwd ?? null;
@@ -97,6 +102,56 @@ export function deriveSnapshotTransition(
       page?.effectiveLeafId ?? active?.effectiveLeafId ?? null,
     revisionChanged,
     messages: newestMessages,
+  };
+}
+
+export function projectionDiagnostic(
+  health: ProjectionHealth,
+  conflict: ProjectionConflict | null,
+) {
+  const error =
+    conflict?.message ??
+    (health.status !== "ok"
+      ? (health.message ?? "Session persistence is not yet confirmed")
+      : null);
+  const errorSeverity =
+    projectionConflictSeverity(conflict) === "attention" ||
+    (!conflict && health.status === "pending")
+      ? ("warning" as const)
+      : ("error" as const);
+  return {
+    projectionHealth: health,
+    projectionConflict: conflict,
+    projectionError: error,
+    error,
+    errorSeverity,
+  };
+}
+
+/** A live replacement and a full snapshot install the same reading state. */
+export function transcriptPatch(
+  transition: SnapshotTransition,
+  active: LiveTranscript | null,
+) {
+  const { page, nextTranscriptRevision } = transition;
+  return {
+    messages: transition.messages,
+    transcriptRevision: nextTranscriptRevision,
+    transcriptAppendFromRevision:
+      page?.appendFromRevision ?? nextTranscriptRevision,
+    transcriptIncarnation: page?.incarnation ?? null,
+    transcriptViewId: transition.nextViewId,
+    transcriptDurableLeafId: transition.nextDurableLeafId,
+    transcriptEffectiveLeafId: transition.nextEffectiveLeafId,
+    transcriptNavigationLeased: active?.navigationLeased === true,
+    branchRevision: active?.branchRevision ?? null,
+    composerHistoryVersion: page?.composerHistoryVersion ?? null,
+    hasOlderMessages: Boolean(page?.hasOlder),
+    activeAssistantMessageKey: active?.activeAssistantMessageKey ?? null,
+    ...projectionDiagnostic(
+      active?.projectionHealth ?? { status: "ok" },
+      active?.projectionConflict ?? null,
+    ),
   };
 }
 

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEVELOPMENT_BROWSER_BUILD } from "../shared/browser-build.mjs";
 import { defaultAccessTokenPath, resolveAccessToken } from "./access-token.js";
 import { createInspireServer } from "./app.js";
 import {
@@ -61,11 +62,6 @@ import {
 import { ResourceStore } from "./resources.js";
 import { RuntimeController, type RuntimeWorkerStatus } from "./runtime.js";
 import { createHostSessionCatalog } from "./session-catalog.js";
-import {
-  currentStaticAssetPaths,
-  defaultStaticAssetCacheDirectory,
-  prepareStaticAssetCache,
-} from "./static-asset-cache.mjs";
 import {
   connectExistingTerminalDaemon,
   launchTerminalDaemon,
@@ -271,28 +267,6 @@ const updateCoordinator = new UpdateCoordinator({
   diagnostics,
 });
 const distDir = join(root, "dist");
-let staticAssetCacheDirs: string[] = [];
-{
-  const cacheDirectory = defaultStaticAssetCacheDirectory(root);
-  try {
-    const cache = await prepareStaticAssetCache(
-      join(distDir, "assets"),
-      cacheDirectory,
-      { assetPaths: await currentStaticAssetPaths(distDir) },
-    );
-    staticAssetCacheDirs = cache.generationDirectories;
-    if (cache.pruneFailures > 0)
-      console.warn(
-        `Deferred cleanup of ${cache.pruneFailures} cached asset generation(s).`,
-      );
-  } catch (error) {
-    console.error(
-      "Unable to preserve prior static assets:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
-
 const application = createInspireServer({
   token,
   instanceState: () => (shuttingDown ? null : publishedState),
@@ -335,7 +309,11 @@ const application = createInspireServer({
       )
     : undefined,
   distDir,
-  staticAssetCacheDirs,
+  requireBrowserBuild: true,
+  developmentBrowserBuild:
+    process.env.INSPIRE_DEV_HOST === "1"
+      ? DEVELOPMENT_BROWSER_BUILD
+      : undefined,
 });
 
 const statePath = process.env.INSPIRE_STATE_PATH;

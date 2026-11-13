@@ -29,7 +29,6 @@ import type {
   ProjectDirEntry,
   PromptAcceptedResponse,
   PromptDeliveryRequest,
-  PromptDeliveryResponse,
   ResourceDescriptor,
   ResourceProbeResponse,
   SessionDeleteResponse,
@@ -42,14 +41,21 @@ import type {
   UploadedAttachment,
 } from "../shared/contracts";
 import { SESSION_HISTORY_PATH } from "../shared/contracts";
-import type { SessionHistoryQuery } from "../shared/history-query";
 import type { HerdrEnhancementStatus } from "../shared/herdr";
+import type { SessionHistoryQuery } from "../shared/history-query";
+import {
+  type HostOperationCommand,
+  type HostOperationIdentity,
+  type HostOperationReceipt,
+  INPUT_OPERATION_PATHS,
+} from "../shared/host-operations";
 import type {
   HostRestartOperation,
   HostRestartRequest,
   HostRestartStatus,
 } from "../shared/host-restart";
 import type { HtmlPreviewResponse } from "../shared/html-preview";
+import { isJsonRecord } from "../shared/json-record";
 import type {
   McpConfigEdit,
   McpConfigSnapshot,
@@ -100,7 +106,12 @@ export interface ProjectFileResult {
   workspaceCwd?: string;
 }
 
-import { authenticatedFetch, BrowserPairingError } from "./browser-auth";
+import {
+  authenticatedFetch,
+  BrowserPairingError,
+  BrowserUpgradeRequired,
+  browserBuildId,
+} from "./browser-auth";
 
 export class ApiError extends Error {
   constructor(
@@ -115,10 +126,7 @@ export class ApiError extends Error {
     public authorityId?: string,
     /** The Host can authoritatively report that the operation outcome is unknown. */
     public outcomeUnknown = false,
-    /** A refusal of this operation, not just failure to observe its receipt. */
-    public promptReceipt?: { operationId: string; outcome: string },
-    /** A settled Pending handoff, including failure or result retirement. */
-    public pendingReceipt?: { operationId: string; outcome: string },
+    public operation?: { operationId: string; command: HostOperationCommand },
     public recoveredAttachments?: UploadedAttachment[],
     public recoveryId?: string,
   ) {
@@ -168,7 +176,7 @@ async function applicationFetch(
   try {
     return await authenticatedFetch(input, init);
   } catch (error) {
-    if (aborted(error)) throw error;
+    if (aborted(error) || error instanceof BrowserUpgradeRequired) throw error;
     if (error instanceof BrowserPairingError)
       throw new ApiError(401, error.message);
     throw new ApiTransportError("request");
@@ -184,63 +192,33 @@ async function responseJson<T>(response: Response): Promise<T> {
   }
 }
 
-async function ensureOk(response: Response): Promise<void> {
+async function ensureOk(
+  response: Response,
+  operation = false,
+): Promise<unknown> {
   if (response.ok) return;
-  let message = `Request failed (${response.status})`;
-  let matches: string[] | undefined;
-  let code: string | undefined;
-  let outcomeUnknown = false;
-  let recoveredAttachments: UploadedAttachment[] | undefined;
-  let recoveryId: string | undefined;
+  let body: Record<string, unknown> | null = null;
   try {
-    const body = (await response.json()) as {
-      error?: string;
-      matches?: unknown;
-      code?: unknown;
-      outcomeUnknown?: unknown;
-      recoveredAttachments?: UploadedAttachment[];
-      recoveryId?: unknown;
-    };
-    if (body.error) message = body.error;
-    if (Array.isArray(body.matches)) matches = body.matches.map(String);
-    if (typeof body.code === "string") code = body.code;
-    outcomeUnknown = body.outcomeUnknown === true;
-    if (
-      body.code === "PROMPT_RECOVERED" &&
-      Array.isArray(body.recoveredAttachments)
-    )
-      recoveredAttachments = body.recoveredAttachments;
-    if (body.code === "PROMPT_RECOVERED" && typeof body.recoveryId === "string")
-      recoveryId = body.recoveryId;
+    const decoded: unknown = await response.json();
+    if (isJsonRecord(decoded)) body = decoded;
   } catch (error) {
     if (aborted(error)) throw error;
-    // A non-JSON HTTP error still has a useful status. Losing the body in
-    // transit, however, is not an authoritative application refusal.
     if (!(error instanceof SyntaxError))
       throw new ApiTransportError("response");
   }
+  // An admitted operation may report its result through a non-2xx HTTP status.
+  // The caller still has to validate the complete receipt and its identity.
+  if (operation && body && "executor" in body) return body;
   throw new ApiError(
     response.status,
-    message,
-    matches,
-    code,
+    typeof body?.error === "string"
+      ? body.error
+      : `Request failed (${response.status})`,
+    Array.isArray(body?.matches) ? body.matches.map(String) : undefined,
+    typeof body?.code === "string" ? body.code : undefined,
     response.headers.get("X-Inspire-Edge") ?? undefined,
-    response.headers.get("X-Inspire-Authority") ?? undefined,
-    outcomeUnknown,
-    response.headers.has("X-Inspire-Prompt-Operation")
-      ? {
-          operationId: response.headers.get("X-Inspire-Prompt-Operation")!,
-          outcome: response.headers.get("X-Inspire-Prompt-Outcome") ?? "",
-        }
-      : undefined,
-    response.headers.has("X-Inspire-Pending-Operation")
-      ? {
-          operationId: response.headers.get("X-Inspire-Pending-Operation")!,
-          outcome: response.headers.get("X-Inspire-Pending-Outcome") ?? "",
-        }
-      : undefined,
-    recoveredAttachments,
-    recoveryId,
+    undefined,
+    operation || body?.outcomeUnknown === true,
   );
 }
 
@@ -256,6 +234,7 @@ export class ApiRequestCancelledError extends Error {
 interface ObservationOptions {
   /** null keeps Pi-owned long operations completion-driven. */
   timeoutMs?: number | null;
+  readErrorBody?: boolean;
   mutation?: boolean;
 }
 
@@ -323,7 +302,8 @@ async function request<T>(
           ...init.headers,
         },
       });
-      await ensureOk(response);
+      if (!response.ok)
+        return (await ensureOk(response, options.readErrorBody)) as T;
       return responseJson<T>(response);
     },
   );
@@ -458,6 +438,87 @@ function post<T>(
   );
 }
 
+async function hostOperation<Command extends HostOperationCommand>(
+  command: Command,
+  identity: HostOperationIdentity,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  timeoutMs?: number | null,
+): Promise<
+  Extract<HostOperationReceipt<Command>, { state: "pending" | "completed" }>
+> {
+  const options = { mutation: true, timeoutMs, readErrorBody: true };
+  const init = { signal };
+  const receipt = await (body === undefined
+    ? request<unknown>(path, init, options)
+    : post<unknown>(path, body, init, options));
+  if (
+    !isJsonRecord(receipt) ||
+    !isJsonRecord(receipt.executor) ||
+    receipt.executor.kind !== "host" ||
+    receipt.executor.authorityId !== identity.authorityId ||
+    receipt.operationId !== identity.operationId ||
+    receipt.command !== command
+  )
+    throw new ApiTransportError("response", true);
+  if (receipt.state === "pending")
+    return receipt as HostOperationReceipt<Command> & { state: "pending" };
+  if (receipt.state === "completed") {
+    const result = receipt.result;
+    const valid =
+      command === "prompt"
+        ? result === null ||
+          (isJsonRecord(result) && typeof result.text === "string")
+        : isJsonRecord(result) &&
+          Array.isArray(result.steering) &&
+          Array.isArray(result.followUp);
+    if (valid)
+      return receipt as HostOperationReceipt<Command> & { state: "completed" };
+  }
+  const detail = receipt.error;
+  if (
+    (receipt.state === "unknown" || receipt.state === "rejected") &&
+    isJsonRecord(detail) &&
+    typeof detail.message === "string" &&
+    typeof detail.status === "number"
+  )
+    throw new ApiError(
+      detail.status,
+      detail.message,
+      Array.isArray(detail.matches) ? detail.matches.map(String) : undefined,
+      typeof detail.code === "string" ? detail.code : undefined,
+      undefined,
+      identity.authorityId,
+      receipt.state === "unknown",
+      { operationId: identity.operationId, command },
+      Array.isArray(detail.recoveredAttachments)
+        ? (detail.recoveredAttachments as UploadedAttachment[])
+        : undefined,
+      typeof detail.recoveryId === "string" ? detail.recoveryId : undefined,
+    );
+  throw new ApiTransportError("response", true);
+}
+
+async function pendingHandoff(
+  action: "abort" | "recover",
+  identity: PendingOperationIdentity,
+  path: string,
+  body?: unknown,
+): Promise<PendingRecovery> {
+  const receipt = await hostOperation(
+    action,
+    identity,
+    path,
+    body,
+    undefined,
+    body === undefined ? undefined : null,
+  );
+  if (receipt.state !== "completed")
+    throw new ApiTransportError("response", true);
+  return receipt.result;
+}
+
 function waitForPromptPoll(delay: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const finish = () => {
@@ -477,55 +538,37 @@ async function deliverPrompt(
   signal?: AbortSignal,
   observeOnly = false,
 ): Promise<PromptAcceptedResponse> {
-  const init = { signal };
-  // Losing even a read-only observation leaves the submitted write uncertain.
-  const observation = {
-    timeoutMs: PROMPT_CONFIRMATION_TIMEOUT_MS,
-    mutation: true,
-  };
-  const receiptPath = `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`;
+  const receiptPath = `${INPUT_OPERATION_PATHS.prompt}/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`;
   let first = !observeOnly;
   let failures = 0;
   const retryDelays = [250, 1_000, 3_000];
   for (;;) {
-    let response: PromptDeliveryResponse;
     try {
-      response = await (first
-        ? post<PromptDeliveryResponse>("/api/prompt", body, init, observation)
-        : request<PromptDeliveryResponse>(receiptPath, init, observation));
+      const receipt = await hostOperation(
+        "prompt",
+        body,
+        first ? INPUT_OPERATION_PATHS.prompt : receiptPath,
+        first ? body : undefined,
+        signal,
+        PROMPT_CONFIRMATION_TIMEOUT_MS,
+      );
+      if (receipt.state === "completed")
+        return { accepted: true, historyEntry: receipt.result };
+      failures = 0;
     } catch (error) {
-      // A retained result is authoritative for this operation. Recover a
-      // lost HTTP response by reading its receipt without posting again.
-      if (error instanceof ApiError) {
-        const receipt =
-          error.edge !== "ssh-reverse" &&
-          error.authorityId === body.authorityId &&
-          error.promptReceipt?.operationId === body.operationId;
-        if (receipt && error.promptReceipt?.outcome === "rejected") throw error;
-        error.outcomeUnknown = true;
-        if (
-          receipt ||
-          (error.status < 500 && error.status !== 408 && error.status !== 429)
-        )
-          throw error;
-      } else if (!(error instanceof ApiTransportError)) throw error;
+      if (
+        error instanceof ApiError
+          ? error.operation ||
+            (error.status < 500 && error.status !== 408 && error.status !== 429)
+          : !(error instanceof ApiTransportError) || error.phase === "response"
+      )
+        throw error;
       const delay = retryDelays[failures++];
       if (delay === undefined || signal?.aborted) throw error;
       first = false;
       await waitForPromptPoll(delay, signal);
       continue;
     }
-    failures = 0;
-    if (response?.accepted === true) return response;
-    if (
-      !response ||
-      response.pending !== true ||
-      response.operationId !== body.operationId ||
-      response.authorityId !== body.authorityId
-    )
-      throw new ApiTransportError("response", true);
-    // Poll the receipt, not another delivery of potentially large attachments.
-    // Pi may still be compacting, running an input hook, or awaiting a dialog.
     first = false;
     await waitForPromptPoll(250, signal);
   }
@@ -914,32 +957,24 @@ export function createApi() {
         },
       ),
     abort: (sessionId: string, identity: PendingOperationIdentity) =>
-      post<PendingRecovery>(
-        "/api/control/abort",
-        {
-          sessionId,
-          operationId: identity.operationId,
-          authorityId: identity.authorityId,
-          expectedViewId: identity.expectedViewId,
-        },
-        {},
-        { timeoutMs: null },
-      ),
+      pendingHandoff("abort", identity, INPUT_OPERATION_PATHS.abort, {
+        sessionId,
+        operationId: identity.operationId,
+        authorityId: identity.authorityId,
+        expectedViewId: identity.expectedViewId,
+      }),
     recoverPending: (sessionId: string, identity: PendingOperationIdentity) =>
-      post<PendingRecovery>(
-        "/api/pending/recover",
-        {
-          sessionId,
-          operationId: identity.operationId,
-          authorityId: identity.authorityId,
-          expectedViewId: identity.expectedViewId,
-        },
-        {},
-        { timeoutMs: null },
-      ),
+      pendingHandoff("recover", identity, INPUT_OPERATION_PATHS.recover, {
+        sessionId,
+        operationId: identity.operationId,
+        authorityId: identity.authorityId,
+        expectedViewId: identity.expectedViewId,
+      }),
     pendingOperation: ({ operationId, ...query }: PendingOperationRequest) =>
-      request<PendingRecovery>(
-        `/api/pending/operations/${encodeURIComponent(operationId)}?${new URLSearchParams(query)}`,
+      pendingHandoff(
+        query.action,
+        { operationId, authorityId: query.authorityId },
+        `${INPUT_OPERATION_PATHS.pending}/${encodeURIComponent(operationId)}?${new URLSearchParams(query)}`,
       ),
     pendingText: (body: PendingReadRequest, signal?: AbortSignal) =>
       post<PendingCopyContent>(
@@ -1145,7 +1180,7 @@ export type Api = ReturnType<typeof createApi>;
 
 export function terminalUrl(ticket: string): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/terminal?ticket=${encodeURIComponent(ticket)}`;
+  return `${protocol}//${window.location.host}/terminal?${new URLSearchParams({ ticket, build: browserBuildId() })}`;
 }
 
 function detailQuery(sessionId: string | null | undefined): string {
@@ -1160,7 +1195,7 @@ export function eventsUrl(
   sessionId: string | null,
 ): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const query = new URLSearchParams({ ticket });
+  const query = new URLSearchParams({ ticket, build: browserBuildId() });
   if (snapshotDigest) query.set("snapshot", snapshotDigest);
   query.set("detail", sessionId ?? "");
   return `${protocol}//${window.location.host}/events?${query}`;

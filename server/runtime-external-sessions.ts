@@ -78,6 +78,10 @@ export class RuntimeExternalSessions {
     return this.connections.has(slot);
   }
 
+  canQueue(slot: RuntimeSlot): boolean {
+    return this.connections.get(slot)?.state.queueAdmission === true;
+  }
+
   connection(slot: RuntimeSlot): ExternalSessionConnection | undefined {
     return this.connections.get(slot)?.native;
   }
@@ -340,7 +344,9 @@ export class RuntimeExternalSessions {
     if (selectionRevision !== connection.selectionRevision)
       state = { ...state, modelSelection: connection.state.modelSelection };
     const priorState = connection.state;
-    const changed = priorState.activity !== state.activity;
+    const changed =
+      priorState.activity !== state.activity ||
+      priorState.queueAdmission !== state.queueAdmission;
     const selectionChanged =
       JSON.stringify(priorState.modelSelection) !==
       JSON.stringify(state.modelSelection);

@@ -6,7 +6,7 @@ covers:
   - shared/html-preview.ts
   - src/{api,resources,resource-preview,document-resources,diff,source-diff,file-icons,syntax-highlighting,store,pdf-renderer,pdf-find,delimited-text,reader-quote}.ts
   - scripts/vite-pdf-assets.ts
-  - server/static-asset-cache.mjs
+  - server/current-web-build.mjs
   - src/controllers/{resource,git,workspace}-controller.ts
   - src/components/{ContextPane,ContextTabStrip,ContextPaneState,FilesPane,FilePreview,PdfPreview,DocumentPreview,ChangesPane,WorkspaceBrowser,ResourcePathLabel,SearchMatchText,NotebookPreview,PaneResizeHandle,RichText,Transcript,TablePreview,DocumentOutline,ReaderQuoteAction}.tsx
   - src/components/context-pane-view.ts
@@ -400,7 +400,7 @@ that sandbox despite `script-src 'none'`.
 
 The page backing canvas is capped at four million pixels, 8192 pixels per dimension, and a device
 pixel ratio of two. Closing or replacing the reader cancels rendering and destroys its worker.
-PDF.js fonts, CMaps, and JavaScript image decoders are shipped locally and retained with their build
+PDF.js fonts, CMaps, and JavaScript image decoders are shipped locally and published with the current build
 generation.
 
 Audio and video use native playback controls. The page media policy allows same-origin and blob

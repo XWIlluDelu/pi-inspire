@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { routeSnapshots } from "./support/host-events";
+import { completeOperation } from "./support/host-operations";
 import {
   openCommandPalette,
   openSettings,
@@ -25,7 +26,7 @@ test("Escape closes the focused workbench surface before aborting an active run"
   let aborts = 0;
   await page.route("**/api/control/abort", (route) => {
     aborts++;
-    return route.fulfill({ json: { steering: [], followUp: [] } });
+    return completeOperation(route, "abort", { steering: [], followUp: [] });
   });
   await page.setViewportSize({ width: 1280, height: 900 });
   await pairAndOpen(page);

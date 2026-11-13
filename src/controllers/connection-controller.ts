@@ -2,6 +2,7 @@ import {
   assistantStreamTextLength,
   MAX_ASSISTANT_STREAM_BATCH_EVENTS,
 } from "../../shared/assistant-stream";
+import { BROWSER_UPGRADE_CLOSE } from "../../shared/browser-build.mjs";
 import {
   isRunState,
   isSessionRuntimeStatus,
@@ -76,6 +77,7 @@ export type ManagedConnectionState =
   | "reconnecting"
   | "offline";
 export type ManagedConnectionProblem =
+  | { kind: "browser-upgrade" }
   | { kind: "device-offline" }
   | { kind: "address-unreachable" }
   | { kind: "relay-unavailable" }
@@ -403,8 +405,16 @@ export class ConnectionController {
       if (!this.flushStreamUpdate(socket)) return;
       this.applySocketEvent(socket, event);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.socket !== socket) return;
+      if (event?.code === BROWSER_UPGRADE_CLOSE) {
+        this.stop();
+        this.host.patch({
+          connection: "offline",
+          connectionProblem: { kind: "browser-upgrade" },
+        });
+        return;
+      }
       const canResume =
         this.synchronized ||
         (phase === "bootstrap" && Boolean(this.host.state().snapshotDigest));

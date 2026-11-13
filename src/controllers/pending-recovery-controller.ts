@@ -4,17 +4,12 @@ import type {
 } from "../../shared/contracts";
 import { type Api, ApiError, ApiTransportError } from "../api";
 
+import { OperationObserver } from "../operation-observer";
+
 interface Handoff {
   intent: string;
   request: PendingOperationRequest;
-  result?: PendingRecovery;
-  completion: Promise<PendingRecovery>;
-  complete(result: PendingRecovery): void;
-  fail(error: ApiError): void;
-  observation?: {
-    api: Api;
-    promise: Promise<PendingRecovery>;
-  };
+  receipt: OperationObserver<Api, PendingRecovery>;
   restored?: boolean;
 }
 interface PendingRecoveryHost {
@@ -48,12 +43,6 @@ export class PendingRecoveryController {
     ]);
     let handoff = this.handoffs.get(intent);
     if (!handoff) {
-      let complete!: Handoff["complete"];
-      let fail!: Handoff["fail"];
-      const completion = new Promise<PendingRecovery>((resolve, reject) => {
-        complete = resolve;
-        fail = reject;
-      });
       handoff = {
         intent,
         request: {
@@ -63,9 +52,7 @@ export class PendingRecoveryController {
           ...(expectedViewId ? { expectedViewId } : {}),
           operationId: crypto.randomUUID(),
         },
-        completion,
-        complete,
-        fail,
+        receipt: new OperationObserver(),
       };
       this.handoffs.set(intent, handoff);
     }
@@ -76,9 +63,9 @@ export class PendingRecoveryController {
   private terminal(error: ApiError, request: PendingOperationRequest): boolean {
     return (
       error.authorityId === request.authorityId &&
-      error.pendingReceipt?.operationId === request.operationId &&
-      (error.pendingReceipt.outcome === "failed" ||
-        error.pendingReceipt.outcome === "retired")
+      error.operation?.operationId === request.operationId &&
+      error.operation.command === request.action &&
+      !error.outcomeUnknown
     );
   }
 
@@ -90,86 +77,45 @@ export class PendingRecoveryController {
     const api = this.host.api();
     if (!api || handoff.request.authorityId !== this.host.authorityId())
       return false;
-    const { request } = handoff;
+    const { request, receipt } = handoff;
+    const rejected = (error: unknown) =>
+      error instanceof ApiError && this.terminal(error, request);
     try {
-      if (!handoff.result) {
-        if (
-          readOnly ||
-          !handoff.observation ||
-          handoff.observation.api !== api
-        ) {
-          const promise = (async () => {
-            try {
-              return await (readOnly
-                ? api.pendingOperation(request)
-                : request.action === "recover"
-                  ? api.recoverPending(request.sessionId, request)
-                  : api.abort(request.sessionId, request));
-            } catch (error) {
-              if (
-                readOnly ||
-                !this.owns(handoff) ||
-                !(
-                  error instanceof ApiTransportError ||
-                  (error instanceof ApiError &&
-                    !this.terminal(error, request) &&
-                    (error.outcomeUnknown || error.status >= 500))
-                )
-              )
-                throw error;
-              return api.pendingOperation(request);
-            }
-          })().then((result) => {
-            // A receipt observer can finish before the original POST. The
-            // first confirmed result owns restoration; retired handoffs must
-            // not be revived by late transport completions.
-            if (this.owns(handoff) && !handoff.result) {
-              handoff.result = result;
-              handoff.complete(result);
-            }
-            return result;
-          });
-          handoff.observation = { api, promise };
-        }
-        const observation = handoff.observation;
-        try {
-          // Lightweight socket resume keeps the same API. Wake the
-          // initiating Return/Stop too when another observer confirms it.
-          await Promise.race([observation.promise, handoff.completion]);
-        } finally {
-          if (handoff.observation === observation)
-            handoff.observation = undefined;
-        }
-      }
-      if (
-        api !== this.host.api() ||
-        request.authorityId !== this.host.authorityId()
-      )
-        return false;
-      if (handoff.restored === undefined) {
-        if (!this.owns(handoff)) return false;
-        handoff.restored = this.host.restore(
-          request.sessionId,
-          handoff.result!,
-        );
-        this.handoffs.delete(handoff.intent);
-      }
-      return handoff.restored;
+      await receipt.observe(
+        api,
+        {
+          start: () =>
+            request.action === "recover"
+              ? api.recoverPending(request.sessionId, request)
+              : api.abort(request.sessionId, request),
+          read: () => api.pendingOperation(request),
+          rejected,
+          recover: (error) =>
+            this.owns(handoff) &&
+            (error instanceof ApiTransportError ||
+              (error instanceof ApiError &&
+                !rejected(error) &&
+                (error.outcomeUnknown || error.status >= 500))),
+        },
+        readOnly,
+      );
     } catch (error) {
-      if (
-        error instanceof ApiError &&
-        error.authorityId === request.authorityId &&
-        (this.terminal(error, request) ||
-          (!error.outcomeUnknown &&
-            error.status !== 401 &&
-            error.status < 500)) &&
-        this.owns(handoff)
-      ) {
+      if (rejected(error) && this.owns(handoff))
         this.handoffs.delete(handoff.intent);
-        handoff.fail(error);
-      }
       throw error;
     }
+    if (
+      api !== this.host.api() ||
+      request.authorityId !== this.host.authorityId()
+    )
+      return false;
+    if (handoff.restored !== undefined) return handoff.restored;
+    if (!this.owns(handoff)) return false;
+    const confirmed = receipt.claim();
+    if (!confirmed) return false;
+    handoff.restored = this.host.restore(request.sessionId, confirmed.value);
+    this.handoffs.delete(handoff.intent);
+    return handoff.restored;
   }
 
   startRun(sessionId: string): void {

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hostReceipt } from "../../shared/host-operations";
 import { deleteSessionDraft, sessionDraft } from "../../src/session-drafts";
 import {
   closeHostApiFixture,
@@ -115,44 +116,41 @@ describe("Pending intent and receipt lifecycle", () => {
       .mockResolvedValue({ steering: ["retained"], followUp: [] });
     const ids: string[] = [];
     let observing = false;
+    let reads = 0;
     installStoreRoutes(async (url, init) => {
       if (url === "/api/pending/recover") {
         ids.push(String(jsonBody(init).operationId));
-        const response = await forward(url, init);
-        if (observing) return response;
+        await forward(url, init);
+        return { status: 500, body: { error: "observation failed" } };
+      }
+      if (url.startsWith("/api/pending/operations/")) {
+        expect(url).toContain(ids[0]);
+        if (observing) return forward(url, init);
+        if (++reads === 1) throw new TypeError("receipt unavailable");
         return {
           status: 500,
-          body: { error: "observation failed" },
-          headers: {
-            "X-Inspire-Authority": TEST_HOST_AUTHORITY,
-            ...(ids.length === 2
-              ? {
-                  "X-Inspire-Pending-Operation": "unmatched-operation",
-                  "X-Inspire-Pending-Outcome": "failed",
-                }
-              : {}),
+          body: {
+            ...hostReceipt("recover", {
+              authorityId: TEST_HOST_AUTHORITY,
+              operationId: "unmatched-operation",
+            }),
+            state: "rejected",
+            error: { status: 500, message: "another operation failed" },
           },
         };
       }
-      if (url.startsWith("/api/pending/operations/")) {
-        if (!observing) throw new TypeError("receipt unavailable");
-        return forward(url, init);
-      }
     });
     const { store } = await initStore();
-    // An ordinary HTTP refusal and proof for another operation are both inconclusive.
     expect(await store.recoverPending()).toBe(false);
-    expect(ids).toHaveLength(1);
     expect(await store.recoverPending()).toBe(false);
-    expect(ids).toEqual([ids[0], ids[0]]);
     observing = true;
     expect(await store.recoverPending()).toBe(true);
-    expect(ids).toEqual([ids[0], ids[0], ids[0]]);
+    expect(ids).toHaveLength(1);
     expect(recover).toHaveBeenCalledOnce();
     expect(sessionDraft("s1")).toBe("retained");
   });
 
-  it("ends retired observation without redispatching its tombstone, then accepts a new explicit Return", async () => {
+  it("keeps a retired receipt unknown until a new queue is admitted", async () => {
     let lost = true;
     const requests: Record<string, unknown>[] = [];
     const recover = vi
@@ -170,17 +168,23 @@ describe("Pending intent and receipt lifecycle", () => {
         return forward(url, init);
       }
     });
-    const { store } = await initStore();
+    const { store, socket } = await initStore();
     expect(await store.recoverPending()).toBe(false);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(Date.now() + 16 * 60_000);
     lost = false;
     expect(await store.recoverPending()).toBe(false);
     expect(recover).toHaveBeenCalledOnce();
+    expect(await store.recoverPending()).toBe(false);
+    expect(requests).toHaveLength(1);
     recover.mockResolvedValue({ steering: ["current queue"], followUp: [] });
+    socket.emit({
+      type: "queue_update",
+      sessionId: "s1",
+      pendingQueues: { revision: 2, totalCount: 1, steering: [], followUp: [] },
+    });
     expect(await store.recoverPending()).toBe(true);
-    expect(requests[1]).toEqual(requests[0]);
-    expect(requests[2]?.operationId).not.toBe(requests[0]?.operationId);
+    expect(requests[1]?.operationId).not.toBe(requests[0]?.operationId);
     expect(sessionDraft("s1")).toBe("current queue");
     const retired = await forward("/api/pending/recover", {
       method: "POST",

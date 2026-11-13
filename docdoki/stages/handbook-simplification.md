@@ -57,17 +57,27 @@ attachment-retention and PDF experiments are outside the main plan.
   without reconstructing runs from browser events.
 - The last-opened hint supplies a fresh browser's starting address. It no longer controls worker
   retention, addressed reads or another browser's completion and failure indicators.
-- Counted source is 237,396 lines, down 14,545 from the handbook baseline and 2,910 from the
-  previous pass. Browser verification covers a real 600-turn saved conversation, branch previews
-  without writer movement, editing with newer draft preservation, saved image copies and shell logs.
-- The full architecture and test replacement remain open. An attached Pi can still queue input
-  without an immediate public admission receipt, independently of HTTP response recovery.
+- A Live replacement delivers the bounded rows, branch and persistence diagnostics together.
+  Join replays only events after the snapshot cut, including cuts within a token batch. A stale
+  HTTP observation and sequence from an earlier Host cannot displace the current view.
+- Prompt, Stop and Return use one Host operation receipt with typed inputs and matched executor,
+  command and ID. Stop/Return retries observe only; retirement stays unknown and concurrent
+  confirmation restores the result once.
+- `inspire pi` runs the native Pi terminal with its public SDK and returns the individual queue
+  disposition for remote Steer and Follow up. A regular terminal Pi does not return that
+  disposition from the extension API; its browser refuses busy input before dispatch.
+- The Host publishes and serves only the current asset manifest. Browser build mismatch blocks
+  requests and subscriptions; an open draft remains visible for manual reload. The previous
+  asset cache and literal palette and manifest-hash checks were removed with their old tests.
+- Counted source is 237,844 lines, 14,097 below the handbook baseline and 448 above the previous
+  pass. The build cleanup removes code, while the native queue path, receipt boundary and
+  regression coverage add code. The handbook's full deletion estimate has not been realized.
 
-## Next actions
+## Remaining architecture and test replacement
 
-1. Finish atomic live tail delivery and share activity and body presentation.
-2. Consolidate input recovery, draft and operation ownership. An attached Pi still needs a
-   supported way to confirm that it admitted input before its next run starts.
-3. Complete the shared dock, action/settings registry, native document transactions, lifecycle
-   plans, confirmed preferences, and current-build publication gate. Replace the corresponding
-   test matrices around the resulting owners.
+- Use a single initial transcript acquisition and remove the bootstrap digest round trip.
+- Extend the operation record to terminal and lifecycle executors and persist current typed
+  intents. Finish the shared draft editor and native action/settings registry.
+- Complete shared dock and activity presentation, typed native configuration transactions,
+  lifecycle plans and confirmed preference flows. Replace the remaining test matrices with
+  the corresponding production owners.
