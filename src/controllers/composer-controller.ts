@@ -544,7 +544,11 @@ export class ComposerController {
     }
     this.publish(sessionId);
     try {
-      const response = await api.prompt(request, confirmation.signal);
+      const response = await api.prompt(
+        request,
+        confirmation.signal,
+        Boolean(retained),
+      );
       if (!ownsTransport()) return false;
       for (const item of record.attachments) {
         this.forgetStagedFile(item.localId);
@@ -631,7 +635,10 @@ export class ComposerController {
           : this.host.notifyVisible)(
           sessionId,
           rejection?.message ??
-            "Message delivery is unconfirmed. You can retry while this Host is still running.",
+            (error instanceof ApiError &&
+            error.code === "ATTACH_CONTROL_OUTCOME_UNKNOWN"
+              ? "The attached Pi did not confirm delivery. Check its conversation before sending again."
+              : "Message delivery is unconfirmed. Trying the same message again only checks its original receipt."),
         );
       return false;
     } finally {

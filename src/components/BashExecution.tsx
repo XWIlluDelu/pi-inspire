@@ -5,6 +5,7 @@ import {
   isResourceReferenceText,
 } from "../../shared/resource-references";
 import { stripTerminalSequences } from "../ansi";
+import { shellCommand, shellCopyText } from "../shell-record";
 import type { ChatMessage } from "../events";
 import { CopyAction } from "./CopyAction";
 import { PiLoader } from "./PiLoader";
@@ -12,8 +13,10 @@ import { PiLoader } from "./PiLoader";
 /** Pi's direct shell result is user activity, not an assistant tool call. */
 export const BashExecution = memo(function BashExecution({
   message,
+  history = false,
 }: {
   message: ChatMessage;
+  history?: boolean;
 }) {
   const running = message.__inspireBashRunning === true;
   const error = message.__inspireBashError;
@@ -40,25 +43,21 @@ export const BashExecution = memo(function BashExecution({
           : message.exitCode !== undefined
             ? `Exit ${message.exitCode}`
             : "Finished";
-  const command = `${message.excludeFromContext ? "!!" : "!"}${message.command ?? ""}`;
+  const shell = { ...message, command: message.command ?? "" };
+  const command = shellCommand(shell);
   const output = stripTerminalSequences(message.output ?? "");
   const previewTruncated =
     (running || interrupted) && message.__inspireBashPreviewTruncated;
   const copy = [
-    command,
-    message.output ?? "",
-    status,
-    contextLabel,
-    message.truncated ? "Output truncated" : "",
-    message.fullOutputPath ?? "",
+    shellCopyText(shell, message.output ?? "", status, contextLabel),
     error ?? "",
   ]
     .filter(Boolean)
     .join("\n");
   return (
     <section
-      className={`turn shell-execution card${failed ? " card--failed" : " card--tool"}`}
-      aria-label="Shell command"
+      className={`turn shell-execution card${history ? " shell-execution--history" : ""}${failed ? " card--failed" : " card--tool"}`}
+      aria-label={history ? "Shell record preview" : "Shell command"}
     >
       <div className="shell-execution__header">
         {running ? (
@@ -71,11 +70,13 @@ export const BashExecution = memo(function BashExecution({
           {status}
         </span>
         <span className="shell-execution__context">{contextLabel}</span>
-        <CopyAction
-          text={copy}
-          label="shell result"
-          className="shell-execution__copy"
-        />
+        {!history && (
+          <CopyAction
+            text={copy}
+            label="shell result"
+            className="shell-execution__copy"
+          />
+        )}
       </div>
       <pre className="shell-execution__command">
         <code>{command}</code>
@@ -99,6 +100,7 @@ export const BashExecution = memo(function BashExecution({
                 className="tool-notice__action"
                 data-file-path={fileResourceReference(message.fullOutputPath)}
                 title={`Preview ${message.fullOutputPath}`}
+                aria-label={history ? "View full shell output" : undefined}
               >
                 View full output
               </button>

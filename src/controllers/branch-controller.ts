@@ -10,6 +10,7 @@ import type {
 import { type Api, ApiError } from "../api";
 import type { CopyContent } from "../content-copy";
 import { isTransientFailure, RecoveryBackoff } from "../recovery-backoff";
+import { shellCopyText } from "../shell-record";
 
 export interface BranchControllerState {
   sessionId: string | null;
@@ -147,6 +148,7 @@ export class BranchController {
     return this.read(async (api, sessionId) => {
       let offset = 0;
       const chunks: string[] = [];
+      let shell: BranchEntryResponse["shell"];
       let imageEntries: NonNullable<BranchEntryResponse["images"]> = [];
       do {
         signal.throwIfAborted();
@@ -156,6 +158,7 @@ export class BranchController {
           { kind: "entry", targetId, offset, format },
           signal,
         );
+        shell ??= page.shell;
         chunks.push(page.text);
         imageEntries = page.images ?? imageEntries;
         if (page.nextOffset === null) break;
@@ -172,7 +175,8 @@ export class BranchController {
           ),
         );
       }
-      return { text: chunks.join(""), images };
+      const text = chunks.join("");
+      return { text: shell ? shellCopyText(shell, text) : text, images };
     }, "view");
   }
 

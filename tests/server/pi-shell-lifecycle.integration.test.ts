@@ -136,8 +136,11 @@ describe("native shell input", () => {
         canEdit: false,
         canFork: false,
       });
-      expect(detail.text).toContain(command);
-      expect(detail.text).toContain(context);
+      expect(detail.text).toContain(query);
+      expect(detail.shell).toMatchObject({
+        command: command.replace(/^!+/, ""),
+        excludeFromContext: context === "Excluded from context",
+      });
       expect(detail.text).not.toContain('"role"');
     }
     expect(f.modelRequests).toHaveLength(0);

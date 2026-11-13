@@ -5,7 +5,6 @@ import type {
   BranchTreeNode,
   SessionHistoryPages,
 } from "../shared/contracts.js";
-import { fencedMarkdown } from "../shared/markdown-fence.js";
 import { userMessagePreviewText } from "../shared/user-message.js";
 import { requestError } from "./request-error.js";
 import { projectSafeValue } from "./safe-projection.js";
@@ -115,8 +114,8 @@ function* branchTextParts(
     const message = entry.message;
     const command = `${message.excludeFromContext ? "!!" : "!"}${message.command}`;
     yield* [
-      fencedMarkdown(command, ""),
-      fencedMarkdown(message.output, ""),
+      command,
+      message.output,
       message.cancelled
         ? "Cancelled"
         : message.exitCode !== undefined
@@ -179,18 +178,10 @@ function entryRole(entry: SessionEntry): BranchNodeRole {
   return entry.type === "custom_message" ? "system" : "metadata";
 }
 
-function entryPreviewText(entry: SessionEntry): string {
-  const text = branchEntryText(entry);
-  return entry.type === "message" && entry.message.role === "bashExecution"
-    ? text.replace(/^`{3,}$/gmu, "")
-    : text;
-}
-
-/** Normalize only enough retained text to decide the outline snippet. */
 function previewPrefix(entry: SessionEntry): string {
   const parts =
     entry.type === "message" && entry.message.role === "bashExecution"
-      ? [entryPreviewText(entry)]
+      ? [branchEntryText(entry)]
       : branchTextParts(entry, "describe", "preview");
   let text = "";
   let space = false;

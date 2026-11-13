@@ -51,12 +51,12 @@ import {
   type ProjectionConflict,
   type PromptRequest,
   type SessionDeleteResponse,
-  type SessionHistoryQuery,
   type SessionRuntimeStatus,
   THINKING_LEVELS,
   type ThinkingLevel,
   type UploadedAttachment,
 } from "../shared/contracts.js";
+import type { SessionHistoryQuery } from "../shared/history-query.js";
 import type { ModelCatalogResponse } from "../shared/model-settings.js";
 import type { TaskNotification, TaskOutcome } from "../shared/notifications.js";
 import {

@@ -98,7 +98,7 @@ test("Settings deferred failure remains dismissible and reload recovers", async 
   ).toBeVisible();
 });
 
-test("Context and History preserve focus after a deferred import fails and reloads", async ({
+test("Context restores focus after a deferred import fails and reloads", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 768, height: 844 });

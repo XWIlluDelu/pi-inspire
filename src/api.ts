@@ -36,12 +36,13 @@ import type {
   SessionExportRequest,
   SessionExportResponse,
   SessionHistoryPages,
-  SessionHistoryQuery,
   SessionListResponse,
   SessionOpenResponse,
   ThinkingLevel,
   UploadedAttachment,
 } from "../shared/contracts";
+import { SESSION_HISTORY_PATH } from "../shared/contracts";
+import type { SessionHistoryQuery } from "../shared/history-query";
 import type { HerdrEnhancementStatus } from "../shared/herdr";
 import type {
   HostRestartOperation,
@@ -474,6 +475,7 @@ function waitForPromptPoll(delay: number, signal?: AbortSignal): Promise<void> {
 async function deliverPrompt(
   body: PromptDeliveryRequest,
   signal?: AbortSignal,
+  observeOnly = false,
 ): Promise<PromptAcceptedResponse> {
   const init = { signal };
   // Losing even a read-only observation leaves the submitted write uncertain.
@@ -482,7 +484,7 @@ async function deliverPrompt(
     mutation: true,
   };
   const receiptPath = `/api/prompt/${encodeURIComponent(body.operationId)}?authorityId=${encodeURIComponent(body.authorityId)}`;
-  let first = true;
+  let first = !observeOnly;
   let failures = 0;
   const retryDelays = [250, 1_000, 3_000];
   for (;;) {
@@ -622,9 +624,10 @@ export function createApi() {
       for (const [key, value] of Object.entries(query))
         if (key !== "kind" && value !== undefined)
           params.set(key, String(value));
-      return request<SessionHistoryPages[Q["kind"]]>(`/api/history?${params}`, {
-        signal,
-      });
+      return request<SessionHistoryPages[Q["kind"]]>(
+        `${SESSION_HISTORY_PATH}?${params}`,
+        { signal },
+      );
     },
     lastAssistantText: (
       sessionId: string,
@@ -874,9 +877,13 @@ export function createApi() {
       ),
     clearTerminalHistory: () =>
       terminalOperations.run<void>("/api/terminal-history", "DELETE"),
-    prompt: (body: PromptDeliveryRequest, signal?: AbortSignal) =>
+    prompt: (
+      body: PromptDeliveryRequest,
+      signal?: AbortSignal,
+      observeOnly = false,
+    ) =>
       withTransportMeasure("prompt-confirmation", () =>
-        deliverPrompt(body, signal),
+        deliverPrompt(body, signal, observeOnly),
       ),
     nativeCommand: (body: HostNativeCommandRequest, signal?: AbortSignal) =>
       post<HostNativeCommandResponse>(

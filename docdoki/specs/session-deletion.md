@@ -93,7 +93,8 @@ Successful deletion clears the session's catalog identity, resource handles, bro
 and persistent Hidden/pinned metadata. Ordinary uploaded files remain durable assets under
 [[composer]], including after permanent deletion or emptying native Trash. Asset cleanup is separate;
 the deletion path has no reference scan or collection callback. If preference cleanup fails after
-the file outcome is known, the response reports it and the browser warns without retrying deletion.
+the file outcome is known, the browser removes the committed rows, retains its last confirmed
+preferences and warns without retrying deletion.
 
 ## Browser reconciliation
 

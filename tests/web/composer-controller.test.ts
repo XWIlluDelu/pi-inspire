@@ -233,6 +233,7 @@ describe("ComposerController", () => {
         projectFiles: ["/workspace/sent.ts"],
       }),
       expect.any(AbortSignal),
+      false,
     );
     expect(harness.slice()).toEqual({
       attachments: [
@@ -308,8 +309,10 @@ describe("ComposerController", () => {
     expect(signal.aborted).toBe(true);
     expect(harness.slice().projectFiles).toEqual(["/workspace/kept.ts"]);
     const retrying = harness.controller.send("synthetic prompt");
-    const [retryRequest, retrySignal] = harness.prompt.mock.calls[1]!;
+    const [retryRequest, retrySignal, observeOnly] =
+      harness.prompt.mock.calls[1]!;
     expect(retryRequest).toEqual(first);
+    expect(observeOnly).toBe(true);
     pending.resolve(acceptedPrompt);
     await expect(sending).resolves.toBe(false);
     expect(retrySignal.aborted).toBe(false);

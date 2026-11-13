@@ -148,6 +148,33 @@ describe("deletion review recovery", () => {
     expect(store.getState().sessions).toEqual([]);
   });
 
+  it("keeps the Host's navigation preferences when a committed delete cannot save them", async () => {
+    const { model, remove } = await setup();
+    const target = model.rows[0]!;
+    const reviewed = { ...model.preferences, hiddenSessionIds: [target.id] };
+    model.preferences = reviewed;
+    await store.init();
+    remove.mockImplementationOnce(async () => {
+      model.rows = model.rows.filter((row) => row.id !== target.id);
+      return {
+        body: {
+          sessionId: target.id,
+          disposition: "trashed",
+          preferenceCleanupFailed: true,
+        },
+      };
+    });
+    expect(await store.deleteSession(target.id)).toBe("trashed");
+    expect(store.getState().prefs.hiddenSessionIds).toEqual([target.id]);
+    expect(store.getState().sessions.some((row) => row.id === target.id)).toBe(
+      false,
+    );
+    expect(store.getState().notices.at(-1)?.text).toContain(
+      "metadata could not be saved",
+    );
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
   it.each(["expanded", "empty"])(
     "refreshes %s Hidden membership without repeating the deletion",
     async (change) => {

@@ -1,9 +1,9 @@
 import type {
   ActiveSnapshot,
   SessionHistoryPages,
-  SessionHistoryQuery,
   SessionRuntimeStatus,
 } from "../shared/contracts.js";
+import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { lastAssistantText } from "./assistant-text.js";
 import { requestError } from "./request-error.js";
 import type { ResourceContext } from "./resources.js";

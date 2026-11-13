@@ -17,7 +17,6 @@ import {
   type BootstrapResponse,
   MAX_ATTACHMENT_FILE_BYTES,
   MAX_ATTACHMENTS,
-  MAX_COMPOSER_HISTORY_ENTRIES,
   MAX_CURATED_SESSION_RESULTS,
   MAX_PROJECT_FILES,
   MAX_PROMPT_CHARS,
@@ -25,10 +24,12 @@ import {
   MAX_SESSION_ID_CHARS,
   MAX_SESSION_ID_HYDRATION_IDS,
   MAX_SESSION_LIST_PAGE_SIZE,
+  SESSION_HISTORY_PATH,
   THINKING_LEVELS,
   type UploadedAttachment,
 } from "../shared/contracts.js";
 import type { HerdrEnhancementStatus } from "../shared/herdr.js";
+import { historyAddress, historyQuerySchema } from "../shared/history-query.js";
 import { HTML_PREVIEW_BYTES } from "../shared/html-preview.js";
 import {
   MAX_RESOURCE_PROBE_REFERENCES,
@@ -318,55 +319,6 @@ const assistantTextSchema = z
     viewId: z.string().min(1).max(512),
   })
   .strict();
-const historyCursor = z.string().min(1).max(2_048);
-const historyAddress = {
-  sessionId: sessionIdField,
-  viewId: z.string().min(1).max(512),
-};
-const historyStart = z.coerce
-  .number()
-  .int()
-  .min(0)
-  .max(Number.MAX_SAFE_INTEGER)
-  .optional();
-const historyQuerySchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("page"),
-    cursor: historyCursor.optional(),
-    entryId: z.string().min(1).max(200).optional(),
-    leafId: z.string().min(1).max(200).optional(),
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("search"),
-    text: z.string().trim().min(1).max(200),
-    leafId: z.string().min(1).max(200).optional(),
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("routes"),
-    parentId: z.string().max(200),
-    before: z.string().min(1).max(200).optional(),
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("composer"),
-    start: z.coerce
-      .number()
-      .int()
-      .min(0)
-      .max(MAX_COMPOSER_HISTORY_ENTRIES)
-      .optional(),
-  }),
-  z.strictObject({
-    ...historyAddress,
-    kind: z.literal("entry"),
-    targetId: z.string().min(1).max(200),
-    offset: historyStart,
-    format: z.literal("message").optional(),
-  }),
-]);
 const branchImageSchema = z.strictObject({
   ...historyAddress,
   targetId: z.string().min(1).max(200),
@@ -1814,7 +1766,7 @@ export function createInspireServer(deps: AppDependencies): {
       await deps.runtime.snapshot(requestedDetail(request.query.detail)),
     ),
   );
-  app.get("/api/history", async (request, response) => {
+  app.get(SESSION_HISTORY_PATH, async (request, response) => {
     const { sessionId, viewId, ...query } = historyQuerySchema.parse(
       request.query,
     );

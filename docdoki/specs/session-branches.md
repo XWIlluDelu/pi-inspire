@@ -47,15 +47,13 @@ detailed reads expose retained source so path matching, Copy and editing remain 
 
 Read complete retained entries in bounded chunks. Ordinary assistant/tool content stays rich;
 native shell records show command, output, status and context inclusion as Shell activity rather
-than system bodies or storage JSON. Decode Host-generated fences into separate wrapping monospaced
-command/output regions with an optional truncation/full-log footer. Stdout stays literal, without
-Markdown, syntax highlighting or terminal-insertion controls. The History body owns scrolling;
-Shell output does not introduce a nested viewport.
+than system bodies or storage JSON. Live and History share the same Shell card. Saved output is
+paged as literal text; structured command, exit and full-log metadata are separate from stdout.
+History owns scrolling without a nested output viewport.
 
-Shell Copy reads the complete retained entry and removes transport fences. Once the bounded reader
-is complete, separate Host full-output metadata may offer authorized file preview. The inline action
-uses the compact output sizing in [[design-system]] and keeps the path available in the tooltip and
-copied record. Text printed in stdout never becomes that metadata.
+Shell Copy reads the complete retained entry, combining its structured metadata with every output
+section. It does not copy a separate full-output file. The full-log button uses the authorized file
+preview. Text printed in stdout never becomes that reference.
 History text uses the same authorized file-preview actions as Transcript.
 
 ### Copy, images and read recovery

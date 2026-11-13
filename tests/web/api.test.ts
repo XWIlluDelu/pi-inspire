@@ -117,6 +117,22 @@ describe("prompt delivery transport", () => {
     );
   });
 
+  it("checks the original receipt without dispatch when retrying uncertain delivery", async () => {
+    const fetch = vi.fn(async () =>
+      Response.json({ error: "No receipt" }, { status: 409 }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    await expect(
+      createApi().prompt(prompt, undefined, true),
+    ).rejects.toMatchObject({
+      outcomeUnknown: true,
+    });
+    expect(fetch).toHaveBeenCalledExactlyOnceWith(
+      "/api/prompt/operation-1?authorityId=authority-1",
+      expect.not.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("accepts only matching Host proof of rejection", async () => {
     const headers = {
       "X-Inspire-Authority": prompt.authorityId,

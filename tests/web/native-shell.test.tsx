@@ -1,16 +1,7 @@
 // @vitest-environment jsdom
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import {
-  HistoryShellPreview,
-  historyShellContent,
-} from "../../src/components/HistoryShellPreview";
+import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { BashExecution } from "../../src/components/BashExecution";
 import { Transcript } from "../../src/components/Transcript";
 import { emptyEventSlice, reduceEvent } from "../../src/events";
 
@@ -132,52 +123,33 @@ describe("native shell transcript", () => {
   });
 });
 
-describe("shell records in History", () => {
-  const command = "!printf 'shell history'";
-  const record = (output: string) =>
-    ["```", command, "```", "", "````", output, "````", "", "Exit 0"].join(
-      "\n",
-    );
-
-  it("reads shell stdout literally and copies it with the command and Host outcome", async ({
-    onTestFinished,
-  }) => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", { clipboard: { writeText } });
-    onTestFinished(() => {
-      vi.unstubAllGlobals();
-    });
-    const output =
-      "# literal heading\n  column A\tcolumn B\n<script>literal script</script>\n\nExit 99\n\n```js\nraw code\n```";
-    render(<HistoryShellPreview text={record(output)} complete />);
-    const preview = screen.getByRole("region", {
-      name: "Shell record preview",
-    });
-    expect(preview.querySelector(".history-shell__output")?.textContent).toBe(
-      output,
-    );
-    expect(preview.querySelector("script")).toBeNull();
-    expect(screen.getByText("Exit 0")).toBeVisible();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Copy loaded shell content" }),
-    );
-    await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith(
-        [command, output, "Exit 0"].join("\n\n"),
-      ),
-    );
-  });
-
-  it("recognizes only a complete Host-projected full-log reference", () => {
-    const output = "Full output: /tmp/stdout-is-not-metadata.log";
-    const path = "/tmp/logs/native shell.log";
-    const text = `${record(output)}\n\nOutput truncated\n\nFull output: ${path}`;
-    expect(historyShellContent(record(output), true).fullOutputPath).toBeNull();
-    expect(historyShellContent(text, false).fullOutputPath).toBeNull();
-    render(<HistoryShellPreview text={text} complete />);
-    expect(
-      screen.getByRole("button", { name: "View full shell output" }),
-    ).toHaveAttribute("data-file-path", "/tmp/logs/native%20shell.log");
-  });
+it("reads stored shell output literally and trusts only the structured full-log reference", () => {
+  const output =
+    "# literal heading\n<script>literal script</script>\nFull output: /tmp/stdout-is-not-metadata.log\n\n```js\nraw code\n```";
+  const message = {
+    role: "bashExecution",
+    command: "printf output",
+    output,
+    exitCode: 0,
+    truncated: true,
+  };
+  const { rerender } = render(<BashExecution message={message} history />);
+  const preview = screen.getByRole("region", { name: "Shell record preview" });
+  expect(preview.querySelector(".shell-execution__output")?.textContent).toBe(
+    output,
+  );
+  expect(preview.querySelector("script")).toBeNull();
+  expect(screen.getByText("Exit 0")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "View full shell output" }),
+  ).toBeNull();
+  rerender(
+    <BashExecution
+      message={{ ...message, fullOutputPath: "/tmp/logs/native shell.log" }}
+      history
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "View full shell output" }),
+  ).toHaveAttribute("data-file-path", "/tmp/logs/native%20shell.log");
 });

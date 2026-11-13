@@ -29,17 +29,21 @@ attachment-retention and PDF experiments are outside the main plan.
   and body section. The title menu, palette and `/tree` open that reader. Reading, routes, search,
   entry bodies and branch actions replaced the separate contextual outline and its transport.
   Same-session navigation carries the inspected revision; copies retain independent admission.
+  The browser query type is inferred from the Host's history schema. Live and History share the
+  Shell card and keep structured log references separate from stdout.
 - Ordinary session open, reconnect and Fork/Clone do not start an owned Pi. An explicit action
   admits a writer if needed. Cold history still observes an external owner, and normal admission
   checks ownership again before writing.
 - Thinking level and per-session runtime settings keep confirmed values separate from pending
-  writes.
+  writes. Deletion applies the committed result once and keeps confirmed navigation metadata
+  when cleanup fails.
 - The start and session editors render their stored text directly. Input history copies text and
   artifacts on explicit selection. Provider and extension prompts share form controls.
 - Update probes share a cache owner. Live and saved views share snapshot assembly without
   retaining transcript snapshots in slot metadata. Each socket owns its subscription state, and
   each Pi dialog owns its process and deadline. Deletion reservations share a registry. A lost prompt response
-  triggers a bounded read of its original Host receipt. Terminal data and maintenance share one
+  triggers a bounded read of its original Host receipt. An unchanged retry observes the same
+  receipt without sending the prompt again. Terminal data and maintenance share one
   wire version. Current credentials, Herdr scopes and attach-control entry paths are in use.
 - The owned Pi bridge publishes bounded native checkpoints. The disk reader verifies the file
   independently, including appends from a second Pi. Live adopts finalized native entries from
@@ -49,7 +53,7 @@ attachment-retention and PDF experiments are outside the main plan.
   without reconstructing runs from browser events.
 - The last-opened hint supplies a fresh browser's starting address. It no longer controls worker
   retention, addressed reads or another browser's completion and failure indicators.
-- Counted source is 237,545 lines, down 14,396 from the handbook baseline and 2,761 from the
+- Counted source is 237,432 lines, down 14,509 from the handbook baseline and 2,874 from the
   previous pass. Browser verification covers a real 600-turn saved conversation, branch previews
   without writer movement, editing with newer draft preservation, saved image copies and shell logs.
 - The full architecture and test replacement remain open. An attached Pi can still queue input

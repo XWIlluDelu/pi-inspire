@@ -79,6 +79,11 @@
   background: var(--bg-inset);
 }
 
+.shell-execution--history .shell-execution__output {
+  max-height: none;
+  overflow: visible;
+}
+
 .shell-execution__note,
 .shell-execution__error {
   margin: 0;

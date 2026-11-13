@@ -23,7 +23,6 @@ import {
   type PendingRecovery,
   type PiMessageDeliveryMode,
   type PiRuntimeSettings,
-  type SessionHistoryQuery,
   type ProjectDisplayPreference,
   type PromptAcceptedResponse,
   parseExtensionStatuses,
@@ -38,6 +37,7 @@ import {
   type ToolVisibilityPreference,
   type VisibilityPreference,
 } from "../shared/contracts";
+import type { SessionHistoryQuery } from "../shared/history-query";
 import { jsonRecord } from "../shared/json-record";
 import type {
   ModelCatalogResponse,

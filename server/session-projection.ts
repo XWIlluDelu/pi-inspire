@@ -23,9 +23,9 @@ import {
   type HistoryMatch,
   type ProjectionHealth,
   type SessionHistoryPages,
-  type SessionHistoryQuery,
   type TranscriptPage,
 } from "../shared/contracts.js";
+import type { SessionHistoryQuery } from "../shared/history-query.js";
 import { jsonRecord } from "../shared/json-record.js";
 import { resultChildCalls } from "../shared/tool-activity.js";
 import { userMessageContent } from "../shared/user-message.js";
@@ -917,10 +917,14 @@ class SessionEntryIndex extends EventEmitter {
   ): BranchEntryResponse {
     const entry = this.currentEntriesById.get(id);
     if (!entry) throw requestError("History point no longer exists", 404);
+    const shell =
+      entry.type === "message" && entry.message.role === "bashExecution"
+        ? entry.message
+        : undefined;
     const text =
       format === "message"
         ? branchMessageSource(entry)
-        : branchEntryText(entry, "separate");
+        : (shell?.output ?? branchEntryText(entry, "separate"));
     if (offset > text.length)
       throw requestError("History content offset is invalid", 400);
     const end = Math.min(text.length, offset + BRANCH_CONTENT_PAGE_CHARS);
@@ -937,6 +941,18 @@ class SessionEntryIndex extends EventEmitter {
         ...branchNode(entry, false, id === effectiveLeafId),
         childCount: sessionChildCount(this.currentEntries, id),
       },
+      ...(shell && offset === 0
+        ? {
+            shell: {
+              command: shell.command,
+              exitCode: shell.exitCode,
+              cancelled: shell.cancelled,
+              truncated: shell.truncated,
+              fullOutputPath: shell.fullOutputPath,
+              excludeFromContext: shell.excludeFromContext,
+            },
+          }
+        : {}),
       text: text.slice(offset, end),
       totalChars: text.length,
       nextOffset: end < text.length ? end : null,

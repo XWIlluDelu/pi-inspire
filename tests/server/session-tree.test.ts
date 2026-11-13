@@ -183,7 +183,7 @@ describe("saved history entries and branch routes", () => {
     expect(preview.length).toBeLessThanOrEqual(240);
   });
 
-  it("fences complete shell output containing many backtick runs without argument expansion", () => {
+  it("keeps complete shell output containing many backtick runs literal", () => {
     const output = "`x".repeat(150_000);
     const entry: SessionEntry = {
       type: "message",
@@ -202,7 +202,7 @@ describe("saved history entries and branch routes", () => {
     };
     const text = branchEntryText(entry);
     expect(text).toContain(output);
-    expect(text).toContain("````\n!echo ```\n````");
+    expect(text).toContain("!echo ```");
     expect(branchNode(entry, false, false).snippet.length).toBeLessThanOrEqual(
       240,
     );

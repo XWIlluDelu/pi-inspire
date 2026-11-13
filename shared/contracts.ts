@@ -971,6 +971,8 @@ export interface TranscriptPage {
   hasOlder: boolean;
 }
 
+export const SESSION_HISTORY_PATH = "/api/history";
+
 export interface NativeTurnPage {
   sessionId: string;
   viewId: string;
@@ -993,13 +995,6 @@ export interface HistoryMatch {
   turn: number;
   snippet: string;
 }
-
-export type SessionHistoryQuery =
-  | { kind: "page"; cursor?: string; entryId?: string; leafId?: string }
-  | { kind: "search"; text: string; leafId?: string }
-  | { kind: "routes"; parentId: string; before?: string }
-  | { kind: "composer"; start?: number }
-  | { kind: "entry"; targetId: string; offset?: number; format?: "message" };
 
 export interface SessionHistoryPages {
   page: NativeTurnPage;
@@ -1080,11 +1075,21 @@ export interface BranchImageRequest {
   targetId: string;
 }
 
+export interface SavedShellDetails {
+  command: string;
+  exitCode?: number;
+  cancelled?: boolean;
+  truncated?: boolean;
+  fullOutputPath?: string;
+  excludeFromContext?: boolean;
+}
+
 export interface BranchEntryResponse {
   sessionId: string;
   revision: number;
   node: BranchTreeNode;
   skipSummaryPrompt?: boolean;
+  shell?: SavedShellDetails;
   text: string;
   nextOffset: number | null;
   totalChars: number;

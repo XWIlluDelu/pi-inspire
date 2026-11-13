@@ -135,19 +135,17 @@ export class SessionManagementController {
     }
   }
 
-  private preferencesWithoutSessions(
-    sessionIds: ReadonlySet<string>,
-  ): InspirePreferences {
-    const prefs = this.host.state().prefs;
-    return {
-      ...prefs,
-      pinnedSessionIds: prefs.pinnedSessionIds.filter(
-        (id) => !sessionIds.has(id),
-      ),
-      hiddenSessionIds: prefs.hiddenSessionIds.filter(
-        (id) => !sessionIds.has(id),
-      ),
-    };
+  private applyDeletionResult(
+    sessionStatuses: AppState["sessionStatuses"],
+    preferences: InspirePreferences | undefined,
+    owners: ReadonlyMap<keyof InspirePreferences, number>,
+  ): void {
+    this.host.patch({
+      sessionStatuses,
+      ...(preferences
+        ? { prefs: this.host.reconcilePreferences(preferences, owners) }
+        : {}),
+    });
   }
 
   deleteSession = async (
@@ -201,10 +199,11 @@ export class SessionManagementController {
       if (!ownsTransport()) return null;
       const deleted = new Set([sessionId]);
       const sessionStatuses = this.host.forgetSessions(deleted);
-      const prefs = result.preferences
-        ? this.host.reconcilePreferences(result.preferences, preferenceOwners)
-        : this.preferencesWithoutSessions(deleted);
-      this.host.patch({ prefs, sessionStatuses });
+      this.applyDeletionResult(
+        sessionStatuses,
+        result.preferences,
+        preferenceOwners,
+      );
       this.host.notify(
         "info",
         result.disposition === "trashed"
@@ -322,28 +321,11 @@ export class SessionManagementController {
         result.deleted.map((session) => session.sessionId),
       );
       const sessionStatuses = this.host.forgetSessions(deleted);
-      const remainingPrefs = this.preferencesWithoutSessions(deleted);
-      const fallbackPrefs = result.failure
-        ? remainingPrefs
-        : {
-            ...remainingPrefs,
-            hiddenSessionIds: remainingPrefs.hiddenSessionIds.filter(
-              (sessionId) => !individualIds.has(sessionId),
-            ),
-            pinnedProjectCwds: remainingPrefs.pinnedProjectCwds.filter(
-              (cwd) => !projectCwds.has(cwd),
-            ),
-            hiddenProjectCwds: remainingPrefs.hiddenProjectCwds.filter(
-              (cwd) => !projectCwds.has(cwd),
-            ),
-            navCollapsedGroups: remainingPrefs.navCollapsedGroups.filter(
-              (cwd) => !projectCwds.has(cwd),
-            ),
-          };
-      const prefs = result.preferences
-        ? this.host.reconcilePreferences(result.preferences, preferenceOwners)
-        : fallbackPrefs;
-      this.host.patch({ prefs, sessionStatuses });
+      this.applyDeletionResult(
+        sessionStatuses,
+        result.preferences,
+        preferenceOwners,
+      );
 
       if (result.deleted.length > 0) {
         const count = result.deleted.length;

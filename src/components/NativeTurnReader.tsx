@@ -20,7 +20,7 @@ import { sessionDraft } from "../session-drafts";
 import { shallowEqual, store, useAppState } from "../store";
 import { PiLoader } from "./PiLoader";
 import { RichText } from "./RichText";
-import { HistoryShellPreview } from "./HistoryShellPreview";
+import { BashExecution } from "./BashExecution";
 import { CopyAction } from "./CopyAction";
 import { branchCopiesBlocked } from "../controllers/branch-controller";
 
@@ -535,11 +535,14 @@ export function NativeTurnReader({
                 <NativeHistoryMessage message={message} />
                 {expanded && (
                   <div>
-                    {expanded.result.node.role === "shell" &&
-                    expanded.offset === 0 ? (
-                      <HistoryShellPreview
-                        text={expanded.result.text}
-                        complete={expanded.result.nextOffset === null}
+                    {expanded.result.shell ? (
+                      <BashExecution
+                        history
+                        message={{
+                          role: "bashExecution",
+                          ...expanded.result.shell,
+                          output: expanded.result.text,
+                        }}
                       />
                     ) : (
                       <div className="native-history__body">
